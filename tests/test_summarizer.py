@@ -134,15 +134,21 @@ class TestBuildPrompt:
         assert "аналитик" in prompt.lower()
 
     def test_empty_articles(self) -> None:
-        config = _make_config()
+        config = _make_config(language="en")
         prompt = build_prompt({}, config)
         assert "0 articles" in prompt
 
     def test_article_count_in_prompt(self) -> None:
         articles = _make_articles_by_category()
-        config = _make_config()
+        config = _make_config(language="en")
         prompt = build_prompt(articles, config)
         assert "3 articles" in prompt
+
+    def test_article_count_in_russian_prompt(self) -> None:
+        articles = _make_articles_by_category()
+        config = _make_config(language="ru")
+        prompt = build_prompt(articles, config)
+        assert "3 статей" in prompt
 
     def test_article_without_pub_date(self) -> None:
         articles = {"AI": [_make_article(pub_date=None)]}

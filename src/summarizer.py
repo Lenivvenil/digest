@@ -18,6 +18,7 @@ _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
     "ru": {
+        "header": "Дайджест сегодня содержит {total} статей по {categories} категориям.",
         "role": (
             "Ты — аналитик, который готовит ежедневный дайджест новостей "
             "для Technology Architect в крупном банке."
@@ -52,6 +53,7 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
         ),
     },
     "en": {
+        "header": "Today's digest contains {total} articles across {categories} categories.",
         "role": (
             "You are an analyst preparing a daily news digest "
             "for a Technology Architect at a major bank."
@@ -112,10 +114,8 @@ def build_prompt(articles_by_category: dict[str, list[Article]], config: Config)
     articles_text = "\n".join(articles_text_parts)
 
     total = sum(len(v) for v in articles_by_category.values())
-    header = (
-        f"Today's digest contains {total} articles across "
-        f"{len(articles_by_category)} categories.\n"
-    )
+    header_tmpl = tmpl.get("header", PROMPT_TEMPLATES["en"]["header"])
+    header = header_tmpl.format(total=total, categories=len(articles_by_category)) + "\n"
 
     return f"{role}\n\n{instructions}\n\n{header}\n{articles_text}"
 
