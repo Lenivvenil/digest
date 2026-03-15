@@ -74,14 +74,14 @@
 
 ### Task 5: Markdown file output for Obsidian
 
-- [ ] Create `src/markdown_writer.py` — saves digest as a markdown file in the repo
-- [ ] File path: `{config.delivery.markdown_dir}/{YYYY-MM-DD}.md` (e.g., `digests/2026-03-14.md`)
-- [ ] File starts with YAML frontmatter: `title`, `date`, `sources_count`, `articles_count`, `llm_provider`, `tags: [digest, daily]`
-- [ ] Body is the LLM-generated summary as-is (it is already markdown)
-- [ ] If file for today already exists, overwrite it (idempotent re-runs)
-- [ ] If `delivery.markdown_to_repo` is false, skip silently
-- [ ] Create `digests/.gitkeep` so the directory is tracked
-- [ ] Write tests: file creation, frontmatter format, overwrite behavior
+- [x] Create `src/markdown_writer.py` — saves digest as a markdown file in the repo
+- [x] File path: `{config.delivery.markdown_dir}/{YYYY-MM-DD}.md` (e.g., `digests/2026-03-14.md`)
+- [x] File starts with YAML frontmatter: `title`, `date`, `sources_count`, `articles_count`, `llm_provider`, `tags: [digest, daily]`
+- [x] Body is the LLM-generated summary as-is (it is already markdown)
+- [x] If file for today already exists, overwrite it (idempotent re-runs)
+- [x] If `delivery.markdown_to_repo` is false, skip silently
+- [x] Create `digests/.gitkeep` so the directory is tracked
+- [x] Write tests: file creation, frontmatter format, overwrite behavior
 
 ### Task 6: Main entrypoint and CLI
 
