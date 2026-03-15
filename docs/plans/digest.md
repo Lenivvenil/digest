@@ -42,13 +42,13 @@
 
 ### Task 3: LLM summarization with multi-provider support
 
-- [ ] Create `src/summarizer.py` — builds prompt from collected articles and calls LLM
-- [ ] Provider abstraction: `BaseLLMProvider` protocol/ABC with method `async def summarize(prompt: str) -> str`
-- [ ] Implement `AnthropicProvider`: calls `https://api.anthropic.com/v1/messages` with `x-api-key` header. Reads `ANTHROPIC_API_KEY` from env. Supports models: `claude-sonnet-4-20250514`, `claude-haiku-4-5-20251001`
-- [ ] Implement `GeminiProvider`: calls `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}`. Reads `GEMINI_API_KEY` from env. Default model: `gemini-2.5-flash`
-- [ ] Implement `GroqProvider`: calls `https://api.groq.com/openai/v1/chat/completions` with Bearer token. Reads `GROQ_API_KEY` from env. Default model: `llama-3.3-70b-versatile`
-- [ ] Factory function `get_provider(config) -> BaseLLMProvider` that selects provider based on `config["llm"]["provider"]`
-- [ ] Prompt template (in Russian by default, controlled by `digest.language`):
+- [x] Create `src/summarizer.py` — builds prompt from collected articles and calls LLM
+- [x] Provider abstraction: `BaseLLMProvider` protocol/ABC with method `async def summarize(prompt: str) -> str`
+- [x] Implement `AnthropicProvider`: calls `https://api.anthropic.com/v1/messages` with `x-api-key` header. Reads `ANTHROPIC_API_KEY` from env. Supports models: `claude-sonnet-4-20250514`, `claude-haiku-4-5-20251001`
+- [x] Implement `GeminiProvider`: calls `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}`. Reads `GEMINI_API_KEY` from env. Default model: `gemini-2.5-flash`
+- [x] Implement `GroqProvider`: calls `https://api.groq.com/openai/v1/chat/completions` with Bearer token. Reads `GROQ_API_KEY` from env. Default model: `llama-3.3-70b-versatile`
+- [x] Factory function `get_provider(config) -> BaseLLMProvider` that selects provider based on `config["llm"]["provider"]`
+- [x] Prompt template (in Russian by default, controlled by `digest.language`):
   - Role: "Ты — аналитик, который готовит ежедневный дайджест новостей для Technology Architect в крупном банке"
   - Instructions: group by category, pick 3-5 most important per category, 2-3 sentence analytical comment per article, "Ключевые тренды дня" section at the end, markdown format with emoji for categories, preserve source links, skip irrelevant news
   - **Three perspectives rule**: for each significant topic or trend within a category, provide three viewpoints formatted as a compact block:
@@ -58,8 +58,8 @@
     - Not every minor news item needs three perspectives — only the 1-2 most significant topics per category. Minor items get a regular analytical comment
     - The perspectives should represent genuinely different reasoning, not just variations in tone. Each perspective should be 1-2 sentences
   - Style controlled by `digest.summary_style`: "analytical" (default, with trends and three perspectives), "brief" (one sentence per news, no perspectives), "detailed" (full context, three perspectives for all items)
-- [ ] Error handling: retry once on timeout/5xx, raise clear error on auth failure (missing/invalid API key)
-- [ ] Write tests: prompt building, provider selection, mock API responses for each provider, error handling
+- [x] Error handling: retry once on timeout/5xx, raise clear error on auth failure (missing/invalid API key)
+- [x] Write tests: prompt building, provider selection, mock API responses for each provider, error handling
 
 ### Task 4: Telegram delivery
 
