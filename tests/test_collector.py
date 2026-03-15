@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.collector import (
+    AllFeedsFailedError,
     Article,
     _article_hash,
     _is_recent,
@@ -299,7 +300,30 @@ async def test_collect_malformed_feed_continues(
 async def test_collect_http_error_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """HTTP error on one feed should not crash the collector."""
+    """HTTP error on one feed should not crash if another feed succeeds."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    good_source = make_source(name="Good", url="https://good.example.com/feed")
+    bad_source = make_source(name="Bad", url="https://bad.example.com/feed")
+    config = make_config(sources=[good_source, bad_source])
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        if "bad" in url:
+            return make_http_response(b"", status_code=500)
+        return make_http_response(RSS_SAMPLE.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert len(result.get("Tech", [])) > 0
+
+
+@pytest.mark.asyncio
+async def test_collect_all_feeds_http_error_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When all feeds fail with HTTP errors, AllFeedsFailedError is raised."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
@@ -309,16 +333,40 @@ async def test_collect_http_error_continues(
         return make_http_response(b"", status_code=500)
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    assert result == {}
+        with pytest.raises(AllFeedsFailedError):
+            await collect(config)
 
 
 @pytest.mark.asyncio
 async def test_collect_timeout_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Timeout on a feed should not crash."""
+    """Timeout on one feed should not crash if another feed succeeds."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    import httpx
+
+    good_source = make_source(name="Good", url="https://good.example.com/feed")
+    slow_source = make_source(name="Slow", url="https://slow.example.com/feed")
+    config = make_config(sources=[good_source, slow_source])
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        if "slow" in url:
+            raise httpx.TimeoutException("timeout")
+        return make_http_response(RSS_SAMPLE.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert len(result.get("Tech", [])) > 0
+
+
+@pytest.mark.asyncio
+async def test_collect_all_feeds_timeout_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When all feeds time out, AllFeedsFailedError is raised."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
@@ -330,9 +378,8 @@ async def test_collect_timeout_continues(
         raise httpx.TimeoutException("timeout")
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    assert result == {}
+        with pytest.raises(AllFeedsFailedError):
+            await collect(config)
 
 
 @pytest.mark.asyncio

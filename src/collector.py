@@ -20,6 +20,10 @@ from src.config import Config, SourceConfig
 logger = logging.getLogger(__name__)
 
 CACHE_FILE = Path(".cache/seen_articles.json")
+
+
+class AllFeedsFailedError(RuntimeError):
+    """Raised when every configured feed fails to fetch."""
 FEED_TIMEOUT = 15.0
 USER_AGENT = "DailyDigestBot/1.0 (https://github.com/user/digest)"
 CACHE_MAX_AGE_DAYS = 7
@@ -109,15 +113,20 @@ def _parse_feed_bytes(raw: bytes, url: str) -> feedparser.FeedParserDict:
     return feedparser.parse(raw, response_headers={"content-location": url})
 
 
-async def _fetch_feed(client: httpx.AsyncClient, source: SourceConfig) -> list[Article]:
-    """Fetch and parse a single RSS/Atom feed. Returns list of articles or empty list on error."""
+async def _fetch_feed(
+    client: httpx.AsyncClient, source: SourceConfig
+) -> list[Article] | None:
+    """Fetch and parse a single RSS/Atom feed.
+
+    Returns list of articles (possibly empty) on success, or None on fetch/parse error.
+    """
     try:
         response = await client.get(source.url, timeout=FEED_TIMEOUT)
         response.raise_for_status()
         feed = _parse_feed_bytes(response.content, source.url)
     except httpx.TimeoutException:
         logger.warning("Timeout fetching feed '%s' (%s)", source.name, source.url)
-        return []
+        return None
     except httpx.HTTPStatusError as exc:
         logger.warning(
             "HTTP %d fetching feed '%s' (%s)",
@@ -125,10 +134,10 @@ async def _fetch_feed(client: httpx.AsyncClient, source: SourceConfig) -> list[A
             source.name,
             source.url,
         )
-        return []
+        return None
     except Exception as exc:
         logger.warning("Error fetching feed '%s' (%s): %s", source.name, source.url, exc)
-        return []
+        return None
 
     if feed.bozo and not feed.entries:
         logger.warning(
@@ -137,7 +146,7 @@ async def _fetch_feed(client: httpx.AsyncClient, source: SourceConfig) -> list[A
             source.url,
             feed.bozo_exception,
         )
-        return []
+        return None
 
     articles: list[Article] = []
     for entry in feed.entries:
@@ -209,10 +218,18 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
         tasks = [_fetch_feed(client, source) for source in config.enabled_sources]
         results = await asyncio.gather(*tasks)
 
+    if config.enabled_sources and all(r is None for r in results):
+        raise AllFeedsFailedError(
+            f"All {len(results)} configured feeds failed to fetch. "
+            "Check network connectivity and feed URLs."
+        )
+
     grouped: dict[str, list[Article]] = {}
     total_collected = 0
 
     for source, articles in zip(config.enabled_sources, results):
+        if articles is None:
+            continue
         per_source_count = 0
         for article in articles:
             if total_collected >= config.digest.max_total_articles:

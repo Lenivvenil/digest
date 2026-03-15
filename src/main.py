@@ -14,7 +14,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from src.collector import collect, save_dedup_cache
+from src.collector import AllFeedsFailedError, collect, save_dedup_cache
 from src.config import load_config
 from src.markdown_writer import write_digest
 from src.summarizer import build_prompt, get_provider
@@ -223,6 +223,9 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     except EnvironmentError as exc:
         logger.error("Environment setup error: %s", exc)
+        return 1
+    except AllFeedsFailedError as exc:
+        logger.error("All feeds failed: %s", exc)
         return 1
     except RuntimeError as exc:
         logger.error("LLM error — digest generation failed: %s", exc)
