@@ -258,7 +258,13 @@ async def _post_with_retry(
                 continue
 
             response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            try:
+                data: dict[str, Any] = response.json()
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"LLM API returned a non-JSON response (status {response.status_code}). "
+                    f"The provider may be returning an HTML error page. Error: {exc}"
+                ) from exc
             try:
                 return extract(data)
             except (KeyError, IndexError, TypeError) as exc:

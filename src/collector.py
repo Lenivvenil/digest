@@ -102,8 +102,8 @@ def _prune_cache(cache: dict[str, str]) -> dict[str, str]:
             dt = datetime.fromisoformat(ts)
             if dt >= cutoff:
                 pruned[h] = ts
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Skipping cache entry %s with unparseable timestamp: %s", h, exc)
     removed = len(cache) - len(pruned)
     if removed:
         logger.debug("Pruned %d stale entries from deduplication cache", removed)
