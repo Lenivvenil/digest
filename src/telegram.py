@@ -79,17 +79,18 @@ def split_message(text: str, max_len: int = _MAX_MESSAGE_LEN) -> list[str]:
     return chunks if chunks else [text]
 
 
-async def send_digest(text: str, config: Config) -> None:
+async def send_digest(text: str, config: Config) -> bool:
     """Send the digest text to Telegram.
 
-    If Telegram delivery is disabled in config, returns silently.
+    Returns True if the message was actually sent, False if delivery was
+    disabled or credentials were missing.
     If credentials are missing, logs a warning and returns without crashing.
     Long messages are split at paragraph boundaries and sent sequentially with
     a 1-second delay between parts.
     """
     if not config.delivery.telegram:
         logger.debug("Telegram delivery is disabled in config, skipping.")
-        return
+        return False
 
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -100,7 +101,7 @@ async def send_digest(text: str, config: Config) -> None:
             "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables. "
             "See https://core.telegram.org/bots#how-do-i-create-a-bot for setup instructions."
         )
-        return
+        return False
 
     chunks = split_message(text)
     api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -110,6 +111,8 @@ async def send_digest(text: str, config: Config) -> None:
             if i > 0:
                 await asyncio.sleep(1)
             await _send_chunk(client, api_url, chat_id, chunk)
+
+    return True
 
 
 async def _send_chunk(

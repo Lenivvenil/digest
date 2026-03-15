@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import feedparser
+import feedparser  # type: ignore[import-untyped]
 import httpx
 
 from src.config import Config, SourceConfig

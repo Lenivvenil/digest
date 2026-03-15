@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 import respx
 import httpx
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 from src.telegram import escape_markdownv2, split_message, send_digest
-from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig, SourceConfig
+from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 
 # ---------------------------------------------------------------------------

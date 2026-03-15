@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from src.collector import (
-    CACHE_FILE,
     Article,
     _article_hash,
     _is_recent,

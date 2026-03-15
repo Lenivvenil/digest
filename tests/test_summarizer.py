@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +14,6 @@ from src.summarizer import (
     AnthropicProvider,
     GeminiProvider,
     GroqProvider,
-    BaseLLMProvider,
     build_prompt,
     get_provider,
 )

@@ -135,8 +135,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         )
 
         try:
-            await telegram_task
-            telegram_sent = config.delivery.telegram
+            telegram_sent = await telegram_task
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 

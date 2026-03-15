@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 from src.markdown_writer import write_digest, _build_frontmatter

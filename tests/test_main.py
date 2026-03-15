@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.collector import Article
-from src.main import RunStats, _parse_args, main, run
+from src.main import _parse_args, main, run
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ async def test_run_full_pipeline(config_file: Path, sample_articles: dict, tmp_p
     with (
         patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
         patch("src.main.get_provider") as mock_get_provider,
-        patch("src.main.send_digest", new_callable=AsyncMock) as mock_send,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False) as mock_send,
         patch("src.main.write_digest", return_value=markdown_path) as mock_write,
     ):
         mock_provider = MagicMock()
@@ -151,6 +151,7 @@ async def test_run_full_pipeline(config_file: Path, sample_articles: dict, tmp_p
 
     mock_send.assert_awaited_once()
     mock_write.assert_called_once()
+    assert stats.telegram_sent is False
     assert stats.markdown_saved is True
     assert stats.markdown_path == str(markdown_path)
     assert stats.digest_length == len("Full summary")
@@ -174,7 +175,7 @@ async def test_main_dry_run_success(config_file: Path, sample_articles: dict) ->
     with (
         patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
         patch("src.main.get_provider") as mock_get_provider,
-        patch("src.main.send_digest", new_callable=AsyncMock),
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
         patch("src.main.write_digest", return_value=None),
     ):
         mock_provider = MagicMock()
