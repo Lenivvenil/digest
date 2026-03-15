@@ -179,10 +179,25 @@ def _is_recent(article: Article, cutoff: datetime) -> bool:
     return article.pub_date >= cutoff
 
 
-async def collect(config: Config) -> dict[str, list[Article]]:
+def save_dedup_cache(cache: dict[str, str]) -> None:
+    """Persist the deduplication cache to disk.
+
+    Called by the orchestrator after the digest is successfully generated,
+    so that a failed run does not permanently suppress articles.
+    """
+    _save_cache(cache)
+
+
+async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
     Applies 24h filtering, deduplication cache, and per-source/total limits.
+
+    Returns:
+        A tuple of (articles_by_category, updated_cache). The caller is
+        responsible for persisting the cache via save_dedup_cache() once the
+        digest has been successfully generated — this prevents a failed run
+        from permanently suppressing articles that were never delivered.
     """
     cache = _load_cache()
     cache = _prune_cache(cache)
@@ -215,11 +230,9 @@ async def collect(config: Config) -> dict[str, list[Article]]:
             per_source_count += 1
             total_collected += 1
 
-    _save_cache(cache)
-
     logger.info(
         "Collected %d new articles across %d categories",
         total_collected,
         len(grouped),
     )
-    return grouped
+    return grouped, cache

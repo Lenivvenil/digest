@@ -211,11 +211,11 @@ def test_write_digest_overwrites_preserves_correct_metadata(tmp_path: Path) -> N
 
 
 def test_write_digest_default_date_uses_today(tmp_path: Path) -> None:
-    from datetime import date
+    from datetime import datetime, timezone
 
     config = make_config(markdown_dir=str(tmp_path / "digests"))
     path = write_digest(SUMMARY, config)  # no date argument
 
     assert path is not None
-    today_str = date.today().strftime("%Y-%m-%d")
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     assert path.name == f"{today_str}.md"

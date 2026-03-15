@@ -66,6 +66,17 @@ def _require(data: dict[str, Any], key: str, section: str) -> Any:
     return data[key]
 
 
+def _require_bool(data: dict[str, Any], key: str, section: str) -> bool:
+    value = _require(data, key, section)
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Config field '{key}' in section '{section}' must be a boolean "
+            f"(true or false without quotes), got {type(value).__name__} {value!r}. "
+            f"Remove quotes around the value in your YAML."
+        )
+    return value
+
+
 def _load_llm(data: dict[str, Any]) -> LLMConfig:
     section = _require(data, "llm", "root")
     provider = _require(section, "provider", "llm")
@@ -80,12 +91,12 @@ def _load_llm(data: dict[str, Any]) -> LLMConfig:
 
 def _load_delivery(data: dict[str, Any]) -> DeliveryConfig:
     section = _require(data, "delivery", "root")
-    telegram = _require(section, "telegram", "delivery")
-    markdown_to_repo = _require(section, "markdown_to_repo", "delivery")
+    telegram = _require_bool(section, "telegram", "delivery")
+    markdown_to_repo = _require_bool(section, "markdown_to_repo", "delivery")
     markdown_dir = section.get("markdown_dir", "digests")
     return DeliveryConfig(
-        telegram=bool(telegram),
-        markdown_to_repo=bool(markdown_to_repo),
+        telegram=telegram,
+        markdown_to_repo=markdown_to_repo,
         markdown_dir=str(markdown_dir),
     )
 
@@ -125,13 +136,18 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
         name = _require(item, "name", f"sources[{i}]")
         url = _require(item, "url", f"sources[{i}]")
         category = _require(item, "category", f"sources[{i}]")
-        enabled = item.get("enabled", True)
+        raw_enabled = item.get("enabled", True)
+        if not isinstance(raw_enabled, bool):
+            raise ValueError(
+                f"Config field 'enabled' in sources[{i}] must be a boolean "
+                f"(true or false without quotes), got {type(raw_enabled).__name__} {raw_enabled!r}."
+            )
         sources.append(
             SourceConfig(
                 name=str(name),
                 url=str(url),
                 category=str(category),
-                enabled=bool(enabled),
+                enabled=raw_enabled,
             )
         )
     return sources

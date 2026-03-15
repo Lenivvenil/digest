@@ -10,6 +10,7 @@ import pytest
 
 from src.collector import Article
 from src.main import _parse_args, main, run
+from src.telegram import TelegramPartialDeliveryError
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +96,8 @@ def sample_articles() -> dict[str, list[Article]]:
 async def test_run_dry_run_no_delivery(config_file: Path, sample_articles: dict) -> None:
     """In dry-run mode, Telegram and markdown writer must not be called."""
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock) as mock_send,
         patch("src.main.write_digest") as mock_write,
@@ -118,7 +120,8 @@ async def test_run_dry_run_no_delivery(config_file: Path, sample_articles: dict)
 async def test_run_no_articles(config_file: Path) -> None:
     """When no articles are found, summarizer and delivery must not be called."""
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value={}),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=({}, {})),
+        patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock) as mock_send,
         patch("src.main.write_digest") as mock_write,
@@ -133,12 +136,34 @@ async def test_run_no_articles(config_file: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_no_delivery_does_not_save_cache(config_file: Path, sample_articles: dict) -> None:
+    """When both Telegram and markdown are disabled, the dedup cache must NOT be saved."""
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache") as mock_save_cache,
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.write_digest", return_value=None),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        stats = await run(config_path=str(config_file), dry_run=False)
+
+    mock_save_cache.assert_not_called()
+    assert stats.telegram_sent is False
+    assert stats.markdown_saved is False
+
+
+@pytest.mark.asyncio
 async def test_run_full_pipeline(config_file: Path, sample_articles: dict, tmp_path: Path) -> None:
     """Full pipeline (no dry-run): Telegram send and markdown write are invoked."""
     markdown_path = tmp_path / "digests" / "2026-03-15.md"
 
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache") as mock_save_cache,
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, return_value=False) as mock_send,
         patch("src.main.write_digest", return_value=markdown_path) as mock_write,
@@ -151,6 +176,7 @@ async def test_run_full_pipeline(config_file: Path, sample_articles: dict, tmp_p
 
     mock_send.assert_awaited_once()
     mock_write.assert_called_once()
+    mock_save_cache.assert_called_once()
     assert stats.telegram_sent is False
     assert stats.markdown_saved is True
     assert stats.markdown_path == str(markdown_path)
@@ -173,7 +199,8 @@ async def test_main_missing_config() -> None:
 async def test_main_dry_run_success(config_file: Path, sample_articles: dict) -> None:
     """Successful dry-run must return exit code 0."""
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
         patch("src.main.write_digest", return_value=None),
@@ -191,7 +218,8 @@ async def test_main_dry_run_success(config_file: Path, sample_articles: dict) ->
 async def test_main_llm_error_returns_exit_1(config_file: Path, sample_articles: dict) -> None:
     """LLM RuntimeError (all feeds failed) must cause exit code 1."""
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
     ):
         mock_provider = MagicMock()
@@ -211,9 +239,118 @@ async def test_main_telegram_failure_still_exit_0(
     markdown_path = tmp_path / "2026-03-15.md"
 
     with (
-        patch("src.main.collect", new_callable=AsyncMock, return_value=sample_articles),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, side_effect=Exception("Network error")),
+        patch("src.main.write_digest", return_value=markdown_path),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        exit_code = await main(["--config", str(config_file)])
+
+    assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_partial_telegram_no_markdown_skips_cache(
+    config_file: Path, sample_articles: dict
+) -> None:
+    """Partial Telegram delivery without markdown: cache must NOT be saved so articles retry."""
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache") as mock_save_cache,
+        patch("src.main.get_provider") as mock_get_provider,
+        patch(
+            "src.main.send_digest",
+            new_callable=AsyncMock,
+            side_effect=TelegramPartialDeliveryError("second chunk failed"),
+        ),
+        patch("src.main.write_digest", return_value=None),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        stats = await run(config_path=str(config_file), dry_run=False)
+
+    mock_save_cache.assert_not_called()
+    assert stats.telegram_sent is False
+    assert stats.telegram_partial is True
+
+
+@pytest.mark.asyncio
+async def test_run_partial_telegram_with_markdown_saves_cache(
+    config_file: Path, sample_articles: dict, tmp_path: Path
+) -> None:
+    """Partial Telegram delivery with markdown fallback: cache IS saved (full content available)."""
+    markdown_path = tmp_path / "digest.md"
+
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache") as mock_save_cache,
+        patch("src.main.get_provider") as mock_get_provider,
+        patch(
+            "src.main.send_digest",
+            new_callable=AsyncMock,
+            side_effect=TelegramPartialDeliveryError("second chunk failed"),
+        ),
+        patch("src.main.write_digest", return_value=markdown_path),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        stats = await run(config_path=str(config_file), dry_run=False)
+
+    mock_save_cache.assert_called_once()
+    assert stats.telegram_sent is False
+    assert stats.telegram_partial is True
+
+
+@pytest.mark.asyncio
+async def test_main_partial_telegram_no_markdown_exits_1(
+    config_file: Path, sample_articles: dict
+) -> None:
+    """Partial Telegram delivery with no markdown fallback must exit code 1."""
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch(
+            "src.main.send_digest",
+            new_callable=AsyncMock,
+            side_effect=TelegramPartialDeliveryError("second chunk failed"),
+        ),
+        patch("src.main.write_digest", return_value=None),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        exit_code = await main(["--config", str(config_file)])
+
+    assert exit_code == 1
+
+
+@pytest.mark.asyncio
+async def test_main_partial_telegram_with_markdown_exits_0(
+    config_file: Path, sample_articles: dict, tmp_path: Path
+) -> None:
+    """Partial Telegram delivery with markdown fallback must still exit code 0."""
+    markdown_path = tmp_path / "2026-03-15.md"
+
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch(
+            "src.main.send_digest",
+            new_callable=AsyncMock,
+            side_effect=TelegramPartialDeliveryError("second chunk failed"),
+        ),
         patch("src.main.write_digest", return_value=markdown_path),
     ):
         mock_provider = MagicMock()

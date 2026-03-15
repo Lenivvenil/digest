@@ -7,7 +7,7 @@ import respx
 import httpx
 from unittest.mock import patch
 
-from src.telegram import escape_markdownv2, split_message, send_digest
+from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, TelegramPartialDeliveryError
 from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 
@@ -68,6 +68,91 @@ def test_escape_underscore_in_url_description() -> None:
 
 
 # ---------------------------------------------------------------------------
+# to_markdownv2
+# ---------------------------------------------------------------------------
+
+
+def test_to_markdownv2_plain_text_unchanged() -> None:
+    assert to_markdownv2("Hello world") == "Hello world"
+
+
+def test_to_markdownv2_bold_converted() -> None:
+    result = to_markdownv2("**bold text**")
+    assert result == "*bold text*"
+
+
+def test_to_markdownv2_heading_converted() -> None:
+    result = to_markdownv2("## Section Title")
+    assert result == "*Section Title*"
+
+
+def test_to_markdownv2_heading_all_levels() -> None:
+    for level in range(1, 7):
+        hashes = "#" * level
+        result = to_markdownv2(f"{hashes} Heading")
+        assert result == "*Heading*", f"Failed for level {level}"
+
+
+def test_to_markdownv2_special_chars_escaped() -> None:
+    result = to_markdownv2("Price is 5.00!")
+    assert r"\." in result
+    assert r"\!" in result
+
+
+def test_to_markdownv2_bold_with_special_chars_inside() -> None:
+    # Special chars inside bold content should still be escaped
+    result = to_markdownv2("**hello. world!**")
+    assert result.startswith("*")
+    assert result.endswith("*")
+    assert r"\." in result
+
+
+def test_to_markdownv2_multiline() -> None:
+    text = "## Title\n\n**bold** line\n\nPlain text."
+    result = to_markdownv2(text)
+    assert "*Title*" in result
+    assert "*bold*" in result
+    assert r"\." in result
+
+
+def test_to_markdownv2_inline_link_rendered() -> None:
+    result = to_markdownv2("[OpenAI](https://openai.com)")
+    # Should produce a MarkdownV2 inline link, not escaped brackets/parens
+    assert result == "[OpenAI](https://openai.com)"
+
+
+def test_to_markdownv2_inline_link_text_special_chars_escaped() -> None:
+    # Dots and other special chars in link text must be escaped
+    result = to_markdownv2("[Hello. World](https://example.com)")
+    assert result == r"[Hello\. World](https://example.com)"
+
+
+def test_to_markdownv2_inline_link_url_paren_escaped() -> None:
+    # Markdown \) in URL is an escaped paren; should survive as \) in MarkdownV2 output.
+    result = to_markdownv2("[title](https://example.com/path\\)end)")
+    assert result == "[title](https://example.com/path\\)end)"
+
+
+def test_to_markdownv2_inline_link_url_with_balanced_parens() -> None:
+    # Wikipedia-style URLs with balanced parentheses must not be truncated.
+    result = to_markdownv2("[Foo](https://en.wikipedia.org/wiki/Foo_(bar))")
+    # The ) inside the URL must be escaped for MarkdownV2; ( is left as-is.
+    assert result == r"[Foo](https://en.wikipedia.org/wiki/Foo_(bar\))"
+
+
+def test_to_markdownv2_inline_link_surrounding_text_escaped() -> None:
+    # Special chars outside the link are still escaped
+    result = to_markdownv2("See [Article](https://example.com) for details.")
+    assert result == r"See [Article](https://example.com) for details\."
+
+
+def test_to_markdownv2_multiple_inline_links() -> None:
+    result = to_markdownv2("[A](https://a.com) and [B](https://b.com)")
+    assert "[A](https://a.com)" in result
+    assert "[B](https://b.com)" in result
+
+
+# ---------------------------------------------------------------------------
 # split_message
 # ---------------------------------------------------------------------------
 
@@ -118,6 +203,16 @@ def test_split_very_long_single_line_hard_split() -> None:
     text = "Z" * 5000
     chunks = split_message(text, max_len=4096)
     assert all(len(c) <= 4096 for c in chunks)
+    assert "".join(chunks) == text
+
+
+def test_split_does_not_cut_between_backslash_and_escaped_char() -> None:
+    # "A" * 4095 + r"\!" is 4097 chars. A naive split at 4096 would leave the
+    # first chunk ending with a bare "\" — invalid MarkdownV2.
+    text = "A" * 4095 + r"\!"
+    chunks = split_message(text, max_len=4096)
+    assert all(len(c) <= 4096 for c in chunks)
+    assert not chunks[0].endswith("\\"), "first chunk must not end with a bare backslash"
     assert "".join(chunks) == text
 
 
@@ -230,6 +325,9 @@ async def test_send_digest_fallback_to_plain_text_on_400() -> None:
     import json
     plain_payload = json.loads(respx.calls[1].request.content)
     assert "parse_mode" not in plain_payload
+    # Fallback strips MarkdownV2 escape backslashes — * is escaped as \* in md2,
+    # so the plain fallback restores it back to *
+    assert plain_payload["text"] == "Test *message*"
 
 
 @pytest.mark.asyncio
@@ -245,3 +343,29 @@ async def test_send_digest_raises_on_http_error() -> None:
     with patch.dict("os.environ", env, clear=True):
         with pytest.raises(httpx.HTTPStatusError):
             await send_digest("Error test", config)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_digest_partial_delivery_raises_partial_error() -> None:
+    """When first chunk succeeds but second chunk fails, TelegramPartialDeliveryError is raised."""
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "tok4", "TELEGRAM_CHAT_ID": "8"}
+    url = "https://api.telegram.org/bottok4/sendMessage"
+
+    # Two paragraphs of 3000 chars each — forces two chunks
+    text = "A" * 3000 + "\n\n" + "B" * 3000
+
+    respx.post(url).mock(
+        side_effect=[
+            httpx.Response(200, json={"ok": True}),   # first chunk succeeds
+            httpx.Response(500, json={"ok": False}),   # second chunk fails
+        ]
+    )
+
+    with patch.dict("os.environ", env, clear=True):
+        with pytest.raises(TelegramPartialDeliveryError):
+            await send_digest(text, config)
+
+    # First chunk was attempted; second chunk was attempted and failed
+    assert respx.calls.call_count == 2

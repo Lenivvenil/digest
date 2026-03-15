@@ -17,6 +17,7 @@ from src.collector import (
     _prune_cache,
     _strip_html,
     collect,
+    save_dedup_cache,
 )
 from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, SourceConfig
 
@@ -219,7 +220,7 @@ async def test_collect_rss_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         return make_http_response(RSS_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert "Tech" in result
     articles = result["Tech"]
@@ -239,7 +240,7 @@ async def test_collect_atom_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         return make_http_response(ATOM_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert "Tech" in result
     assert result["Tech"][0].title == "Atom Article"
@@ -257,8 +258,9 @@ async def test_collect_deduplication(tmp_path: Path, monkeypatch: pytest.MonkeyP
         return make_http_response(RSS_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        first = await collect(config)
-        second = await collect(config)
+        first, first_cache = await collect(config)
+        save_dedup_cache(first_cache)
+        second, _ = await collect(config)
 
     assert len(first.get("Tech", [])) == 2
     assert len(second.get("Tech", [])) == 0
@@ -286,7 +288,7 @@ async def test_collect_malformed_feed_continues(
         return make_http_response(RSS_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert call_count == 2
     # Good feed should still produce articles
@@ -307,7 +309,7 @@ async def test_collect_http_error_continues(
         return make_http_response(b"", status_code=500)
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert result == {}
 
@@ -328,7 +330,7 @@ async def test_collect_timeout_continues(
         raise httpx.TimeoutException("timeout")
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert result == {}
 
@@ -346,7 +348,7 @@ async def test_collect_respects_max_per_source(
         return make_http_response(RSS_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) == 1
 
@@ -394,7 +396,7 @@ async def test_collect_respects_max_total(
         return make_http_response(make_unique_rss(idx))
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     total = sum(len(v) for v in result.values())
     assert total == 3
@@ -429,7 +431,7 @@ async def test_collect_filters_old_articles(
         return make_http_response(old_rss.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert result.get("Tech", []) == []
 
@@ -467,7 +469,7 @@ async def test_collect_groups_by_category(
         return make_http_response(make_rss_for(domain))
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     assert "Tech" in result
     assert "Finance" in result
@@ -486,7 +488,7 @@ async def test_collect_html_stripped_in_description(
         return make_http_response(RSS_SAMPLE.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result = await collect(config)
+        result, _ = await collect(config)
 
     for articles in result.values():
         for article in articles:

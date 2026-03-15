@@ -14,11 +14,11 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from src.collector import collect
+from src.collector import collect, save_dedup_cache
 from src.config import load_config
 from src.markdown_writer import write_digest
 from src.summarizer import build_prompt, get_provider
-from src.telegram import send_digest
+from src.telegram import TelegramPartialDeliveryError, send_digest
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class RunStats:
     new_articles: int
     digest_length: int
     telegram_sent: bool
+    telegram_partial: bool
     markdown_saved: bool
     markdown_path: str
 
@@ -74,7 +75,10 @@ def _print_stats(stats: RunStats) -> None:
     print(f"Articles collected: {stats.articles_collected}")
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
-    print(f"Telegram sent:      {'yes' if stats.telegram_sent else 'no'}")
+    if stats.telegram_partial:
+        print("Telegram sent:      partial (some chunks failed)")
+    else:
+        print(f"Telegram sent:      {'yes' if stats.telegram_sent else 'no'}")
     if stats.markdown_saved:
         print(f"Markdown saved:     {stats.markdown_path}")
     else:
@@ -96,18 +100,20 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     feeds_count = len(config.enabled_sources)
     logger.info("Starting digest run: %d enabled sources, dry_run=%s", feeds_count, dry_run)
 
-    articles_by_category = await collect(config)
+    articles_by_category, pending_cache = await collect(config)
     total_articles = sum(len(v) for v in articles_by_category.values())
     logger.info("Collected %d new articles across %d categories", total_articles, len(articles_by_category))
 
     if not articles_by_category:
         logger.info("No new articles found. Nothing to summarize.")
+        save_dedup_cache(pending_cache)
         return RunStats(
             feeds_fetched=feeds_count,
             articles_collected=0,
             new_articles=0,
             digest_length=0,
             telegram_sent=False,
+            telegram_partial=False,
             markdown_saved=False,
             markdown_path="",
         )
@@ -119,6 +125,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     logger.info("Summary generated: %d chars", len(summary))
 
     telegram_sent = False
+    telegram_partial = False
     markdown_saved = False
     markdown_path = ""
 
@@ -136,6 +143,12 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
 
         try:
             telegram_sent = await telegram_task
+        except TelegramPartialDeliveryError as exc:
+            # Some chunks were delivered but later chunks failed.
+            # Do NOT persist the cache here — we need to know whether the
+            # markdown fallback succeeded first (see logic below).
+            logger.warning("Telegram delivery partially failed (non-critical): %s", exc)
+            telegram_partial = True
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 
@@ -143,12 +156,36 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             markdown_saved = True
             markdown_path = str(markdown_result)
 
+        # Persist dedup cache only when at least one channel delivered the
+        # digest.  If both Telegram and markdown output are disabled or fail,
+        # do not mark articles as seen so they are retried on the next run.
+        #
+        # For partial Telegram delivery: save the cache only when the markdown
+        # fallback also succeeded.  The markdown file contains the full digest,
+        # so the user can read everything there.  If markdown was NOT written,
+        # articles from the failed chunks would be permanently lost — so we
+        # intentionally skip saving the cache so they are picked up on the
+        # next run.
+        if telegram_sent or markdown_saved:
+            save_dedup_cache(pending_cache)
+        elif telegram_partial and not markdown_saved:
+            logger.warning(
+                "Partial Telegram delivery with no markdown fallback — "
+                "dedup cache NOT updated; articles will be retried on the next run."
+            )
+        elif not (telegram_sent or markdown_saved or telegram_partial):
+            logger.warning(
+                "No delivery channel produced output — dedup cache not updated; "
+                "articles will be retried on the next run."
+            )
+
     return RunStats(
         feeds_fetched=feeds_count,
         articles_collected=total_articles,
         new_articles=total_articles,
         digest_length=len(summary),
         telegram_sent=telegram_sent,
+        telegram_partial=telegram_partial,
         markdown_saved=markdown_saved,
         markdown_path=markdown_path,
     )
@@ -162,6 +199,25 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         stats = await run(config_path=args.config, dry_run=args.dry_run)
         _print_stats(stats)
+        # Partial Telegram delivery with no markdown fallback means the user
+        # received an incomplete digest and has no way to see the full content.
+        # Exit 1 so GitHub Actions triggers the failure notification step.
+        if stats.telegram_partial and not stats.markdown_saved:
+            return 1
+        # If new articles were collected but nothing was delivered to any channel
+        # (both Telegram and markdown failed/disabled), treat as a critical failure
+        # so the failure notification step fires.
+        if (
+            not args.dry_run
+            and stats.new_articles > 0
+            and not (stats.telegram_sent or stats.markdown_saved or stats.telegram_partial)
+        ):
+            logger.error(
+                "No delivery channel produced output despite %d new articles — "
+                "check Telegram credentials and markdown_to_repo config.",
+                stats.new_articles,
+            )
+            return 1
         return 0
     except FileNotFoundError as exc:
         logger.error("Config file not found: %s", exc)

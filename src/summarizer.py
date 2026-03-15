@@ -256,7 +256,14 @@ async def _post_with_retry(
 
             response.raise_for_status()
             data: dict[str, Any] = response.json()
-            return extract(data)
+            try:
+                return extract(data)
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError(
+                    f"Unexpected LLM response structure — the provider returned a 200 but "
+                    f"the payload did not match the expected schema (possibly blocked or empty). "
+                    f"Error: {exc}. Response: {data}"
+                ) from exc
 
     raise RuntimeError(
         f"LLM request failed after 2 attempts. Last error: {last_exc}"

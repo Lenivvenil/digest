@@ -6,6 +6,12 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+# Prevent concurrent runs so that the dedup cache is never written by two
+# simultaneous jobs, which would cause the same articles to be sent twice.
+concurrency:
+  group: digest
+  cancel-in-progress: false
+
 jobs:
   digest:
     runs-on: ubuntu-latest
@@ -36,6 +42,7 @@ jobs:
         run: python -m src --config config.yaml
 
       - name: Commit digest and cache back to repo
+        if: success() || failure()
         run: |
           git config user.name "digest-bot"
           git config user.email "digest-bot@users.noreply.github.com"
