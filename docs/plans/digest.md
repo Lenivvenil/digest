@@ -108,11 +108,11 @@
 
 ### Task 8: Quality and polish
 
-- [ ] Ensure all tests pass: `python -m pytest tests/ -v`
-- [ ] Ensure type checking passes: `python -m mypy src/ --ignore-missing-imports`
-- [ ] Ensure linting passes: `python -m ruff check src/`
-- [ ] Review all error messages — they should be clear and actionable (e.g., "ANTHROPIC_API_KEY environment variable is not set. Get your key at https://console.anthropic.com/")
-- [ ] Verify `config.yaml` is well-documented with comments explaining each option
-- [ ] Add `.env.example` file listing all possible env vars with placeholder values
-- [ ] Verify the GitHub Actions workflow YAML is valid
-- [ ] Ensure `README.md` is complete and includes a "Quick Start" section with step-by-step instructions
+- [x] Ensure all tests pass: `python -m pytest tests/ -v`
+- [x] Ensure type checking passes: `python -m mypy src/ --ignore-missing-imports`
+- [x] Ensure linting passes: `python -m ruff check src/`
+- [x] Review all error messages — they should be clear and actionable (e.g., "ANTHROPIC_API_KEY environment variable is not set. Get your key at https://console.anthropic.com/")
+- [x] Verify `config.yaml` is well-documented with comments explaining each option
+- [x] Add `.env.example` file listing all possible env vars with placeholder values
+- [x] Verify the GitHub Actions workflow YAML is valid
+- [x] Ensure `README.md` is complete and includes a "Quick Start" section with step-by-step instructions
