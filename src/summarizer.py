@@ -179,11 +179,14 @@ class GeminiProvider(BaseLLMProvider):
         self._api_key = api_key
 
     async def summarize(self, prompt: str) -> str:
-        url = self.BASE_URL.format(model=self.model) + f"?key={self._api_key}"
+        url = self.BASE_URL.format(model=self.model)
         payload: dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
         }
-        headers = {"content-type": "application/json"}
+        headers = {
+            "content-type": "application/json",
+            "x-goog-api-key": self._api_key,
+        }
         return await _post_with_retry(url, headers, payload, self._extract)
 
     @staticmethod

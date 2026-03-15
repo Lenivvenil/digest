@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RunStats:
     feeds_fetched: int
-    articles_collected: int
     new_articles: int
     digest_length: int
     telegram_sent: bool
@@ -72,7 +71,6 @@ def _setup_logging(verbose: bool) -> None:
 def _print_stats(stats: RunStats) -> None:
     print("\n--- Digest Run Summary ---")
     print(f"Feeds fetched:      {stats.feeds_fetched}")
-    print(f"Articles collected: {stats.articles_collected}")
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
     if stats.telegram_partial:
@@ -109,7 +107,6 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         save_dedup_cache(pending_cache)
         return RunStats(
             feeds_fetched=feeds_count,
-            articles_collected=0,
             new_articles=0,
             digest_length=0,
             telegram_sent=False,
@@ -181,7 +178,6 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
 
     return RunStats(
         feeds_fetched=feeds_count,
-        articles_collected=total_articles,
         new_articles=total_articles,
         digest_length=len(summary),
         telegram_sent=telegram_sent,

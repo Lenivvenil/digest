@@ -113,7 +113,7 @@ async def test_run_dry_run_no_delivery(config_file: Path, sample_articles: dict)
     assert stats.telegram_sent is False
     assert stats.markdown_saved is False
     assert stats.digest_length == len("Test summary content")
-    assert stats.articles_collected == 1
+    assert stats.new_articles == 1
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,7 @@ async def test_run_no_articles(config_file: Path) -> None:
     mock_get_provider.assert_not_called()
     mock_send.assert_not_called()
     mock_write.assert_not_called()
-    assert stats.articles_collected == 0
+    assert stats.new_articles == 0
     assert stats.digest_length == 0
 
 

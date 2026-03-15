@@ -375,12 +375,13 @@ class TestGeminiProvider:
             with pytest.raises(PermissionError, match="authentication failed"):
                 await provider.summarize("test prompt")
 
-    def test_url_contains_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_api_key_in_header_not_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GEMINI_API_KEY", "my-secret-key")
         provider = GeminiProvider(model="gemini-2.5-flash")
-        url = provider.BASE_URL.format(model=provider.model) + f"?key={provider._api_key}"
-        assert "my-secret-key" in url
+        url = provider.BASE_URL.format(model=provider.model)
+        assert "my-secret-key" not in url
         assert "gemini-2.5-flash" in url
+        assert provider._api_key == "my-secret-key"
 
 
 # ---------------------------------------------------------------------------
