@@ -1,0 +1,105 @@
+# Daily News Digest — Configuration
+# Edit this file to customize your digest
+
+llm:
+  # Provider: "anthropic" | "gemini" | "groq"
+  # anthropic — Claude (requires ANTHROPIC_API_KEY)
+  # gemini    — Google Gemini (requires GEMINI_API_KEY, has free tier)
+  # groq      — Groq (requires GROQ_API_KEY, has free tier)
+  provider: "anthropic"
+  # Model to use (provider-specific):
+  #   anthropic: claude-sonnet-4-20250514 | claude-haiku-4-5-20251001
+  #   gemini:    gemini-2.5-flash
+  #   groq:      llama-3.3-70b-versatile
+  model: "claude-sonnet-4-20250514"
+
+delivery:
+  # Send digest via Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+  telegram: true
+  # Commit generated markdown file back to the repo (useful with Obsidian git-sync)
+  markdown_to_repo: true
+  # Directory where markdown digest files are saved
+  markdown_dir: "digests"
+
+digest:
+  # Language for digest content: "ru" (Russian) | "en" (English)
+  language: "ru"
+  # Maximum number of articles fetched per RSS source
+  max_articles_per_source: 5
+  # Maximum total articles across all sources
+  max_total_articles: 30
+  # Summary style:
+  #   "analytical" — with trend analysis and three perspectives for top topics (default)
+  #   "brief"      — one sentence per news item, no perspectives
+  #   "detailed"   — full context, three perspectives for all items
+  summary_style: "analytical"
+
+sources:
+  # Banking & Fintech
+  - name: "Finextra"
+    url: "https://www.finextra.com/rss/headlines.aspx"
+    category: "Banking & Fintech"
+    enabled: true
+
+  - name: "PYMNTS"
+    url: "https://www.pymnts.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+
+  - name: "Finovate"
+    url: "https://finovate.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+
+  # AI & LLM
+  - name: "MIT Technology Review AI"
+    url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
+    category: "AI & LLM"
+    enabled: true
+
+  - name: "The Batch by Andrew Ng"
+    url: "https://www.deeplearning.ai/the-batch/feed/"
+    category: "AI & LLM"
+    enabled: true
+
+  - name: "Hugging Face Blog"
+    url: "https://huggingface.co/blog/feed.xml"
+    category: "AI & LLM"
+    enabled: true
+
+  - name: "Ars Technica AI"
+    url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
+    category: "AI & LLM"
+    enabled: true
+
+  # Enterprise Architecture
+  - name: "InfoQ"
+    url: "https://feed.infoq.com/infoq/infoq"
+    category: "Enterprise Architecture"
+    enabled: true
+
+  - name: "ThoughtWorks Insights"
+    url: "https://www.thoughtworks.com/rss/insights.xml"
+    category: "Enterprise Architecture"
+    enabled: true
+
+  - name: "Martin Fowler"
+    url: "https://martinfowler.com/feed.atom"
+    category: "Enterprise Architecture"
+    enabled: true
+
+  - name: "Hacker News Best"
+    url: "https://hnrss.org/best"
+    category: "Enterprise Architecture"
+    enabled: true
+
+  # Geopolitics & CIS
+  - name: "Spot.uz"
+    url: "https://www.spot.uz/ru/rss/"
+    category: "Geopolitics & CIS"
+    enabled: true
+
+  - name: "Kun.uz EN"
+    url: "https://kun.uz/en/news.rss"
+    category: "Geopolitics & CIS"
+    enabled: true

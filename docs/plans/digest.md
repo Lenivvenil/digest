@@ -14,18 +14,18 @@
 
 ### Task 1: Project scaffold and config system
 
-- [ ] Create project structure: `src/`, `tests/`, `digests/`, `config.yaml`, `requirements.txt`, `.gitignore`, `README.md`
-- [ ] `requirements.txt` must include: `pyyaml`, `httpx`, `feedparser`, `pytest`, `mypy`, `ruff`. No heavyweight frameworks
-- [ ] `config.yaml` — the single source of truth for all settings. Must contain sections: `llm`, `delivery`, `digest`, `sources`
-- [ ] `llm` section supports multiple providers via `provider` field: `"anthropic"` (Claude Sonnet/Haiku), `"gemini"` (free, no card), `"groq"` (free, no card). Each provider has its own model field. Default provider: `"anthropic"`, default model: `"claude-sonnet-4-20250514"`
-- [ ] `delivery` section: `telegram: true/false`, `markdown_to_repo: true/false`, `markdown_dir: "digests"`
-- [ ] `digest` section: `language: "ru"`, `max_articles_per_source: 5`, `max_total_articles: 30`, `summary_style: "analytical"`
-- [ ] `sources` section: list of objects with fields `name`, `url` (RSS/Atom URL), `category`, `enabled` (bool). Pre-populate with these sources:
+- [x] Create project structure: `src/`, `tests/`, `digests/`, `config.yaml`, `requirements.txt`, `.gitignore`, `README.md`
+- [x] `requirements.txt` must include: `pyyaml`, `httpx`, `feedparser`, `pytest`, `mypy`, `ruff`. No heavyweight frameworks
+- [x] `config.yaml` — the single source of truth for all settings. Must contain sections: `llm`, `delivery`, `digest`, `sources`
+- [x] `llm` section supports multiple providers via `provider` field: `"anthropic"` (Claude Sonnet/Haiku), `"gemini"` (free, no card), `"groq"` (free, no card). Each provider has its own model field. Default provider: `"anthropic"`, default model: `"claude-sonnet-4-20250514"`
+- [x] `delivery` section: `telegram: true/false`, `markdown_to_repo: true/false`, `markdown_dir: "digests"`
+- [x] `digest` section: `language: "ru"`, `max_articles_per_source: 5`, `max_total_articles: 30`, `summary_style: "analytical"`
+- [x] `sources` section: list of objects with fields `name`, `url` (RSS/Atom URL), `category`, `enabled` (bool). Pre-populate with these sources:
   - Category "Banking & Fintech": Finextra (`https://www.finextra.com/rss/headlines.aspx`), PYMNTS (`https://www.pymnts.com/feed/`), Finovate (`https://finovate.com/feed/`)
   - Category "AI & LLM": MIT Technology Review AI (`https://www.technologyreview.com/topic/artificial-intelligence/feed`), The Batch by Andrew Ng (`https://www.deeplearning.ai/the-batch/feed/`), Hugging Face Blog (`https://huggingface.co/blog/feed.xml`), Ars Technica AI (`https://feeds.arstechnica.com/arstechnica/technology-lab`)
   - Category "Enterprise Architecture": InfoQ (`https://feed.infoq.com/infoq/infoq`), ThoughtWorks Insights (`https://www.thoughtworks.com/rss/insights.xml`), Martin Fowler (`https://martinfowler.com/feed.atom`), Hacker News Best (`https://hnrss.org/best`)
   - Category "Geopolitics & CIS": Spot.uz (`https://www.spot.uz/ru/rss/`), Kun.uz EN (`https://kun.uz/en/news.rss`)
-- [ ] Write tests: config loading, config validation (missing required fields raise clear errors), default values
+- [x] Write tests: config loading, config validation (missing required fields raise clear errors), default values
 
 ### Task 2: RSS/Atom feed collector
 

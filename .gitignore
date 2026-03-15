@@ -1,0 +1,23 @@
+
+# ralphex progress logs
+.ralphex/progress/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environment variables — never commit real secrets
+.env
+
+# macOS
+.DS_Store
