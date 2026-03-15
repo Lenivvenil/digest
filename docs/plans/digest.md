@@ -29,16 +29,16 @@
 
 ### Task 2: RSS/Atom feed collector
 
-- [ ] Create `src/collector.py` — fetches and parses RSS/Atom feeds
-- [ ] Use `feedparser` for robust RSS/Atom parsing (handles both formats, encoding issues, malformed XML)
-- [ ] Use `httpx` with async support for parallel feed fetching. Timeout: 15 seconds per feed. Custom User-Agent header
-- [ ] For each article extract: `title`, `link`, `description` (strip HTML tags, truncate to 500 chars), `source` (from config name), `category` (from config), `pub_date`
-- [ ] Filter: only articles from the last 24 hours (compare `pub_date` with current UTC time). If `pub_date` is missing or unparseable, include the article
-- [ ] Deduplication cache: maintain `.cache/seen_articles.json` — a dict of `{hash: iso_datetime}`. Hash = md5 of `title|link`. Prune entries older than 7 days on each run. Skip articles already in cache
-- [ ] Respect `max_articles_per_source` and `max_total_articles` from config
-- [ ] Return articles grouped by category as `dict[str, list[Article]]` where Article is a dataclass
-- [ ] Handle errors gracefully: if a feed fails, log warning and continue with others. Never crash on a single feed failure
-- [ ] Write tests: feed parsing with sample RSS/Atom XML fixtures, deduplication logic, 24h filtering, HTML stripping, error handling for malformed feeds
+- [x] Create `src/collector.py` — fetches and parses RSS/Atom feeds
+- [x] Use `feedparser` for robust RSS/Atom parsing (handles both formats, encoding issues, malformed XML)
+- [x] Use `httpx` with async support for parallel feed fetching. Timeout: 15 seconds per feed. Custom User-Agent header
+- [x] For each article extract: `title`, `link`, `description` (strip HTML tags, truncate to 500 chars), `source` (from config name), `category` (from config), `pub_date`
+- [x] Filter: only articles from the last 24 hours (compare `pub_date` with current UTC time). If `pub_date` is missing or unparseable, include the article
+- [x] Deduplication cache: maintain `.cache/seen_articles.json` — a dict of `{hash: iso_datetime}`. Hash = md5 of `title|link`. Prune entries older than 7 days on each run. Skip articles already in cache
+- [x] Respect `max_articles_per_source` and `max_total_articles` from config
+- [x] Return articles grouped by category as `dict[str, list[Article]]` where Article is a dataclass
+- [x] Handle errors gracefully: if a feed fails, log warning and continue with others. Never crash on a single feed failure
+- [x] Write tests: feed parsing with sample RSS/Atom XML fixtures, deduplication logic, 24h filtering, HTML stripping, error handling for malformed feeds
 
 ### Task 3: LLM summarization with multi-provider support
 
