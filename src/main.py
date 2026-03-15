@@ -104,7 +104,8 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
 
     if not articles_by_category:
         logger.info("No new articles found. Nothing to summarize.")
-        save_dedup_cache(pending_cache)
+        if not dry_run:
+            save_dedup_cache(pending_cache)
         return RunStats(
             feeds_fetched=feeds_count,
             new_articles=0,

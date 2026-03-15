@@ -39,8 +39,6 @@ def write_digest(
 
     date_str = date.strftime("%Y-%m-%d")
     output_dir = Path(config.delivery.markdown_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     file_path = output_dir / f"{date_str}.md"
 
     frontmatter = _build_frontmatter(
@@ -51,7 +49,12 @@ def write_digest(
     )
 
     content = frontmatter + "\n" + summary + "\n"
-    file_path.write_text(content, encoding="utf-8")
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        logger.error("Failed to write digest file to %s: %s", file_path, exc)
+        return None
 
     logger.info("Digest written to %s (%d bytes)", file_path, len(content))
     return file_path

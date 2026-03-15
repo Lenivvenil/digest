@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import feedparser  # type: ignore[import-untyped]
+import html as html_lib
 import httpx
 
 from src.config import Config, SourceConfig
@@ -41,8 +42,9 @@ class Article:
 
 
 def _strip_html(text: str) -> str:
-    """Remove HTML tags and collapse whitespace."""
+    """Remove HTML tags, decode HTML entities, and collapse whitespace."""
     text = re.sub(r"<[^>]+>", " ", text)
+    text = html_lib.unescape(text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
