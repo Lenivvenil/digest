@@ -85,12 +85,12 @@
 
 ### Task 6: Main entrypoint and CLI
 
-- [ ] Create `src/main.py` as the main entrypoint. Also make it callable as `python -m src`
-- [ ] Flow: load config → collect feeds (async) → summarize → deliver (telegram + markdown, parallel)
-- [ ] CLI arguments via `argparse`: `--config` (path to config, default `config.yaml`), `--dry-run` (collect and summarize but don't send/save), `--verbose` (debug logging)
-- [ ] Print summary stats on completion: feeds fetched, articles collected, new articles (not cached), digest length, delivery status
-- [ ] Exit code 0 on success, 1 on critical failure (all feeds failed, LLM error). Partial failures (some feeds down, telegram failed but markdown saved) should still exit 0
-- [ ] Write tests: dry-run mode, argument parsing
+- [x] Create `src/main.py` as the main entrypoint. Also make it callable as `python -m src`
+- [x] Flow: load config → collect feeds (async) → summarize → deliver (telegram + markdown, parallel)
+- [x] CLI arguments via `argparse`: `--config` (path to config, default `config.yaml`), `--dry-run` (collect and summarize but don't send/save), `--verbose` (debug logging)
+- [x] Print summary stats on completion: feeds fetched, articles collected, new articles (not cached), digest length, delivery status
+- [x] Exit code 0 on success, 1 on critical failure (all feeds failed, LLM error). Partial failures (some feeds down, telegram failed but markdown saved) should still exit 0
+- [x] Write tests: dry-run mode, argument parsing
 
 ### Task 7: GitHub Actions workflow
 
