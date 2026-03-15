@@ -94,17 +94,17 @@
 
 ### Task 7: GitHub Actions workflow
 
-- [ ] Create `.github/workflows/digest.yml`
-- [ ] Schedule: `cron: '0 6 * * *'` (runs daily at 06:00 UTC, which is ~11:00 Tashkent time)
-- [ ] Also trigger on `workflow_dispatch` for manual runs
-- [ ] Python 3.12, install dependencies from `requirements.txt`
-- [ ] Pass secrets from GitHub repository secrets: `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY` or `GROQ_API_KEY` depending on config), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- [ ] Run `python -m src --config config.yaml`
-- [ ] After the script, commit and push new markdown files in `digests/` directory and updated `.cache/` back to the repo. Use `git config` for bot user, `git add digests/ .cache/`, `git diff --cached --quiet || git commit -m "digest: {date}" && git push`
-- [ ] Cache pip dependencies for faster runs
-- [ ] Add a step that posts workflow status (success/failure) — use the existing Telegram bot to send a short status message if the digest generation fails
-- [ ] Write the workflow so it works on both `main` and `master` branches
-- [ ] Add `README.md` with: project description, setup instructions (create Telegram bot, get API keys, configure GitHub secrets), how to add/remove sources, architecture diagram (text-based), example digest output
+- [x] Create `.github/workflows/digest.yml`
+- [x] Schedule: `cron: '0 6 * * *'` (runs daily at 06:00 UTC, which is ~11:00 Tashkent time)
+- [x] Also trigger on `workflow_dispatch` for manual runs
+- [x] Python 3.12, install dependencies from `requirements.txt`
+- [x] Pass secrets from GitHub repository secrets: `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY` or `GROQ_API_KEY` depending on config), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+- [x] Run `python -m src --config config.yaml`
+- [x] After the script, commit and push new markdown files in `digests/` directory and updated `.cache/` back to the repo. Use `git config` for bot user, `git add digests/ .cache/`, `git diff --cached --quiet || git commit -m "digest: {date}" && git push`
+- [x] Cache pip dependencies for faster runs
+- [x] Add a step that posts workflow status (success/failure) — use the existing Telegram bot to send a short status message if the digest generation fails
+- [x] Write the workflow so it works on both `main` and `master` branches
+- [x] Add `README.md` with: project description, setup instructions (create Telegram bot, get API keys, configure GitHub secrets), how to add/remove sources, architecture diagram (text-based), example digest output
 
 ### Task 8: Quality and polish
 
