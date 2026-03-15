@@ -63,14 +63,14 @@
 
 ### Task 4: Telegram delivery
 
-- [ ] Create `src/telegram.py` — sends digest to Telegram
-- [ ] Use `httpx` to call Telegram Bot API: `https://api.telegram.org/bot{token}/sendMessage`
-- [ ] Reads `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from env
-- [ ] Send as MarkdownV2 format with `parse_mode: "MarkdownV2"`. Properly escape special characters for MarkdownV2 (`_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`)
-- [ ] Split messages longer than 4096 chars at paragraph boundaries (double newline). Send each chunk as a separate message with 1 second delay between messages
-- [ ] If Telegram delivery is disabled in config (`delivery.telegram: false`), skip silently
-- [ ] If env vars are missing and Telegram is enabled, log warning but do not crash (still produce markdown)
-- [ ] Write tests: message splitting, MarkdownV2 escaping, graceful handling of missing credentials
+- [x] Create `src/telegram.py` — sends digest to Telegram
+- [x] Use `httpx` to call Telegram Bot API: `https://api.telegram.org/bot{token}/sendMessage`
+- [x] Reads `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from env
+- [x] Send as MarkdownV2 format with `parse_mode: "MarkdownV2"`. Properly escape special characters for MarkdownV2 (`_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`)
+- [x] Split messages longer than 4096 chars at paragraph boundaries (double newline). Send each chunk as a separate message with 1 second delay between messages
+- [x] If Telegram delivery is disabled in config (`delivery.telegram: false`), skip silently
+- [x] If env vars are missing and Telegram is enabled, log warning but do not crash (still produce markdown)
+- [x] Write tests: message splitting, MarkdownV2 escaping, graceful handling of missing credentials
 
 ### Task 5: Markdown file output for Obsidian
 
