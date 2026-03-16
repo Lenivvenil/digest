@@ -2,8 +2,10 @@ name: Daily News Digest
 
 on:
   schedule:
-    # 06:00 UTC = 11:00 Tashkent time (UTC+5)
-    - cron: '0 6 * * *'
+    # 02:00 UTC = 07:00 Tashkent time (UTC+5)
+    - cron: '0 2 * * *'
+    # 13:00 UTC = 18:00 Tashkent time (UTC+5)
+    - cron: '0 13 * * *'
   workflow_dispatch:
 
 # Prevent concurrent runs so that the dedup cache is never written by two
