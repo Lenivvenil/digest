@@ -257,6 +257,10 @@ async def _post_with_retry(
                 )
                 continue
 
+            if response.status_code >= 400:
+                logger.error(
+                    "LLM API error (HTTP %d): %s", response.status_code, response.text
+                )
             response.raise_for_status()
             try:
                 data: dict[str, Any] = response.json()
