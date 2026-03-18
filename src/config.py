@@ -241,12 +241,18 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
             f"base_weight={base_weight}."
         )
 
+    trial_slots = int(section.get("trial_slots", 2))
+    if trial_slots < 0:
+        raise ValueError(
+            f"adaptive.trial_slots must be non-negative, got {trial_slots}."
+        )
+
     return AdaptiveConfig(
         enabled=enabled,
         feedback_weight=feedback_weight,
         score_weight=score_weight,
         base_weight=base_weight,
-        trial_slots=int(section.get("trial_slots", 2)),
+        trial_slots=trial_slots,
         min_priority=min_priority,
         max_priority=max_priority,
     )

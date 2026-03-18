@@ -39,6 +39,17 @@ from src.telegram import TelegramPartialDeliveryError, send_digest
 logger = logging.getLogger(__name__)
 
 
+def _prune_digest_sources_map(
+    mapping: dict[str, list[str]], max_entries: int = 30
+) -> None:
+    """Remove oldest entries from digest_sources_map to prevent unbounded growth."""
+    if len(mapping) <= max_entries:
+        return
+    sorted_keys = sorted(mapping.keys())
+    for key in sorted_keys[: len(sorted_keys) - max_entries]:
+        del mapping[key]
+
+
 @dataclass
 class RunStats:
     feeds_fetched: int
@@ -179,6 +190,18 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             feedback_collected=feedback_collected,
         )
 
+    # Record which sources contributed to this digest so that chunk-level
+    # Telegram feedback can be distributed to the right sources next run.
+    # Updated after delivery — see below.
+    contributing_sources = sorted(
+        {a.source for articles in articles_by_category.values() for a in articles}
+    )
+    digest_id = (
+        datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if config.adaptive.enabled
+        else ""
+    )
+
     prompt = build_prompt(articles_by_category, config)
     provider = get_provider(config)
     logger.info("Summarizing with provider=%s model=%s", config.llm.provider, config.llm.model)
@@ -194,7 +217,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         logger.info("Dry-run mode: skipping delivery.")
     else:
         # Run telegram delivery and markdown write in parallel
-        telegram_task = asyncio.create_task(send_digest(summary, config))
+        telegram_task = asyncio.create_task(send_digest(summary, config, digest_id=digest_id))
         markdown_result = write_digest(
             summary,
             config,
@@ -239,6 +262,17 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
                 "No delivery channel produced output — dedup cache not updated; "
                 "articles will be retried on the next run."
             )
+
+        # Only update last_digest_sources when Telegram delivery succeeded,
+        # because feedback buttons only exist in Telegram messages.  If we
+        # always overwrite, a failed run would cause the *next* run to
+        # attribute feedback from the previous successful digest to the
+        # wrong set of sources.
+        if telegram_sent:
+            feedback_store.last_digest_sources = contributing_sources
+            feedback_store.digest_sources_map[digest_id] = contributing_sources
+            # Prune old entries (keep last 30 days)
+            _prune_digest_sources_map(feedback_store.digest_sources_map, max_entries=30)
 
         # Save source stats and feedback
         save_stats(source_stats, cache_dir)
