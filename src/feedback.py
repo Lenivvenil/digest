@@ -152,7 +152,9 @@ def get_source_feedback_score(
     relevant: list[int] = []
 
     for fb in store.ratings:
-        if fb.source_name != source_name:
+        # Match by source_name when available; include ratings with empty
+        # source_name as global sentiment (article-level buttons not yet wired)
+        if fb.source_name and fb.source_name != source_name:
             continue
         try:
             ts = datetime.fromisoformat(fb.timestamp)

@@ -111,6 +111,9 @@ python -m src --dry-run --verbose
 
 # Use a different config file
 python -m src --config my-config.yaml
+
+# Discover new RSS sources via LLM
+python -m src --discover
 ```
 
 ## Adding / removing sources
@@ -126,9 +129,26 @@ sources:
     priority: 3              # 1 (lowest) to 5 (highest); default 3
 ```
 
+Optional fields for trial sources:
+
+```yaml
+    trial: true               # test a new source with limited slots
+    trial_started: "2026-03-15" # auto-populated when trial begins
+    trial_days: 7              # days before auto-promotion/demotion (default 7)
+```
+
 The `priority` field controls how many article slots each source receives relative to others.
 Higher-priority sources are also processed first, so they always fill their quota before
 lower-priority sources consume the total budget.
+
+## Adaptive Source Management
+
+When enabled (`adaptive.enabled: true` in config.yaml), the system automatically tunes source priorities:
+
+- **Feedback**: React with thumbs-up/down on digest messages in Telegram. Ratings influence priorities.
+- **Quality scoring**: Tracks reliability, productivity, and description quality per source.
+- **Trial sources**: New sources marked `trial: true` get a separate slot budget. After the trial period, high-quality sources promote to permanent; low-quality sources are disabled.
+- **Trend detection**: Sources with >50% article increase over 7 days get a priority bonus.
 
 Pre-configured categories:
 - **Banking & Fintech** — Finextra, PYMNTS, The Financial Brand, American Banker

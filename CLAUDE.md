@@ -34,22 +34,27 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 ├── src/
 │   ├── __init__.py
 │   ├── __main__.py          # enables `python -m src`
-│   ├── main.py              # entrypoint, orchestration
-│   ├── config.py            # config loading and validation
-│   ├── collector.py         # RSS/Atom feed fetching and parsing
+│   ├── main.py              # entrypoint, orchestration, --discover CLI
+│   ├── config.py            # config loading and validation (incl. adaptive config)
+│   ├── collector.py         # RSS/Atom feed fetching, parsing, slot allocation
+│   ├── source_scorer.py     # source quality scoring, stats persistence, priority calc
+│   ├── feedback.py          # Telegram feedback collection and storage
 │   ├── summarizer.py        # LLM provider abstraction and prompt building
-│   ├── telegram.py          # Telegram Bot API delivery
+│   ├── telegram.py          # Telegram Bot API delivery (with feedback buttons)
 │   └── markdown_writer.py   # Markdown file output for Obsidian
 ├── tests/
 │   ├── __init__.py
 │   ├── test_config.py
 │   ├── test_collector.py
+│   ├── test_source_scorer.py
+│   ├── test_feedback.py
 │   ├── test_summarizer.py
 │   ├── test_telegram.py
+│   ├── test_main.py
 │   └── test_markdown_writer.py
 ├── digests/                  # generated markdown files (committed to repo)
 │   └── .gitkeep
-├── .cache/                   # deduplication cache (committed to repo)
+├── .cache/                   # deduplication cache, source stats, feedback (committed to repo)
 │   └── .gitkeep
 ├── .github/workflows/
 │   └── digest.yml

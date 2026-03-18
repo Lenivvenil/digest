@@ -204,9 +204,7 @@ def detect_trending_sources(
         recent_total = sum(snap.articles_found for snap in recent)
         previous_total = sum(snap.articles_found for snap in previous)
         if previous_total == 0:
-            # No baseline — treat as trending only if recent has content
-            if recent_total > 0:
-                trending.append(name)
+            # No baseline to compare — cannot determine a trend
             continue
         increase = (recent_total - previous_total) / previous_total
         if increase > 0.5:
@@ -327,5 +325,7 @@ def apply_trial_decisions(
             source_entry["enabled"] = False
             logger.info("Demoted trial source '%s' (disabled)", name)
 
-    with path.open("w", encoding="utf-8") as fh:
+    tmp_path = path.with_suffix(".yaml.tmp")
+    with tmp_path.open("w", encoding="utf-8") as fh:
         yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+    tmp_path.replace(path)

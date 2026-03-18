@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -202,7 +202,7 @@ def allocate_slots(
     trials = [s for s in sources if s.trial]
 
     if trial_budget is not None and trials:
-        regular_budget = total_budget
+        regular_budget = total_budget - trial_budget
     else:
         regular_budget = total_budget
         trial_budget = 0
@@ -313,7 +313,6 @@ async def collect(
         patched_sources: list[SourceConfig] = []
         for s in successful_sources:
             if s.name in effective_priorities:
-                from dataclasses import replace
                 patched_sources.append(replace(s, priority=effective_priorities[s.name]))
             else:
                 patched_sources.append(s)
@@ -400,6 +399,7 @@ async def collect(
                 grouped.setdefault(source.category, []).append(article)
                 taken += 1
                 total_collected += 1
+            per_source_taken[source.name] = taken
 
     # Update articles_included counts in source stats
     if source_stats is not None:

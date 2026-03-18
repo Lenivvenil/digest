@@ -791,15 +791,15 @@ async def test_collect_falls_back_to_static_priorities(
 
 class TestAllocateSlotsTrial:
     def test_trial_sources_get_separate_budget(self) -> None:
-        """Trial sources should use trial_budget, not compete with regular sources."""
+        """Trial sources should use trial_budget, reserved from total budget."""
         regular = make_source(name="Regular", priority=5)
         trial = SourceConfig(
             name="Trial", url="https://t.com/feed", category="Tech",
             enabled=True, priority=3, trial=True, trial_started="2026-03-01",
         )
         slots = allocate_slots([regular, trial], total_budget=10, trial_budget=2)
-        # Regular should get all 10 of the main budget
-        assert slots["Regular"] == 10
+        # Regular should get total_budget - trial_budget = 8
+        assert slots["Regular"] == 8
         # Trial should get all 2 of the trial budget
         assert slots["Trial"] == 2
 
@@ -815,8 +815,8 @@ class TestAllocateSlotsTrial:
         assert slots["Regular"] == 5
         assert slots["Trial"] == 3
 
-    def test_trial_budget_does_not_reduce_regular_slots(self) -> None:
-        """Regular sources should get the full total_budget, not total-trial."""
+    def test_trial_budget_reserved_from_regular(self) -> None:
+        """Trial budget is subtracted from total, so regular sources get the remainder."""
         sources = [
             make_source(name="R1", priority=3),
             make_source(name="R2", priority=3),
@@ -826,9 +826,9 @@ class TestAllocateSlotsTrial:
             ),
         ]
         slots = allocate_slots(sources, total_budget=10, trial_budget=2)
-        # Regular sources split 10 evenly
-        assert slots["R1"] == 5
-        assert slots["R2"] == 5
+        # Regular sources split (10 - 2) = 8 evenly
+        assert slots["R1"] == 4
+        assert slots["R2"] == 4
         # Trial gets from trial budget
         assert slots["T1"] == 2
 
