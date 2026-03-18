@@ -38,7 +38,7 @@ sources:
   # ============================================================
   # Управление источниками
   # ============================================================
-  # Каждый источник имеет три поля:
+  # Каждый источник имеет следующие поля:
   #
   #   name     — отображаемое название (используется в дайджесте)
   #   url      — прямая ссылка на RSS/Atom-ленту
@@ -46,6 +46,11 @@ sources:
   #              Можно использовать любое название — новые категории
   #              создаются автоматически.
   #   enabled  — true/false; false отключает источник без удаления
+  #   priority — целое число от 1 до 5 (по умолчанию 3).
+  #              Определяет долю слотов из max_total_articles, которую
+  #              получает источник при сборке дайджеста.
+  #              5 — максимальный приоритет (фундаментальные/инженерные блоги),
+  #              1 — минимальный (широкие новостные фиды).
   #
   # Как добавить новый источник:
   #   1. Найдите RSS-ленту сайта (обычно /feed, /rss, /feed.xml, /atom.xml)
@@ -62,71 +67,245 @@ sources:
   #
   # ============================================================
 
+  # Architecture & Distributed Systems
+  - name: "Martin Fowler"
+    url: "https://martinfowler.com/feed.atom"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 5
+
+  - name: "ACM Queue"
+    url: "https://queue.acm.org/rss/feeds/queuecontent.xml"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 5
+
+  - name: "ByteByteGo"
+    url: "https://blog.bytebytego.com/feed"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 3
+
+  # Company Engineering Blogs
+  - name: "Stripe Engineering"
+    url: "https://stripe.com/blog/feed.rss"
+    category: "Company Engineering"
+    enabled: true
+    priority: 5
+
+  - name: "Netflix TechBlog"
+    url: "https://netflixtechblog.com/feed"
+    category: "Company Engineering"
+    enabled: true
+    priority: 5
+
+  - name: "Uber Engineering"
+    url: "https://eng.uber.com/feed/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 5
+
+  - name: "Airbnb Tech Blog"
+    url: "https://medium.com/airbnb-engineering/feed"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "Cloudflare Blog"
+    url: "https://blog.cloudflare.com/rss/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "Grab Tech Blog"
+    url: "https://engineering.grab.com/feed.xml"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "Shopify Engineering"
+    url: "https://shopify.engineering/feed"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "LinkedIn Engineering"
+    url: "https://engineering.linkedin.com/blog.rss"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "DoorDash Engineering"
+    url: "https://doordash.engineering/feed/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 3
+
+  - name: "Spotify Engineering"
+    url: "https://engineering.atspotify.com/feed/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 3
+
+  - name: "Slack Engineering"
+    url: "https://slack.engineering/feed/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 3
+
+  - name: "GitHub Engineering"
+    url: "https://github.blog/engineering.atom"
+    category: "Company Engineering"
+    enabled: true
+    priority: 2
+
+  - name: "Discord Engineering"
+    url: "https://discord.com/blog/engineering-rss"
+    category: "Company Engineering"
+    enabled: true
+    priority: 2
+
+  # Cloud & Infrastructure
+  - name: "AWS Architecture Blog"
+    url: "https://aws.amazon.com/blogs/architecture/feed/"
+    category: "Cloud & Infrastructure"
+    enabled: true
+    priority: 3
+
+  - name: "Kubernetes Blog"
+    url: "https://kubernetes.io/feed.xml"
+    category: "Cloud & Infrastructure"
+    enabled: true
+    priority: 3
+
+  - name: "CNCF Blog"
+    url: "https://www.cncf.io/feed/"
+    category: "Cloud & Infrastructure"
+    enabled: true
+    priority: 3
+
+  - name: "Istio Blog"
+    url: "https://istio.io/blog/index.xml"
+    category: "Cloud & Infrastructure"
+    enabled: true
+    priority: 3
+
+  # Data & Databases
+  - name: "Cockroach Labs Blog"
+    url: "https://www.cockroachlabs.com/blog/rss.xml"
+    category: "Data & Databases"
+    enabled: true
+    priority: 4
+
+  - name: "ScyllaDB Blog"
+    url: "https://www.scylladb.com/feed/"
+    category: "Data & Databases"
+    enabled: true
+    priority: 4
+
+  - name: "Databricks Blog"
+    url: "https://www.databricks.com/blog/rss.xml"
+    category: "Data & Databases"
+    enabled: true
+    priority: 3
+
   # Banking & Fintech
   - name: "Finextra"
     url: "https://www.finextra.com/rss/headlines.aspx"
     category: "Banking & Fintech"
     enabled: true
+    priority: 2
 
   - name: "PYMNTS"
     url: "https://www.pymnts.com/feed/"
     category: "Banking & Fintech"
     enabled: true
+    priority: 2
+
+  - name: "Square Developer Blog"
+    url: "https://developer.squareup.com/blog/index.rss"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 2
 
   - name: "Finovate"
     url: "https://finovate.com/feed/"
     category: "Banking & Fintech"
-    enabled: true
+    enabled: false
+    priority: 1
 
   # AI & LLM
   - name: "MIT Technology Review AI"
     url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
     category: "AI & LLM"
     enabled: true
+    priority: 2
 
   - name: "The Batch by Andrew Ng"
     url: "https://www.deeplearning.ai/the-batch/feed/"
     category: "AI & LLM"
     enabled: true
+    priority: 3
 
   - name: "Hugging Face Blog"
     url: "https://huggingface.co/blog/feed.xml"
     category: "AI & LLM"
     enabled: true
+    priority: 3
+
+  - name: "OpenAI News"
+    url: "https://openai.com/news/rss.xml"
+    category: "AI & LLM"
+    enabled: true
+    priority: 2
+
+  - name: "NVIDIA Developer Blog"
+    url: "https://developer.nvidia.com/blog/feed/"
+    category: "AI & LLM"
+    enabled: true
+    priority: 2
 
   - name: "Ars Technica AI"
     url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
     category: "AI & LLM"
-    enabled: true
+    enabled: false
+    priority: 1
 
   # Enterprise Architecture
   - name: "InfoQ"
     url: "https://feed.infoq.com/infoq/infoq"
     category: "Enterprise Architecture"
     enabled: true
+    priority: 4
 
   - name: "ThoughtWorks Insights"
     url: "https://www.thoughtworks.com/rss/insights.xml"
     category: "Enterprise Architecture"
     enabled: true
-
-  - name: "Martin Fowler"
-    url: "https://martinfowler.com/feed.atom"
-    category: "Enterprise Architecture"
-    enabled: true
+    priority: 3
 
   - name: "Hacker News Best"
     url: "https://hnrss.org/best"
     category: "Enterprise Architecture"
     enabled: true
+    priority: 1
+
+  # Russian Tech
+  - name: "Habr — Interesting"
+    url: "https://habr.com/ru/rss/interesting/"
+    category: "Russian Tech"
+    enabled: true
+    priority: 2
 
   # Geopolitics & CIS
   - name: "Spot.uz"
     url: "https://www.spot.uz/ru/rss/"
     category: "Geopolitics & CIS"
     enabled: true
+    priority: 2
 
   - name: "Kun.uz EN"
     url: "https://kun.uz/en/news.rss"
     category: "Geopolitics & CIS"
     enabled: true
+    priority: 2

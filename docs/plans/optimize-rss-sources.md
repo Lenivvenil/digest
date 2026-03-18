@@ -110,11 +110,11 @@ slot(source) = max(1, round(max_total_articles * source.priority / Σ priority �
 | Ars Technica AI | 1 | disable | technology-lab — весь tech, не только AI |
 | Hacker News Best | 1 | keep | Очень широкий; низкий приоритет сам дросселирует |
 
-- [ ] В `config.yaml`: добавить `priority: N` ко всем существующим источникам согласно таблице
-- [ ] В `config.yaml`: исправить URL для Square Corner, GitHub Engineering, Discord Blog
-- [ ] В `config.yaml`: выставить `enabled: false` для Finovate и Ars Technica AI
-- [ ] Убедиться что конфиг валидируется: `python -c "from src.config import load_config; load_config()"`
-- [ ] Mark completed
+- [x] В `config.yaml`: добавить `priority: N` ко всем существующим источникам согласно таблице
+- [x] В `config.yaml`: исправить URL для Square Corner, GitHub Engineering, Discord Blog
+- [x] В `config.yaml`: выставить `enabled: false` для Finovate и Ars Technica AI
+- [x] Убедиться что конфиг валидируется: `python -c "from src.config import load_config; load_config()"`
+- [x] Mark completed
 
 ---
 
