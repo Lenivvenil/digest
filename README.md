@@ -123,11 +123,17 @@ sources:
     url: "https://..."       # RSS or Atom feed URL
     category: "AI & LLM"    # groups sources together in the digest
     enabled: true            # set to false to temporarily disable
+    priority: 3              # 1 (lowest) to 5 (highest); default 3
 ```
 
+The `priority` field controls how many article slots each source receives relative to others.
+Higher-priority sources are also processed first, so they always fill their quota before
+lower-priority sources consume the total budget.
+
 Pre-configured categories:
-- **Banking & Fintech** — Finextra, PYMNTS, Finovate
-- **AI & LLM** — MIT Technology Review, The Batch, Hugging Face Blog, Ars Technica
+- **Banking & Fintech** — Finextra, PYMNTS, The Financial Brand, American Banker
+- **AI & LLM** — MIT Technology Review, The Batch, Hugging Face Blog, Google DeepMind
+- **Platform Engineering** — High Scalability, Brendan Gregg, SRE Weekly, The New Stack
 - **Enterprise Architecture** — InfoQ, ThoughtWorks, Martin Fowler, Hacker News Best
 - **Geopolitics & CIS** — Spot.uz, Kun.uz
 

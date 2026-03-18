@@ -587,12 +587,6 @@ class TestAllocateSlots:
         slots = allocate_slots(sources, total_budget=1)
         assert slots["Tiny"] >= 1
 
-    def test_zero_weight_fallback(self) -> None:
-        # priority=0 is invalid per config validation, but allocate_slots handles it gracefully
-        sources = [make_source(name="A", priority=0), make_source(name="B", priority=0)]
-        slots = allocate_slots(sources, total_budget=10)
-        assert slots["A"] == 1
-        assert slots["B"] == 1
 
 
 @pytest.mark.asyncio

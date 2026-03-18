@@ -187,12 +187,8 @@ def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, 
     """Return per-source article slot counts proportional to source priorities.
 
     slot(source) = max(1, round(total_budget * source.priority / total_weight))
-
-    If total_weight is 0, every source gets 1 slot.
     """
     total_weight = sum(s.priority for s in sources)
-    if total_weight == 0:
-        return {s.name: 1 for s in sources}
     return {
         s.name: max(1, round(total_budget * s.priority / total_weight))
         for s in sources
@@ -254,7 +250,14 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
     grouped: dict[str, list[Article]] = {}
     total_collected = 0
 
-    for source, articles in zip(config.enabled_sources, results):
+    # Process sources in descending priority order so high-priority sources
+    # fill their slots before low-priority sources exhaust the total budget.
+    source_result_pairs = sorted(
+        zip(config.enabled_sources, results),
+        key=lambda x: x[0].priority,
+        reverse=True,
+    )
+    for source, articles in source_result_pairs:
         if articles is None:
             continue
         per_source_count = 0
