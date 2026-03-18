@@ -686,3 +686,99 @@ async def test_collect_redistributes_unused_slots(
     # Without redistribution only 1 article would be collected; with it up to 5 should be.
     assert active_count > 1
     assert total > 1
+
+
+# ---------------------------------------------------------------------------
+# effective_priorities tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collect_uses_effective_priorities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When effective_priorities are provided, they override static priorities."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
+        items = "\n".join(
+            f"""<item>
+              <title>{prefix} Article {i}</title>
+              <link>https://{prefix.lower()}.example.com/{i}</link>
+              <description>Body {i}</description>
+              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
+            </item>"""
+            for i in range(count)
+        )
+        return textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel><title>{prefix}</title>
+                {items}
+              </channel>
+            </rss>
+        """).encode()
+
+    # Static: High=5, Low=1. Effective: flip them — High=1, Low=5.
+    high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
+    low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
+    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
+
+    effective = {"High": 1, "Low": 5}
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        prefix = "High" if "high" in url else "Low"
+        return make_http_response(make_multi_rss(prefix, count=5))
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config, effective_priorities=effective)
+
+    low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
+    high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
+    # With flipped effective priorities, Low should get more slots
+    assert low_count > high_count
+
+
+@pytest.mark.asyncio
+async def test_collect_falls_back_to_static_priorities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When effective_priorities is None, static priorities are used."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
+        items = "\n".join(
+            f"""<item>
+              <title>{prefix} Article {i}</title>
+              <link>https://{prefix.lower()}.example.com/{i}</link>
+              <description>Body {i}</description>
+              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
+            </item>"""
+            for i in range(count)
+        )
+        return textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel><title>{prefix}</title>
+                {items}
+              </channel>
+            </rss>
+        """).encode()
+
+    high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
+    low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
+    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        prefix = "High" if "high" in url else "Low"
+        return make_http_response(make_multi_rss(prefix, count=5))
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config, effective_priorities=None)
+
+    high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
+    low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
+    # With static priorities, High (priority=5) should get more
+    assert high_count > low_count

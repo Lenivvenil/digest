@@ -7,6 +7,10 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.config import AdaptiveConfig, SourceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -178,3 +182,69 @@ def calculate_score(stats: SourceStats) -> float:
         + recency * 0.2
     )
     return min(1.0, max(0.0, score))
+
+
+def detect_trending_sources(
+    stats: dict[str, SourceStats], window: int = 7
+) -> list[str]:
+    """Return source names where articles_found shows >50% increase.
+
+    Compares the last `window` days against the previous `window` days.
+    Sources with insufficient history (fewer than `window` snapshots in
+    the recent window) are ignored.
+    """
+    trending: list[str] = []
+    for name, s in stats.items():
+        if len(s.history) < window:
+            continue
+        recent = s.history[-window:]
+        previous = s.history[-2 * window : -window] if len(s.history) >= 2 * window else []
+        recent_total = sum(snap.articles_found for snap in recent)
+        previous_total = sum(snap.articles_found for snap in previous)
+        if previous_total == 0:
+            # No baseline — treat as trending only if recent has content
+            if recent_total > 0:
+                trending.append(name)
+            continue
+        increase = (recent_total - previous_total) / previous_total
+        if increase > 0.5:
+            trending.append(name)
+    return trending
+
+
+def calculate_effective_priorities(
+    sources: list["SourceConfig"],
+    stats: dict[str, SourceStats],
+    feedback_scores: dict[str, float],
+    adaptive_config: "AdaptiveConfig",
+) -> dict[str, int]:
+    """Compute effective priorities by combining base priority, quality score, and feedback.
+
+    For each source:
+      weighted = (base_priority/5)*base_weight + score*score_weight + feedback*feedback_weight
+      scaled to min_priority..max_priority range, with +1 trend bonus (capped).
+    """
+    trending = detect_trending_sources(stats)
+    min_p = adaptive_config.min_priority
+    max_p = adaptive_config.max_priority
+    p_range = max_p - min_p
+
+    result: dict[str, int] = {}
+    for source in sources:
+        base_norm = source.priority / 5.0
+        score = calculate_score(stats[source.name]) if source.name in stats else 0.5
+        feedback = feedback_scores.get(source.name, 0.5)
+
+        weighted = (
+            base_norm * adaptive_config.base_weight
+            + score * adaptive_config.score_weight
+            + feedback * adaptive_config.feedback_weight
+        )
+        # Scale weighted (0.0-1.0) to priority range
+        priority = round(min_p + weighted * p_range)
+        # Apply trend bonus
+        if source.name in trending:
+            priority += 1
+        priority = max(min_p, min(max_p, priority))
+        result[source.name] = priority
+    return result

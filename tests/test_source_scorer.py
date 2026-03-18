@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.config import AdaptiveConfig, SourceConfig
 from src.source_scorer import (
     DailySnapshot,
     SourceStats,
+    calculate_effective_priorities,
     calculate_score,
+    detect_trending_sources,
     load_stats,
     save_stats,
     update_stats,
@@ -215,3 +218,148 @@ def test_calculate_score_partial() -> None:
     score = calculate_score(stats)
     # Should be moderate
     assert 0.2 < score < 0.8
+
+
+# --- detect_trending_sources ---
+
+
+def test_detect_trending_flat_history() -> None:
+    """Flat history should not detect any trends."""
+    stats = {
+        "Stable": SourceStats(
+            name="Stable",
+            history=[
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5,
+                              articles_included=2, fetch_ok=True)
+                for i in range(1, 15)  # 14 days of flat data
+            ],
+        )
+    }
+    result = detect_trending_sources(stats, window=7)
+    assert result == []
+
+
+def test_detect_trending_rising_history() -> None:
+    """Rising articles_found in recent window should be detected as trending."""
+    previous = [
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2,
+                      articles_included=1, fetch_ok=True)
+        for i in range(1, 8)  # days 1-7: 2 articles/day = 14 total
+    ]
+    recent = [
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5,
+                      articles_included=3, fetch_ok=True)
+        for i in range(8, 15)  # days 8-14: 5 articles/day = 35 total (150% increase)
+    ]
+    stats = {
+        "Rising": SourceStats(name="Rising", history=previous + recent)
+    }
+    result = detect_trending_sources(stats, window=7)
+    assert "Rising" in result
+
+
+def test_detect_trending_insufficient_history() -> None:
+    """Sources with too few snapshots should be ignored."""
+    stats = {
+        "New": SourceStats(
+            name="New",
+            history=[
+                DailySnapshot(date="2026-03-01", articles_found=10,
+                              articles_included=5, fetch_ok=True)
+            ],
+        )
+    }
+    result = detect_trending_sources(stats, window=7)
+    assert result == []
+
+
+# --- calculate_effective_priorities ---
+
+
+def _make_source(name: str, priority: int = 3) -> SourceConfig:
+    return SourceConfig(name=name, url="https://x.com", category="Tech",
+                        enabled=True, priority=priority)
+
+
+def _default_adaptive() -> AdaptiveConfig:
+    return AdaptiveConfig(enabled=True, feedback_weight=0.3, score_weight=0.5,
+                          base_weight=0.2, trial_slots=2, min_priority=1,
+                          max_priority=5)
+
+
+def test_effective_priorities_high_score_bad_feedback() -> None:
+    """High quality score + bad feedback -> moderate priority."""
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    sources = [_make_source("A", priority=3)]
+    stats = {
+        "A": SourceStats(
+            name="A", total_fetches=10, successful_fetches=10,
+            total_articles_found=50, articles_included_in_digest=50,
+            avg_description_length=200.0, last_seen=today,
+        )
+    }
+    feedback = {"A": 0.1}  # bad feedback
+    result = calculate_effective_priorities(sources, stats, feedback, _default_adaptive())
+    # score ~1.0, feedback 0.1, base 3/5=0.6
+    # weighted = 0.6*0.2 + 1.0*0.5 + 0.1*0.3 = 0.12 + 0.5 + 0.03 = 0.65
+    # priority = round(1 + 0.65*4) = round(3.6) = 4
+    assert 2 <= result["A"] <= 4
+
+
+def test_effective_priorities_low_score_good_feedback() -> None:
+    """Low quality score + good feedback -> moderate priority."""
+    sources = [_make_source("B", priority=3)]
+    stats = {
+        "B": SourceStats(
+            name="B", total_fetches=10, successful_fetches=2,
+            total_articles_found=10, articles_included_in_digest=1,
+            avg_description_length=20.0, last_seen=None,
+        )
+    }
+    feedback = {"B": 0.9}  # good feedback
+    result = calculate_effective_priorities(sources, stats, feedback, _default_adaptive())
+    assert 2 <= result["B"] <= 4
+
+
+def test_effective_priorities_trending_bonus() -> None:
+    """Trending source should get +1 bonus."""
+    sources = [_make_source("T", priority=1)]
+    previous = [
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2,
+                      articles_included=1, fetch_ok=True)
+        for i in range(1, 8)
+    ]
+    recent = [
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10,
+                      articles_included=5, fetch_ok=True)
+        for i in range(8, 15)
+    ]
+    stats = {
+        "T": SourceStats(name="T", total_fetches=14, successful_fetches=14,
+                         total_articles_found=84, articles_included_in_digest=42,
+                         avg_description_length=150.0, last_seen="2026-03-14",
+                         history=previous + recent)
+    }
+    adaptive = _default_adaptive()
+
+    # Calculate without trending (use flat history)
+    flat_stats = {
+        "T": SourceStats(name="T", total_fetches=14, successful_fetches=14,
+                         total_articles_found=84, articles_included_in_digest=42,
+                         avg_description_length=150.0, last_seen="2026-03-14",
+                         history=previous + previous)  # flat = no trend
+    }
+    no_trend = calculate_effective_priorities(sources, flat_stats, {}, adaptive)
+    with_trend = calculate_effective_priorities(sources, stats, {}, adaptive)
+
+    # With trend should be >= without trend (bonus applied)
+    assert with_trend["T"] >= no_trend["T"]
+
+
+def test_effective_priorities_no_stats_uses_neutral() -> None:
+    """Source with no stats should get neutral score (0.5)."""
+    sources = [_make_source("New", priority=3)]
+    result = calculate_effective_priorities(sources, {}, {}, _default_adaptive())
+    # base=0.6*0.2=0.12, score=0.5*0.5=0.25, feedback=0.5*0.3=0.15 => 0.52
+    # priority = round(1 + 0.52*4) = round(3.08) = 3
+    assert result["New"] == 3

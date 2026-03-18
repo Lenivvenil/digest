@@ -219,6 +219,7 @@ def save_dedup_cache(cache: dict[str, str]) -> None:
 async def collect(
     config: Config,
     source_stats: dict[str, SourceStats] | None = None,
+    effective_priorities: dict[str, int] | None = None,
 ) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
@@ -268,7 +269,19 @@ async def collect(
     successful_sources = [
         s for s, r in zip(config.enabled_sources, results) if r is not None
     ]
-    raw_slots = allocate_slots(successful_sources, config.digest.max_total_articles)
+    # Override priorities with effective values when provided
+    if effective_priorities:
+        patched_sources: list[SourceConfig] = []
+        for s in successful_sources:
+            if s.name in effective_priorities:
+                from dataclasses import replace
+                patched_sources.append(replace(s, priority=effective_priorities[s.name]))
+            else:
+                patched_sources.append(s)
+        alloc_sources = patched_sources
+    else:
+        alloc_sources = successful_sources
+    raw_slots = allocate_slots(alloc_sources, config.digest.max_total_articles)
     slots = {
         name: min(count, config.digest.max_articles_per_source)
         for name, count in raw_slots.items()
@@ -280,10 +293,15 @@ async def collect(
     # Pre-compute eligible articles per source (recency + dedup filter) in
     # descending priority order so that pass 2 redistribution also favours
     # higher-priority sources when filling the remaining budget.
+    def _effective_priority(s: SourceConfig) -> int:
+        if effective_priorities and s.name in effective_priorities:
+            return effective_priorities[s.name]
+        return s.priority
+
     source_eligible: list[tuple[SourceConfig, list[tuple[str, Article]]]] = []
     for source, raw_articles in sorted(
         zip(config.enabled_sources, results),
-        key=lambda x: x[0].priority,
+        key=lambda x: _effective_priority(x[0]),
         reverse=True,
     ):
         if raw_articles is None:

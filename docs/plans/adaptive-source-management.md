@@ -39,12 +39,12 @@
 
 ### Task 4: Dynamic priority engine combining signals
 Реализуем движок пересчёта эффективных приоритетов, объединяя три сигнала: базовый приоритет из конфига (стабильность), объективный скоринг (качество контента) и обратную связь пользователя (предпочтения). Тренды выявляются через анализ роста продуктивности источника.
-- [ ] In `src/source_scorer.py`: implement `detect_trending_sources(stats: dict[str, SourceStats], window: int = 7) -> list[str]` — return source names where `articles_found` shows >50% increase in last `window` days vs previous window (indicates emerging trend coverage)
-- [ ] In `src/source_scorer.py`: implement `calculate_effective_priorities(sources: list[SourceConfig], stats: dict[str, SourceStats], feedback_scores: dict[str, float], adaptive_config: AdaptiveConfig) -> dict[str, int]` — for each source: compute weighted combination of `base_priority / 5 * base_weight + score * score_weight + feedback * feedback_weight`, scale to 1–5 range, apply +1 trend bonus for trending sources (capped at 5), return `{source_name: effective_priority}`
-- [ ] In `src/collector.py`: modify `collect()` to accept optional `effective_priorities: dict[str, int] | None`; when provided, override `source.priority` with effective values before calling `allocate_slots()`
-- [ ] Add/update tests in `tests/test_source_scorer.py`: test `detect_trending_sources` with flat history (no trends), rising history (detected), test `calculate_effective_priorities` with various signal combinations (high score + bad feedback → moderate priority, low score + good feedback → moderate, trending source gets +1 bonus)
-- [ ] Add/update tests in `tests/test_collector.py`: test that `collect()` uses effective priorities when provided, falls back to static priorities when not provided
-- [ ] Mark completed
+- [x] In `src/source_scorer.py`: implement `detect_trending_sources(stats: dict[str, SourceStats], window: int = 7) -> list[str]` — return source names where `articles_found` shows >50% increase in last `window` days vs previous window (indicates emerging trend coverage)
+- [x] In `src/source_scorer.py`: implement `calculate_effective_priorities(sources: list[SourceConfig], stats: dict[str, SourceStats], feedback_scores: dict[str, float], adaptive_config: AdaptiveConfig) -> dict[str, int]` — for each source: compute weighted combination of `base_priority / 5 * base_weight + score * score_weight + feedback * feedback_weight`, scale to 1–5 range, apply +1 trend bonus for trending sources (capped at 5), return `{source_name: effective_priority}`
+- [x] In `src/collector.py`: modify `collect()` to accept optional `effective_priorities: dict[str, int] | None`; when provided, override `source.priority` with effective values before calling `allocate_slots()`
+- [x] Add/update tests in `tests/test_source_scorer.py`: test `detect_trending_sources` with flat history (no trends), rising history (detected), test `calculate_effective_priorities` with various signal combinations (high score + bad feedback → moderate priority, low score + good feedback → moderate, trending source gets +1 bonus)
+- [x] Add/update tests in `tests/test_collector.py`: test that `collect()` uses effective priorities when provided, falls back to static priorities when not provided
+- [x] Mark completed
 
 ### Task 5: Trial source lifecycle management
 Механизм пробных источников: добавление новых источников с пометкой `trial: true`, ограниченный бюджет слотов, автоматическое продвижение в постоянные или удаление после пробного периода на основе скоринга.
