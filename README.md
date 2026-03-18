@@ -12,7 +12,7 @@ Runs on **GitHub Actions** free tier — no VPS, no paid hosting required.
 config.yaml
     |
     v
-collector.py  ──(feedparser + httpx)──>  RSS/Atom feeds (13 sources)
+collector.py  ──(feedparser + httpx)──>  RSS/Atom feeds (50 sources)
     |
     v  (Articles grouped by category, deduplicated, last 24h only)
 summarizer.py ──(httpx)──────────────>  LLM API
