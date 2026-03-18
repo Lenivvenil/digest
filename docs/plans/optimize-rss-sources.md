@@ -19,13 +19,13 @@
 Добавляем поле `priority: int` (допустимые значения 1–5, дефолт 3) в `SourceConfig`. Это единственное
 изменение в слое данных — все остальные задачи опираются на это поле.
 
-- [ ] В `src/config.py`: добавить поле `priority: int = 3` в датакласс `SourceConfig`
-- [ ] В `src/config.py`: в функции `_load_sources` парсить опциональное поле `priority` из YAML;
+- [x] В `src/config.py`: добавить поле `priority: int = 3` в датакласс `SourceConfig`
+- [x] В `src/config.py`: в функции `_load_sources` парсить опциональное поле `priority` из YAML;
       валидировать что значение целое и входит в диапазон 1–5, иначе бросать `ValueError` с пояснением
-- [ ] В `tests/test_config.py`: тест — источник без `priority` получает `priority=3`
-- [ ] В `tests/test_config.py`: тест — источник с `priority: 5` парсится корректно
-- [ ] В `tests/test_config.py`: тест — `priority: 0` и `priority: 6` вызывают `ValueError`
-- [ ] Mark completed
+- [x] В `tests/test_config.py`: тест — источник без `priority` получает `priority=3`
+- [x] В `tests/test_config.py`: тест — источник с `priority: 5` парсится корректно
+- [x] В `tests/test_config.py`: тест — `priority: 0` и `priority: 6` вызывают `ValueError`
+- [x] Mark completed
 
 ---
 

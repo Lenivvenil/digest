@@ -258,6 +258,63 @@ def test_all_providers_accepted(tmp_path: Path) -> None:
         assert config.llm.provider == provider
 
 
+def test_source_default_priority(tmp_path: Path) -> None:
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+    assert config.sources[0].priority == 3
+
+
+def test_source_explicit_priority(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "High Priority Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
+            priority: 5
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.sources[0].priority == 5
+
+
+def test_source_priority_out_of_range(tmp_path: Path) -> None:
+    for bad_priority in (0, 6):
+        content = f"""
+            llm:
+              provider: "anthropic"
+              model: "claude-sonnet-4-20250514"
+            delivery:
+              telegram: false
+              markdown_to_repo: false
+            digest:
+              language: "ru"
+              max_articles_per_source: 5
+              max_total_articles: 30
+              summary_style: "analytical"
+            sources:
+              - name: "Feed"
+                url: "https://example.com/feed"
+                category: "Test"
+                enabled: true
+                priority: {bad_priority}
+        """
+        cfg_path = _write_config(tmp_path, content)
+        with pytest.raises(ValueError, match="priority.*must be between 1 and 5"):
+            load_config(cfg_path)
+
+
 def test_default_summary_style_and_language(tmp_path: Path) -> None:
     content = """
         llm:

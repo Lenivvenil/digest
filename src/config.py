@@ -43,6 +43,7 @@ class SourceConfig:
     url: str
     category: str
     enabled: bool
+    priority: int = 3
 
 
 @dataclass
@@ -142,12 +143,24 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'enabled' in sources[{i}] must be a boolean "
                 f"(true or false without quotes), got {type(raw_enabled).__name__} {raw_enabled!r}."
             )
+        raw_priority = item.get("priority", 3)
+        if not isinstance(raw_priority, int):
+            raise ValueError(
+                f"Config field 'priority' in sources[{i}] must be an integer, "
+                f"got {type(raw_priority).__name__} {raw_priority!r}."
+            )
+        if raw_priority < 1 or raw_priority > 5:
+            raise ValueError(
+                f"Config field 'priority' in sources[{i}] must be between 1 and 5, "
+                f"got {raw_priority!r}."
+            )
         sources.append(
             SourceConfig(
                 name=str(name),
                 url=str(url),
                 category=str(category),
                 enabled=raw_enabled,
+                priority=raw_priority,
             )
         )
     return sources
