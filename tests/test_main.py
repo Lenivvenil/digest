@@ -419,7 +419,7 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
         patch("src.main.write_digest", return_value=None),
-        patch("src.main.evaluate_trial_sources", return_value=([], [])),
+        patch("src.main.evaluate_trial_sources", return_value=([], [], [])),
         patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
     ):
         from src.feedback import FeedbackStore
@@ -490,7 +490,7 @@ async def test_run_adaptive_trial_evaluation(
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
         patch("src.main.write_digest", return_value=markdown_path),
-        patch("src.main.evaluate_trial_sources", return_value=(["SourceA"], ["SourceB"])) as mock_eval,
+        patch("src.main.evaluate_trial_sources", return_value=(["SourceA"], ["SourceB"], [])) as mock_eval,
         patch("src.main.apply_trial_decisions") as mock_apply,
         patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
     ):
@@ -505,7 +505,9 @@ async def test_run_adaptive_trial_evaluation(
         stats = await run(config_path=str(adaptive_config_file), dry_run=False)
 
     mock_eval.assert_called_once()
-    mock_apply.assert_called_once_with(str(adaptive_config_file), ["SourceA"], ["SourceB"])
+    mock_apply.assert_called_once_with(
+        str(adaptive_config_file), ["SourceA"], ["SourceB"], needs_start=[]
+    )
     assert stats.sources_promoted == 1
     assert stats.sources_demoted == 1
 
@@ -534,3 +536,89 @@ def test_run_stats_new_fields() -> None:
     assert stats.sources_promoted == 0
     assert stats.sources_demoted == 0
     assert stats.feedback_collected == 0
+
+
+# ---------------------------------------------------------------------------
+# discover_sources tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
+    """discover_sources should parse FEED| lines and validate URLs."""
+    from src.main import discover_sources
+
+    llm_response = (
+        "Here are some suggestions:\n"
+        "FEED|https://example.com/feed1.xml|Security|Security Weekly\n"
+        "FEED|https://example.com/feed2.xml|Cloud|Cloud Blog\n"
+        "Some other text\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value=llm_response)
+        mock_get_provider.return_value = mock_provider
+
+        result = await discover_sources(config_path=str(config_file))
+
+    assert result == 0
+    assert mock_client.get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_discover_sources_no_suggestions(config_file: Path) -> None:
+    """discover_sources should handle empty LLM response gracefully."""
+    from src.main import discover_sources
+
+    with patch("src.main.get_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="No good feeds found.")
+        mock_get_provider.return_value = mock_provider
+
+        result = await discover_sources(config_path=str(config_file))
+
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_discover_sources_malformed_lines(config_file: Path) -> None:
+    """discover_sources should skip lines with wrong number of fields."""
+    from src.main import discover_sources
+
+    llm_response = (
+        "FEED|only-two-parts|Category\n"
+        "FEED|https://ok.com/feed|Cat|Name\n"
+        "NOT_FEED|something\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value=llm_response)
+        mock_get_provider.return_value = mock_provider
+
+        result = await discover_sources(config_path=str(config_file))
+
+    assert result == 0
+    # Only one valid FEED line -> only 1 GET request
+    assert mock_client.get.await_count == 1

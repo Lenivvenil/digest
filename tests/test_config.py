@@ -466,3 +466,52 @@ def test_default_summary_style_and_language(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, content)
     config = load_config(cfg_path)
     assert config.digest.summary_style == "analytical"
+
+
+def test_adaptive_min_priority_gte_max_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          min_priority: 5
+          max_priority: 1
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="min_priority.*must be less than.*max_priority"):
+        load_config(cfg_path)
+
+
+def test_adaptive_weights_not_summing_to_one_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 0.5
+          score_weight: 0.5
+          base_weight: 0.5
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="Adaptive weights must sum to 1.0"):
+        load_config(cfg_path)

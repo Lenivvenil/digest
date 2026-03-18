@@ -221,14 +221,34 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
             f"Config field 'enabled' in section 'adaptive' must be a boolean, "
             f"got {type(enabled).__name__} {enabled!r}."
         )
+    feedback_weight = float(section.get("feedback_weight", 0.3))
+    score_weight = float(section.get("score_weight", 0.5))
+    base_weight = float(section.get("base_weight", 0.2))
+    min_priority = int(section.get("min_priority", 1))
+    max_priority = int(section.get("max_priority", 5))
+
+    if min_priority >= max_priority:
+        raise ValueError(
+            f"adaptive.min_priority ({min_priority}) must be less than "
+            f"adaptive.max_priority ({max_priority})."
+        )
+
+    weight_sum = feedback_weight + score_weight + base_weight
+    if abs(weight_sum - 1.0) > 0.01:
+        raise ValueError(
+            f"Adaptive weights must sum to 1.0 (got {weight_sum:.2f}): "
+            f"feedback_weight={feedback_weight}, score_weight={score_weight}, "
+            f"base_weight={base_weight}."
+        )
+
     return AdaptiveConfig(
         enabled=enabled,
-        feedback_weight=float(section.get("feedback_weight", 0.3)),
-        score_weight=float(section.get("score_weight", 0.5)),
-        base_weight=float(section.get("base_weight", 0.2)),
+        feedback_weight=feedback_weight,
+        score_weight=score_weight,
+        base_weight=base_weight,
         trial_slots=int(section.get("trial_slots", 2)),
-        min_priority=int(section.get("min_priority", 1)),
-        max_priority=int(section.get("max_priority", 5)),
+        min_priority=min_priority,
+        max_priority=max_priority,
     )
 
 

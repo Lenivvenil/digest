@@ -249,11 +249,11 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     sources_demoted = 0
     if config.adaptive.enabled and not dry_run:
         today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-        promote, demote = evaluate_trial_sources(
+        promote, demote, needs_start = evaluate_trial_sources(
             config.enabled_sources, source_stats, today
         )
-        if promote or demote:
-            apply_trial_decisions(config_path, promote, demote)
+        if promote or demote or needs_start:
+            apply_trial_decisions(config_path, promote, demote, needs_start=needs_start)
             sources_promoted = len(promote)
             sources_demoted = len(demote)
             logger.info(

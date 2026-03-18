@@ -120,14 +120,21 @@ def update_stats(
                     s.avg_description_length * 0.7 + avg_desc_len * 0.3
                 )
 
-    s.history.append(
-        DailySnapshot(
-            date=today,
-            articles_found=articles_found,
-            articles_included=articles_included,
-            fetch_ok=fetch_ok,
+    # Update existing snapshot if already recorded today; otherwise append new one
+    if s.history and s.history[-1].date == today:
+        snap = s.history[-1]
+        snap.articles_found = articles_found
+        snap.articles_included = articles_included
+        snap.fetch_ok = fetch_ok
+    else:
+        s.history.append(
+            DailySnapshot(
+                date=today,
+                articles_found=articles_found,
+                articles_included=articles_included,
+                fetch_ok=fetch_ok,
+            )
         )
-    )
 
     # Cap history at HISTORY_MAX_DAYS
     if len(s.history) > HISTORY_MAX_DAYS:
@@ -254,12 +261,13 @@ def evaluate_trial_sources(
     sources: list["SourceConfig"],
     stats: dict[str, SourceStats],
     today: str,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """Evaluate trial sources and decide which to promote or demote.
 
-    Returns (promote_names, demote_names):
+    Returns (promote_names, demote_names, needs_start_names):
     - promote: trials with score > 0.6 after trial_days elapsed
     - demote: trials with score < 0.3 after trial_days elapsed
+    - needs_start: trials with no trial_started date (will be initialized)
     - others remain in trial
     """
     promote: list[str] = []
@@ -269,12 +277,21 @@ def evaluate_trial_sources(
         today_dt = datetime.strptime(today, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
         logger.warning("Invalid today date for trial evaluation: %s", today)
-        return [], []
+        return [], [], []
+
+    needs_start: list[str] = []
 
     for source in sources:
         if not source.trial:
             continue
         if source.trial_started is None:
+            # Auto-populate trial_started to today on first encounter
+            logger.info(
+                "Trial source '%s' has no trial_started date; will initialize to %s",
+                source.name,
+                today,
+            )
+            needs_start.append(source.name)
             continue
         try:
             started_dt = datetime.strptime(source.trial_started, "%Y-%m-%d").replace(
@@ -298,14 +315,20 @@ def evaluate_trial_sources(
         elif score < 0.3:
             demote.append(source.name)
 
-    return promote, demote
+    return promote, demote, needs_start
 
 
 def apply_trial_decisions(
-    config_path: str, promote: list[str], demote: list[str]
+    config_path: str,
+    promote: list[str],
+    demote: list[str],
+    needs_start: list[str] | None = None,
 ) -> None:
-    """Update config.yaml: set trial=false for promoted, enabled=false for demoted."""
-    if not promote and not demote:
+    """Update config.yaml: set trial=false for promoted, enabled=false for demoted,
+    and initialize trial_started for new trial sources."""
+    if needs_start is None:
+        needs_start = []
+    if not promote and not demote and not needs_start:
         return
 
     path = Path(config_path)
@@ -316,14 +339,20 @@ def apply_trial_decisions(
         logger.warning("Cannot apply trial decisions: invalid config structure")
         return
 
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
     for source_entry in data["sources"]:
         name = source_entry.get("name")
         if name in promote:
             source_entry["trial"] = False
+            source_entry.pop("trial_started", None)
             logger.info("Promoted trial source '%s' to permanent", name)
         elif name in demote:
             source_entry["enabled"] = False
             logger.info("Demoted trial source '%s' (disabled)", name)
+        elif name in needs_start:
+            source_entry["trial_started"] = today
+            logger.info("Initialized trial_started for '%s' to %s", name, today)
 
     tmp_path = path.with_suffix(".yaml.tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:

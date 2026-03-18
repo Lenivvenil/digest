@@ -393,9 +393,10 @@ def test_evaluate_trial_not_expired() -> None:
             avg_description_length=200.0, last_seen="2026-03-18",
         )
     }
-    promote, demote = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
     assert promote == []
     assert demote == []
+    assert needs_start == []
 
 
 def test_evaluate_trial_promote_high_score() -> None:
@@ -409,9 +410,10 @@ def test_evaluate_trial_promote_high_score() -> None:
             avg_description_length=200.0, last_seen=today,
         )
     }
-    promote, demote = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
     assert "Good" in promote
     assert demote == []
+    assert needs_start == []
 
 
 def test_evaluate_trial_demote_low_score() -> None:
@@ -425,9 +427,10 @@ def test_evaluate_trial_demote_low_score() -> None:
             avg_description_length=10.0, last_seen=None,
         )
     }
-    promote, demote = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
     assert promote == []
     assert "Bad" in demote
+    assert needs_start == []
 
 
 def test_evaluate_trial_middling_score_no_action() -> None:
@@ -441,17 +444,19 @@ def test_evaluate_trial_middling_score_no_action() -> None:
             avg_description_length=80.0, last_seen=today,
         )
     }
-    promote, demote = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
     assert promote == []
     assert demote == []
+    assert needs_start == []
 
 
 def test_evaluate_trial_non_trial_ignored() -> None:
     """Non-trial sources should not be evaluated."""
     sources = [_make_source("Regular", priority=3)]
-    promote, demote = evaluate_trial_sources(sources, {}, "2026-03-18")
+    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18")
     assert promote == []
     assert demote == []
+    assert needs_start == []
 
 
 # --- apply_trial_decisions ---
@@ -525,3 +530,81 @@ def test_apply_trial_decisions_noop(tmp_path: Path) -> None:
     original = config_path.read_text()
     apply_trial_decisions(str(config_path), promote=[], demote=[])
     assert config_path.read_text() == original
+
+
+def test_evaluate_trial_needs_start_for_none_trial_started() -> None:
+    """Trial source with trial_started=None should appear in needs_start."""
+    sources = [
+        SourceConfig(
+            name="NewTrial", url="https://x.com", category="Tech",
+            enabled=True, priority=3, trial=True, trial_started=None,
+        )
+    ]
+    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18")
+    assert promote == []
+    assert demote == []
+    assert "NewTrial" in needs_start
+
+
+def test_apply_trial_decisions_initializes_trial_started(tmp_path: Path) -> None:
+    """needs_start sources should get trial_started set in config."""
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "NewTrial", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    apply_trial_decisions(str(config_path), promote=[], demote=[], needs_start=["NewTrial"])
+
+    with config_path.open("r") as f:
+        result = yaml.safe_load(f)
+
+    source = result["sources"][0]
+    assert source["trial_started"] is not None
+
+
+def test_apply_trial_decisions_clears_trial_started_on_promote(tmp_path: Path) -> None:
+    """Promoted source should have trial_started removed."""
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "GoodFeed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    apply_trial_decisions(str(config_path), promote=["GoodFeed"], demote=[])
+
+    with config_path.open("r") as f:
+        result = yaml.safe_load(f)
+
+    source = result["sources"][0]
+    assert source["trial"] is False
+    assert "trial_started" not in source
+
+
+def test_update_stats_deduplicates_same_day() -> None:
+    """Calling update_stats twice on the same day should update the snapshot, not append."""
+    stats: dict[str, SourceStats] = {}
+    update_stats(stats, "Feed", fetch_ok=True, articles_found=5,
+                 articles_included=0, avg_desc_len=100.0)
+    assert len(stats["Feed"].history) == 1
+
+    update_stats(stats, "Feed", fetch_ok=True, articles_found=8,
+                 articles_included=3, avg_desc_len=120.0)
+    # Should still be 1 snapshot (updated in place), not 2
+    assert len(stats["Feed"].history) == 1
+    assert stats["Feed"].history[0].articles_found == 8
+    assert stats["Feed"].history[0].articles_included == 3
