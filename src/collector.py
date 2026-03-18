@@ -184,20 +184,59 @@ async def _fetch_feed(
     return articles
 
 
-def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, int]:
+def allocate_slots(
+    sources: list[SourceConfig],
+    total_budget: int,
+    trial_budget: int | None = None,
+) -> dict[str, int]:
     """Return per-source article slot counts proportional to source priorities.
 
-    slot(source) = max(1, round(total_budget * source.priority / total_weight))
+    When trial_budget is provided, trial sources get a separate budget that
+    does not compete with regular sources.
+
+    slot(source) = max(1, round(budget * source.priority / total_weight))
 
     If total_weight is zero (all sources have priority=0), every source gets 1 slot.
     """
-    total_weight = sum(s.priority for s in sources)
-    if total_weight == 0:
-        return {s.name: 1 for s in sources}
-    return {
-        s.name: max(1, round(total_budget * s.priority / total_weight))
-        for s in sources
-    }
+    regular = [s for s in sources if not s.trial]
+    trials = [s for s in sources if s.trial]
+
+    if trial_budget is not None and trials:
+        regular_budget = total_budget
+    else:
+        regular_budget = total_budget
+        trial_budget = 0
+        # Treat trials as regular if no separate budget
+        regular = sources
+        trials = []
+
+    result: dict[str, int] = {}
+
+    # Allocate for regular sources
+    if regular:
+        total_weight = sum(s.priority for s in regular)
+        if total_weight == 0:
+            for s in regular:
+                result[s.name] = 1
+        else:
+            for s in regular:
+                result[s.name] = max(
+                    1, round(regular_budget * s.priority / total_weight)
+                )
+
+    # Allocate for trial sources from separate budget
+    if trials and trial_budget:
+        total_weight = sum(s.priority for s in trials)
+        if total_weight == 0:
+            for s in trials:
+                result[s.name] = 1
+        else:
+            for s in trials:
+                result[s.name] = max(
+                    1, round(trial_budget * s.priority / total_weight)
+                )
+
+    return result
 
 
 def _is_recent(article: Article, cutoff: datetime) -> bool:
@@ -281,7 +320,14 @@ async def collect(
         alloc_sources = patched_sources
     else:
         alloc_sources = successful_sources
-    raw_slots = allocate_slots(alloc_sources, config.digest.max_total_articles)
+    trial_budget = (
+        config.adaptive.trial_slots
+        if config.adaptive.enabled and any(s.trial for s in alloc_sources)
+        else None
+    )
+    raw_slots = allocate_slots(
+        alloc_sources, config.digest.max_total_articles, trial_budget=trial_budget
+    )
     slots = {
         name: min(count, config.digest.max_articles_per_source)
         for name, count in raw_slots.items()
@@ -338,13 +384,15 @@ async def collect(
 
     # Pass 2: redistribute unused budget to sources that still have eligible
     # articles, respecting the absolute per-source cap.
+    # Trial sources are capped at their allocated slot count (no redistribution).
     if total_collected < config.digest.max_total_articles:
         for source, eligible in source_eligible:
             taken = per_source_taken[source.name]
+            cap = slots[source.name] if source.trial else config.digest.max_articles_per_source
             for h, article in eligible[taken:]:
                 if total_collected >= config.digest.max_total_articles:
                     break
-                if taken >= config.digest.max_articles_per_source:
+                if taken >= cap:
                     break
                 if h in cache:
                     continue

@@ -9,13 +9,17 @@ from src.config import AdaptiveConfig, SourceConfig
 from src.source_scorer import (
     DailySnapshot,
     SourceStats,
+    apply_trial_decisions,
     calculate_effective_priorities,
     calculate_score,
     detect_trending_sources,
+    evaluate_trial_sources,
     load_stats,
     save_stats,
     update_stats,
 )
+
+import yaml
 
 
 def test_daily_snapshot_creation() -> None:
@@ -363,3 +367,161 @@ def test_effective_priorities_no_stats_uses_neutral() -> None:
     # base=0.6*0.2=0.12, score=0.5*0.5=0.25, feedback=0.5*0.3=0.15 => 0.52
     # priority = round(1 + 0.52*4) = round(3.08) = 3
     assert result["New"] == 3
+
+
+# --- evaluate_trial_sources ---
+
+
+def _make_trial_source(
+    name: str, trial_started: str, trial_days: int = 7
+) -> SourceConfig:
+    return SourceConfig(
+        name=name, url="https://x.com", category="Tech",
+        enabled=True, priority=3, trial=True,
+        trial_started=trial_started, trial_days=trial_days,
+    )
+
+
+def test_evaluate_trial_not_expired() -> None:
+    """Trial source not yet past trial_days should not be promoted or demoted."""
+    sources = [_make_trial_source("New", trial_started="2026-03-15", trial_days=7)]
+    today = "2026-03-18"  # only 3 days elapsed
+    stats = {
+        "New": SourceStats(
+            name="New", total_fetches=3, successful_fetches=3,
+            total_articles_found=10, articles_included_in_digest=10,
+            avg_description_length=200.0, last_seen="2026-03-18",
+        )
+    }
+    promote, demote = evaluate_trial_sources(sources, stats, today)
+    assert promote == []
+    assert demote == []
+
+
+def test_evaluate_trial_promote_high_score() -> None:
+    """Expired trial with high score (>0.6) should be promoted."""
+    sources = [_make_trial_source("Good", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "Good": SourceStats(
+            name="Good", total_fetches=10, successful_fetches=10,
+            total_articles_found=50, articles_included_in_digest=50,
+            avg_description_length=200.0, last_seen=today,
+        )
+    }
+    promote, demote = evaluate_trial_sources(sources, stats, today)
+    assert "Good" in promote
+    assert demote == []
+
+
+def test_evaluate_trial_demote_low_score() -> None:
+    """Expired trial with low score (<0.3) should be demoted."""
+    sources = [_make_trial_source("Bad", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "Bad": SourceStats(
+            name="Bad", total_fetches=10, successful_fetches=1,
+            total_articles_found=5, articles_included_in_digest=0,
+            avg_description_length=10.0, last_seen=None,
+        )
+    }
+    promote, demote = evaluate_trial_sources(sources, stats, today)
+    assert promote == []
+    assert "Bad" in demote
+
+
+def test_evaluate_trial_middling_score_no_action() -> None:
+    """Expired trial with score between 0.3 and 0.6 stays in trial."""
+    sources = [_make_trial_source("Mid", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "Mid": SourceStats(
+            name="Mid", total_fetches=10, successful_fetches=5,
+            total_articles_found=20, articles_included_in_digest=5,
+            avg_description_length=80.0, last_seen=today,
+        )
+    }
+    promote, demote = evaluate_trial_sources(sources, stats, today)
+    assert promote == []
+    assert demote == []
+
+
+def test_evaluate_trial_non_trial_ignored() -> None:
+    """Non-trial sources should not be evaluated."""
+    sources = [_make_source("Regular", priority=3)]
+    promote, demote = evaluate_trial_sources(sources, {}, "2026-03-18")
+    assert promote == []
+    assert demote == []
+
+
+# --- apply_trial_decisions ---
+
+
+def test_apply_trial_decisions_promote(tmp_path: Path) -> None:
+    """Promoted source should have trial set to false."""
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "GoodFeed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
+            {"name": "OtherFeed", "url": "https://y.com", "category": "Tech",
+             "enabled": True, "trial": False},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    apply_trial_decisions(str(config_path), promote=["GoodFeed"], demote=[])
+
+    with config_path.open("r") as f:
+        result = yaml.safe_load(f)
+
+    good = next(s for s in result["sources"] if s["name"] == "GoodFeed")
+    assert good["trial"] is False
+    # Other source should be untouched
+    other = next(s for s in result["sources"] if s["name"] == "OtherFeed")
+    assert other["enabled"] is True
+
+
+def test_apply_trial_decisions_demote(tmp_path: Path) -> None:
+    """Demoted source should have enabled set to false."""
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "BadFeed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    apply_trial_decisions(str(config_path), promote=[], demote=["BadFeed"])
+
+    with config_path.open("r") as f:
+        result = yaml.safe_load(f)
+
+    bad = next(s for s in result["sources"] if s["name"] == "BadFeed")
+    assert bad["enabled"] is False
+
+
+def test_apply_trial_decisions_noop(tmp_path: Path) -> None:
+    """Empty promote/demote lists should not modify the file."""
+    config_data = {
+        "sources": [
+            {"name": "Feed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    original = config_path.read_text()
+    apply_trial_decisions(str(config_path), promote=[], demote=[])
+    assert config_path.read_text() == original

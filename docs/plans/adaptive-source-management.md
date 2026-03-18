@@ -48,12 +48,12 @@
 
 ### Task 5: Trial source lifecycle management
 Механизм пробных источников: добавление новых источников с пометкой `trial: true`, ограниченный бюджет слотов, автоматическое продвижение в постоянные или удаление после пробного периода на основе скоринга.
-- [ ] In `src/source_scorer.py`: implement `evaluate_trial_sources(sources: list[SourceConfig], stats: dict[str, SourceStats], today: str) -> tuple[list[str], list[str]]` — return `(promote_names, demote_names)`: promote trials with score > 0.6 after `trial_days` elapsed, demote trials with score < 0.3 after `trial_days` elapsed, leave others in trial
-- [ ] In `src/source_scorer.py`: implement `apply_trial_decisions(config_path: str, promote: list[str], demote: list[str]) -> None` — read `config.yaml`, set `trial: false` for promoted sources, set `enabled: false` for demoted sources, write back to file
-- [ ] In `src/collector.py`: modify `allocate_slots()` to reserve separate budget for trial sources (use `adaptive.trial_slots` from config, default 2), so trial sources don't compete with established sources for slots
-- [ ] Add/update tests in `tests/test_source_scorer.py`: test `evaluate_trial_sources` — new trial not yet expired (no action), expired with high score (promote), expired with low score (demote); test `apply_trial_decisions` with a temp config.yaml file
-- [ ] Add/update tests in `tests/test_collector.py`: test that trial sources get separate slot budget and don't reduce slots for regular sources
-- [ ] Mark completed
+- [x] In `src/source_scorer.py`: implement `evaluate_trial_sources(sources: list[SourceConfig], stats: dict[str, SourceStats], today: str) -> tuple[list[str], list[str]]` — return `(promote_names, demote_names)`: promote trials with score > 0.6 after `trial_days` elapsed, demote trials with score < 0.3 after `trial_days` elapsed, leave others in trial
+- [x] In `src/source_scorer.py`: implement `apply_trial_decisions(config_path: str, promote: list[str], demote: list[str]) -> None` — read `config.yaml`, set `trial: false` for promoted sources, set `enabled: false` for demoted sources, write back to file
+- [x] In `src/collector.py`: modify `allocate_slots()` to reserve separate budget for trial sources (use `adaptive.trial_slots` from config, default 2), so trial sources don't compete with established sources for slots
+- [x] Add/update tests in `tests/test_source_scorer.py`: test `evaluate_trial_sources` — new trial not yet expired (no action), expired with high score (promote), expired with low score (demote); test `apply_trial_decisions` with a temp config.yaml file
+- [x] Add/update tests in `tests/test_collector.py`: test that trial sources get separate slot budget and don't reduce slots for regular sources
+- [x] Mark completed
 
 ### Task 6: Pipeline integration and orchestration
 Связываем все компоненты в единый пайплайн: загрузка статистики и фидбека, пересчёт приоритетов, сбор статей, обновление статистики, управление trial-источниками. Обновляем документацию и конфиг.

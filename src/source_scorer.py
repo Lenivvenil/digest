@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 if TYPE_CHECKING:
     from src.config import AdaptiveConfig, SourceConfig
 
@@ -248,3 +250,82 @@ def calculate_effective_priorities(
         priority = max(min_p, min(max_p, priority))
         result[source.name] = priority
     return result
+
+
+def evaluate_trial_sources(
+    sources: list["SourceConfig"],
+    stats: dict[str, SourceStats],
+    today: str,
+) -> tuple[list[str], list[str]]:
+    """Evaluate trial sources and decide which to promote or demote.
+
+    Returns (promote_names, demote_names):
+    - promote: trials with score > 0.6 after trial_days elapsed
+    - demote: trials with score < 0.3 after trial_days elapsed
+    - others remain in trial
+    """
+    promote: list[str] = []
+    demote: list[str] = []
+
+    try:
+        today_dt = datetime.strptime(today, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        logger.warning("Invalid today date for trial evaluation: %s", today)
+        return [], []
+
+    for source in sources:
+        if not source.trial:
+            continue
+        if source.trial_started is None:
+            continue
+        try:
+            started_dt = datetime.strptime(source.trial_started, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            logger.warning(
+                "Invalid trial_started date for source '%s': %s",
+                source.name,
+                source.trial_started,
+            )
+            continue
+
+        elapsed = (today_dt - started_dt).days
+        if elapsed < source.trial_days:
+            continue
+
+        score = calculate_score(stats[source.name]) if source.name in stats else 0.5
+        if score > 0.6:
+            promote.append(source.name)
+        elif score < 0.3:
+            demote.append(source.name)
+
+    return promote, demote
+
+
+def apply_trial_decisions(
+    config_path: str, promote: list[str], demote: list[str]
+) -> None:
+    """Update config.yaml: set trial=false for promoted, enabled=false for demoted."""
+    if not promote and not demote:
+        return
+
+    path = Path(config_path)
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+
+    if not isinstance(data, dict) or "sources" not in data:
+        logger.warning("Cannot apply trial decisions: invalid config structure")
+        return
+
+    for source_entry in data["sources"]:
+        name = source_entry.get("name")
+        if name in promote:
+            source_entry["trial"] = False
+            logger.info("Promoted trial source '%s' to permanent", name)
+        elif name in demote:
+            source_entry["enabled"] = False
+            logger.info("Demoted trial source '%s' (disabled)", name)
+
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)

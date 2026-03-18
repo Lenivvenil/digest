@@ -782,3 +782,112 @@ async def test_collect_falls_back_to_static_priorities(
     low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
     # With static priorities, High (priority=5) should get more
     assert high_count > low_count
+
+
+# ---------------------------------------------------------------------------
+# Trial source slot budget tests
+# ---------------------------------------------------------------------------
+
+
+class TestAllocateSlotsTrial:
+    def test_trial_sources_get_separate_budget(self) -> None:
+        """Trial sources should use trial_budget, not compete with regular sources."""
+        regular = make_source(name="Regular", priority=5)
+        trial = SourceConfig(
+            name="Trial", url="https://t.com/feed", category="Tech",
+            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
+        )
+        slots = allocate_slots([regular, trial], total_budget=10, trial_budget=2)
+        # Regular should get all 10 of the main budget
+        assert slots["Regular"] == 10
+        # Trial should get all 2 of the trial budget
+        assert slots["Trial"] == 2
+
+    def test_trial_no_budget_treated_as_regular(self) -> None:
+        """Without trial_budget, trial sources compete with regular sources."""
+        regular = make_source(name="Regular", priority=5)
+        trial = SourceConfig(
+            name="Trial", url="https://t.com/feed", category="Tech",
+            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
+        )
+        slots = allocate_slots([regular, trial], total_budget=8)
+        # total_weight=8, Regular=round(8*5/8)=5, Trial=round(8*3/8)=3
+        assert slots["Regular"] == 5
+        assert slots["Trial"] == 3
+
+    def test_trial_budget_does_not_reduce_regular_slots(self) -> None:
+        """Regular sources should get the full total_budget, not total-trial."""
+        sources = [
+            make_source(name="R1", priority=3),
+            make_source(name="R2", priority=3),
+            SourceConfig(
+                name="T1", url="https://t.com", category="Tech",
+                enabled=True, priority=3, trial=True, trial_started="2026-03-01",
+            ),
+        ]
+        slots = allocate_slots(sources, total_budget=10, trial_budget=2)
+        # Regular sources split 10 evenly
+        assert slots["R1"] == 5
+        assert slots["R2"] == 5
+        # Trial gets from trial budget
+        assert slots["T1"] == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_trial_sources_separate_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trial sources should get a separate slot budget when adaptive is enabled."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    from src.config import AdaptiveConfig
+
+    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
+        items = "\n".join(
+            f"""<item>
+              <title>{prefix} Article {i}</title>
+              <link>https://{prefix.lower()}.example.com/{i}</link>
+              <description>Body {i}</description>
+              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
+            </item>"""
+            for i in range(count)
+        )
+        return textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel><title>{prefix}</title>
+                {items}
+              </channel>
+            </rss>
+        """).encode()
+
+    regular = make_source(name="Regular", url="https://regular.example.com/feed", priority=5)
+    trial = SourceConfig(
+        name="Trial", url="https://trial.example.com/feed", category="Tech",
+        enabled=True, priority=3, trial=True, trial_started="2026-03-01",
+    )
+    config = Config(
+        llm=LLMConfig(provider="anthropic", model="test"),
+        delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
+        digest=DigestConfig(
+            language="ru", max_articles_per_source=10,
+            max_total_articles=10, summary_style="analytical",
+        ),
+        sources=[regular, trial],
+        adaptive=AdaptiveConfig(enabled=True, trial_slots=2),
+    )
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        prefix = "Regular" if "regular" in url else "Trial"
+        return make_http_response(make_multi_rss(prefix, count=5))
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    regular_count = sum(1 for a in result.get("Tech", []) if a.source == "Regular")
+    trial_count = sum(1 for a in result.get("Tech", []) if a.source == "Trial")
+    # Trial should get at most trial_slots=2
+    assert trial_count <= 2
+    # Regular should get more since it has the full budget
+    assert regular_count > trial_count
