@@ -315,6 +315,61 @@ def test_source_priority_out_of_range(tmp_path: Path) -> None:
             load_config(cfg_path)
 
 
+def test_source_priority_bool_rejected(tmp_path: Path) -> None:
+    """YAML boolean values (true/false) must be rejected as priority even though bool is a subclass of int."""
+    for bad_priority in ("true", "false"):
+        content = f"""
+            llm:
+              provider: "anthropic"
+              model: "claude-sonnet-4-20250514"
+            delivery:
+              telegram: false
+              markdown_to_repo: false
+            digest:
+              language: "ru"
+              max_articles_per_source: 5
+              max_total_articles: 30
+              summary_style: "analytical"
+            sources:
+              - name: "Feed"
+                url: "https://example.com/feed"
+                category: "Test"
+                enabled: true
+                priority: {bad_priority}
+        """
+        cfg_path = _write_config(tmp_path, content)
+        with pytest.raises(ValueError, match="priority.*must be an integer"):
+            load_config(cfg_path)
+
+
+def test_duplicate_source_names_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "Feed A"
+            url: "https://example.com/a"
+            category: "Test"
+            enabled: true
+          - name: "Feed A"
+            url: "https://example.com/b"
+            category: "Test"
+            enabled: true
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="Duplicate source name"):
+        load_config(cfg_path)
+
+
 def test_default_summary_style_and_language(tmp_path: Path) -> None:
     content = """
         llm:

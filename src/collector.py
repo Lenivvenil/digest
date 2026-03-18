@@ -187,8 +187,12 @@ def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, 
     """Return per-source article slot counts proportional to source priorities.
 
     slot(source) = max(1, round(total_budget * source.priority / total_weight))
+
+    If total_weight is zero (all sources have priority=0), every source gets 1 slot.
     """
     total_weight = sum(s.priority for s in sources)
+    if total_weight == 0:
+        return {s.name: 1 for s in sources}
     return {
         s.name: max(1, round(total_budget * s.priority / total_weight))
         for s in sources
@@ -250,32 +254,63 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
     grouped: dict[str, list[Article]] = {}
     total_collected = 0
 
-    # Process sources in descending priority order so high-priority sources
-    # fill their slots before low-priority sources exhaust the total budget.
-    source_result_pairs = sorted(
+    # Pre-compute eligible articles per source (recency + dedup filter) in
+    # descending priority order so that pass 2 redistribution also favours
+    # higher-priority sources when filling the remaining budget.
+    source_eligible: list[tuple[SourceConfig, list[tuple[str, Article]]]] = []
+    for source, raw_articles in sorted(
         zip(config.enabled_sources, results),
         key=lambda x: x[0].priority,
         reverse=True,
-    )
-    for source, articles in source_result_pairs:
-        if articles is None:
+    ):
+        if raw_articles is None:
             continue
-        per_source_count = 0
-        for article in articles:
-            if total_collected >= config.digest.max_total_articles:
-                break
-            if per_source_count >= slots[source.name]:
-                break
+        eligible: list[tuple[str, Article]] = []
+        for article in raw_articles:
             if not _is_recent(article, cutoff_24h):
                 continue
             h = _article_hash(article.title, article.link)
             if h in cache:
                 logger.debug("Skipping cached article: %s", article.title)
                 continue
+            eligible.append((h, article))
+        source_eligible.append((source, eligible))
+
+    per_source_taken: dict[str, int] = {s.name: 0 for s, _ in source_eligible}
+
+    # Pass 1: fill up to proportional slot limits.
+    for source, eligible in source_eligible:
+        slot = slots[source.name]
+        taken = 0
+        for h, article in eligible:
+            if total_collected >= config.digest.max_total_articles:
+                break
+            if taken >= slot:
+                break
+            if h in cache:
+                continue
             cache[h] = now.isoformat()
             grouped.setdefault(source.category, []).append(article)
-            per_source_count += 1
+            taken += 1
             total_collected += 1
+        per_source_taken[source.name] = taken
+
+    # Pass 2: redistribute unused budget to sources that still have eligible
+    # articles, respecting the absolute per-source cap.
+    if total_collected < config.digest.max_total_articles:
+        for source, eligible in source_eligible:
+            taken = per_source_taken[source.name]
+            for h, article in eligible[taken:]:
+                if total_collected >= config.digest.max_total_articles:
+                    break
+                if taken >= config.digest.max_articles_per_source:
+                    break
+                if h in cache:
+                    continue
+                cache[h] = now.isoformat()
+                grouped.setdefault(source.category, []).append(article)
+                taken += 1
+                total_collected += 1
 
     logger.info(
         "Collected %d new articles across %d categories",

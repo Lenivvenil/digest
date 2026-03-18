@@ -587,6 +587,12 @@ class TestAllocateSlots:
         slots = allocate_slots(sources, total_budget=1)
         assert slots["Tiny"] >= 1
 
+    def test_zero_weight_fallback(self) -> None:
+        sources = [make_source(name="A", priority=0), make_source(name="B", priority=0)]
+        slots = allocate_slots(sources, total_budget=10)
+        assert slots["A"] == 1
+        assert slots["B"] == 1
+
 
 
 @pytest.mark.asyncio
@@ -631,3 +637,52 @@ async def test_collect_respects_priority(
     high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
     low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
     assert high_count > low_count
+
+
+@pytest.mark.asyncio
+async def test_collect_redistributes_unused_slots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unused slots from a quiet high-priority source must flow to active lower-priority sources."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    def make_multi_rss(prefix: str, count: int) -> bytes:
+        items = "\n".join(
+            f"""<item>
+              <title>{prefix} Article {i}</title>
+              <link>https://{prefix.lower()}.example.com/{i}</link>
+              <description>Body {i}</description>
+              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
+            </item>"""
+            for i in range(count)
+        )
+        return textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel><title>{prefix}</title>
+                {items}
+              </channel>
+            </rss>
+        """).encode()
+
+    # priority=5 quiet feed gets large slot allocation but only has 0 articles.
+    # priority=1 active feed has 5 articles but only gets 1 proportional slot.
+    # With redistribution the active feed should fill the remaining budget.
+    quiet = make_source(name="Quiet", url="https://quiet.example.com/feed", category="Tech", priority=5)
+    active = make_source(name="Active", url="https://active.example.com/feed", category="Tech", priority=1)
+    config = make_config(sources=[quiet, active], max_total_articles=6, max_articles_per_source=5)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        if "quiet" in url:
+            return make_http_response(make_multi_rss("Quiet", count=0))
+        return make_http_response(make_multi_rss("Active", count=5))
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    total = sum(len(v) for v in result.values())
+    active_count = sum(1 for a in result.get("Tech", []) if a.source == "Active")
+    # Without redistribution only 1 article would be collected; with it up to 5 should be.
+    assert active_count > 1
+    assert total > 1

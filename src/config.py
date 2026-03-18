@@ -144,7 +144,7 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"(true or false without quotes), got {type(raw_enabled).__name__} {raw_enabled!r}."
             )
         raw_priority = item.get("priority", 3)
-        if not isinstance(raw_priority, int):
+        if isinstance(raw_priority, bool) or not isinstance(raw_priority, int):
             raise ValueError(
                 f"Config field 'priority' in sources[{i}] must be an integer, "
                 f"got {type(raw_priority).__name__} {raw_priority!r}."
@@ -163,6 +163,14 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 priority=raw_priority,
             )
         )
+    seen_names: set[str] = set()
+    for source in sources:
+        if source.name in seen_names:
+            raise ValueError(
+                f"Duplicate source name {source.name!r}. "
+                "Each source must have a unique name."
+            )
+        seen_names.add(source.name)
     return sources
 
 

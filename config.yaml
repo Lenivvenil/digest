@@ -69,7 +69,7 @@ sources:
 
   # Architecture & Distributed Systems
   - name: "High Scalability"
-    url: "http://feeds.feedburner.com/HighScalability"
+    url: "https://feeds.feedburner.com/HighScalability"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
