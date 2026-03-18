@@ -183,6 +183,22 @@ async def _fetch_feed(
     return articles
 
 
+def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, int]:
+    """Return per-source article slot counts proportional to source priorities.
+
+    slot(source) = max(1, round(total_budget * source.priority / total_weight))
+
+    If total_weight is 0, every source gets 1 slot.
+    """
+    total_weight = sum(s.priority for s in sources)
+    if total_weight == 0:
+        return {s.name: 1 for s in sources}
+    return {
+        s.name: max(1, round(total_budget * s.priority / total_weight))
+        for s in sources
+    }
+
+
 def _is_recent(article: Article, cutoff: datetime) -> bool:
     """Return True if article is within 24h window or has no date."""
     if article.pub_date is None:
@@ -226,6 +242,15 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
             "Check network connectivity and feed URLs."
         )
 
+    successful_sources = [
+        s for s, r in zip(config.enabled_sources, results) if r is not None
+    ]
+    raw_slots = allocate_slots(successful_sources, config.digest.max_total_articles)
+    slots = {
+        name: min(count, config.digest.max_articles_per_source)
+        for name, count in raw_slots.items()
+    }
+
     grouped: dict[str, list[Article]] = {}
     total_collected = 0
 
@@ -236,7 +261,7 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
         for article in articles:
             if total_collected >= config.digest.max_total_articles:
                 break
-            if per_source_count >= config.digest.max_articles_per_source:
+            if per_source_count >= slots[source.name]:
                 break
             if not _is_recent(article, cutoff_24h):
                 continue

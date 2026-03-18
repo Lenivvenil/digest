@@ -41,23 +41,23 @@ slot(source) = max(1, round(max_total_articles * source.priority / Σ priority �
 Итого для каждого источника вычисляется индивидуальный лимит ещё до итерации по статьям.
 Это позволяет источнику с `priority=5` получать ~3× больше слотов, чем с `priority=1`.
 
-- [ ] В `src/collector.py`: добавить чистую функцию `allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, int]`,
+- [x] В `src/collector.py`: добавить чистую функцию `allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, int]`,
       которая возвращает словарь `{source.name: slot_count}` по формуле выше;
       если `total_weight == 0` — возвращает по 1 слоту каждому источнику
-- [ ] В `src/collector.py`: в функции `collect()` — после `asyncio.gather` отфильтровать источники,
+- [x] В `src/collector.py`: в функции `collect()` — после `asyncio.gather` отфильтровать источники,
       у которых `results` не `None`, вызвать `allocate_slots()` и использовать возвращённые значения
       вместо глобального `config.digest.max_articles_per_source` при итерации по статьям
-- [ ] В `src/collector.py`: убрать строку `if per_source_count >= config.digest.max_articles_per_source`
+- [x] В `src/collector.py`: убрать строку `if per_source_count >= config.digest.max_articles_per_source`
       и заменить её на `if per_source_count >= slots[source.name]`
-- [ ] В `src/collector.py`: сохранить `config.digest.max_articles_per_source` как fallback-потолок —
+- [x] В `src/collector.py`: сохранить `config.digest.max_articles_per_source` как fallback-потолок —
       ни один источник не может получить больше этого значения независимо от приоритета
-- [ ] В `tests/test_collector.py`: тест `test_allocate_slots_proportional` — источники с приоритетами
+- [x] В `tests/test_collector.py`: тест `test_allocate_slots_proportional` — источники с приоритетами
       [5, 3, 1] при бюджете 18 получают слоты пропорционально (5/9×18, 3/9×18, 1/9×18)
-- [ ] В `tests/test_collector.py`: тест `test_allocate_slots_minimum_one` — источник с `priority=1`
+- [x] В `tests/test_collector.py`: тест `test_allocate_slots_minimum_one` — источник с `priority=1`
       при любом бюджете получает как минимум 1 слот
-- [ ] В `tests/test_collector.py`: тест `test_collect_respects_priority` — источник с `priority=5`
+- [x] В `tests/test_collector.py`: тест `test_collect_respects_priority` — источник с `priority=5`
       отдаёт больше статей, чем источник с `priority=1`, при одинаковом фиде
-- [ ] Mark completed
+- [x] Mark completed
 
 ---
 

@@ -17,6 +17,7 @@ from src.collector import (
     _parse_pub_date,
     _prune_cache,
     _strip_html,
+    allocate_slots,
     collect,
     save_dedup_cache,
 )
@@ -26,42 +27,62 @@ from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, SourceCo
 # Fixtures
 # ---------------------------------------------------------------------------
 
-RSS_SAMPLE = textwrap.dedent("""\
-    <?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0">
-      <channel>
-        <title>Test Feed</title>
-        <link>https://example.com</link>
-        <description>A test feed</description>
-        <item>
-          <title>Article One</title>
-          <link>https://example.com/1</link>
-          <description><![CDATA[<p>First <b>article</b> body.</p>]]></description>
-          <pubDate>Mon, 16 Mar 2026 05:00:00 +0000</pubDate>
-        </item>
-        <item>
-          <title>Article Two</title>
-          <link>https://example.com/2</link>
-          <description>Second article body.</description>
-          <pubDate>Mon, 16 Mar 2026 04:00:00 +0000</pubDate>
-        </item>
-      </channel>
-    </rss>
-""")
+def _rfc2822(hours_ago: int = 2) -> str:
+    """Return an RFC 2822 date string for a recent time."""
+    dt = datetime.now(tz=timezone.utc) - timedelta(hours=hours_ago)
+    return dt.strftime("%a, %d %b %Y %H:%M:%S +0000")
 
-ATOM_SAMPLE = textwrap.dedent("""\
-    <?xml version="1.0" encoding="utf-8"?>
-    <feed xmlns="http://www.w3.org/2005/Atom">
-      <title>Atom Feed</title>
-      <link href="https://atom.example.com"/>
-      <entry>
-        <title>Atom Article</title>
-        <link href="https://atom.example.com/1"/>
-        <summary>Atom article summary.</summary>
-        <updated>2026-03-16T06:00:00Z</updated>
-      </entry>
-    </feed>
-""")
+
+def _iso8601(hours_ago: int = 3) -> str:
+    """Return an ISO 8601 UTC date string for a recent time."""
+    dt = datetime.now(tz=timezone.utc) - timedelta(hours=hours_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_rss_sample() -> str:
+    return textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Test Feed</title>
+            <link>https://example.com</link>
+            <description>A test feed</description>
+            <item>
+              <title>Article One</title>
+              <link>https://example.com/1</link>
+              <description><![CDATA[<p>First <b>article</b> body.</p>]]></description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
+            </item>
+            <item>
+              <title>Article Two</title>
+              <link>https://example.com/2</link>
+              <description>Second article body.</description>
+              <pubDate>{_rfc2822(hours_ago=3)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
+
+
+def make_atom_sample() -> str:
+    return textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="utf-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <title>Atom Feed</title>
+          <link href="https://atom.example.com"/>
+          <entry>
+            <title>Atom Article</title>
+            <link href="https://atom.example.com/1"/>
+            <summary>Atom article summary.</summary>
+            <updated>{_iso8601(hours_ago=3)}</updated>
+          </entry>
+        </feed>
+    """)
+
+
+# Keep module-level aliases for backward compatibility within this file
+RSS_SAMPLE = make_rss_sample()
+ATOM_SAMPLE = make_atom_sample()
 
 MALFORMED_XML = b"<not valid xml><<<"
 
@@ -71,8 +92,9 @@ def make_source(
     url: str = "https://example.com/feed",
     category: str = "Tech",
     enabled: bool = True,
+    priority: int = 3,
 ) -> SourceConfig:
-    return SourceConfig(name=name, url=url, category=category, enabled=enabled)
+    return SourceConfig(name=name, url=url, category=category, enabled=enabled, priority=priority)
 
 
 def make_config(
@@ -422,13 +444,13 @@ async def test_collect_respects_max_total(
                   <title>Article {idx}-A</title>
                   <link>https://s{idx}.example.com/a</link>
                   <description>Body A</description>
-                  <pubDate>Mon, 16 Mar 2026 05:00:00 +0000</pubDate>
+                  <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
                 </item>
                 <item>
                   <title>Article {idx}-B</title>
                   <link>https://s{idx}.example.com/b</link>
                   <description>Body B</description>
-                  <pubDate>Mon, 16 Mar 2026 04:00:00 +0000</pubDate>
+                  <pubDate>{_rfc2822(hours_ago=3)}</pubDate>
                 </item>
               </channel>
             </rss>
@@ -457,7 +479,7 @@ async def test_collect_filters_old_articles(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    old_rss = textwrap.dedent("""\
+    old_rss = textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0">
           <channel>
@@ -466,7 +488,7 @@ async def test_collect_filters_old_articles(
               <title>Old Article</title>
               <link>https://old.example.com/1</link>
               <description>Old news</description>
-              <pubDate>Mon, 10 Mar 2026 05:00:00 +0000</pubDate>
+              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
             </item>
           </channel>
         </rss>
@@ -505,7 +527,7 @@ async def test_collect_groups_by_category(
                   <title>{domain} Article</title>
                   <link>https://{domain}.example.com/1</link>
                   <description>Some body</description>
-                  <pubDate>Mon, 16 Mar 2026 05:00:00 +0000</pubDate>
+                  <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
                 </item>
               </channel>
             </rss>
@@ -541,3 +563,77 @@ async def test_collect_html_stripped_in_description(
         for article in articles:
             assert "<" not in article.description
             assert ">" not in article.description
+
+
+# ---------------------------------------------------------------------------
+# allocate_slots tests
+# ---------------------------------------------------------------------------
+
+class TestAllocateSlots:
+    def test_proportional(self) -> None:
+        sources = [
+            make_source(name="High", priority=5),
+            make_source(name="Med", priority=3),
+            make_source(name="Low", priority=1),
+        ]
+        slots = allocate_slots(sources, total_budget=18)
+        # total_weight=9; expected: round(18*5/9)=10, round(18*3/9)=6, round(18*1/9)=2
+        assert slots["High"] == 10
+        assert slots["Med"] == 6
+        assert slots["Low"] == 2
+
+    def test_minimum_one(self) -> None:
+        sources = [make_source(name="Tiny", priority=1)]
+        slots = allocate_slots(sources, total_budget=1)
+        assert slots["Tiny"] >= 1
+
+    def test_zero_weight_fallback(self) -> None:
+        # priority=0 is invalid per config validation, but allocate_slots handles it gracefully
+        sources = [make_source(name="A", priority=0), make_source(name="B", priority=0)]
+        slots = allocate_slots(sources, total_budget=10)
+        assert slots["A"] == 1
+        assert slots["B"] == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_respects_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """High-priority source should receive more article slots than low-priority source."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
+        items = "\n".join(
+            f"""<item>
+              <title>{prefix} Article {i}</title>
+              <link>https://{prefix.lower()}.example.com/{i}</link>
+              <description>Body {i}</description>
+              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
+            </item>"""
+            for i in range(count)
+        )
+        return textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+              <channel><title>{prefix}</title>
+                {items}
+              </channel>
+            </rss>
+        """).encode()
+
+    high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
+    low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
+    # Budget=6, weights=6 → High gets round(6*5/6)=5 slots, Low gets round(6*1/6)=1 slot
+    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        prefix = "High" if "high" in url else "Low"
+        return make_http_response(make_multi_rss(prefix, count=5))
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
+    low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
+    assert high_count > low_count
