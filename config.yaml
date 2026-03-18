@@ -68,6 +68,30 @@ sources:
   # ============================================================
 
   # Architecture & Distributed Systems
+  - name: "High Scalability"
+    url: "http://feeds.feedburner.com/HighScalability"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 5
+
+  - name: "Brendan Gregg's Blog"
+    url: "https://www.brendangregg.com/blog/rss.xml"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 5
+
+  - name: "Increment Magazine"
+    url: "https://increment.com/feeds/all.rss"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 5
+
+  - name: "SRE Weekly"
+    url: "https://sreweekly.com/feed/"
+    category: "Architecture & Distributed Systems"
+    enabled: true
+    priority: 4
+
   - name: "Martin Fowler"
     url: "https://martinfowler.com/feed.atom"
     category: "Architecture & Distributed Systems"
@@ -165,6 +189,12 @@ sources:
     enabled: true
     priority: 2
 
+  - name: "Meta Engineering"
+    url: "https://engineering.fb.com/feed/"
+    category: "Company Engineering"
+    enabled: true
+    priority: 4
+
   # Cloud & Infrastructure
   - name: "AWS Architecture Blog"
     url: "https://aws.amazon.com/blogs/architecture/feed/"
@@ -209,6 +239,18 @@ sources:
     enabled: true
     priority: 3
 
+  - name: "Confluent Blog"
+    url: "https://www.confluent.io/blog/feed/"
+    category: "Data & Databases"
+    enabled: true
+    priority: 4
+
+  - name: "TimescaleDB Blog"
+    url: "https://www.timescale.com/blog/rss/"
+    category: "Data & Databases"
+    enabled: true
+    priority: 4
+
   # Banking & Fintech
   - name: "Finextra"
     url: "https://www.finextra.com/rss/headlines.aspx"
@@ -233,6 +275,25 @@ sources:
     category: "Banking & Fintech"
     enabled: false
     priority: 1
+
+  - name: "Monzo Tech Blog"
+    url: "https://monzo.com/blog/technology/feed"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 5
+
+  # Payments & Fintech
+  - name: "Adyen Tech Blog"
+    url: "https://www.adyen.com/knowledge-hub/rss.xml"
+    category: "Payments & Fintech"
+    enabled: true
+    priority: 4
+
+  - name: "Plaid Blog"
+    url: "https://plaid.com/blog/rss.xml"
+    category: "Payments & Fintech"
+    enabled: true
+    priority: 4
 
   # AI & LLM
   - name: "MIT Technology Review AI"
@@ -270,6 +331,26 @@ sources:
     category: "AI & LLM"
     enabled: false
     priority: 1
+
+  # AI Engineering
+  - name: "Google Research Blog"
+    url: "https://research.google/blog/rss/"
+    category: "AI Engineering"
+    enabled: true
+    priority: 4
+
+  # Platform Engineering
+  - name: "Prometheus Blog"
+    url: "https://prometheus.io/blog/feed.xml"
+    category: "Platform Engineering"
+    enabled: true
+    priority: 4
+
+  - name: "OpenTelemetry Blog"
+    url: "https://opentelemetry.io/blog/feed.xml"
+    category: "Platform Engineering"
+    enabled: true
+    priority: 4
 
   # Enterprise Architecture
   - name: "InfoQ"

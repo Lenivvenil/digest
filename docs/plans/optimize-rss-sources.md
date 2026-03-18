@@ -141,8 +141,8 @@ slot(source) = max(1, round(max_total_articles * source.priority / Σ priority �
 | OpenTelemetry Blog | `https://opentelemetry.io/blog/feed.xml` | Platform Engineering | 4 |
 | Google Research Blog | `https://research.google/blog/rss/` | AI Engineering | 4 |
 
-- [ ] В `config.yaml`: добавить все 13 источников из таблицы с указанными `priority` значениями
-- [ ] Mark completed
+- [x] В `config.yaml`: добавить все 13 источников из таблицы с указанными `priority` значениями
+- [x] Mark completed
 
 ---
 
