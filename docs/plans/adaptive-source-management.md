@@ -19,13 +19,13 @@
 
 ### Task 2: Source quality scoring engine with persistence
 Реализуем подсчёт объективных метрик качества каждого источника: надёжность фида, продуктивность (сколько статей попадает в дайджест), качество описаний. Статистика сохраняется в `.cache/source_stats.json` между запусками.
-- [ ] In `src/source_scorer.py`: implement `load_stats(cache_dir: str) -> dict[str, SourceStats]` — load from `.cache/source_stats.json`, return empty dict if file missing
-- [ ] In `src/source_scorer.py`: implement `save_stats(stats: dict[str, SourceStats], cache_dir: str) -> None` — serialize to JSON with ISO timestamps
-- [ ] In `src/source_scorer.py`: implement `update_stats(stats: dict[str, SourceStats], source_name: str, fetch_ok: bool, articles_found: int, articles_included: int, avg_desc_len: float) -> None` — append `DailySnapshot`, update rolling counters, cap history at 30 days
-- [ ] In `src/source_scorer.py`: implement `calculate_score(stats: SourceStats) -> float` returning 0.0–1.0 composite score based on: reliability (`successful_fetches / total_fetches`), productivity (`articles_included / articles_found`), description quality (`avg_description_length > 100`), recency (`last_seen` within 3 days)
-- [ ] In `src/collector.py`: after fetching each feed, call `update_stats()` with fetch results (success/fail, article count, avg description length); after `allocate_slots()`, update `articles_included` count per source
-- [ ] Add/update tests in `tests/test_source_scorer.py`: test `load_stats`/`save_stats` round-trip, test `update_stats` appends snapshots and caps at 30, test `calculate_score` returns expected values for edge cases (new source with no history → 0.5, perfect source → ~1.0, dead source → ~0.0)
-- [ ] Mark completed
+- [x] In `src/source_scorer.py`: implement `load_stats(cache_dir: str) -> dict[str, SourceStats]` — load from `.cache/source_stats.json`, return empty dict if file missing
+- [x] In `src/source_scorer.py`: implement `save_stats(stats: dict[str, SourceStats], cache_dir: str) -> None` — serialize to JSON with ISO timestamps
+- [x] In `src/source_scorer.py`: implement `update_stats(stats: dict[str, SourceStats], source_name: str, fetch_ok: bool, articles_found: int, articles_included: int, avg_desc_len: float) -> None` — append `DailySnapshot`, update rolling counters, cap history at 30 days
+- [x] In `src/source_scorer.py`: implement `calculate_score(stats: SourceStats) -> float` returning 0.0–1.0 composite score based on: reliability (`successful_fetches / total_fetches`), productivity (`articles_included / articles_found`), description quality (`avg_description_length > 100`), recency (`last_seen` within 3 days)
+- [x] In `src/collector.py`: after fetching each feed, call `update_stats()` with fetch results (success/fail, article count, avg description length); after `allocate_slots()`, update `articles_included` count per source
+- [x] Add/update tests in `tests/test_source_scorer.py`: test `load_stats`/`save_stats` round-trip, test `update_stats` appends snapshots and caps at 30, test `calculate_score` returns expected values for edge cases (new source with no history → 0.5, perfect source → ~1.0, dead source → ~0.0)
+- [x] Mark completed
 
 ### Task 3: Telegram feedback collection
 Добавляем кнопки оценки (👍/👎) к сообщениям дайджеста в Telegram и механизм сбора ответов через `getUpdates` при следующем запуске. Обратная связь сохраняется в `.cache/feedback.json`.

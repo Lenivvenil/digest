@@ -17,6 +17,7 @@ import html as html_lib
 import httpx
 
 from src.config import Config, SourceConfig
+from src.source_scorer import SourceStats, update_stats
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +216,10 @@ def save_dedup_cache(cache: dict[str, str]) -> None:
     _save_cache(cache)
 
 
-async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, str]]:
+async def collect(
+    config: Config,
+    source_stats: dict[str, SourceStats] | None = None,
+) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
     Applies 24h filtering, deduplication cache, and per-source/total limits.
@@ -235,6 +239,25 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
         tasks = [_fetch_feed(client, source) for source in config.enabled_sources]
         results = await asyncio.gather(*tasks)
+
+    # Update source stats after fetching
+    if source_stats is not None:
+        for source, raw_articles in zip(config.enabled_sources, results):
+            fetch_ok = raw_articles is not None
+            articles_found = len(raw_articles) if raw_articles else 0
+            avg_desc_len = 0.0
+            if raw_articles:
+                desc_lens = [len(a.description) for a in raw_articles if a.description]
+                if desc_lens:
+                    avg_desc_len = sum(desc_lens) / len(desc_lens)
+            update_stats(
+                source_stats,
+                source.name,
+                fetch_ok=fetch_ok,
+                articles_found=articles_found,
+                articles_included=0,  # updated after slot allocation
+                avg_desc_len=avg_desc_len,
+            )
 
     if config.enabled_sources and all(r is None for r in results):
         raise AllFeedsFailedError(
@@ -311,6 +334,17 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
                 grouped.setdefault(source.category, []).append(article)
                 taken += 1
                 total_collected += 1
+
+    # Update articles_included counts in source stats
+    if source_stats is not None:
+        for source_name, taken in per_source_taken.items():
+            if source_name in source_stats:
+                st = source_stats[source_name]
+                # The last snapshot was added with articles_included=0; fix it now
+                if st.history:
+                    st.history[-1].articles_included = taken
+                # Also update the rolling counter: undo the 0 and add actual count
+                st.articles_included_in_digest += taken
 
     logger.info(
         "Collected %d new articles across %d categories",
