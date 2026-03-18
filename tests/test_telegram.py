@@ -7,7 +7,7 @@ import respx
 import httpx
 from unittest.mock import patch
 
-from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, TelegramPartialDeliveryError
+from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, TelegramPartialDeliveryError, _feedback_keyboard
 from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 
@@ -369,3 +369,67 @@ async def test_send_digest_partial_delivery_raises_partial_error() -> None:
 
     # First chunk was attempted; second chunk was attempted and failed
     assert respx.calls.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Feedback keyboard
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_keyboard_structure() -> None:
+    kb = _feedback_keyboard(0)
+    assert "inline_keyboard" in kb
+    buttons = kb["inline_keyboard"][0]
+    assert len(buttons) == 2
+    assert buttons[0]["callback_data"] == "fb:good:0"
+    assert buttons[1]["callback_data"] == "fb:bad:0"
+
+
+def test_feedback_keyboard_chunk_index() -> None:
+    kb = _feedback_keyboard(3)
+    buttons = kb["inline_keyboard"][0]
+    assert buttons[0]["callback_data"] == "fb:good:3"
+    assert buttons[1]["callback_data"] == "fb:bad:3"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_digest_single_message_has_feedback_buttons() -> None:
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "kbtoken", "TELEGRAM_CHAT_ID": "99"}
+    url = "https://api.telegram.org/botkbtoken/sendMessage"
+
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    with patch.dict("os.environ", env, clear=True):
+        await send_digest("Short digest", config)
+
+    assert respx.calls.call_count == 1
+    import json as _json
+    payload = _json.loads(respx.calls[0].request.content)
+    assert "reply_markup" in payload
+    buttons = payload["reply_markup"]["inline_keyboard"][0]
+    assert buttons[0]["callback_data"] == "fb:good:0"
+    assert buttons[1]["callback_data"] == "fb:bad:0"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_digest_multi_chunk_only_last_has_buttons() -> None:
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "kbtoken2", "TELEGRAM_CHAT_ID": "88"}
+    url = "https://api.telegram.org/botkbtoken2/sendMessage"
+
+    text = "A" * 3000 + "\n\n" + "B" * 3000
+
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    with patch.dict("os.environ", env, clear=True):
+        await send_digest(text, config)
+
+    assert respx.calls.call_count == 2
+    import json as _json
+    first_payload = _json.loads(respx.calls[0].request.content)
+    last_payload = _json.loads(respx.calls[1].request.content)
+    assert "reply_markup" not in first_payload
+    assert "reply_markup" in last_payload

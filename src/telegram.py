@@ -210,7 +210,9 @@ async def send_digest(text: str, config: Config) -> bool:
             for i, chunk in enumerate(chunks):
                 if i > 0:
                     await asyncio.sleep(1)
-                await _send_chunk(client, api_url, chat_id, chunk)
+                is_last = i == len(chunks) - 1
+                reply_markup = _feedback_keyboard(i) if is_last else None
+                await _send_chunk(client, api_url, chat_id, chunk, reply_markup=reply_markup)
                 any_sent = True
     except Exception as exc:
         if any_sent:
@@ -227,11 +229,25 @@ async def send_digest(text: str, config: Config) -> bool:
     return True
 
 
+def _feedback_keyboard(chunk_index: int) -> dict[str, list[list[dict[str, str]]]]:
+    """Build an InlineKeyboardMarkup with thumbs up/down feedback buttons."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "\U0001f44d", "callback_data": f"fb:good:{chunk_index}"},
+                {"text": "\U0001f44e", "callback_data": f"fb:bad:{chunk_index}"},
+            ]
+        ]
+    }
+
+
 async def _send_chunk(
     client: httpx.AsyncClient,
     api_url: str,
     chat_id: str,
     md2_text: str,
+    *,
+    reply_markup: dict[str, list[list[dict[str, str]]]] | None = None,
 ) -> None:
     """Send a single pre-converted MarkdownV2 chunk to Telegram.
 
@@ -240,11 +256,13 @@ async def _send_chunk(
     On HTTP 400 (parse error), retries as plain text by stripping MarkdownV2
     escape backslashes from the same chunk.
     """
-    payload = {
+    payload: dict[str, object] = {
         "chat_id": chat_id,
         "text": md2_text,
         "parse_mode": "MarkdownV2",
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         response = await client.post(api_url, json=payload)
         if response.status_code == 400:

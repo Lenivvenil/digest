@@ -29,13 +29,13 @@
 
 ### Task 3: Telegram feedback collection
 Добавляем кнопки оценки (👍/👎) к сообщениям дайджеста в Telegram и механизм сбора ответов через `getUpdates` при следующем запуске. Обратная связь сохраняется в `.cache/feedback.json`.
-- [ ] In `src/telegram.py`: modify `send_digest()` to attach an `InlineKeyboardMarkup` with two buttons (👍 callback_data=`fb:good:{msg_chunk_index}`, 👎 callback_data=`fb:bad:{msg_chunk_index}`) to the last message chunk of the digest
-- [ ] In `src/feedback.py`: implement `load_feedback(cache_dir: str) -> FeedbackStore` — load from `.cache/feedback.json`, return empty store if missing
-- [ ] In `src/feedback.py`: implement `save_feedback(store: FeedbackStore, cache_dir: str) -> None` — serialize to JSON
-- [ ] In `src/feedback.py`: implement `async collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStore` — call Telegram `getUpdates` API with `offset=last_update_id+1`, filter `callback_query` results, parse `fb:good`/`fb:bad` from `callback_data`, answer each callback query, update store with new ratings, update `last_update_id`
-- [ ] In `src/feedback.py`: implement `get_source_feedback_score(store: FeedbackStore, source_name: str, days: int = 14) -> float | None` — aggregate ratings for source over last N days, return 0.0–1.0 or None if no data
-- [ ] Add/update tests in `tests/test_feedback.py`: test `load_feedback`/`save_feedback` round-trip; test `collect_feedback` with mocked Telegram API responses (good rating, bad rating, non-feedback callback, empty updates); test `get_source_feedback_score` aggregation and None for unknown source
-- [ ] Mark completed
+- [x] In `src/telegram.py`: modify `send_digest()` to attach an `InlineKeyboardMarkup` with two buttons (👍 callback_data=`fb:good:{msg_chunk_index}`, 👎 callback_data=`fb:bad:{msg_chunk_index}`) to the last message chunk of the digest
+- [x] In `src/feedback.py`: implement `load_feedback(cache_dir: str) -> FeedbackStore` — load from `.cache/feedback.json`, return empty store if missing
+- [x] In `src/feedback.py`: implement `save_feedback(store: FeedbackStore, cache_dir: str) -> None` — serialize to JSON
+- [x] In `src/feedback.py`: implement `async collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStore` — call Telegram `getUpdates` API with `offset=last_update_id+1`, filter `callback_query` results, parse `fb:good`/`fb:bad` from `callback_data`, answer each callback query, update store with new ratings, update `last_update_id`
+- [x] In `src/feedback.py`: implement `get_source_feedback_score(store: FeedbackStore, source_name: str, days: int = 14) -> float | None` — aggregate ratings for source over last N days, return 0.0–1.0 or None if no data
+- [x] Add/update tests in `tests/test_feedback.py`: test `load_feedback`/`save_feedback` round-trip; test `collect_feedback` with mocked Telegram API responses (good rating, bad rating, non-feedback callback, empty updates); test `get_source_feedback_score` aggregation and None for unknown source
+- [x] Mark completed
 
 ### Task 4: Dynamic priority engine combining signals
 Реализуем движок пересчёта эффективных приоритетов, объединяя три сигнала: базовый приоритет из конфига (стабильность), объективный скоринг (качество контента) и обратную связь пользователя (предпочтения). Тренды выявляются через анализ роста продуктивности источника.
