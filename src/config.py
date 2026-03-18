@@ -44,6 +44,20 @@ class SourceConfig:
     category: str
     enabled: bool
     priority: int = 3
+    trial: bool = False
+    trial_started: str | None = None
+    trial_days: int = 7
+
+
+@dataclass
+class AdaptiveConfig:
+    enabled: bool
+    feedback_weight: float = 0.3
+    score_weight: float = 0.5
+    base_weight: float = 0.2
+    trial_slots: int = 2
+    min_priority: int = 1
+    max_priority: int = 5
 
 
 @dataclass
@@ -52,6 +66,9 @@ class Config:
     delivery: DeliveryConfig
     digest: DigestConfig
     sources: list[SourceConfig] = field(default_factory=list)
+    adaptive: AdaptiveConfig = field(
+        default_factory=lambda: AdaptiveConfig(enabled=False)
+    )
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -154,6 +171,21 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'priority' in sources[{i}] must be between 1 and 5, "
                 f"got {raw_priority!r}."
             )
+        raw_trial = item.get("trial", False)
+        if not isinstance(raw_trial, bool):
+            raise ValueError(
+                f"Config field 'trial' in sources[{i}] must be a boolean "
+                f"(true or false without quotes), got {type(raw_trial).__name__} {raw_trial!r}."
+            )
+        trial_started = item.get("trial_started", None)
+        if trial_started is not None:
+            trial_started = str(trial_started)
+        raw_trial_days = item.get("trial_days", 7)
+        if isinstance(raw_trial_days, bool) or not isinstance(raw_trial_days, int):
+            raise ValueError(
+                f"Config field 'trial_days' in sources[{i}] must be an integer, "
+                f"got {type(raw_trial_days).__name__} {raw_trial_days!r}."
+            )
         sources.append(
             SourceConfig(
                 name=str(name),
@@ -161,6 +193,9 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 category=str(category),
                 enabled=raw_enabled,
                 priority=raw_priority,
+                trial=raw_trial,
+                trial_started=trial_started,
+                trial_days=raw_trial_days,
             )
         )
     seen_names: set[str] = set()
@@ -172,6 +207,29 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
             )
         seen_names.add(source.name)
     return sources
+
+
+def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
+    section = data.get("adaptive")
+    if section is None:
+        return AdaptiveConfig(enabled=False)
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'adaptive' must be a mapping.")
+    enabled = section.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            f"Config field 'enabled' in section 'adaptive' must be a boolean, "
+            f"got {type(enabled).__name__} {enabled!r}."
+        )
+    return AdaptiveConfig(
+        enabled=enabled,
+        feedback_weight=float(section.get("feedback_weight", 0.3)),
+        score_weight=float(section.get("score_weight", 0.5)),
+        base_weight=float(section.get("base_weight", 0.2)),
+        trial_slots=int(section.get("trial_slots", 2)),
+        min_priority=int(section.get("min_priority", 1)),
+        max_priority=int(section.get("max_priority", 5)),
+    )
 
 
 def load_config(config_path: str | Path = "config.yaml") -> Config:
@@ -196,11 +254,19 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     delivery = _load_delivery(data)
     digest = _load_digest(data)
     sources = _load_sources(data)
+    adaptive = _load_adaptive(data)
 
     logger.info(
-        "Config loaded: provider=%s, sources=%d (%d enabled)",
+        "Config loaded: provider=%s, sources=%d (%d enabled), adaptive=%s",
         llm.provider,
         len(sources),
         sum(1 for s in sources if s.enabled),
+        adaptive.enabled,
     )
-    return Config(llm=llm, delivery=delivery, digest=digest, sources=sources)
+    return Config(
+        llm=llm,
+        delivery=delivery,
+        digest=digest,
+        sources=sources,
+        adaptive=adaptive,
+    )

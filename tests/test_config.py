@@ -370,6 +370,85 @@ def test_duplicate_source_names_rejected(tmp_path: Path) -> None:
         load_config(cfg_path)
 
 
+def test_source_trial_defaults(tmp_path: Path) -> None:
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+    assert config.sources[0].trial is False
+    assert config.sources[0].trial_started is None
+    assert config.sources[0].trial_days == 7
+
+
+def test_source_trial_fields(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "Trial Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
+            trial: true
+            trial_started: "2026-03-10"
+            trial_days: 14
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    src = config.sources[0]
+    assert src.trial is True
+    assert src.trial_started == "2026-03-10"
+    assert src.trial_days == 14
+
+
+def test_adaptive_config_defaults(tmp_path: Path) -> None:
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+    assert config.adaptive.enabled is False
+    assert config.adaptive.feedback_weight == 0.3
+    assert config.adaptive.score_weight == 0.5
+    assert config.adaptive.base_weight == 0.2
+    assert config.adaptive.trial_slots == 2
+    assert config.adaptive.min_priority == 1
+    assert config.adaptive.max_priority == 5
+
+
+def test_adaptive_config_explicit(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 0.4
+          score_weight: 0.4
+          base_weight: 0.2
+          trial_slots: 3
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.enabled is True
+    assert config.adaptive.feedback_weight == 0.4
+    assert config.adaptive.score_weight == 0.4
+    assert config.adaptive.trial_slots == 3
+
+
 def test_default_summary_style_and_language(tmp_path: Path) -> None:
     content = """
         llm:
