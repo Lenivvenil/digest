@@ -19,5 +19,8 @@ env/
 # Environment variables — never commit real secrets
 .env
 
+# Claude Code local settings
+.claude/
+
 # macOS
 .DS_Store
