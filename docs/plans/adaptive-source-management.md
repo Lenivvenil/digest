@@ -57,10 +57,10 @@
 
 ### Task 6: Pipeline integration and orchestration
 Связываем все компоненты в единый пайплайн: загрузка статистики и фидбека, пересчёт приоритетов, сбор статей, обновление статистики, управление trial-источниками. Обновляем документацию и конфиг.
-- [ ] In `src/main.py`: in `run()` function, before `collect()`: load source stats via `load_stats()`, load feedback via `load_feedback()`, if adaptive enabled — call `collect_feedback()` to poll new Telegram feedback, call `calculate_effective_priorities()`, pass result to `collect()`
-- [ ] In `src/main.py`: in `run()` function, after successful delivery: call `save_stats()` (alongside `save_dedup_cache()`), call `save_feedback()`, if adaptive enabled — call `evaluate_trial_sources()` and `apply_trial_decisions()`
-- [ ] In `config.yaml`: add `adaptive` section with default values (`enabled: false`, weights, trial_slots); add comments explaining each field
-- [ ] In `src/main.py`: add `--discover` CLI flag that triggers LLM-based source suggestion: build a prompt listing current categories and source names, ask LLM to suggest 2-3 RSS feed URLs for underrepresented topics, validate suggested URLs by attempting to fetch them, print valid suggestions to stdout (user manually adds to config.yaml)
-- [ ] Update `RunStats` dataclass in `src/main.py` to include `sources_promoted: int`, `sources_demoted: int`, `feedback_collected: int`; log these in the summary
-- [ ] Add/update tests in `tests/test_main.py`: test that `run()` loads/saves stats and feedback when adaptive enabled; test that `run()` skips adaptive logic when disabled; test `--discover` flag argument parsing
-- [ ] Mark completed
+- [x] In `src/main.py`: in `run()` function, before `collect()`: load source stats via `load_stats()`, load feedback via `load_feedback()`, if adaptive enabled — call `collect_feedback()` to poll new Telegram feedback, call `calculate_effective_priorities()`, pass result to `collect()`
+- [x] In `src/main.py`: in `run()` function, after successful delivery: call `save_stats()` (alongside `save_dedup_cache()`), call `save_feedback()`, if adaptive enabled — call `evaluate_trial_sources()` and `apply_trial_decisions()`
+- [x] In `config.yaml`: add `adaptive` section with default values (`enabled: false`, weights, trial_slots); add comments explaining each field
+- [x] In `src/main.py`: add `--discover` CLI flag that triggers LLM-based source suggestion: build a prompt listing current categories and source names, ask LLM to suggest 2-3 RSS feed URLs for underrepresented topics, validate suggested URLs by attempting to fetch them, print valid suggestions to stdout (user manually adds to config.yaml)
+- [x] Update `RunStats` dataclass in `src/main.py` to include `sources_promoted: int`, `sources_demoted: int`, `feedback_collected: int`; log these in the summary
+- [x] Add/update tests in `tests/test_main.py`: test that `run()` loads/saves stats and feedback when adaptive enabled; test that `run()` skips adaptive logic when disabled; test `--discover` flag argument parsing
+- [x] Mark completed

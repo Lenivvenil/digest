@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.collector import Article
-from src.main import _parse_args, main, run
+from src.main import RunStats, _parse_args, main, run
 from src.telegram import TelegramPartialDeliveryError
 
 
@@ -39,11 +39,46 @@ MINIMAL_CONFIG = textwrap.dedent(
     """
 )
 
+ADAPTIVE_CONFIG = textwrap.dedent(
+    """\
+    llm:
+      provider: "anthropic"
+      model: "claude-sonnet-4-20250514"
+    delivery:
+      telegram: false
+      markdown_to_repo: false
+      markdown_dir: "digests"
+    adaptive:
+      enabled: true
+      feedback_weight: 0.3
+      score_weight: 0.5
+      base_weight: 0.2
+      trial_slots: 2
+    digest:
+      language: "ru"
+      max_articles_per_source: 5
+      max_total_articles: 30
+      summary_style: "analytical"
+    sources:
+      - name: "Test Source"
+        url: "https://example.com/feed.rss"
+        category: "Test"
+        enabled: true
+    """
+)
+
 
 @pytest.fixture()
 def config_file(tmp_path: Path) -> Path:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(MINIMAL_CONFIG, encoding="utf-8")
+    return cfg
+
+
+@pytest.fixture()
+def adaptive_config_file(tmp_path: Path) -> Path:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(ADAPTIVE_CONFIG, encoding="utf-8")
     return cfg
 
 
@@ -360,3 +395,142 @@ async def test_main_partial_telegram_with_markdown_exits_0(
         exit_code = await main(["--config", str(config_file)])
 
     assert exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Adaptive integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_adaptive_loads_and_saves_stats_feedback(
+    adaptive_config_file: Path, sample_articles: dict
+) -> None:
+    """When adaptive is enabled, run() loads/saves stats and feedback, computes priorities."""
+    with (
+        patch("src.main.load_stats", return_value={}) as mock_load_stats,
+        patch("src.main.save_stats") as mock_save_stats,
+        patch("src.main.load_feedback") as mock_load_feedback,
+        patch("src.main.save_feedback") as mock_save_feedback,
+        patch("src.main.collect_feedback", new_callable=AsyncMock) as mock_collect_fb,
+        patch("src.main.calculate_effective_priorities", return_value={"Test Source": 3}) as mock_calc,
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.write_digest", return_value=None),
+        patch("src.main.evaluate_trial_sources", return_value=([], [])),
+        patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
+    ):
+        from src.feedback import FeedbackStore
+
+        mock_load_feedback.return_value = FeedbackStore()
+        mock_collect_fb.return_value = FeedbackStore()
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        await run(config_path=str(adaptive_config_file), dry_run=False)
+
+    mock_load_stats.assert_called_once_with(".cache")
+    mock_load_feedback.assert_called_once_with(".cache")
+    mock_collect_fb.assert_awaited_once()
+    mock_calc.assert_called_once()
+    mock_save_stats.assert_called_once()
+    mock_save_feedback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_skips_adaptive_when_disabled(
+    config_file: Path, sample_articles: dict
+) -> None:
+    """When adaptive is disabled, run() does not compute effective priorities."""
+    with (
+        patch("src.main.load_stats", return_value={}) as mock_load_stats,
+        patch("src.main.save_stats"),
+        patch("src.main.load_feedback") as mock_load_feedback,
+        patch("src.main.save_feedback"),
+        patch("src.main.calculate_effective_priorities") as mock_calc,
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.write_digest", return_value=None),
+    ):
+        from src.feedback import FeedbackStore
+
+        mock_load_feedback.return_value = FeedbackStore()
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        await run(config_path=str(config_file), dry_run=False)
+
+    mock_load_stats.assert_called_once()
+    mock_load_feedback.assert_called_once()
+    mock_calc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_adaptive_trial_evaluation(
+    adaptive_config_file: Path, sample_articles: dict, tmp_path: Path
+) -> None:
+    """When adaptive enabled, trial sources are evaluated and decisions applied after delivery."""
+    markdown_path = tmp_path / "digests" / "test.md"
+
+    with (
+        patch("src.main.load_stats", return_value={}),
+        patch("src.main.save_stats"),
+        patch("src.main.load_feedback") as mock_load_feedback,
+        patch("src.main.save_feedback"),
+        patch("src.main.collect_feedback", new_callable=AsyncMock) as mock_collect_fb,
+        patch("src.main.calculate_effective_priorities", return_value={"Test Source": 3}),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.write_digest", return_value=markdown_path),
+        patch("src.main.evaluate_trial_sources", return_value=(["SourceA"], ["SourceB"])) as mock_eval,
+        patch("src.main.apply_trial_decisions") as mock_apply,
+        patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
+    ):
+        from src.feedback import FeedbackStore
+
+        mock_load_feedback.return_value = FeedbackStore()
+        mock_collect_fb.return_value = FeedbackStore()
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        stats = await run(config_path=str(adaptive_config_file), dry_run=False)
+
+    mock_eval.assert_called_once()
+    mock_apply.assert_called_once_with(str(adaptive_config_file), ["SourceA"], ["SourceB"])
+    assert stats.sources_promoted == 1
+    assert stats.sources_demoted == 1
+
+
+def test_parse_args_discover_flag() -> None:
+    args = _parse_args(["--discover"])
+    assert args.discover is True
+
+
+def test_parse_args_discover_default() -> None:
+    args = _parse_args([])
+    assert args.discover is False
+
+
+def test_run_stats_new_fields() -> None:
+    """RunStats includes adaptive-related fields with defaults."""
+    stats = RunStats(
+        feeds_fetched=5,
+        new_articles=10,
+        digest_length=1000,
+        telegram_sent=True,
+        telegram_partial=False,
+        markdown_saved=True,
+        markdown_path="digests/test.md",
+    )
+    assert stats.sources_promoted == 0
+    assert stats.sources_demoted == 0
+    assert stats.feedback_collected == 0

@@ -21,6 +21,22 @@ delivery:
   # Directory where markdown digest files are saved
   markdown_dir: "digests"
 
+adaptive:
+  # Enable adaptive source management (dynamic priority recalculation,
+  # feedback collection, trial source lifecycle)
+  enabled: false
+  # Weight of user feedback (Telegram 👍/👎) in priority calculation (0.0–1.0)
+  feedback_weight: 0.3
+  # Weight of objective quality score in priority calculation (0.0–1.0)
+  score_weight: 0.5
+  # Weight of base (static) priority from config in priority calculation (0.0–1.0)
+  base_weight: 0.2
+  # Number of article slots reserved for trial sources (separate from main budget)
+  trial_slots: 2
+  # Effective priority range after recalculation
+  min_priority: 1
+  max_priority: 5
+
 digest:
   # Language for digest content: "ru" (Russian) | "en" (English)
   language: "ru"
