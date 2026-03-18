@@ -129,6 +129,16 @@ def _load_digest(data: dict[str, Any]) -> DigestConfig:
         )
     max_articles_per_source = section.get("max_articles_per_source", 5)
     max_total_articles = section.get("max_total_articles", 30)
+    if int(max_articles_per_source) < 1:
+        raise ValueError(
+            f"Config field 'max_articles_per_source' must be >= 1, "
+            f"got {max_articles_per_source}."
+        )
+    if int(max_total_articles) < 1:
+        raise ValueError(
+            f"Config field 'max_total_articles' must be >= 1, "
+            f"got {max_total_articles}."
+        )
     summary_style = section.get("summary_style", "analytical")
     if summary_style not in VALID_SUMMARY_STYLES:
         raise ValueError(
@@ -185,6 +195,11 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
             raise ValueError(
                 f"Config field 'trial_days' in sources[{i}] must be an integer, "
                 f"got {type(raw_trial_days).__name__} {raw_trial_days!r}."
+            )
+        if raw_trial_days < 1:
+            raise ValueError(
+                f"Config field 'trial_days' in sources[{i}] must be >= 1, "
+                f"got {raw_trial_days}."
             )
         sources.append(
             SourceConfig(

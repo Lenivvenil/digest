@@ -515,6 +515,72 @@ def test_adaptive_negative_trial_slots_rejected(tmp_path: Path) -> None:
         load_config(cfg_path)
 
 
+def test_trial_days_zero_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
+            trial: true
+            trial_days: 0
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="trial_days.*must be >= 1"):
+        load_config(cfg_path)
+
+
+def test_max_articles_per_source_zero_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 0
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="max_articles_per_source.*must be >= 1"):
+        load_config(cfg_path)
+
+
+def test_max_total_articles_negative_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: -1
+          summary_style: "analytical"
+        sources: []
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="max_total_articles.*must be >= 1"):
+        load_config(cfg_path)
+
+
 def test_adaptive_weights_not_summing_to_one_rejected(tmp_path: Path) -> None:
     content = """
         llm:

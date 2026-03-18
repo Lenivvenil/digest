@@ -224,6 +224,76 @@ async def test_collect_feedback_empty_updates() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_collect_feedback_four_part_format_with_digest_id() -> None:
+    """4-part callback (fb:good:N:digest_id) attributes feedback to correct sources."""
+    token = "testtoken"
+    store = FeedbackStore(
+        digest_sources_map={"20260318_101530": ["Source A", "Source B"]},
+    )
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 4001,
+                    "callback_query": {
+                        "id": "cq4",
+                        "data": "fb:good:0:20260318_101530",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 4001
+    # Should create one rating per source in the digest
+    assert len(result.ratings) == 2
+    source_names = {r.source_name for r in result.ratings}
+    assert source_names == {"Source A", "Source B"}
+    assert all(r.rating == 1 for r in result.ratings)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_unknown_digest_id_records_unscoped() -> None:
+    """4-part callback with unknown digest_id records unscoped feedback."""
+    token = "testtoken"
+    store = FeedbackStore()
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 5001,
+                    "callback_query": {
+                        "id": "cq5",
+                        "data": "fb:bad:0:unknown_digest_id",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 5001
+    assert len(result.ratings) == 1
+    assert result.ratings[0].source_name == ""
+    assert result.ratings[0].rating == -1
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_collect_feedback_uses_offset() -> None:
     token = "testtoken"
     store = FeedbackStore(last_update_id=500)
