@@ -25,31 +25,36 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "instructions_analytical": (
             "Сгруппируй новости по категориям. В каждой категории выбери 3-5 самых важных статей. "
-            "Для каждой статьи дай аналитический комментарий в 2-3 предложения, сохрани ссылку на источник. "
-            "Для 1-2 наиболее значимых тем в каждой категории добавь блок из трёх перспектив:\n"
-            "🟢 **Оптимист** — сильнейший аргумент «за», почему это прорыв или возможность (1-2 предложения)\n"
-            "🔴 **Скептик** — сильнейший аргумент «против», риски, почему это может не сработать (1-2 предложения)\n"
-            "⚖️ **Реалист** — взвешенная оценка, что скорее всего произойдёт на самом деле (1-2 предложения)\n"
+            "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
+            "Для 1 наиболее значимой темы в каждой категории добавь блок из трёх перспектив:\n"
+            "🟢 **Оптимист** — 1 предложение\n"
+            "🔴 **Скептик** — 1 предложение\n"
+            "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
-            "Второстепенные новости получают обычный аналитический комментарий без перспектив. "
-            "В конце добавь раздел «Ключевые тренды дня» с 3-5 трендами. "
-            "Используй markdown-форматирование и эмодзи для категорий. Пропускай нерелевантные новости."
+            "Второстепенные новости получают обычный комментарий без перспектив. "
+            "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
+            "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
         "instructions_brief": (
-            "Сгруппируй новости по категориям. Для каждой статьи дай одно предложение-комментарий, "
-            "сохрани ссылку на источник. Используй markdown-форматирование. Никаких перспектив."
+            "Сгруппируй новости по категориям. Для каждой статьи дай одно предложение-комментарий. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат. "
+            "НЕ добавляй отдельную строку Link:. "
+            "Используй ## для заголовков категорий. Используй markdown-форматирование. Никаких перспектив."
         ),
         "instructions_detailed": (
             "Сгруппируй новости по категориям. В каждой категории выбери 3-5 самых важных статей. "
-            "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом, "
-            "сохрани ссылку на источник. "
+            "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
             "Для КАЖДОЙ значимой темы добавь блок из трёх перспектив:\n"
-            "🟢 **Оптимист** — сильнейший аргумент «за», почему это прорыв или возможность (1-2 предложения)\n"
-            "🔴 **Скептик** — сильнейший аргумент «против», риски, почему это может не сработать (1-2 предложения)\n"
-            "⚖️ **Реалист** — взвешенная оценка, что скорее всего произойдёт на самом деле (1-2 предложения)\n"
+            "🟢 **Оптимист** — 1 предложение\n"
+            "🔴 **Скептик** — 1 предложение\n"
+            "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
-            "В конце добавь раздел «Ключевые тренды дня» с 3-5 трендами. "
-            "Используй markdown-форматирование и эмодзи для категорий. Пропускай нерелевантные новости."
+            "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
+            "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
     },
     "en": {
@@ -60,31 +65,36 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "instructions_analytical": (
             "Group news by category. Within each category pick 3-5 most important articles. "
-            "For each article provide a 2-3 sentence analytical comment and preserve the source link. "
-            "For 1-2 most significant topics in each category add a block of three perspectives:\n"
-            "🟢 **Optimist** — the strongest argument in favor, why this is a breakthrough (1-2 sentences)\n"
-            "🔴 **Skeptic** — the strongest argument against, risks, why this might fail (1-2 sentences)\n"
-            "⚖️ **Realist** — the balanced middle-ground, what is most likely to happen (1-2 sentences)\n"
+            "For each article provide a 1-2 sentence analytical comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
+            "For 1 most significant topic in each category add a block of three perspectives:\n"
+            "🟢 **Optimist** — 1 sentence\n"
+            "🔴 **Skeptic** — 1 sentence\n"
+            "⚖️ **Realist** — 1 sentence\n"
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
-            "Minor news items get a regular analytical comment without perspectives. "
-            "Add a 'Key Trends of the Day' section at the end with 3-5 trends. "
-            "Use markdown formatting and emoji for categories. Skip irrelevant news."
+            "Minor news items get a regular comment without perspectives. "
+            "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
+            "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
         "instructions_brief": (
-            "Group news by category. For each article write one sentence comment "
-            "and preserve the source link. Use markdown formatting. No perspectives."
+            "Group news by category. For each article write one sentence comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format. "
+            "Do NOT add a separate Link: line. "
+            "Use ## for category headers. Use markdown formatting. No perspectives."
         ),
         "instructions_detailed": (
             "Group news by category. Within each category pick 3-5 most important articles. "
-            "For each article provide a detailed analytical comment with full context "
-            "and preserve the source link. "
+            "For each article provide a detailed analytical comment with full context. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
             "For EVERY significant topic add a block of three perspectives:\n"
-            "🟢 **Optimist** — the strongest argument in favor, why this is a breakthrough (1-2 sentences)\n"
-            "🔴 **Skeptic** — the strongest argument against, risks, why this might fail (1-2 sentences)\n"
-            "⚖️ **Realist** — the balanced middle-ground, what is most likely to happen (1-2 sentences)\n"
+            "🟢 **Optimist** — 1 sentence\n"
+            "🔴 **Skeptic** — 1 sentence\n"
+            "⚖️ **Realist** — 1 sentence\n"
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
-            "Add a 'Key Trends of the Day' section at the end with 3-5 trends. "
-            "Use markdown formatting and emoji for categories. Skip irrelevant news."
+            "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
+            "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
     },
 }
@@ -104,11 +114,9 @@ def build_prompt(articles_by_category: dict[str, list[Article]], config: Config)
     for category, articles in articles_by_category.items():
         articles_text_parts.append(f"\n## {category}\n")
         for art in articles:
-            pub = art.pub_date.strftime("%Y-%m-%d %H:%M UTC") if art.pub_date else "unknown date"
             articles_text_parts.append(
-                f"- **{art.title}** ({art.source}, {pub})\n"
+                f"- [{art.title}]({art.link}) ({art.source})\n"
                 f"  {art.description}\n"
-                f"  Link: {art.link}\n"
             )
 
     articles_text = "\n".join(articles_text_parts)

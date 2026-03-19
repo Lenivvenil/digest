@@ -159,7 +159,8 @@ class TestBuildPrompt:
         )
         config = _make_config()
         prompt = build_prompt(articles, config)
-        assert "unknown date" in prompt
+        assert "No Date" in prompt  # title is still in prompt
+        assert "unknown date" not in prompt  # date no longer included
 
 
 # ---------------------------------------------------------------------------
