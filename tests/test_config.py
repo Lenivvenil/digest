@@ -515,6 +515,52 @@ def test_adaptive_negative_trial_slots_rejected(tmp_path: Path) -> None:
         load_config(cfg_path)
 
 
+def test_adaptive_trial_slots_equal_to_total_articles_accepted(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 10
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          trial_slots: 10
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.trial_slots == 10
+
+
+def test_adaptive_trial_slots_exceeds_total_articles_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 10
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          trial_slots: 11
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="trial_slots.*must not exceed.*max_total_articles"):
+        load_config(cfg_path)
+
+
 def test_trial_days_zero_rejected(tmp_path: Path) -> None:
     content = """
         llm:

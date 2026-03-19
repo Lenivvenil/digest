@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 from datetime import datetime, timezone
 
 from src.collector import AllFeedsFailedError, collect, save_dedup_cache
@@ -333,40 +336,138 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     )
 
 
-def _is_safe_url(url: str) -> bool:
-    """Return True if the URL uses http(s) and does not target private/local networks."""
+@dataclass
+class _ValidatedURL:
+    """Result of URL validation with pinned DNS resolution."""
+
+    url: str
+    hostname: str
+    pinned_addrinfos: list[tuple[int, int, int, str, Any]]
+
+
+def _validate_url(url: str) -> _ValidatedURL | None:
+    """Validate URL safety by checking all resolved IPs are globally routable.
+
+    Returns a _ValidatedURL with pinned DNS results if safe, or None if the URL
+    resolves to non-global addresses (private, loopback, multicast, CGNAT, etc.).
+    The pinned addrinfos must be used for the actual fetch to prevent DNS rebinding.
+    """
     import ipaddress
+    import socket
     from urllib.parse import urlparse
 
     try:
         parsed = urlparse(url)
     except Exception:
-        return False
+        return None
 
     if parsed.scheme not in ("http", "https"):
-        return False
+        return None
 
     hostname = parsed.hostname
     if not hostname:
-        return False
+        return None
 
-    # Block obvious localhost aliases
-    if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-        return False
-
-    # Block IP addresses in private/link-local/loopback ranges
+    # Normalize IDN hostnames to ASCII/punycode so that _pin_dns
+    # matches the form that httpx/socket will actually use.
     try:
-        addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return False
+        hostname = hostname.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError):
+        return None
+
+    # Reject out-of-range ports early (parsed.port raises ValueError)
+    try:
+        _ = parsed.port
     except ValueError:
-        pass  # hostname is a DNS name, not an IP — allow
+        return None
 
     # Block well-known cloud metadata endpoints
-    if hostname == "metadata.google.internal":
-        return False
+    if hostname in ("localhost", "metadata.google.internal"):
+        return None
 
-    return True
+    def _is_safe(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        return addr.is_global and not addr.is_multicast
+
+    # Use is_global as allowlist — rejects private, loopback, link-local,
+    # reserved, CGNAT (100.64/10), and any other non-routable space.
+    # Multicast is excluded separately (Python considers it "global").
+    pinned_addrinfos: list[tuple[int, int, int, str, Any]] = []
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if not _is_safe(addr):
+            return None
+        # IP literal — synthesize a single addrinfo entry
+        family = socket.AF_INET6 if addr.version == 6 else socket.AF_INET
+        sockaddr: Any = (
+            (str(addr), 0, 0, 0) if addr.version == 6 else (str(addr), 0)
+        )
+        pinned_addrinfos = [(family, socket.SOCK_STREAM, 0, "", sockaddr)]
+    except ValueError:
+        # hostname is a DNS name — resolve and check all resulting IPs
+        try:
+            addrinfos = socket.getaddrinfo(
+                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
+        except (socket.gaierror, UnicodeError):
+            return None
+        for family, type_, proto, canonname, sockaddr in addrinfos:  # type: ignore[misc]
+            ip_str = str(sockaddr[0])
+            try:
+                addr = ipaddress.ip_address(ip_str)
+                if not _is_safe(addr):
+                    return None
+                pinned_addrinfos.append((family, type_, proto, canonname, sockaddr))
+            except ValueError:
+                return None
+
+    if not pinned_addrinfos:
+        return None
+
+    return _ValidatedURL(url=url, hostname=hostname, pinned_addrinfos=pinned_addrinfos)
+
+
+def _pin_dns(
+    hostname: str, addrinfos: list[tuple[int, int, int, str, Any]]
+) -> contextlib.AbstractContextManager[None]:
+    """Pin DNS resolution for *hostname* to pre-validated addresses.
+
+    Prevents DNS rebinding by ensuring httpx connects to the same IPs
+    that were checked during validation. Safe for sequential async I/O
+    (one outstanding fetch at a time).
+    """
+    import socket as _socket
+
+    @contextlib.contextmanager
+    def _ctx() -> Iterator[None]:
+        original = _socket.getaddrinfo
+
+        def _pinned(
+            host: str | bytes,
+            port: int | str | None,
+            family: int = 0,
+            type: int = 0,  # noqa: A002
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[tuple[int, int, int, str, Any]]:
+            _host = host.decode("ascii") if isinstance(host, bytes) else host
+            if _host == hostname:
+                p = int(port) if port is not None and str(port).isdigit() else 0
+                result: list[tuple[int, int, int, str, Any]] = []
+                for af, st, pr, cn, sa in addrinfos:
+                    if af == _socket.AF_INET:
+                        result.append((af, st, pr, cn, (sa[0], p)))
+                    else:
+                        result.append((af, st, pr, cn, (sa[0], p, sa[2], sa[3])))
+                return result
+            return original(host, port, family, type, proto, flags)  # type: ignore[return-value]
+
+        _socket.getaddrinfo = _pinned  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            _socket.getaddrinfo = original  # type: ignore[assignment]
+
+    return _ctx()
 
 
 async def discover_sources(config_path: str) -> int:
@@ -417,13 +518,18 @@ async def discover_sources(config_path: str) -> int:
         return 0
 
     print(f"\nValidating {len(suggestions)} suggested feeds...\n")
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+
+    async with httpx.AsyncClient(
+        timeout=15.0, follow_redirects=False, trust_env=False
+    ) as client:
         for url, category, name in suggestions:
-            if not _is_safe_url(url):
+            validated = _validate_url(url)
+            if validated is None:
                 status = "BLOCKED (unsafe URL: private/local network or non-http scheme)"
             else:
                 try:
-                    resp = await client.get(url)
+                    with _pin_dns(validated.hostname, validated.pinned_addrinfos):
+                        resp = await client.get(validated.url)
                     resp.raise_for_status()
                     status = "OK"
                 except Exception as exc:

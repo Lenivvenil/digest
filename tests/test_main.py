@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import socket
 import textwrap
+import unittest.mock
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -584,7 +586,7 @@ def test_run_stats_new_fields() -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
     """discover_sources should parse FEED| lines and validate URLs."""
-    from src.main import discover_sources
+    from src.main import _ValidatedURL, discover_sources
 
     llm_response = (
         "Here are some suggestions:\n"
@@ -592,6 +594,17 @@ async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
         "FEED|https://example.com/feed2.xml|Cloud|Cloud Blog\n"
         "Some other text\n"
     )
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    def fake_validate(url: str) -> _ValidatedURL | None:
+        if url.startswith("https://example.com/"):
+            return _ValidatedURL(
+                url=url, hostname="example.com", pinned_addrinfos=fake_addrinfos
+            )
+        return None
 
     mock_client = AsyncMock()
     mock_response = MagicMock()
@@ -603,6 +616,7 @@ async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
     with (
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
+        patch("src.main._validate_url", side_effect=fake_validate),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)
@@ -632,13 +646,24 @@ async def test_discover_sources_no_suggestions(config_file: Path) -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
     """discover_sources must not fetch private/localhost URLs from LLM output."""
-    from src.main import discover_sources
+    from src.main import _ValidatedURL, discover_sources
 
     llm_response = (
         "FEED|http://169.254.169.254/latest/meta-data/|Cloud|Metadata\n"
         "FEED|http://localhost:6379/|Internal|Redis\n"
         "FEED|https://example.com/feed.xml|Tech|Safe Feed\n"
     )
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    def fake_validate(url: str) -> _ValidatedURL | None:
+        if "169.254" in url or "localhost" in url:
+            return None
+        return _ValidatedURL(
+            url=url, hostname="example.com", pinned_addrinfos=fake_addrinfos
+        )
 
     mock_client = AsyncMock()
     mock_response = MagicMock()
@@ -650,6 +675,7 @@ async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
     with (
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
+        patch("src.main._validate_url", side_effect=fake_validate),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)
@@ -662,18 +688,78 @@ async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
     assert mock_client.get.await_count == 1
 
 
-def test_is_safe_url_blocks_private_ips() -> None:
-    from src.main import _is_safe_url
+def test_validate_url_blocks_private_ips() -> None:
+    from unittest.mock import patch
 
-    assert _is_safe_url("https://example.com/feed") is True
-    assert _is_safe_url("http://localhost/foo") is False
-    assert _is_safe_url("http://127.0.0.1/foo") is False
-    assert _is_safe_url("http://169.254.169.254/latest") is False
-    assert _is_safe_url("http://10.0.0.1/internal") is False
-    assert _is_safe_url("http://192.168.1.1/admin") is False
-    assert _is_safe_url("ftp://example.com/feed") is False
-    assert _is_safe_url("http://metadata.google.internal/v1") is False
-    assert _is_safe_url("") is False
+    from src.main import _validate_url
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    with patch("socket.getaddrinfo", return_value=fake_addrinfos):
+        # Safe URLs return a _ValidatedURL with pinned addrinfos
+        result = _validate_url("https://example.com/feed")
+        assert result is not None
+        assert result.url == "https://example.com/feed"
+        assert result.hostname == "example.com"
+        assert len(result.pinned_addrinfos) > 0
+    # Unsafe URLs return None (no DNS needed for these checks)
+    assert _validate_url("http://localhost/foo") is None
+    assert _validate_url("http://127.0.0.1/foo") is None
+    assert _validate_url("http://169.254.169.254/latest") is None
+    assert _validate_url("http://10.0.0.1/internal") is None
+    assert _validate_url("http://192.168.1.1/admin") is None
+    assert _validate_url("ftp://example.com/feed") is None
+    assert _validate_url("http://metadata.google.internal/v1") is None
+    assert _validate_url("") is None
+    # Multicast and CGNAT addresses must be blocked
+    assert _validate_url("http://224.0.0.1/feed") is None
+    assert _validate_url("http://100.64.0.1/feed") is None
+    # Out-of-range port must not crash, just return None
+    assert _validate_url("https://example.com:99999/feed") is None
+
+
+def test_pin_dns_overrides_resolution() -> None:
+    """_pin_dns should override socket.getaddrinfo for the pinned hostname."""
+    import socket
+
+    from src.main import _pin_dns
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    with _pin_dns("pintest.example.com", fake_addrinfos):
+        result = socket.getaddrinfo("pintest.example.com", 443)
+        assert len(result) == 1
+        assert result[0][4] == ("93.184.216.34", 443)
+
+    # After context exit, original resolution is restored — verify by checking
+    # the patched getaddrinfo is no longer in effect (calling with a different
+    # host should not return our fake addrinfos)
+    with unittest.mock.patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("1.2.3.4", 80)),
+    ]) as mock_gai:
+        original_result = socket.getaddrinfo("example.com", 80)
+        assert len(original_result) > 0
+        mock_gai.assert_called_once()
+
+
+def test_pin_dns_overrides_resolution_bytes_host() -> None:
+    """_pin_dns should also pin when host is passed as bytes (httpx/httpcore path)."""
+    import socket
+
+    from src.main import _pin_dns
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    with _pin_dns("pintest.example.com", fake_addrinfos):
+        result = socket.getaddrinfo(b"pintest.example.com", 443)
+        assert len(result) == 1
+        assert result[0][4] == ("93.184.216.34", 443)
 
 
 def test_prune_digest_sources_map_under_limit() -> None:
@@ -734,13 +820,24 @@ def test_prune_digest_sources_map_preserves_newest() -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_malformed_lines(config_file: Path) -> None:
     """discover_sources should skip lines with wrong number of fields."""
-    from src.main import discover_sources
+    from src.main import _ValidatedURL, discover_sources
 
     llm_response = (
         "FEED|only-two-parts|Category\n"
         "FEED|https://ok.com/feed|Cat|Name\n"
         "NOT_FEED|something\n"
     )
+
+    fake_addrinfos = [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ]
+
+    def fake_validate(url: str) -> _ValidatedURL | None:
+        if url.startswith("https://"):
+            return _ValidatedURL(
+                url=url, hostname="ok.com", pinned_addrinfos=fake_addrinfos
+            )
+        return None
 
     mock_client = AsyncMock()
     mock_response = MagicMock()
@@ -752,6 +849,7 @@ async def test_discover_sources_malformed_lines(config_file: Path) -> None:
     with (
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
+        patch("src.main._validate_url", side_effect=fake_validate),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)

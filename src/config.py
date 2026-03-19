@@ -316,6 +316,13 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     sources = _load_sources(data)
     adaptive = _load_adaptive(data)
 
+    # Validate cross-section constraints
+    if adaptive.enabled and adaptive.trial_slots > digest.max_total_articles:
+        raise ValueError(
+            f"adaptive.trial_slots ({adaptive.trial_slots}) must not exceed "
+            f"digest.max_total_articles ({digest.max_total_articles})."
+        )
+
     logger.info(
         "Config loaded: provider=%s, sources=%d (%d enabled), adaptive=%s",
         llm.provider,
