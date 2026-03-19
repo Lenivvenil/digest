@@ -174,8 +174,18 @@ def split_message(text: str, max_len: int = _MAX_MESSAGE_LEN) -> list[str]:
     return chunks if chunks else [text]
 
 
-async def send_digest(text: str, config: Config) -> bool:
+async def send_digest(
+    text: str, config: Config, *, digest_id: str = "", show_feedback: bool = False
+) -> bool:
     """Send the digest text to Telegram.
+
+    Args:
+        text: The digest text to send.
+        config: Application config.
+        digest_id: Optional digest identifier (YYYYMMDD_HHMMSS) embedded in
+            feedback buttons so late feedback is attributed to the correct digest.
+        show_feedback: Attach thumbs-up/down feedback buttons to the last chunk.
+            Should only be True when adaptive source management is enabled.
 
     Returns True if the message was actually sent, False if delivery was
     disabled or credentials were missing.
@@ -211,7 +221,11 @@ async def send_digest(text: str, config: Config) -> bool:
                 if i > 0:
                     await asyncio.sleep(1)
                 is_last = i == len(chunks) - 1
-                reply_markup = _feedback_keyboard(i) if is_last else None
+                reply_markup = (
+                    _feedback_keyboard(i, digest_id=digest_id)
+                    if is_last and show_feedback
+                    else None
+                )
                 await _send_chunk(client, api_url, chat_id, chunk, reply_markup=reply_markup)
                 any_sent = True
     except Exception as exc:
@@ -229,13 +243,21 @@ async def send_digest(text: str, config: Config) -> bool:
     return True
 
 
-def _feedback_keyboard(chunk_index: int) -> dict[str, list[list[dict[str, str]]]]:
-    """Build an InlineKeyboardMarkup with thumbs up/down feedback buttons."""
+def _feedback_keyboard(
+    chunk_index: int, digest_id: str = ""
+) -> dict[str, list[list[dict[str, str]]]]:
+    """Build an InlineKeyboardMarkup with thumbs up/down feedback buttons.
+
+    The digest_id (YYYYMMDD_HHMMSS) is embedded in the callback payload so
+    that feedback can be attributed to the correct digest even if a newer
+    one has already been sent.
+    """
+    suffix = f":{digest_id}" if digest_id else ""
     return {
         "inline_keyboard": [
             [
-                {"text": "\U0001f44d", "callback_data": f"fb:good:{chunk_index}"},
-                {"text": "\U0001f44e", "callback_data": f"fb:bad:{chunk_index}"},
+                {"text": "\U0001f44d", "callback_data": f"fb:good:{chunk_index}{suffix}"},
+                {"text": "\U0001f44e", "callback_data": f"fb:bad:{chunk_index}{suffix}"},
             ]
         ]
     }
@@ -274,7 +296,9 @@ async def _send_chunk(
                 response.text,
             )
             plain_text = re.sub(r"\\(.)", r"\1", md2_text)
-            payload_plain = {"chat_id": chat_id, "text": plain_text}
+            payload_plain: dict[str, object] = {"chat_id": chat_id, "text": plain_text}
+            if reply_markup is not None:
+                payload_plain["reply_markup"] = reply_markup
             response = await client.post(api_url, json=payload_plain)
         response.raise_for_status()
         logger.info("Telegram message chunk sent successfully (%d chars).", len(md2_text))

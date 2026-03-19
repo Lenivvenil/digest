@@ -128,9 +128,13 @@ def test_to_markdownv2_inline_link_text_special_chars_escaped() -> None:
 
 
 def test_to_markdownv2_inline_link_url_paren_escaped() -> None:
-    # Markdown \) in URL is an escaped paren; should survive as \) in MarkdownV2 output.
-    result = to_markdownv2("[title](https://example.com/path\\)end)")
-    assert result == "[title](https://example.com/path\\)end)"
+    # The regex only matches balanced parens in URLs. Unbalanced parens terminate the URL.
+    # Input: [title](https://example.com/path)end)
+    # The regex matches [title](https://example.com/path) and leaves "end)" as text.
+    # MarkdownV2 requires ) to be escaped in text, so output should be:
+    # [title](https://example.com/path)end\)
+    result = to_markdownv2("[title](https://example.com/path)end)")
+    assert result == "[title](https://example.com/path)end\\)"
 
 
 def test_to_markdownv2_inline_link_url_with_balanced_parens() -> None:
@@ -402,7 +406,7 @@ async def test_send_digest_single_message_has_feedback_buttons() -> None:
     respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
 
     with patch.dict("os.environ", env, clear=True):
-        await send_digest("Short digest", config)
+        await send_digest("Short digest", config, show_feedback=True)
 
     assert respx.calls.call_count == 1
     import json as _json
@@ -425,7 +429,7 @@ async def test_send_digest_multi_chunk_only_last_has_buttons() -> None:
     respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
 
     with patch.dict("os.environ", env, clear=True):
-        await send_digest(text, config)
+        await send_digest(text, config, show_feedback=True)
 
     assert respx.calls.call_count == 2
     import json as _json

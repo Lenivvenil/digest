@@ -224,6 +224,22 @@ def test_calculate_score_partial() -> None:
     assert 0.2 < score < 0.8
 
 
+def test_calculate_score_malformed_last_seen_date() -> None:
+    """Malformed last_seen date should be treated as recency 0.0."""
+    stats = SourceStats(
+        name="BadDate",
+        total_fetches=10,
+        successful_fetches=10,
+        total_articles_found=50,
+        articles_included_in_digest=50,
+        avg_description_length=200.0,
+        last_seen="2026/03/18",  # Invalid format (should be YYYY-MM-DD)
+    )
+    score = calculate_score(stats)
+    # With recency=0.0, score = 1.0*0.3 + 1.0*0.3 + 1.0*0.2 + 0.0*0.2 = 0.8
+    assert abs(score - 0.8) < 0.01
+
+
 # --- detect_trending_sources ---
 
 
@@ -307,7 +323,7 @@ def test_effective_priorities_high_score_bad_feedback() -> None:
     # score ~1.0, feedback 0.1, base 3/5=0.6
     # weighted = 0.6*0.2 + 1.0*0.5 + 0.1*0.3 = 0.12 + 0.5 + 0.03 = 0.65
     # priority = round(1 + 0.65*4) = round(3.6) = 4
-    assert 2 <= result["A"] <= 4
+    assert result["A"] == 4
 
 
 def test_effective_priorities_low_score_good_feedback() -> None:
@@ -367,6 +383,48 @@ def test_effective_priorities_no_stats_uses_neutral() -> None:
     # base=0.6*0.2=0.12, score=0.5*0.5=0.25, feedback=0.5*0.3=0.15 => 0.52
     # priority = round(1 + 0.52*4) = round(3.08) = 3
     assert result["New"] == 3
+
+
+def test_effective_priorities_trending_bonus_capped_at_max() -> None:
+    """Trending bonus should not exceed max_priority."""
+    # Create a high-scoring trending source that, with +1 bonus, would exceed max_priority=5
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    sources = [_make_source("HighScore", priority=5)]
+
+    # Perfect score
+    stats = {
+        "HighScore": SourceStats(
+            name="HighScore", total_fetches=10, successful_fetches=10,
+            total_articles_found=50, articles_included_in_digest=50,
+            avg_description_length=200.0, last_seen=today,
+            # Add trending history
+            history=[
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10,
+                              articles_included=8, fetch_ok=True)
+                for i in range(8, 15)
+            ],
+        )
+    }
+    feedback = {}  # no feedback, use neutral 0.5
+    result = calculate_effective_priorities(sources, stats, feedback, _default_adaptive())
+    # Should be capped at max_priority (5) even with trend bonus
+    assert result["HighScore"] <= 5
+
+
+def test_effective_priorities_trend_bonus_capped_at_min() -> None:
+    """Low priority source should not go below min_priority even without bonus."""
+    sources = [_make_source("LowScore", priority=1)]
+    stats = {
+        "LowScore": SourceStats(
+            name="LowScore", total_fetches=10, successful_fetches=1,
+            total_articles_found=5, articles_included_in_digest=0,
+            avg_description_length=10.0, last_seen=None,
+        )
+    }
+    feedback = {}
+    result = calculate_effective_priorities(sources, stats, feedback, _default_adaptive())
+    # Should be at least min_priority (1)
+    assert result["LowScore"] >= 1
 
 
 # --- evaluate_trial_sources ---
@@ -457,6 +515,207 @@ def test_evaluate_trial_non_trial_ignored() -> None:
     assert promote == []
     assert demote == []
     assert needs_start == []
+
+
+def test_evaluate_trial_invalid_date_format() -> None:
+    """Trial source with invalid trial_started date should be skipped with warning."""
+    sources = [_make_trial_source("BadDate", trial_started="2026/03/01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "BadDate": SourceStats(
+            name="BadDate", total_fetches=10, successful_fetches=10,
+            total_articles_found=50, articles_included_in_digest=50,
+            avg_description_length=200.0, last_seen=today,
+        )
+    }
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    # Source with invalid date should be skipped entirely
+    assert promote == []
+    assert demote == []
+    assert needs_start == []
+
+
+def test_evaluate_trial_boundary_just_below_0_6_not_promoted() -> None:
+    """Trial source with score just below 0.6 should NOT be promoted (threshold is > 0.6)."""
+    sources = [_make_trial_source("NotQuite", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    # Create stats that give a score just below 0.6
+    # score = reliability*0.3 + productivity*0.3 + desc*0.2 + recency*0.2
+    # For score = 0.59: 0.5*0.3 + 0.5*0.3 + 0.5*0.2 + 0.5*0.2 = 0.5
+    # Need higher: 1.0*0.3 + 0.5*0.3 + 0.6*0.2 + 1.0*0.2 = 0.3+0.15+0.12+0.2 = 0.77
+    # Need to find values that equal ~0.59
+    # 1.0*0.3 + 0.3*0.3 + 0.96*0.2 + 1.0*0.2 = 0.3+0.09+0.192+0.2 = 0.782
+    # Try: 0.8*0.3 + 0.375*0.3 + 0.75*0.2 + 1.0*0.2 = 0.24+0.1125+0.15+0.2 = 0.7025
+    # Try: 0.5*0.3 + 0.3*0.3 + 0.5*0.2 + 1.0*0.2 = 0.15+0.09+0.1+0.2 = 0.54 (good, below 0.6)
+    stats = {
+        "NotQuite": SourceStats(
+            name="NotQuite",
+            total_fetches=10,
+            successful_fetches=5,  # reliability = 0.5
+            total_articles_found=10,
+            articles_included_in_digest=3,  # productivity = 0.3
+            avg_description_length=60.0,  # desc = (60-20)/(200-20) = 0.5
+            last_seen=today,  # recency = 1.0
+        )
+    }
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    # Score should be ~0.54, which is < 0.6, so NOT promoted
+    assert "NotQuite" not in promote
+
+
+def test_evaluate_trial_boundary_just_above_0_6_promoted() -> None:
+    """Trial source with score just above 0.6 should be promoted."""
+    sources = [_make_trial_source("JustGood", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "JustGood": SourceStats(
+            name="JustGood", total_fetches=10, successful_fetches=10,
+            total_articles_found=50, articles_included_in_digest=40,
+            avg_description_length=150.0, last_seen=today,
+        )
+    }
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    # This should have score > 0.6
+    assert "JustGood" in promote
+
+
+def test_evaluate_trial_boundary_just_above_0_3_not_demoted() -> None:
+    """Trial source with score just above 0.3 should NOT be demoted (threshold is < 0.3)."""
+    sources = [_make_trial_source("Middling", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "Middling": SourceStats(
+            name="Middling",
+            total_fetches=10,
+            successful_fetches=5,  # reliability = 0.5
+            total_articles_found=10,
+            articles_included_in_digest=5,  # productivity = 0.5
+            avg_description_length=20.0,  # desc = 0.0
+            last_seen=None,  # recency = 0.0
+        )
+    }
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    # score = 0.5*0.3 + 0.5*0.3 + 0.0*0.2 + 0.0*0.2 = 0.15 + 0.15 = 0.3
+    # At exactly 0.3, should NOT be demoted (threshold is < 0.3)
+    assert "Middling" not in demote
+
+
+def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
+    """Trial source with score just below 0.3 should be demoted."""
+    sources = [_make_trial_source("JustBad", trial_started="2026-03-01", trial_days=7)]
+    today = "2026-03-18"
+    stats = {
+        "JustBad": SourceStats(
+            name="JustBad", total_fetches=10, successful_fetches=2,
+            total_articles_found=5, articles_included_in_digest=0,
+            avg_description_length=10.0, last_seen=None,
+        )
+    }
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    # This should have score < 0.3
+    assert "JustBad" in demote
+
+
+# --- YAML manipulation helpers (_find_source_block, _set_field_in_block, _remove_field_in_block) ---
+
+
+def test_find_source_block_first_key_name() -> None:
+    """Find source block when name is the first key."""
+    from src.source_scorer import _find_source_block
+
+    lines = [
+        "sources:",
+        "  - name: Feed1",
+        "    url: https://example.com",
+        "    category: Tech",
+        "  - name: Feed2",
+        "    url: https://other.com",
+    ]
+    start, end = _find_source_block(lines, "Feed1")
+    assert start == 1
+    assert end == 4  # Up to the next list item
+
+
+def test_find_source_block_name_later_key() -> None:
+    """Find source block when name appears after other keys (alphabetical order)."""
+    from src.source_scorer import _find_source_block
+
+    lines = [
+        "sources:",
+        "  - category: Tech",
+        "    name: Feed1",
+        "    url: https://example.com",
+        "  - category: News",
+        "    name: Feed2",
+    ]
+    start, end = _find_source_block(lines, "Feed1")
+    assert start == 1
+    assert end == 4
+
+
+def test_find_source_block_nonexistent() -> None:
+    """Find source block returns None when source not found."""
+    from src.source_scorer import _find_source_block
+
+    lines = [
+        "sources:",
+        "  - name: Feed1",
+        "    url: https://example.com",
+    ]
+    result = _find_source_block(lines, "NonExistent")
+    assert result is None
+
+
+def test_set_field_in_block_replaces_existing() -> None:
+    """Set field should replace existing value."""
+    from src.source_scorer import _set_field_in_block
+
+    lines = [
+        "  - name: Feed1",
+        "    trial: true",
+        "    url: https://example.com",
+    ]
+    result = _set_field_in_block(lines, 0, 3, "trial", "false")
+    assert any("trial: false" in line for line in result)
+
+
+def test_set_field_in_block_adds_new() -> None:
+    """Set field should add new field when not present."""
+    from src.source_scorer import _set_field_in_block
+
+    lines = [
+        "  - name: Feed1",
+        "    url: https://example.com",
+    ]
+    result = _set_field_in_block(lines, 0, 2, "trial", "true")
+    assert any("trial: true" in line for line in result)
+
+
+def test_remove_field_in_block() -> None:
+    """Remove field should delete field line."""
+    from src.source_scorer import _remove_field_in_block
+
+    lines = [
+        "  - name: Feed1",
+        "    trial_started: 2026-03-01",
+        "    url: https://example.com",
+    ]
+    result, new_end = _remove_field_in_block(lines, 0, 3, "trial_started")
+    assert new_end == 2
+    assert not any("trial_started" in line for line in result)
+
+
+def test_remove_field_in_block_nonexistent() -> None:
+    """Remove field should not crash if field not present."""
+    from src.source_scorer import _remove_field_in_block
+
+    lines = [
+        "  - name: Feed1",
+        "    url: https://example.com",
+    ]
+    result, new_end = _remove_field_in_block(lines, 0, 2, "nonexistent")
+    assert new_end == 2  # No change
+    assert len(result) == 2  # No lines removed
 
 
 # --- apply_trial_decisions ---

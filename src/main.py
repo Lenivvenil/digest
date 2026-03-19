@@ -212,12 +212,20 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     telegram_partial = False
     markdown_saved = False
     markdown_path = ""
+    delivery_succeeded = False
 
     if dry_run:
         logger.info("Dry-run mode: skipping delivery.")
     else:
         # Run telegram delivery and markdown write in parallel
-        telegram_task = asyncio.create_task(send_digest(summary, config, digest_id=digest_id))
+        telegram_task = asyncio.create_task(
+            send_digest(
+                summary,
+                config,
+                digest_id=digest_id,
+                show_feedback=config.adaptive.enabled,
+            )
+        )
         markdown_result = write_digest(
             summary,
             config,
@@ -270,18 +278,33 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         # wrong set of sources.
         if telegram_sent:
             feedback_store.last_digest_sources = contributing_sources
-            feedback_store.digest_sources_map[digest_id] = contributing_sources
+            if digest_id:
+                feedback_store.digest_sources_map[digest_id] = contributing_sources
             # Prune old entries (keep last 30 days)
             _prune_digest_sources_map(feedback_store.digest_sources_map, max_entries=30)
 
-        # Save source stats and feedback
-        save_stats(source_stats, cache_dir)
+        # Save feedback unconditionally — it tracks polled Telegram callbacks
+        # (last_update_id) from previous digests and must be persisted even if
+        # the current delivery fails, to avoid re-processing answered callbacks.
         save_feedback(feedback_store, cache_dir)
 
-    # Evaluate trial sources after delivery
+        # Save source stats only when at least one channel delivered the digest.
+        # Stats are updated in-memory during collect(); persisting them after a
+        # failed delivery would pollute scoring data with a run the user never saw.
+        delivery_succeeded = telegram_sent or markdown_saved
+        if delivery_succeeded:
+            save_stats(source_stats, cache_dir)
+        else:
+            logger.warning(
+                "Delivery failed — source stats NOT updated to avoid "
+                "polluting scores with undelivered content."
+            )
+
+    # Evaluate trial sources only after successful delivery — promoting or
+    # demoting based on a digest the user never received is misleading.
     sources_promoted = 0
     sources_demoted = 0
-    if config.adaptive.enabled and not dry_run:
+    if config.adaptive.enabled and not dry_run and delivery_succeeded:
         today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
         promote, demote, needs_start = evaluate_trial_sources(
             config.enabled_sources, source_stats, today
@@ -308,6 +331,42 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         sources_demoted=sources_demoted,
         feedback_collected=feedback_collected,
     )
+
+
+def _is_safe_url(url: str) -> bool:
+    """Return True if the URL uses http(s) and does not target private/local networks."""
+    import ipaddress
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    # Block obvious localhost aliases
+    if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return False
+
+    # Block IP addresses in private/link-local/loopback ranges
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return False
+    except ValueError:
+        pass  # hostname is a DNS name, not an IP — allow
+
+    # Block well-known cloud metadata endpoints
+    if hostname == "metadata.google.internal":
+        return False
+
+    return True
 
 
 async def discover_sources(config_path: str) -> int:
@@ -358,14 +417,17 @@ async def discover_sources(config_path: str) -> int:
         return 0
 
     print(f"\nValidating {len(suggestions)} suggested feeds...\n")
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
         for url, category, name in suggestions:
-            try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                status = "OK"
-            except Exception as exc:
-                status = f"FAILED ({exc})"
+            if not _is_safe_url(url):
+                status = "BLOCKED (unsafe URL: private/local network or non-http scheme)"
+            else:
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    status = "OK"
+                except Exception as exc:
+                    status = f"FAILED ({exc})"
             print(f"  [{status}] {name}")
             print(f"    URL:      {url}")
             print(f"    Category: {category}")

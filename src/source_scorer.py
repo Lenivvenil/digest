@@ -9,8 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
-
 if TYPE_CHECKING:
     from src.config import AdaptiveConfig, SourceConfig
 
@@ -318,6 +316,93 @@ def evaluate_trial_sources(
     return promote, demote, needs_start
 
 
+def _find_source_block(lines: list[str], source_name: str) -> tuple[int, int] | None:
+    """Find the line range [start, end) of a source entry with the given name.
+
+    Handles both ``- name: X`` (name as first key) and ``- category: ...\n  name: X``
+    (name appearing later in the block, e.g. when keys are alphabetically sorted).
+    """
+    import re as _re
+
+    # First, find all list-item starts under sources
+    i = 0
+    while i < len(lines):
+        # Look for lines that start a list item: "  - key: value"
+        match = _re.match(r"^(\s*)-\s+\w+\s*:", lines[i])
+        if match:
+            indent = len(match.group(1))
+            start = i
+            # Find end of this block
+            end = i + 1
+            while end < len(lines):
+                stripped = lines[end]
+                if stripped.strip() == "" or stripped.lstrip().startswith("#"):
+                    end += 1
+                    continue
+                next_match = _re.match(r"^(\s*)-\s+\S", stripped)
+                if next_match and len(next_match.group(1)) <= indent:
+                    break
+                key_match = _re.match(r"^(\s*)\S", stripped)
+                if key_match and len(key_match.group(1)) <= indent:
+                    break
+                end += 1
+
+            # Check if this block contains `name: <source_name>`
+            for k in range(start, end):
+                # Match both `- name: X` (first key) and `  name: X` (continuation)
+                name_match = _re.match(r"^\s*-?\s*name:\s*(.+?)\s*$", lines[k])
+                if name_match and name_match.group(1).strip("\"'") == source_name:
+                    return start, end
+
+            i = end
+        else:
+            i += 1
+    return None
+
+
+def _set_field_in_block(
+    lines: list[str], start: int, end: int, field: str, value: str
+) -> list[str]:
+    """Set or add a YAML field within a source block (lines[start:end]).
+
+    If the field already exists, its value is replaced in-place.
+    Otherwise, a new line is appended at the end of the block using
+    the indentation of sibling fields.
+    """
+    import re as _re
+
+    # Detect field indent from first non-name field in the block
+    field_indent = "    "
+    for k in range(start + 1, end):
+        m = _re.match(r"^(\s+)\w", lines[k])
+        if m:
+            field_indent = m.group(1)
+            break
+
+    for k in range(start, end):
+        pattern = rf"^(\s+){_re.escape(field)}\s*:.*$"
+        if _re.match(pattern, lines[k]):
+            lines[k] = f"{field_indent}{field}: {value}"
+            return lines
+
+    # Field not found — insert before end of block
+    lines.insert(end, f"{field_indent}{field}: {value}")
+    return lines
+
+
+def _remove_field_in_block(
+    lines: list[str], start: int, end: int, field: str
+) -> tuple[list[str], int]:
+    """Remove a YAML field line from a source block. Returns updated lines and new end."""
+    import re as _re
+
+    for k in range(start, end):
+        if _re.match(rf"^\s+{_re.escape(field)}\s*:.*$", lines[k]):
+            lines.pop(k)
+            return lines, end - 1
+    return lines, end
+
+
 def apply_trial_decisions(
     config_path: str,
     promote: list[str],
@@ -325,7 +410,11 @@ def apply_trial_decisions(
     needs_start: list[str] | None = None,
 ) -> None:
     """Update config.yaml: set trial=false for promoted, enabled=false for demoted,
-    and initialize trial_started for new trial sources."""
+    and initialize trial_started for new trial sources.
+
+    Uses line-by-line text editing to preserve comments, formatting, and field
+    order in the hand-maintained config file.
+    """
     if needs_start is None:
         needs_start = []
     if not promote and not demote and not needs_start:
@@ -333,28 +422,46 @@ def apply_trial_decisions(
 
     path = Path(config_path)
     with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-
-    if not isinstance(data, dict) or "sources" not in data:
-        logger.warning("Cannot apply trial decisions: invalid config structure")
-        return
+        lines = fh.read().splitlines()
 
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
-    for source_entry in data["sources"]:
-        name = source_entry.get("name")
-        if name in promote:
-            source_entry["trial"] = False
-            source_entry.pop("trial_started", None)
-            logger.info("Promoted trial source '%s' to permanent", name)
-        elif name in demote:
-            source_entry["enabled"] = False
-            logger.info("Demoted trial source '%s' (disabled)", name)
-        elif name in needs_start:
-            source_entry["trial_started"] = today
-            logger.info("Initialized trial_started for '%s' to %s", name, today)
+    for name in promote:
+        block = _find_source_block(lines, name)
+        if block is None:
+            logger.warning("Cannot find source '%s' in config for promotion", name)
+            continue
+        start, end = block
+        lines = _set_field_in_block(lines, start, end, "trial", "false")
+        # Recalculate end after potential insertion
+        block = _find_source_block(lines, name)
+        if block:
+            start, end = block
+            lines, end = _remove_field_in_block(lines, start, end, "trial_started")
+            lines, end = _remove_field_in_block(lines, start, end, "trial_days")
+        logger.info("Promoted trial source '%s' to permanent", name)
+
+    for name in demote:
+        block = _find_source_block(lines, name)
+        if block is None:
+            logger.warning("Cannot find source '%s' in config for demotion", name)
+            continue
+        start, end = block
+        lines = _set_field_in_block(lines, start, end, "enabled", "false")
+        logger.info("Demoted trial source '%s' (disabled)", name)
+
+    for name in needs_start:
+        block = _find_source_block(lines, name)
+        if block is None:
+            logger.warning("Cannot find source '%s' in config to set trial_started", name)
+            continue
+        start, end = block
+        lines = _set_field_in_block(lines, start, end, "trial_started", today)
+        logger.info("Initialized trial_started for '%s' to %s", name, today)
 
     tmp_path = path.with_suffix(".yaml.tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:
-        yaml.dump(data, fh, default_flow_style=False, allow_unicode=True)
+        fh.write("\n".join(lines))
+        if lines:
+            fh.write("\n")
     tmp_path.replace(path)

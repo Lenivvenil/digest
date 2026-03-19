@@ -309,6 +309,47 @@ async def test_collect_feedback_uses_offset() -> None:
     assert "offset=501" in str(request.url)
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_handles_failed_answer_callback() -> None:
+    """Failed answer callback should not crash collection; offset still updates."""
+    token = "testtoken"
+    store = FeedbackStore(
+        last_update_id=0,
+        last_digest_sources=["TestFeed"],  # For legacy format (no digest_id)
+    )
+
+    updates_response = {
+        "ok": True,
+        "result": [
+            {
+                "update_id": 100,
+                "callback_query": {
+                    "id": "q1",
+                    "from": {"id": 123},
+                    "data": "fb:good:0",  # Valid format: fb:{good|bad}:{chunk_index}
+                },
+                "message": {"message_id": 1, "chat": {"id": 456}, "text": "test"},
+            }
+        ],
+    }
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json=updates_response)
+    )
+
+    # Mock answer endpoint to fail for this update
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(500, json={"ok": False})
+    )
+
+    updated_store = await collect_feedback(token, store)
+
+    # Despite the failed answer callback, last_update_id should advance
+    # (because the exception handler in line 172-175 catches it and continues)
+    assert updated_store.last_update_id == 100
+
+
 # ---------------------------------------------------------------------------
 # get_source_feedback_score
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -242,6 +243,24 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
     min_priority = int(section.get("min_priority", 1))
     max_priority = int(section.get("max_priority", 5))
 
+    for wname, wval in [
+        ("feedback_weight", feedback_weight),
+        ("score_weight", score_weight),
+        ("base_weight", base_weight),
+    ]:
+        if not math.isfinite(wval) or wval < 0.0 or wval > 1.0:
+            raise ValueError(
+                f"adaptive.{wname} must be between 0.0 and 1.0, got {wval}."
+            )
+
+    if min_priority < 1:
+        raise ValueError(
+            f"adaptive.min_priority must be >= 1, got {min_priority}."
+        )
+    if max_priority < 1:
+        raise ValueError(
+            f"adaptive.max_priority must be >= 1, got {max_priority}."
+        )
     if min_priority >= max_priority:
         raise ValueError(
             f"adaptive.min_priority ({min_priority}) must be less than "

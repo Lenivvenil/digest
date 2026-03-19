@@ -604,3 +604,183 @@ def test_adaptive_weights_not_summing_to_one_rejected(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Adaptive weights must sum to 1.0"):
         load_config(cfg_path)
+
+
+def test_adaptive_negative_weight_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: -0.3
+          score_weight: 1.1
+          base_weight: 0.2
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
+        load_config(cfg_path)
+
+
+def test_adaptive_weight_above_one_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 1.5
+          score_weight: 0.0
+          base_weight: 0.0
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="must be between 0.0 and 1.0"):
+        load_config(cfg_path)
+
+
+def test_adaptive_min_priority_below_one_rejected(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          min_priority: -1
+          max_priority: 5
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="min_priority must be >= 1"):
+        load_config(cfg_path)
+
+
+def test_adaptive_weights_exactly_sum_to_one(tmp_path: Path) -> None:
+    """Weights that sum to exactly 1.0 should be accepted."""
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 0.2
+          score_weight: 0.3
+          base_weight: 0.5
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.feedback_weight == 0.2
+    assert config.adaptive.score_weight == 0.3
+    assert config.adaptive.base_weight == 0.5
+
+
+def test_adaptive_weight_at_boundary_zero(tmp_path: Path) -> None:
+    """Weight of exactly 0.0 should be accepted."""
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 0.0
+          score_weight: 0.7
+          base_weight: 0.3
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.feedback_weight == 0.0
+
+
+def test_adaptive_weight_at_boundary_one(tmp_path: Path) -> None:
+    """Weight of exactly 1.0 is technically allowed but weights must sum to 1.0."""
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          feedback_weight: 1.0
+          score_weight: 0.0
+          base_weight: 0.0
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.feedback_weight == 1.0
+
+
+def test_adaptive_min_equals_max_minus_one_allowed(tmp_path: Path) -> None:
+    """min_priority = max_priority - 1 should be allowed (smallest valid range)."""
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources: []
+        adaptive:
+          enabled: true
+          min_priority: 4
+          max_priority: 5
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.adaptive.min_priority == 4
+    assert config.adaptive.max_priority == 5

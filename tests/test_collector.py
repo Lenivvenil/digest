@@ -832,6 +832,22 @@ class TestAllocateSlotsTrial:
         # Trial gets from trial budget
         assert slots["T1"] == 2
 
+    def test_trial_budget_equals_total_no_regular_overflow(self) -> None:
+        """When trial_budget == total_budget, regular sources must get 0 slots."""
+        regular_a = make_source(name="RegularA", priority=3)
+        regular_b = make_source(name="RegularB", priority=3)
+        trial = SourceConfig(
+            name="Trial", url="https://t.com/feed", category="Tech",
+            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
+        )
+        slots = allocate_slots(
+            [regular_a, regular_b, trial], total_budget=2, trial_budget=2
+        )
+        assert slots["RegularA"] == 0
+        assert slots["RegularB"] == 0
+        assert slots["Trial"] == 2
+        assert sum(slots.values()) <= 2
+
 
 @pytest.mark.asyncio
 async def test_collect_trial_sources_separate_budget(

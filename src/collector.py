@@ -184,6 +184,27 @@ async def _fetch_feed(
     return articles
 
 
+def _clamp_partition(
+    result: dict[str, int],
+    names: list[str],
+    budget: int,
+) -> None:
+    """Trim allocated slots so their sum does not exceed *budget*.
+
+    When ``max(1, round(...))`` guarantees at least 1 slot per source the
+    partition total can overshoot the budget.  This helper iteratively
+    reduces the largest allocations until the total fits.
+    """
+    total = sum(result[n] for n in names)
+    while total > budget:
+        # Find the source with the largest allocation and reduce it
+        max_name = max(names, key=lambda n: result[n])
+        if result[max_name] <= 0:
+            break
+        result[max_name] -= 1
+        total -= 1
+
+
 def allocate_slots(
     sources: list[SourceConfig],
     total_budget: int,
@@ -202,7 +223,16 @@ def allocate_slots(
     trials = [s for s in sources if s.trial]
 
     if trial_budget is not None and trials:
-        regular_budget = total_budget - trial_budget
+        if regular:
+            regular_budget = total_budget - trial_budget
+        else:
+            # No regular sources — give trials the full budget, but only if
+            # trial_budget was nonzero.  An explicit trial_slots=0 means
+            # "no trial articles" and must be honoured even when all active
+            # sources happen to be trials.
+            regular_budget = 0
+            if trial_budget > 0:
+                trial_budget = total_budget
     else:
         regular_budget = total_budget
         trial_budget = 0
@@ -213,7 +243,7 @@ def allocate_slots(
     result: dict[str, int] = {}
 
     # Allocate for regular sources
-    if regular:
+    if regular and regular_budget > 0:
         total_weight = sum(s.priority for s in regular)
         if total_weight == 0:
             for s in regular:
@@ -223,6 +253,11 @@ def allocate_slots(
                 result[s.name] = max(
                     1, round(regular_budget * s.priority / total_weight)
                 )
+        # Clamp partition total to budget
+        _clamp_partition(result, [s.name for s in regular], regular_budget)
+    elif regular:
+        for s in regular:
+            result[s.name] = 0
 
     # Allocate for trial sources from separate budget
     if trials and trial_budget:
@@ -235,6 +270,8 @@ def allocate_slots(
                 result[s.name] = max(
                     1, round(trial_budget * s.priority / total_weight)
                 )
+        # Clamp partition total to budget
+        _clamp_partition(result, [s.name for s in trials], trial_budget)
 
     return result
 
@@ -366,7 +403,7 @@ async def collect(
 
     # Pass 1: fill up to proportional slot limits.
     for source, eligible in source_eligible:
-        slot = slots[source.name]
+        slot = slots.get(source.name, 0)
         taken = 0
         for h, article in eligible:
             if total_collected >= config.digest.max_total_articles:
@@ -387,7 +424,7 @@ async def collect(
     if total_collected < config.digest.max_total_articles:
         for source, eligible in source_eligible:
             taken = per_source_taken[source.name]
-            cap = slots[source.name] if source.trial else config.digest.max_articles_per_source
+            cap = slots.get(source.name, 0) if source.trial else config.digest.max_articles_per_source
             for h, article in eligible[taken:]:
                 if total_collected >= config.digest.max_total_articles:
                     break

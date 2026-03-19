@@ -406,7 +406,7 @@ async def test_main_partial_telegram_with_markdown_exits_0(
 async def test_run_adaptive_loads_and_saves_stats_feedback(
     adaptive_config_file: Path, sample_articles: dict
 ) -> None:
-    """When adaptive is enabled, run() loads/saves stats and feedback, computes priorities."""
+    """When adaptive is enabled and delivery succeeds, run() saves stats and feedback."""
     with (
         patch("src.main.load_stats", return_value={}) as mock_load_stats,
         patch("src.main.save_stats") as mock_save_stats,
@@ -417,7 +417,7 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
         patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
         patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
-        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=True),
         patch("src.main.write_digest", return_value=None),
         patch("src.main.evaluate_trial_sources", return_value=([], [], [])),
         patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
@@ -438,6 +438,44 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
     mock_calc.assert_called_once()
     mock_save_stats.assert_called_once()
     mock_save_feedback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_adaptive_delivery_failure_skips_stats_and_trials(
+    adaptive_config_file: Path, sample_articles: dict
+) -> None:
+    """When delivery fails, source stats must NOT be saved and trials must NOT be evaluated."""
+    with (
+        patch("src.main.load_stats", return_value={}),
+        patch("src.main.save_stats") as mock_save_stats,
+        patch("src.main.load_feedback") as mock_load_feedback,
+        patch("src.main.save_feedback") as mock_save_feedback,
+        patch("src.main.collect_feedback", new_callable=AsyncMock) as mock_collect_fb,
+        patch("src.main.calculate_effective_priorities", return_value={"Test Source": 3}),
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", new_callable=AsyncMock, return_value=False),
+        patch("src.main.write_digest", return_value=None),
+        patch("src.main.evaluate_trial_sources") as mock_eval,
+        patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
+    ):
+        from src.feedback import FeedbackStore
+
+        mock_load_feedback.return_value = FeedbackStore()
+        mock_collect_fb.return_value = FeedbackStore()
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value="Summary")
+        mock_get_provider.return_value = mock_provider
+
+        await run(config_path=str(adaptive_config_file), dry_run=False)
+
+    # Stats must NOT be saved when delivery fails
+    mock_save_stats.assert_not_called()
+    # Feedback is still saved (to persist polled callback offsets)
+    mock_save_feedback.assert_called_once()
+    # Trial evaluation must NOT run when delivery fails
+    mock_eval.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -589,6 +627,108 @@ async def test_discover_sources_no_suggestions(config_file: Path) -> None:
         result = await discover_sources(config_path=str(config_file))
 
     assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
+    """discover_sources must not fetch private/localhost URLs from LLM output."""
+    from src.main import discover_sources
+
+    llm_response = (
+        "FEED|http://169.254.169.254/latest/meta-data/|Cloud|Metadata\n"
+        "FEED|http://localhost:6379/|Internal|Redis\n"
+        "FEED|https://example.com/feed.xml|Tech|Safe Feed\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.summarize = AsyncMock(return_value=llm_response)
+        mock_get_provider.return_value = mock_provider
+
+        result = await discover_sources(config_path=str(config_file))
+
+    assert result == 0
+    # Only the safe URL should be fetched; the two unsafe ones are blocked
+    assert mock_client.get.await_count == 1
+
+
+def test_is_safe_url_blocks_private_ips() -> None:
+    from src.main import _is_safe_url
+
+    assert _is_safe_url("https://example.com/feed") is True
+    assert _is_safe_url("http://localhost/foo") is False
+    assert _is_safe_url("http://127.0.0.1/foo") is False
+    assert _is_safe_url("http://169.254.169.254/latest") is False
+    assert _is_safe_url("http://10.0.0.1/internal") is False
+    assert _is_safe_url("http://192.168.1.1/admin") is False
+    assert _is_safe_url("ftp://example.com/feed") is False
+    assert _is_safe_url("http://metadata.google.internal/v1") is False
+    assert _is_safe_url("") is False
+
+
+def test_prune_digest_sources_map_under_limit() -> None:
+    """Pruning should not modify map when it's under max_entries."""
+    from src.main import _prune_digest_sources_map
+
+    mapping = {
+        "2026-03-01": ["Feed1"],
+        "2026-03-05": ["Feed2"],
+        "2026-03-10": ["Feed3"],
+    }
+    _prune_digest_sources_map(mapping, max_entries=5)
+    # All 3 entries should remain (3 < 5)
+    assert len(mapping) == 3
+
+
+def test_prune_digest_sources_map_exceeds_limit() -> None:
+    """Pruning should remove oldest entries when exceeding max_entries."""
+    from src.main import _prune_digest_sources_map
+
+    mapping = {
+        "2026-03-01": ["Feed1"],
+        "2026-03-02": ["Feed2"],
+        "2026-03-03": ["Feed3"],
+        "2026-03-04": ["Feed4"],
+        "2026-03-05": ["Feed5"],
+    }
+    _prune_digest_sources_map(mapping, max_entries=3)
+    # Should keep only the 3 newest entries (by key sort order)
+    assert len(mapping) == 3
+    # Oldest two entries (2026-03-01, 2026-03-02) should be removed
+    assert "2026-03-01" not in mapping
+    assert "2026-03-02" not in mapping
+    # Newest three should remain
+    assert "2026-03-03" in mapping
+    assert "2026-03-04" in mapping
+    assert "2026-03-05" in mapping
+
+
+def test_prune_digest_sources_map_preserves_newest() -> None:
+    """Pruning should preserve the entries with highest sort order (newest)."""
+    from src.main import _prune_digest_sources_map
+
+    mapping = {
+        "2026-01-01": ["Old"],
+        "2026-03-18_120000": ["Recent1"],
+        "2026-03-19_090000": ["Recent2"],
+        "2026-03-20_140000": ["Recent3"],
+    }
+    _prune_digest_sources_map(mapping, max_entries=2)
+    # Should keep 2 newest (highest sort order)
+    assert len(mapping) == 2
+    assert "2026-03-19_090000" in mapping
+    assert "2026-03-20_140000" in mapping
+    assert "2026-01-01" not in mapping
 
 
 @pytest.mark.asyncio
