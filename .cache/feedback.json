@@ -2,12 +2,8 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "Cloudflare Blog",
     "Finextra",
-    "Habr \u2014 Interesting",
-    "Hacker News Best",
-    "PYMNTS",
-    "Spot.uz"
+    "Habr \u2014 Interesting"
   ],
   "digest_sources_map": {
     "20260319_201242": [
@@ -24,6 +20,21 @@
       "Hacker News Best",
       "PYMNTS",
       "Spot.uz"
+    ],
+    "20260319_210553": [
+      "Finextra",
+      "Habr \u2014 Interesting"
     ]
-  }
+  },
+  "digest_category_sources_map": {
+    "20260319_210553": {
+      "Banking & Fintech": [
+        "Finextra"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ]
+    }
+  },
+  "last_digest_time": "2026-03-19 21:06 UTC"
 }
