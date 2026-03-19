@@ -7,7 +7,7 @@ import respx
 import httpx
 from unittest.mock import patch
 
-from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, TelegramPartialDeliveryError, _feedback_keyboard
+from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, send_category_feedback_message, TelegramPartialDeliveryError, _feedback_keyboard
 from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 
@@ -437,3 +437,65 @@ async def test_send_digest_multi_chunk_only_last_has_buttons() -> None:
     last_payload = _json.loads(respx.calls[1].request.content)
     assert "reply_markup" not in first_payload
     assert "reply_markup" in last_payload
+
+
+# ---------------------------------------------------------------------------
+# send_category_feedback_message
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_category_feedback_message_sends_keyboard() -> None:
+    """send_category_feedback_message POSTs a message with inline keyboard per category."""
+    import json as _json
+
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "cattoken", "TELEGRAM_CHAT_ID": "77"}
+    url = "https://api.telegram.org/botcattoken/sendMessage"
+
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    cat_sources = {
+        "AI & LLM": ["Source A", "Source B"],
+        "Cloud": ["AWS Blog"],
+    }
+    with patch.dict("os.environ", env, clear=True):
+        await send_category_feedback_message(cat_sources, config, "20260320_120000")
+
+    assert respx.calls.call_count == 1
+    payload = _json.loads(respx.calls[0].request.content)
+    assert payload["chat_id"] == "77"
+    assert payload["text"] == "Оцените категории:"
+    keyboard = payload["reply_markup"]["inline_keyboard"]
+    # Two categories → two rows
+    assert len(keyboard) == 2
+    # Each row has two buttons: 👍 and 👎
+    for row in keyboard:
+        assert len(row) == 2
+        good_btn, bad_btn = row
+        assert good_btn["callback_data"].startswith("fb:cat:good:")
+        assert bad_btn["callback_data"].startswith("fb:cat:bad:")
+
+
+@pytest.mark.asyncio
+async def test_send_category_feedback_message_skips_when_disabled() -> None:
+    """No HTTP request when telegram delivery is disabled."""
+    config = make_config(telegram=False)
+    # Would raise if any HTTP call is made
+    await send_category_feedback_message({"AI": ["S"]}, config, "20260320_120000")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_category_feedback_message_skips_empty_categories() -> None:
+    """No HTTP request when category_sources dict is empty."""
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "cattoken2", "TELEGRAM_CHAT_ID": "88"}
+    url = "https://api.telegram.org/botcattoken2/sendMessage"
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    with patch.dict("os.environ", env, clear=True):
+        await send_category_feedback_message({}, config, "20260320_120000")
+
+    assert respx.calls.call_count == 0

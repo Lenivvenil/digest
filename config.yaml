@@ -6,12 +6,12 @@ llm:
   # anthropic — Claude (requires ANTHROPIC_API_KEY)
   # gemini    — Google Gemini (requires GEMINI_API_KEY, has free tier)
   # groq      — Groq (requires GROQ_API_KEY, has free tier)
-  provider: "groq"
+  provider: "gemini"
   # Model to use (provider-specific):
   #   anthropic: claude-sonnet-4-6 | claude-haiku-4-5-20251001
   #   gemini:    gemini-2.5-flash
   #   groq:      llama-3.3-70b-versatile
-  model: "llama-3.3-70b-versatile"
+  model: "gemini-2.5-flash"
 
 delivery:
   # Send digest via Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)

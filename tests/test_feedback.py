@@ -441,3 +441,177 @@ def test_get_source_feedback_score_only_old_returns_none() -> None:
         ArticleFeedback("h1", "Feed E", 1, old),
     ])
     assert get_source_feedback_score(store, "Feed E", days=14) is None
+
+
+# ---------------------------------------------------------------------------
+# Per-category feedback (5-part callback_data)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_category_good() -> None:
+    """5-part fb:cat:good callback attributes rating to sources in that category."""
+    from src.feedback import _category_hash
+
+    token = "testtoken"
+    cat_hash = _category_hash("AI & LLM")
+    digest_id = "20260320_120000"
+    store = FeedbackStore(
+        digest_category_sources_map={
+            digest_id: {"AI & LLM": ["Source A", "Source B"]}
+        }
+    )
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 6001,
+                    "callback_query": {
+                        "id": "cq6",
+                        "data": f"fb:cat:good:{cat_hash}:{digest_id}",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 6001
+    assert len(result.ratings) == 2
+    assert {r.source_name for r in result.ratings} == {"Source A", "Source B"}
+    assert all(r.rating == 1 for r in result.ratings)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_category_bad() -> None:
+    """5-part fb:cat:bad callback records negative rating for sources in category."""
+    from src.feedback import _category_hash
+
+    token = "testtoken"
+    cat_hash = _category_hash("Fintech")
+    digest_id = "20260320_130000"
+    store = FeedbackStore(
+        digest_category_sources_map={
+            digest_id: {"Fintech": ["Finextra"]}
+        }
+    )
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 7001,
+                    "callback_query": {
+                        "id": "cq7",
+                        "data": f"fb:cat:bad:{cat_hash}:{digest_id}",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 7001
+    assert len(result.ratings) == 1
+    assert result.ratings[0].source_name == "Finextra"
+    assert result.ratings[0].rating == -1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_category_unknown_hash_records_unscoped() -> None:
+    """5-part callback with unrecognised category hash records unscoped feedback."""
+    token = "testtoken"
+    digest_id = "20260320_140000"
+    store = FeedbackStore(
+        digest_category_sources_map={
+            digest_id: {"Cloud": ["AWS Blog"]}
+        }
+    )
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 8001,
+                    "callback_query": {
+                        "id": "cq8",
+                        "data": f"fb:cat:good:deadbeef:{digest_id}",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 8001
+    assert len(result.ratings) == 1
+    assert result.ratings[0].source_name == ""
+    assert result.ratings[0].rating == 1
+
+
+# ---------------------------------------------------------------------------
+# /status command handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_status_command() -> None:
+    """/status message triggers a sendMessage reply with digest info."""
+    token = "testtoken"
+    chat_id = "99999"
+    store = FeedbackStore(
+        last_digest_time="2026-03-20 08:00 UTC",
+        last_digest_sources=["Source A", "Source B", "Source C"],
+    )
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 9001,
+                    "message": {
+                        "message_id": 1,
+                        "text": "/status",
+                        "chat": {"id": int(chat_id)},
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    send_route = respx.post(f"https://api.telegram.org/bot{token}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 9001
+    assert len(result.ratings) == 0  # no feedback ratings added for /status
+
+    assert send_route.called
+    sent_payload = send_route.calls[0].request
+    import json as _json
+    body = _json.loads(sent_payload.content)
+    assert body["chat_id"] == chat_id
+    assert "2026-03-20 08:00 UTC" in body["text"]
+    assert "3" in body["text"]  # source count

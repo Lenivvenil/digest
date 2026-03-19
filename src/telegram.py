@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -12,6 +13,11 @@ import httpx
 from src.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _category_hash(category: str) -> str:
+    """Return an 8-character hex hash for a category name (for callback_data)."""
+    return hashlib.md5(category.encode()).hexdigest()[:8]
 
 
 class TelegramPartialDeliveryError(Exception):
@@ -261,6 +267,57 @@ def _feedback_keyboard(
             ]
         ]
     }
+
+
+async def send_category_feedback_message(
+    category_sources: dict[str, list[str]],
+    config: Config,
+    digest_id: str,
+) -> None:
+    """Send an inline-keyboard message with per-category 👍/👎 buttons.
+
+    Sends a separate message after the main digest so users can rate individual
+    categories. Ratings are attributed only to sources in that category.
+    Non-critical: logs a warning and returns silently on any failure.
+    """
+    if not config.delivery.telegram:
+        return
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        return
+
+    keyboard: list[list[dict[str, str]]] = []
+    for category in sorted(category_sources.keys()):
+        cat_hash = _category_hash(category)
+        keyboard.append(
+            [
+                {
+                    "text": f"{category} \U0001f44d",
+                    "callback_data": f"fb:cat:good:{cat_hash}:{digest_id}",
+                },
+                {
+                    "text": f"{category} \U0001f44e",
+                    "callback_data": f"fb:cat:bad:{cat_hash}:{digest_id}",
+                },
+            ]
+        )
+    if not keyboard:
+        return
+
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload: dict[str, object] = {
+        "chat_id": chat_id,
+        "text": "Оцените категории:",
+        "reply_markup": {"inline_keyboard": keyboard},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(api_url, json=payload)
+            response.raise_for_status()
+            logger.info("Category feedback message sent with %d categories.", len(keyboard))
+    except Exception as exc:
+        logger.warning("Failed to send category feedback message: %s", exc)
 
 
 async def _send_chunk(

@@ -449,7 +449,7 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
 async def test_run_adaptive_delivery_failure_skips_stats_and_trials(
     adaptive_config_file: Path, sample_articles: dict
 ) -> None:
-    """When delivery fails, source stats must NOT be saved and trials must NOT be evaluated."""
+    """When delivery fails, source stats are still saved and trials must NOT be evaluated."""
     with (
         patch("src.main.load_stats", return_value={}),
         patch("src.main.save_stats") as mock_save_stats,
@@ -475,8 +475,8 @@ async def test_run_adaptive_delivery_failure_skips_stats_and_trials(
 
         await run(config_path=str(adaptive_config_file), dry_run=False)
 
-    # Stats must NOT be saved when delivery fails
-    mock_save_stats.assert_not_called()
+    # Stats are always saved to accumulate quality data even on delivery failure
+    mock_save_stats.assert_called_once()
     # Feedback is saved twice: once immediately after polling (to persist
     # last_update_id) and once after delivery attempt (to persist any
     # digest_sources_map updates).

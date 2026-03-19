@@ -27,7 +27,7 @@ CACHE_FILE = Path(".cache/seen_articles.json")
 class AllFeedsFailedError(RuntimeError):
     """Raised when every configured feed fails to fetch."""
 FEED_TIMEOUT = 15.0
-USER_AGENT = "DailyDigestBot/1.0 (https://github.com/user/digest)"
+USER_AGENT = "DailyDigestBot/1.0 (https://github.com/lenivvenil/digest)"
 CACHE_MAX_AGE_DAYS = 7
 DESCRIPTION_MAX_CHARS = 500
 

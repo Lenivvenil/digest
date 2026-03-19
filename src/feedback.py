@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -13,6 +14,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 FEEDBACK_FILE = "feedback.json"
+
+
+def _category_hash(category: str) -> str:
+    """Return an 8-character hex hash for a category name (for callback_data)."""
+    return hashlib.md5(category.encode()).hexdigest()[:8]
 
 
 @dataclass
@@ -31,6 +37,10 @@ class FeedbackStore:
     # Mapping of digest_id (YYYYMMDD_HHMMSS) -> contributing source names.
     # Allows correct attribution when feedback arrives for older digests.
     digest_sources_map: dict[str, list[str]] = field(default_factory=dict)
+    # Mapping of digest_id -> {category: [source_names]} for per-category feedback.
+    digest_category_sources_map: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # ISO timestamp of the last successfully delivered digest (set in main.py).
+    last_digest_time: str = ""
 
 
 def load_feedback(cache_dir: str) -> FeedbackStore:
@@ -58,6 +68,8 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
             last_update_id=data.get("last_update_id", 0),
             last_digest_sources=data.get("last_digest_sources", []),
             digest_sources_map=data.get("digest_sources_map", {}),
+            digest_category_sources_map=data.get("digest_category_sources_map", {}),
+            last_digest_time=data.get("last_digest_time", ""),
         )
     except Exception as exc:
         logger.warning("Failed to load feedback: %s", exc)
@@ -73,6 +85,8 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         "last_update_id": store.last_update_id,
         "last_digest_sources": store.last_digest_sources,
         "digest_sources_map": store.digest_sources_map,
+        "digest_category_sources_map": store.digest_category_sources_map,
+        "last_digest_time": store.last_digest_time,
     }
     try:
         with path.open("w", encoding="utf-8") as fh:
@@ -89,7 +103,7 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
     """
     offset = store.last_update_id + 1 if store.last_update_id > 0 else None
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-    params: dict[str, str | int] = {"allowed_updates": '["callback_query"]'}
+    params: dict[str, str | int] = {"allowed_updates": '["callback_query", "message"]'}
     if offset is not None:
         params["offset"] = offset
 
@@ -107,61 +121,115 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                 update_id = update.get("update_id", 0)
 
                 try:
+                    # Handle text commands (e.g. /status)
+                    message = update.get("message")
+                    if message:
+                        text = message.get("text", "").strip()
+                        if text == "/status":
+                            chat_id = str(message.get("chat", {}).get("id", ""))
+                            if chat_id:
+                                last_time = store.last_digest_time or "unknown"
+                                source_count = len(store.last_digest_sources)
+                                status_text = (
+                                    f"Last digest: {last_time}\n"
+                                    f"Sources: {source_count}"
+                                )
+                                try:
+                                    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                                    await client.post(
+                                        send_url,
+                                        json={"chat_id": chat_id, "text": status_text},
+                                    )
+                                except Exception as exc:
+                                    logger.warning("Failed to send /status reply: %s", exc)
+                        continue
+
                     callback_query = update.get("callback_query")
                     if not callback_query:
                         continue
 
                     callback_data = callback_query.get("data", "")
                     parts = callback_data.split(":")
-                    if len(parts) not in (3, 4) or parts[0] != "fb":
-                        continue
-                    if parts[1] not in ("good", "bad"):
-                        continue
-
-                    rating = 1 if parts[1] == "good" else -1
-                    # New format: fb:{good|bad}:{chunk_index}:{digest_id}
-                    # Legacy format: fb:{good|bad}:{chunk_index}
-                    digest_id = parts[3] if len(parts) == 4 else None
                     callback_id = callback_query.get("id", "")
                     now = datetime.now(tz=timezone.utc).isoformat()
 
-                    # Look up sources for the specific digest.
-                    # - New-format callback with known digest_id → exact match
-                    # - New-format callback with unknown digest_id (pruned/lost) → skip
-                    #   attribution rather than misattributing to the wrong digest
-                    # - Legacy callback (no digest_id) → fall back to last_digest_sources
-                    if digest_id and digest_id in store.digest_sources_map:
-                        sources = store.digest_sources_map[digest_id]
-                    elif digest_id:
-                        # digest_id present but not found — pruned or unknown;
-                        # record unscoped feedback rather than misattribute
-                        logger.debug(
-                            "Digest %s not in sources map; recording unscoped feedback",
-                            digest_id,
-                        )
-                        sources = []
-                    else:
-                        sources = store.last_digest_sources
-                    if sources:
-                        for src_name in sources:
+                    if not parts or parts[0] != "fb":
+                        continue
+
+                    if len(parts) == 5 and parts[1] == "cat" and parts[2] in ("good", "bad"):
+                        # Per-category feedback: fb:cat:{good|bad}:{cat_hash}:{digest_id}
+                        rating = 1 if parts[2] == "good" else -1
+                        cat_hash = parts[3]
+                        digest_id_cat = parts[4]
+                        cat_map = store.digest_category_sources_map.get(digest_id_cat, {})
+                        sources: list[str] = []
+                        for cat_name, cat_sources_list in cat_map.items():
+                            if _category_hash(cat_name) == cat_hash:
+                                sources = cat_sources_list
+                                break
+                        if sources:
+                            for src_name in sources:
+                                store.ratings.append(
+                                    ArticleFeedback(
+                                        article_hash=callback_data,
+                                        source_name=src_name,
+                                        rating=rating,
+                                        timestamp=now,
+                                    )
+                                )
+                        else:
                             store.ratings.append(
                                 ArticleFeedback(
                                     article_hash=callback_data,
-                                    source_name=src_name,
+                                    source_name="",
+                                    rating=rating,
+                                    timestamp=now,
+                                )
+                            )
+                    elif len(parts) in (3, 4) and parts[1] in ("good", "bad"):
+                        # Digest-level feedback: fb:{good|bad}:{chunk_index}[:{digest_id}]
+                        rating = 1 if parts[1] == "good" else -1
+                        digest_id = parts[3] if len(parts) == 4 else None
+
+                        # Look up sources for the specific digest.
+                        # - New-format callback with known digest_id → exact match
+                        # - New-format callback with unknown digest_id (pruned/lost) → skip
+                        #   attribution rather than misattributing to the wrong digest
+                        # - Legacy callback (no digest_id) → fall back to last_digest_sources
+                        if digest_id and digest_id in store.digest_sources_map:
+                            digest_sources = store.digest_sources_map[digest_id]
+                        elif digest_id:
+                            # digest_id present but not found — pruned or unknown;
+                            # record unscoped feedback rather than misattribute
+                            logger.debug(
+                                "Digest %s not in sources map; recording unscoped feedback",
+                                digest_id,
+                            )
+                            digest_sources = []
+                        else:
+                            digest_sources = store.last_digest_sources
+                        if digest_sources:
+                            for src_name in digest_sources:
+                                store.ratings.append(
+                                    ArticleFeedback(
+                                        article_hash=callback_data,
+                                        source_name=src_name,
+                                        rating=rating,
+                                        timestamp=now,
+                                    )
+                                )
+                        else:
+                            # Fallback: no source mapping available (legacy data)
+                            store.ratings.append(
+                                ArticleFeedback(
+                                    article_hash=callback_data,
+                                    source_name="",
                                     rating=rating,
                                     timestamp=now,
                                 )
                             )
                     else:
-                        # Fallback: no source mapping available (legacy data)
-                        store.ratings.append(
-                            ArticleFeedback(
-                                article_hash=callback_data,
-                                source_name="",
-                                rating=rating,
-                                timestamp=now,
-                            )
-                        )
+                        continue
 
                     # Answer the callback query to dismiss the loading indicator
                     answer_url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"

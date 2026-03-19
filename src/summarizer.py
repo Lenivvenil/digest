@@ -182,6 +182,10 @@ class GeminiProvider(BaseLLMProvider):
         url = self.BASE_URL.format(model=self.model)
         payload: dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 8192,
+                "temperature": 0.7,
+            },
         }
         headers = {
             "content-type": "application/json",

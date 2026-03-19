@@ -30,20 +30,22 @@ from src.feedback import (
 )
 from src.markdown_writer import write_digest
 from src.source_scorer import (
+    SourceStats,
     apply_trial_decisions,
     calculate_effective_priorities,
+    calculate_score,
     evaluate_trial_sources,
     load_stats,
     save_stats,
 )
 from src.summarizer import build_prompt, get_provider
-from src.telegram import TelegramPartialDeliveryError, send_digest
+from src.telegram import TelegramPartialDeliveryError, send_category_feedback_message, send_digest
 
 logger = logging.getLogger(__name__)
 
 
 def _prune_digest_sources_map(
-    mapping: dict[str, list[str]], max_entries: int = 30
+    mapping: dict[str, Any], max_entries: int = 30
 ) -> None:
     """Remove oldest entries from digest_sources_map to prevent unbounded growth."""
     if len(mapping) <= max_entries:
@@ -51,6 +53,46 @@ def _prune_digest_sources_map(
     sorted_keys = sorted(mapping.keys())
     for key in sorted_keys[: len(sorted_keys) - max_entries]:
         del mapping[key]
+
+
+def _build_nano_status(
+    feeds_count: int,
+    total_articles: int,
+    ok_count: int,
+    err_count: int,
+    source_stats: dict[str, SourceStats],
+    config: Any,
+    effective_priorities: dict[str, int] | None,
+) -> str:
+    """Build a two-line status footer for the digest message.
+
+    Line 1: feed counts for this run and LLM model.
+    Line 2: adaptive priority changes and average quality score.
+    """
+    line1 = (
+        f"\U0001f4ca {feeds_count} src | {total_articles} art | "
+        f"{ok_count} ok / {err_count} err | {config.llm.model}"
+    )
+
+    promoted_count = 0
+    demoted_count = 0
+    if effective_priorities:
+        for source in config.enabled_sources:
+            ep = effective_priorities.get(source.name)
+            if ep is not None:
+                if ep > source.priority:
+                    promoted_count += 1
+                elif ep < source.priority:
+                    demoted_count += 1
+
+    scores = [calculate_score(s) for s in source_stats.values() if s.total_fetches > 0]
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+
+    line2 = (
+        f"\U0001f4c8 {promoted_count} \u2191 | {demoted_count} \u2193 | "
+        f"avg score: {avg_score:.2f}"
+    )
+    return f"{line1}\n{line2}"
 
 
 @dataclass
@@ -177,11 +219,31 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         )
         logger.info("Computed effective priorities for %d sources", len(effective_priorities))
 
+    # Snapshot fetch counters before collect so we can compute per-run ok/err counts
+    _stats_snapshot: dict[str, tuple[int, int]] = {
+        name: (s.total_fetches, s.successful_fetches) for name, s in source_stats.items()
+    }
+
     articles_by_category, pending_cache = await collect(
         config, source_stats=source_stats, effective_priorities=effective_priorities
     )
     total_articles = sum(len(v) for v in articles_by_category.values())
     logger.info("Collected %d new articles across %d categories", total_articles, len(articles_by_category))
+
+    # Compute ok/err counts from the delta between snapshot and current stats
+    ok_count = 0
+    err_count = 0
+    for source in config.enabled_sources:
+        name = source.name
+        if name in source_stats:
+            old_total, old_ok = _stats_snapshot.get(name, (0, 0))
+            new_total = source_stats[name].total_fetches
+            new_ok = source_stats[name].successful_fetches
+            if new_total > old_total:
+                if new_ok > old_ok:
+                    ok_count += 1
+                else:
+                    err_count += 1
 
     if not articles_by_category:
         logger.info("No new articles found. Nothing to summarize.")
@@ -218,6 +280,18 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     summary = await provider.summarize(prompt)
     logger.info("Summary generated: %d chars", len(summary))
 
+    # Build delivery text: summary + nano-status footer (not added to markdown/RunStats)
+    nano_status = _build_nano_status(
+        feeds_count=feeds_count,
+        total_articles=total_articles,
+        ok_count=ok_count,
+        err_count=err_count,
+        source_stats=source_stats,
+        config=config,
+        effective_priorities=effective_priorities,
+    )
+    delivery_text = f"{summary}\n\n{nano_status}"
+
     telegram_sent = False
     telegram_partial = False
     markdown_saved = False
@@ -230,7 +304,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         # Run telegram delivery and markdown write in parallel
         telegram_task = asyncio.create_task(
             send_digest(
-                summary,
+                delivery_text,
                 config,
                 digest_id=digest_id,
                 show_feedback=config.adaptive.enabled,
@@ -293,22 +367,32 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             # Prune old entries (keep last 30 days)
             _prune_digest_sources_map(feedback_store.digest_sources_map, max_entries=30)
 
+            # Build per-category source map and send category feedback buttons
+            if digest_id and config.adaptive.enabled:
+                cat_sources: dict[str, list[str]] = {
+                    cat: sorted({a.source for a in arts})
+                    for cat, arts in articles_by_category.items()
+                }
+                feedback_store.digest_category_sources_map[digest_id] = cat_sources
+                _prune_digest_sources_map(
+                    feedback_store.digest_category_sources_map, max_entries=30
+                )
+                await send_category_feedback_message(cat_sources, config, digest_id)
+
+        delivery_succeeded = telegram_sent or markdown_saved
+        if delivery_succeeded:
+            feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC"
+            )
+
         # Save feedback unconditionally — it tracks polled Telegram callbacks
         # (last_update_id) from previous digests and must be persisted even if
         # the current delivery fails, to avoid re-processing answered callbacks.
         save_feedback(feedback_store, cache_dir)
 
-        # Save source stats only when at least one channel delivered the digest.
-        # Stats are updated in-memory during collect(); persisting them after a
-        # failed delivery would pollute scoring data with a run the user never saw.
-        delivery_succeeded = telegram_sent or markdown_saved
-        if delivery_succeeded:
-            save_stats(source_stats, cache_dir)
-        else:
-            logger.warning(
-                "Delivery failed — source stats NOT updated to avoid "
-                "polluting scores with undelivered content."
-            )
+        # Always persist source stats so the adaptive system accumulates data
+        # even when delivery fails (e.g. Telegram is down, markdown write fails).
+        save_stats(source_stats, cache_dir)
 
     # Evaluate trial sources only after successful delivery — promoting or
     # demoting based on a digest the user never received is misleading.
