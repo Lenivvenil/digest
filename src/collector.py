@@ -446,7 +446,7 @@ async def collect(
                 # The last snapshot was added with articles_included=0; fix it now
                 if st.history:
                     st.history[-1].articles_included = taken
-                # Also update the rolling counter: undo the 0 and add actual count
+                # Also update the rolling counter with actual included count
                 st.articles_included_in_digest += taken
 
     logger.info(
