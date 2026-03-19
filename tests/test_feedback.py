@@ -350,6 +350,38 @@ async def test_collect_feedback_handles_failed_answer_callback() -> None:
     assert updated_store.last_update_id == 100
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_getupdates_not_ok() -> None:
+    """When getUpdates returns ok=false, store is returned unchanged."""
+    token = "testtoken"
+    store = FeedbackStore(last_update_id=10, last_digest_sources=["Feed1"])
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={"ok": False, "description": "Unauthorized"})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 10
+    assert result.ratings == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_network_error() -> None:
+    """Network error during getUpdates should be caught and store returned unchanged."""
+    token = "testtoken"
+    store = FeedbackStore(last_update_id=5, last_digest_sources=["Feed1"])
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        side_effect=httpx.ConnectError("Connection refused")
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 5
+    assert result.ratings == []
+
+
 # ---------------------------------------------------------------------------
 # get_source_feedback_score
 # ---------------------------------------------------------------------------
