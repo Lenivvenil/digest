@@ -24,7 +24,7 @@ delivery:
 adaptive:
   # Enable adaptive source management (dynamic priority recalculation,
   # feedback collection, trial source lifecycle)
-  enabled: false
+  enabled: true
   # Weight of user feedback (Telegram 👍/👎) in priority calculation (0.0–1.0)
   feedback_weight: 0.3
   # Weight of objective quality score in priority calculation (0.0–1.0)
