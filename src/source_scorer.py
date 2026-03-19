@@ -118,12 +118,14 @@ def update_stats(
                     s.avg_description_length * 0.7 + avg_desc_len * 0.3
                 )
 
-    # Update existing snapshot if already recorded today; otherwise append new one
+    # Update existing snapshot if already recorded today; otherwise append new one.
+    # Use max() to avoid overwriting a successful run's data with a later
+    # partial failure, which would corrupt trend detection.
     if s.history and s.history[-1].date == today:
         snap = s.history[-1]
-        snap.articles_found = articles_found
-        snap.articles_included = articles_included
-        snap.fetch_ok = fetch_ok
+        snap.articles_found = max(snap.articles_found, articles_found)
+        snap.articles_included = max(snap.articles_included, articles_included)
+        snap.fetch_ok = snap.fetch_ok or fetch_ok
     else:
         s.history.append(
             DailySnapshot(

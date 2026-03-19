@@ -150,14 +150,21 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     feedback_collected = 0
 
     if config.adaptive.enabled:
-        # Poll new Telegram feedback
-        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        if bot_token:
-            old_count = len(feedback_store.ratings)
-            feedback_store = await collect_feedback(bot_token, feedback_store)
-            feedback_collected = len(feedback_store.ratings) - old_count
-            if feedback_collected:
-                logger.info("Collected %d new feedback ratings", feedback_collected)
+        # Poll new Telegram feedback — skip in dry-run to avoid advancing
+        # last_update_id without persisting, which would cause duplicate
+        # ratings on the next real run.
+        if not dry_run:
+            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            if bot_token:
+                old_count = len(feedback_store.ratings)
+                feedback_store = await collect_feedback(bot_token, feedback_store)
+                feedback_collected = len(feedback_store.ratings) - old_count
+                if feedback_collected:
+                    logger.info("Collected %d new feedback ratings", feedback_collected)
+                # Persist updated last_update_id immediately so that
+                # already-answered callbacks are not reprocessed if a later
+                # stage (collect, summarize, deliver) raises an exception.
+                save_feedback(feedback_store, cache_dir)
 
         # Calculate effective priorities
         feedback_scores: dict[str, float] = {}

@@ -439,7 +439,10 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
     mock_collect_fb.assert_awaited_once()
     mock_calc.assert_called_once()
     mock_save_stats.assert_called_once()
-    mock_save_feedback.assert_called_once()
+    # save_feedback is called twice: once immediately after polling (to
+    # persist last_update_id) and once after delivery (to persist
+    # last_digest_sources / digest_sources_map).
+    assert mock_save_feedback.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -474,8 +477,10 @@ async def test_run_adaptive_delivery_failure_skips_stats_and_trials(
 
     # Stats must NOT be saved when delivery fails
     mock_save_stats.assert_not_called()
-    # Feedback is still saved (to persist polled callback offsets)
-    mock_save_feedback.assert_called_once()
+    # Feedback is saved twice: once immediately after polling (to persist
+    # last_update_id) and once after delivery attempt (to persist any
+    # digest_sources_map updates).
+    assert mock_save_feedback.call_count == 2
     # Trial evaluation must NOT run when delivery fails
     mock_eval.assert_not_called()
 
