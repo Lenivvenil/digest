@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -77,6 +78,26 @@ class Config:
         return [s for s in self.sources if s.enabled]
 
 
+def _safe_int(value: Any, field: str, section: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Config field '{field}' in section '{section}' must be an integer, "
+            f"got {type(value).__name__} {value!r}."
+        )
+
+
+def _safe_float(value: Any, field: str, section: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"Config field '{field}' in section '{section}' must be a number, "
+            f"got {type(value).__name__} {value!r}."
+        )
+
+
 def _require(data: dict[str, Any], key: str, section: str) -> Any:
     if key not in data:
         raise ValueError(
@@ -129,14 +150,18 @@ def _load_digest(data: dict[str, Any]) -> DigestConfig:
             f"Invalid digest.language '{language}'. "
             f"Must be one of: {', '.join(sorted(VALID_LANGUAGES))}."
         )
-    max_articles_per_source = section.get("max_articles_per_source", 5)
-    max_total_articles = section.get("max_total_articles", 30)
-    if int(max_articles_per_source) < 1:
+    max_articles_per_source = _safe_int(
+        section.get("max_articles_per_source", 5), "max_articles_per_source", "digest"
+    )
+    max_total_articles = _safe_int(
+        section.get("max_total_articles", 30), "max_total_articles", "digest"
+    )
+    if max_articles_per_source < 1:
         raise ValueError(
             f"Config field 'max_articles_per_source' must be >= 1, "
             f"got {max_articles_per_source}."
         )
-    if int(max_total_articles) < 1:
+    if max_total_articles < 1:
         raise ValueError(
             f"Config field 'max_total_articles' must be >= 1, "
             f"got {max_total_articles}."
@@ -149,8 +174,8 @@ def _load_digest(data: dict[str, Any]) -> DigestConfig:
         )
     return DigestConfig(
         language=language,
-        max_articles_per_source=int(max_articles_per_source),
-        max_total_articles=int(max_total_articles),
+        max_articles_per_source=max_articles_per_source,
+        max_total_articles=max_total_articles,
         summary_style=summary_style,
     )
 
@@ -164,7 +189,14 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
         if not isinstance(item, dict):
             raise ValueError(f"Source at index {i} must be a mapping.")
         name = _require(item, "name", f"sources[{i}]")
+        if not str(name).strip():
+            raise ValueError(f"Source name at index {i} must not be empty.")
         url = _require(item, "url", f"sources[{i}]")
+        if urlparse(str(url)).scheme not in ("http", "https"):
+            raise ValueError(
+                f"Source '{name}' has an invalid URL scheme. "
+                f"Only http and https are allowed, got: {str(url)!r}."
+            )
         category = _require(item, "category", f"sources[{i}]")
         raw_enabled = item.get("enabled", True)
         if not isinstance(raw_enabled, bool):
@@ -227,6 +259,8 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 recency_hours=raw_recency_hours,
             )
         )
+    if not sources:
+        raise ValueError("Config must contain at least one source.")
     seen_names: set[str] = set()
     for source in sources:
         if source.name in seen_names:
@@ -250,11 +284,11 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
             f"Config field 'enabled' in section 'adaptive' must be a boolean, "
             f"got {type(enabled).__name__} {enabled!r}."
         )
-    feedback_weight = float(section.get("feedback_weight", 0.3))
-    score_weight = float(section.get("score_weight", 0.5))
-    base_weight = float(section.get("base_weight", 0.2))
-    min_priority = int(section.get("min_priority", 1))
-    max_priority = int(section.get("max_priority", 5))
+    feedback_weight = _safe_float(section.get("feedback_weight", 0.3), "feedback_weight", "adaptive")
+    score_weight = _safe_float(section.get("score_weight", 0.5), "score_weight", "adaptive")
+    base_weight = _safe_float(section.get("base_weight", 0.2), "base_weight", "adaptive")
+    min_priority = _safe_int(section.get("min_priority", 1), "min_priority", "adaptive")
+    max_priority = _safe_int(section.get("max_priority", 5), "max_priority", "adaptive")
 
     for wname, wval in [
         ("feedback_weight", feedback_weight),
@@ -288,7 +322,7 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
             f"base_weight={base_weight}."
         )
 
-    trial_slots = int(section.get("trial_slots", 2))
+    trial_slots = _safe_int(section.get("trial_slots", 2), "trial_slots", "adaptive")
     if trial_slots < 0:
         raise ValueError(
             f"adaptive.trial_slots must be non-negative, got {trial_slots}."
@@ -319,7 +353,10 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
             "Copy config.yaml from the repository root and edit it."
         )
     with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+        try:
+            data = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML in config file: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("Config file must be a YAML mapping at the top level.")
 

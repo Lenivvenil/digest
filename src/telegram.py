@@ -315,6 +315,9 @@ async def send_category_feedback_message(
         logger.warning("Failed to send category feedback message: %s", exc)
 
 
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
 async def _send_chunk(
     client: httpx.AsyncClient,
     api_url: str,
@@ -329,6 +332,8 @@ async def _send_chunk(
     via to_markdownv2() and split to fit within Telegram's 4096-char limit.
     On HTTP 400 (parse error), retries as plain text by stripping MarkdownV2
     escape backslashes from the same chunk.
+    Transient errors (429/5xx/timeout) are retried up to 3 times with exponential
+    backoff, honouring the Retry-After header when present.
     """
     payload: dict[str, object] = {
         "chat_id": chat_id,
@@ -337,11 +342,23 @@ async def _send_chunk(
     }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
-    try:
-        response = await client.post(api_url, json=payload)
+
+    response: httpx.Response | None = None
+    for attempt in range(3):
+        try:
+            response = await client.post(api_url, json=payload)
+        except httpx.TimeoutException:
+            if attempt < 2:
+                logger.warning(
+                    "Telegram request timed out, retry %d/3 in %ds", attempt + 1, 2 ** attempt
+                )
+                await asyncio.sleep(2 ** attempt)
+                continue
+            logger.error("Telegram request timed out after 3 attempts")
+            raise
+
+        # HTTP 400 is a permanent parse error — fall back to plain text, do not retry.
         if response.status_code == 400:
-            # MarkdownV2 parse errors — fall back to plain text.
-            # Strip escape backslashes so the text reads naturally.
             logger.warning(
                 "Telegram rejected message with MarkdownV2 (HTTP 400), retrying as plain text. "
                 "Response: %s",
@@ -352,15 +369,42 @@ async def _send_chunk(
             if reply_markup is not None:
                 payload_plain["reply_markup"] = reply_markup
             response = await client.post(api_url, json=payload_plain)
-        response.raise_for_status()
+
+        # Transient server/rate-limit errors — back off and retry.
+        if response.status_code in _RETRY_STATUSES:
+            retry_after = response.headers.get("Retry-After")
+            sleep = float(retry_after) if retry_after else 2 ** attempt
+            logger.warning(
+                "Telegram HTTP %d, retry %d/3 in %.0fs",
+                response.status_code,
+                attempt + 1,
+                sleep,
+            )
+            if attempt < 2:
+                await asyncio.sleep(sleep)
+            continue
+
+        # Success or permanent non-retryable error.
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Failed to send Telegram message (HTTP %d): %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            raise
         logger.info("Telegram message chunk sent successfully (%d chars).", len(md2_text))
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "Failed to send Telegram message (HTTP %d): %s",
-            exc.response.status_code,
-            exc.response.text,
-        )
-        raise
-    except httpx.RequestError as exc:
-        logger.error("Network error while sending Telegram message: %s", exc)
-        raise
+        return
+
+    # All 3 attempts exhausted — raise on the last response.
+    if response is not None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Failed to send Telegram message (HTTP %d) after 3 attempts: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            raise

@@ -16,6 +16,7 @@ import contextlib
 import logging
 import os
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -123,6 +124,7 @@ class RunStats:
     sources_promoted: int = 0
     sources_demoted: int = 0
     feedback_collected: int = 0
+    duration_seconds: float = 0.0
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -201,6 +203,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     Returns:
         RunStats with counters and delivery status.
     """
+    _t_run_start = time.monotonic()
     config = load_config(config_path)
     feeds_count = len(config.enabled_sources)
     logger.info("Starting digest run: %d enabled sources, dry_run=%s", feeds_count, dry_run)
@@ -245,9 +248,12 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         name: (s.total_fetches, s.successful_fetches) for name, s in source_stats.items()
     }
 
+    _t_collect_start = time.monotonic()
     articles_by_category, pending_cache = await collect(
         config, source_stats=source_stats, effective_priorities=effective_priorities
     )
+    _t_collect = time.monotonic() - _t_collect_start
+    logger.info("Stage: collect %.1fs", _t_collect)
     total_articles = sum(len(v) for v in articles_by_category.values())
     logger.info("Collected %d new articles across %d categories", total_articles, len(articles_by_category))
 
@@ -270,7 +276,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         logger.info("No new articles found. Nothing to summarize.")
         if not dry_run:
             save_dedup_cache(pending_cache)
-            save_stats(source_stats, cache_dir)
+            save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
             save_feedback(feedback_store, cache_dir)
         return RunStats(
             feeds_fetched=feeds_count,
@@ -298,7 +304,10 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     prompt = build_prompt(articles_by_category, config)
     provider = get_provider(config)
     logger.info("Summarizing with provider=%s model=%s", config.llm.provider, config.llm.model)
+    _t_summarize_start = time.monotonic()
     summary = _clean_summary(await provider.summarize(prompt))
+    _t_summarize = time.monotonic() - _t_summarize_start
+    logger.info("Stage: summarize %.1fs", _t_summarize)
     logger.info("Summary generated: %d chars", len(summary))
 
     # Build delivery text: summary + nano-status footer (not added to markdown/RunStats)
@@ -319,6 +328,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     markdown_path = ""
     delivery_succeeded = False
 
+    _t_deliver_start = time.monotonic()
     if dry_run:
         logger.info("Dry-run mode: skipping delivery.")
     else:
@@ -413,7 +423,10 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
 
         # Always persist source stats so the adaptive system accumulates data
         # even when delivery fails (e.g. Telegram is down, markdown write fails).
-        save_stats(source_stats, cache_dir)
+        active_source_names = {s.name for s in config.enabled_sources}
+        save_stats(source_stats, cache_dir, active_sources=active_source_names)
+        _t_deliver = time.monotonic() - _t_deliver_start
+        logger.info("Stage: deliver %.1fs", _t_deliver)
 
     # Evaluate trial sources only after successful delivery — promoting or
     # demoting based on a digest the user never received is misleading.
@@ -445,6 +458,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         sources_promoted=sources_promoted,
         sources_demoted=sources_demoted,
         feedback_collected=feedback_collected,
+        duration_seconds=time.monotonic() - _t_run_start,
     )
 
 

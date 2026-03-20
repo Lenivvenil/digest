@@ -913,3 +913,88 @@ def test_save_stats_round_trip(tmp_path: Path) -> None:
     assert "FeedA" in loaded
     assert loaded["FeedA"].total_fetches == 5
     assert loaded["FeedA"].successful_fetches == 4
+
+
+def test_load_stats_skips_bad_snapshot(tmp_path: Path) -> None:
+    """A malformed snapshot entry is skipped; the source still loads with valid snapshots."""
+    import json
+
+    data = {
+        "Feed A": {
+            "name": "Feed A",
+            "total_fetches": 3,
+            "successful_fetches": 2,
+            "total_articles_found": 10,
+            "articles_included_in_digest": 5,
+            "avg_description_length": 120.0,
+            "last_seen": "2026-03-18",
+            "history": [
+                {
+                    "date": "2026-03-18",
+                    "articles_found": 5,
+                    "articles_included": 2,
+                    "fetch_ok": True,
+                },
+                {
+                    # Missing required fields — will be skipped
+                    "date": "2026-03-17",
+                },
+            ],
+        }
+    }
+    (tmp_path / "source_stats.json").write_text(json.dumps(data), encoding="utf-8")
+
+    result = load_stats(str(tmp_path))
+    assert "Feed A" in result
+    assert len(result["Feed A"].history) == 1
+    assert result["Feed A"].history[0].date == "2026-03-18"
+
+
+def test_load_stats_skips_bad_source_preserves_rest(tmp_path: Path) -> None:
+    """A malformed source entry is skipped; other sources load correctly."""
+    import json
+
+    data = {
+        "Good Source": {
+            "name": "Good Source",
+            "total_fetches": 2,
+            "successful_fetches": 2,
+            "total_articles_found": 8,
+            "articles_included_in_digest": 4,
+            "avg_description_length": 100.0,
+            "last_seen": "2026-03-18",
+            "history": [],
+        },
+        "Bad Source": "this is not a dict",
+    }
+    (tmp_path / "source_stats.json").write_text(json.dumps(data), encoding="utf-8")
+
+    result = load_stats(str(tmp_path))
+    assert "Good Source" in result
+    assert "Bad Source" not in result
+
+
+def test_save_stats_prunes_stale(tmp_path: Path) -> None:
+    """save_stats removes sources not in active_sources when param is provided."""
+    stats: dict[str, SourceStats] = {
+        "Active": SourceStats(name="Active"),
+        "Stale": SourceStats(name="Stale"),
+    }
+    save_stats(stats, str(tmp_path), active_sources={"Active"})
+
+    loaded = load_stats(str(tmp_path))
+    assert "Active" in loaded
+    assert "Stale" not in loaded
+
+
+def test_save_stats_no_prune_without_param(tmp_path: Path) -> None:
+    """save_stats keeps all entries when active_sources is not provided."""
+    stats: dict[str, SourceStats] = {
+        "A": SourceStats(name="A"),
+        "B": SourceStats(name="B"),
+    }
+    save_stats(stats, str(tmp_path))
+
+    loaded = load_stats(str(tmp_path))
+    assert "A" in loaded
+    assert "B" in loaded

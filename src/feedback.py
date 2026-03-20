@@ -56,15 +56,19 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
         if not isinstance(data, dict):
             logger.warning("Invalid feedback format, expected dict")
             return FeedbackStore()
-        ratings = [
-            ArticleFeedback(
-                article_hash=r["article_hash"],
-                source_name=r["source_name"],
-                rating=r["rating"],
-                timestamp=r["timestamp"],
-            )
-            for r in data.get("ratings", [])
-        ]
+        ratings: list[ArticleFeedback] = []
+        for i, r in enumerate(data.get("ratings", [])):
+            try:
+                ratings.append(
+                    ArticleFeedback(
+                        article_hash=r["article_hash"],
+                        source_name=r["source_name"],
+                        rating=r["rating"],
+                        timestamp=r["timestamp"],
+                    )
+                )
+            except (KeyError, TypeError) as exc:
+                logger.warning("Skipping malformed feedback rating at index %d: %s", i, exc)
         return FeedbackStore(
             ratings=ratings,
             last_update_id=data.get("last_update_id", 0),

@@ -489,3 +489,55 @@ class TestGroqProvider:
             await provider.summarize("test prompt")
 
         assert captured_headers.get("Authorization") == "Bearer groq-secret"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: empty summary and Gemini safety filter
+# ---------------------------------------------------------------------------
+
+
+class TestEmptySummaryRaises:
+    @pytest.mark.asyncio
+    async def test_empty_summary_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_post_with_retry raises RuntimeError when LLM returns whitespace-only text."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        body = {"content": [{"text": "   "}]}
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = AnthropicProvider(model="claude-sonnet-4-20250514")
+            with pytest.raises(RuntimeError, match="empty summary"):
+                await provider.summarize("test prompt")
+
+
+class TestGeminiSafetyFilter:
+    @pytest.mark.asyncio
+    async def test_gemini_safety_filter_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GeminiProvider raises RuntimeError when finishReason is SAFETY."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+        body = {
+            "candidates": [
+                {
+                    "finishReason": "SAFETY",
+                    "content": {"parts": [{"text": ""}]},
+                }
+            ]
+        }
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = GeminiProvider(model="gemini-2.5-flash")
+            with pytest.raises(RuntimeError, match="SAFETY"):
+                await provider.summarize("test prompt")

@@ -210,7 +210,15 @@ class GeminiProvider(BaseLLMProvider):
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError("Gemini API returned empty 'candidates' array")
-        return candidates[0]["content"]["parts"][0]["text"]
+        candidate = candidates[0]
+        finish_reason = candidate.get("finishReason", "STOP")
+        if finish_reason != "STOP":
+            raise RuntimeError(
+                f"Gemini generation stopped with finishReason={finish_reason!r} "
+                f"(content may have been blocked by a safety filter). "
+                f"Response: {data}"
+            )
+        return candidate["content"]["parts"][0]["text"]
 
 
 class GroqProvider(BaseLLMProvider):
@@ -316,13 +324,34 @@ async def _post_with_retry(
                     f"The provider may be returning an HTML error page. Error: {exc}"
                 ) from exc
             try:
-                return extract(data)
+                text = extract(data)
             except (KeyError, IndexError, TypeError) as exc:
                 raise RuntimeError(
                     f"Unexpected LLM response structure — the provider returned a 200 but "
                     f"the payload did not match the expected schema (possibly blocked or empty). "
                     f"Error: {exc}. Response: {data}"
                 ) from exc
+            # Log token usage when available (Anthropic/Gemini/Groq all expose it).
+            usage = data.get("usage") or data.get("usageMetadata") or {}
+            input_t = (
+                usage.get("input_tokens")
+                or usage.get("prompt_tokens")
+                or usage.get("promptTokenCount")
+                or 0
+            )
+            output_t = (
+                usage.get("output_tokens")
+                or usage.get("completion_tokens")
+                or usage.get("candidatesTokenCount")
+                or 0
+            )
+            if input_t or output_t:
+                logger.info(
+                    "LLM tokens: in=%d out=%d total=%d", input_t, output_t, input_t + output_t
+                )
+            if not text.strip():
+                raise RuntimeError("LLM returned empty summary")
+            return text
 
     raise RuntimeError(
         f"LLM request failed after {_MAX_ATTEMPTS} attempts. Last error: {last_exc}"

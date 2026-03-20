@@ -7,7 +7,7 @@ import respx
 import httpx
 from unittest.mock import patch
 
-from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, send_category_feedback_message, TelegramPartialDeliveryError, _feedback_keyboard
+from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, send_category_feedback_message, TelegramPartialDeliveryError, _feedback_keyboard, _send_chunk
 from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 
@@ -337,14 +337,14 @@ async def test_send_digest_fallback_to_plain_text_on_400() -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_send_digest_raises_on_http_error() -> None:
-    """HTTP 500 errors from Telegram propagate as exceptions."""
+    """HTTP 500 errors from Telegram propagate as exceptions after retries."""
     config = make_config(telegram=True)
     env = {"TELEGRAM_BOT_TOKEN": "tok3", "TELEGRAM_CHAT_ID": "7"}
     url = "https://api.telegram.org/bottok3/sendMessage"
 
     respx.post(url).mock(return_value=httpx.Response(500, json={"ok": False}))
 
-    with patch.dict("os.environ", env, clear=True):
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
         with pytest.raises(httpx.HTTPStatusError):
             await send_digest("Error test", config)
 
@@ -363,16 +363,18 @@ async def test_send_digest_partial_delivery_raises_partial_error() -> None:
     respx.post(url).mock(
         side_effect=[
             httpx.Response(200, json={"ok": True}),   # first chunk succeeds
-            httpx.Response(500, json={"ok": False}),   # second chunk fails
+            httpx.Response(500, json={"ok": False}),   # second chunk, attempt 1
+            httpx.Response(500, json={"ok": False}),   # second chunk, attempt 2
+            httpx.Response(500, json={"ok": False}),   # second chunk, attempt 3
         ]
     )
 
-    with patch.dict("os.environ", env, clear=True):
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
         with pytest.raises(TelegramPartialDeliveryError):
             await send_digest(text, config)
 
-    # First chunk was attempted; second chunk was attempted and failed
-    assert respx.calls.call_count == 2
+    # First chunk (1) + second chunk exhausts 3 retries (3) = 4 total
+    assert respx.calls.call_count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -499,3 +501,84 @@ async def test_send_category_feedback_message_skips_empty_categories() -> None:
         await send_category_feedback_message({}, config, "20260320_120000")
 
     assert respx.calls.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# _send_chunk retry behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_chunk_retries_503_then_ok() -> None:
+    """_send_chunk retries on 503 and succeeds on the second attempt."""
+    url = "https://api.telegram.org/botretrytoken/sendMessage"
+    respx.post(url).mock(
+        side_effect=[
+            httpx.Response(503, json={"ok": False}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+
+    async with httpx.AsyncClient() as client:
+        with patch("asyncio.sleep") as mock_sleep:
+            await _send_chunk(client, url, "42", "hello")
+
+    assert respx.calls.call_count == 2
+    mock_sleep.assert_called_once_with(1)  # 2**0 = 1 on first attempt
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_chunk_respects_retry_after() -> None:
+    """_send_chunk sleeps for Retry-After seconds on 429."""
+    url = "https://api.telegram.org/botretryafter/sendMessage"
+    respx.post(url).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "5"}, json={"ok": False}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+
+    async with httpx.AsyncClient() as client:
+        with patch("asyncio.sleep") as mock_sleep:
+            await _send_chunk(client, url, "42", "hello")
+
+    assert respx.calls.call_count == 2
+    mock_sleep.assert_called_once_with(5.0)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_chunk_fails_after_3_retries() -> None:
+    """_send_chunk raises HTTPStatusError after all 3 attempts are exhausted."""
+    url = "https://api.telegram.org/botfail3/sendMessage"
+    respx.post(url).mock(return_value=httpx.Response(503, json={"ok": False}))
+
+    async with httpx.AsyncClient() as client:
+        with patch("asyncio.sleep"):
+            with pytest.raises(httpx.HTTPStatusError):
+                await _send_chunk(client, url, "42", "hello")
+
+    assert respx.calls.call_count == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_chunk_no_retry_on_400() -> None:
+    """HTTP 400 triggers plain-text fallback, not transient retry."""
+    url = "https://api.telegram.org/bot400/sendMessage"
+    respx.post(url).mock(
+        side_effect=[
+            httpx.Response(400, json={"ok": False, "description": "Bad Request"}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+
+    async with httpx.AsyncClient() as client:
+        with patch("asyncio.sleep") as mock_sleep:
+            await _send_chunk(client, url, "42", r"hello \*world\*")
+
+    # Exactly 2 calls: MarkdownV2 attempt + plain-text fallback, no retry loop
+    assert respx.calls.call_count == 2
+    mock_sleep.assert_not_called()

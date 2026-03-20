@@ -61,14 +61,14 @@ def _parse_pub_date(entry: Any) -> datetime | None:
         try:
             t = entry.published_parsed
             return datetime(t[0], t[1], t[2], t[3], t[4], t[5], tzinfo=timezone.utc)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to parse published_parsed date: %s", exc)
     if hasattr(entry, "updated_parsed") and entry.updated_parsed:
         try:
             t = entry.updated_parsed
             return datetime(t[0], t[1], t[2], t[3], t[4], t[5], tzinfo=timezone.utc)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to parse updated_parsed date: %s", exc)
     return None
 
 
@@ -116,30 +116,57 @@ def _parse_feed_bytes(raw: bytes, url: str) -> feedparser.FeedParserDict:
     return feedparser.parse(raw, response_headers={"content-location": url})
 
 
+_FEED_RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
 async def _fetch_feed(
     client: httpx.AsyncClient, source: SourceConfig
 ) -> list[Article] | None:
     """Fetch and parse a single RSS/Atom feed.
 
     Returns list of articles (possibly empty) on success, or None on fetch/parse error.
+    Transient errors (5xx/429/timeout) are retried once with a 2s backoff.
     """
+    response: httpx.Response | None = None
+    for attempt in range(2):
+        try:
+            response = await client.get(source.url, timeout=FEED_TIMEOUT)
+            response.raise_for_status()
+            break
+        except httpx.TimeoutException:
+            if attempt == 0:
+                logger.info("Timeout fetching '%s', retrying...", source.name)
+                await asyncio.sleep(2)
+                continue
+            logger.warning("Timeout fetching feed '%s' (%s) after retry", source.name, source.url)
+            return None
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _FEED_RETRY_STATUSES and attempt == 0:
+                logger.info(
+                    "HTTP %d fetching '%s', retrying...",
+                    exc.response.status_code,
+                    source.name,
+                )
+                await asyncio.sleep(2)
+                continue
+            logger.warning(
+                "HTTP %d fetching feed '%s' (%s)",
+                exc.response.status_code,
+                source.name,
+                source.url,
+            )
+            return None
+        except Exception as exc:
+            logger.warning("Error fetching feed '%s' (%s): %s", source.name, source.url, exc)
+            return None
+
+    if response is None:
+        return None
+
     try:
-        response = await client.get(source.url, timeout=FEED_TIMEOUT)
-        response.raise_for_status()
         feed = _parse_feed_bytes(response.content, source.url)
-    except httpx.TimeoutException:
-        logger.warning("Timeout fetching feed '%s' (%s)", source.name, source.url)
-        return None
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "HTTP %d fetching feed '%s' (%s)",
-            exc.response.status_code,
-            source.name,
-            source.url,
-        )
-        return None
     except Exception as exc:
-        logger.warning("Error fetching feed '%s' (%s): %s", source.name, source.url, exc)
+        logger.warning("Error parsing feed '%s' (%s): %s", source.name, source.url, exc)
         return None
 
     if feed.bozo and not feed.entries:
@@ -313,7 +340,13 @@ async def collect(
 
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-        tasks = [_fetch_feed(client, source) for source in config.enabled_sources]
+        sem = asyncio.Semaphore(20)
+
+        async def _limited(src: SourceConfig) -> list[Article] | None:
+            async with sem:
+                return await _fetch_feed(client, src)
+
+        tasks = [_limited(source) for source in config.enabled_sources]
         results = await asyncio.gather(*tasks)
 
     # Update source stats after fetching

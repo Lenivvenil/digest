@@ -1021,3 +1021,84 @@ def test_atomic_json_write_overwrites_existing(tmp_path: Path) -> None:
     loaded = json.loads(target.read_text(encoding="utf-8"))
     assert loaded == {"v": 2}
     assert not (tmp_path / "data.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# _fetch_feed retry behaviour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_retries_503(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_fetch_feed retries once on HTTP 503 and returns articles on success."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    config = make_config(sources=[make_source()])
+    call_count = 0
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return make_http_response(b"", 503)
+        return make_http_response(make_rss_sample().encode())
+
+    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert call_count == 2
+    assert "Tech" in result
+    assert len(result["Tech"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_retries_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_fetch_feed retries once after a TimeoutException and returns articles on success."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    import httpx as _httpx
+
+    config = make_config(sources=[make_source()])
+    call_count = 0
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise _httpx.TimeoutException("timed out")
+        return make_http_response(make_rss_sample().encode())
+
+    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert call_count == 2
+    assert "Tech" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_no_retry_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_fetch_feed does not retry on HTTP 404; source is skipped, others still process."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source_404 = make_source(name="Bad", url="https://example.com/bad")
+    source_ok = make_source(name="Good", url="https://example.com/good", category="Tech")
+    config = make_config(sources=[source_404, source_ok])
+    calls: list[str] = []
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        calls.append(url)
+        if "bad" in url:
+            return make_http_response(b"", 404)
+        return make_http_response(make_rss_sample().encode())
+
+    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    # 404 source should be attempted exactly once (no retry)
+    bad_calls = [c for c in calls if "bad" in c]
+    assert len(bad_calls) == 1
+    # Good source still returns articles
+    assert "Tech" in result

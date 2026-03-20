@@ -113,6 +113,41 @@ def test_load_feedback_non_dict(tmp_path: Path) -> None:
     assert store.ratings == []
 
 
+def test_load_feedback_skips_bad_rating_preserves_rest(tmp_path: Path) -> None:
+    """A malformed rating entry is skipped; valid entries are preserved."""
+    import json
+
+    data = {
+        "last_update_id": 5,
+        "ratings": [
+            {
+                "article_hash": "good1",
+                "source_name": "Feed A",
+                "rating": 1,
+                "timestamp": "2026-03-18T10:00:00",
+            },
+            {
+                "article_hash": "broken",
+                # "source_name" is missing — will trigger KeyError
+                "rating": 1,
+                "timestamp": "2026-03-18T11:00:00",
+            },
+            {
+                "article_hash": "good2",
+                "source_name": "Feed B",
+                "rating": -1,
+                "timestamp": "2026-03-18T12:00:00",
+            },
+        ],
+    }
+    (tmp_path / "feedback.json").write_text(json.dumps(data), encoding="utf-8")
+
+    store = load_feedback(str(tmp_path))
+    assert len(store.ratings) == 2
+    assert store.ratings[0].article_hash == "good1"
+    assert store.ratings[1].article_hash == "good2"
+
+
 def test_save_feedback_no_tmp_file_left(tmp_path: Path) -> None:
     """After save_feedback, the .tmp file must not exist."""
     store = FeedbackStore(last_update_id=7)

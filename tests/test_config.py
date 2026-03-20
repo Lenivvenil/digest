@@ -128,7 +128,11 @@ def test_missing_llm_section(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Missing required config field 'llm'"):
@@ -147,7 +151,11 @@ def test_missing_provider(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Missing required config field 'provider'"):
@@ -167,7 +175,11 @@ def test_invalid_provider(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Invalid llm.provider"):
@@ -187,7 +199,11 @@ def test_invalid_summary_style(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "fancy"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Invalid digest.summary_style"):
@@ -207,7 +223,11 @@ def test_invalid_language(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "brief"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="Invalid digest.language"):
@@ -251,7 +271,11 @@ def test_all_providers_accepted(tmp_path: Path) -> None:
               max_articles_per_source: 5
               max_total_articles: 30
               summary_style: "analytical"
-            sources: []
+            sources:
+              - name: "Feed"
+                url: "https://example.com/feed"
+                category: "Test"
+                enabled: true
         """
         cfg_path = _write_config(tmp_path, content)
         config = load_config(cfg_path)
@@ -433,7 +457,11 @@ def test_adaptive_config_explicit(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 0.4
@@ -461,7 +489,11 @@ def test_default_summary_style_and_language(tmp_path: Path) -> None:
           language: "ru"
           max_articles_per_source: 5
           max_total_articles: 30
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     config = load_config(cfg_path)
@@ -481,7 +513,11 @@ def test_adaptive_min_priority_gte_max_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           min_priority: 5
@@ -505,7 +541,11 @@ def test_adaptive_negative_trial_slots_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           trial_slots: -1
@@ -528,7 +568,11 @@ def test_adaptive_trial_slots_equal_to_total_articles_accepted(tmp_path: Path) -
           max_articles_per_source: 5
           max_total_articles: 10
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           trial_slots: 10
@@ -551,7 +595,11 @@ def test_adaptive_trial_slots_exceeds_total_articles_rejected(tmp_path: Path) ->
           max_articles_per_source: 5
           max_total_articles: 10
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           trial_slots: 11
@@ -600,7 +648,11 @@ def test_max_articles_per_source_zero_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 0
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="max_articles_per_source.*must be >= 1"):
@@ -620,7 +672,11 @@ def test_max_total_articles_negative_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: -1
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="max_total_articles.*must be >= 1"):
@@ -640,7 +696,11 @@ def test_adaptive_weights_not_summing_to_one_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 0.5
@@ -665,7 +725,11 @@ def test_adaptive_negative_weight_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: -0.3
@@ -690,7 +754,11 @@ def test_adaptive_weight_above_one_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 1.5
@@ -715,7 +783,11 @@ def test_adaptive_min_priority_below_one_rejected(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           min_priority: -1
@@ -740,7 +812,11 @@ def test_adaptive_weights_exactly_sum_to_one(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 0.2
@@ -768,7 +844,11 @@ def test_adaptive_weight_at_boundary_zero(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 0.0
@@ -794,7 +874,11 @@ def test_adaptive_weight_at_boundary_one(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           feedback_weight: 1.0
@@ -820,7 +904,11 @@ def test_adaptive_min_equals_max_minus_one_allowed(tmp_path: Path) -> None:
           max_articles_per_source: 5
           max_total_articles: 30
           summary_style: "analytical"
-        sources: []
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
         adaptive:
           enabled: true
           min_priority: 4
@@ -911,4 +999,56 @@ def test_source_recency_hours_negative_rejected(tmp_path: Path) -> None:
     """
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="recency_hours"):
+        load_config(cfg_path)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: validation hardening
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_error(tmp_path: Path) -> None:
+    """Invalid YAML raises ValueError with a descriptive message."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("key: [unclosed bracket", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid YAML"):
+        load_config(cfg)
+
+
+def test_non_numeric_int(tmp_path: Path) -> None:
+    """Non-integer value for max_articles_per_source raises ValueError."""
+    content = MINIMAL_CONFIG.replace(
+        "max_articles_per_source: 5", 'max_articles_per_source: "not_a_number"'
+    )
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="max_articles_per_source"):
+        load_config(cfg_path)
+
+
+def test_file_scheme_rejected(tmp_path: Path) -> None:
+    """A source URL with file:// scheme raises ValueError."""
+    content = MINIMAL_CONFIG.replace(
+        'url: "https://example.com/feed"', 'url: "file:///etc/passwd"'
+    )
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="URL scheme"):
+        load_config(cfg_path)
+
+
+def test_empty_name(tmp_path: Path) -> None:
+    """A source with an empty name raises ValueError."""
+    content = MINIMAL_CONFIG.replace('name: "Test Feed"', 'name: ""')
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="empty"):
+        load_config(cfg_path)
+
+
+def test_empty_sources(tmp_path: Path) -> None:
+    """An empty sources list raises ValueError."""
+    content = MINIMAL_CONFIG.replace(
+        "    sources:\n      - name: \"Test Feed\"\n        url: \"https://example.com/feed\"\n        category: \"Test\"\n        enabled: true",
+        "    sources: []",
+    )
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="at least one source"):
         load_config(cfg_path)

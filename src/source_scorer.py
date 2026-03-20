@@ -53,35 +53,60 @@ def load_stats(cache_dir: str) -> dict[str, SourceStats]:
             return {}
         result: dict[str, SourceStats] = {}
         for name, raw in data.items():
-            history = [
-                DailySnapshot(
-                    date=snap["date"],
-                    articles_found=snap["articles_found"],
-                    articles_included=snap["articles_included"],
-                    fetch_ok=snap["fetch_ok"],
+            try:
+                history: list[DailySnapshot] = []
+                for j, snap in enumerate(raw.get("history", [])):
+                    try:
+                        history.append(
+                            DailySnapshot(
+                                date=snap["date"],
+                                articles_found=snap["articles_found"],
+                                articles_included=snap["articles_included"],
+                                fetch_ok=snap["fetch_ok"],
+                            )
+                        )
+                    except (KeyError, TypeError) as exc:
+                        logger.warning(
+                            "Skipping malformed snapshot at index %d for source '%s': %s",
+                            j,
+                            name,
+                            exc,
+                        )
+                result[name] = SourceStats(
+                    name=raw.get("name", name),
+                    total_fetches=raw.get("total_fetches", 0),
+                    successful_fetches=raw.get("successful_fetches", 0),
+                    total_articles_found=raw.get("total_articles_found", 0),
+                    articles_included_in_digest=raw.get("articles_included_in_digest", 0),
+                    avg_description_length=raw.get("avg_description_length", 0.0),
+                    last_seen=raw.get("last_seen"),
+                    history=history,
                 )
-                for snap in raw.get("history", [])
-            ]
-            result[name] = SourceStats(
-                name=raw.get("name", name),
-                total_fetches=raw.get("total_fetches", 0),
-                successful_fetches=raw.get("successful_fetches", 0),
-                total_articles_found=raw.get("total_articles_found", 0),
-                articles_included_in_digest=raw.get("articles_included_in_digest", 0),
-                avg_description_length=raw.get("avg_description_length", 0.0),
-                last_seen=raw.get("last_seen"),
-                history=history,
-            )
+            except (KeyError, TypeError, AttributeError) as exc:
+                logger.warning("Skipping malformed source stats entry '%s': %s", name, exc)
         return result
     except Exception as exc:
         logger.warning("Failed to load source stats: %s", exc)
         return {}
 
 
-def save_stats(stats: dict[str, SourceStats], cache_dir: str) -> None:
-    """Serialize source statistics to JSON."""
+def save_stats(
+    stats: dict[str, SourceStats],
+    cache_dir: str,
+    active_sources: set[str] | None = None,
+) -> None:
+    """Serialize source statistics to JSON.
+
+    If active_sources is provided, entries for sources not in the set are
+    pruned before saving (handles renamed or removed sources).
+    """
     path = Path(cache_dir) / STATS_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
+    if active_sources is not None:
+        stale = [name for name in stats if name not in active_sources]
+        for name in stale:
+            del stats[name]
+            logger.info("Pruned stale source stats entry: '%s'", name)
     data = {name: asdict(s) for name, s in stats.items()}
     try:
         atomic_json_write(path, data)
