@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -141,7 +142,7 @@ class AnthropicProvider(BaseLLMProvider):
 
     API_URL = "https://api.anthropic.com/v1/messages"
     API_VERSION = "2023-06-01"
-    MAX_TOKENS = 4096
+    MAX_TOKENS = 8192
 
     def __init__(self, model: str) -> None:
         self.model = model
@@ -168,7 +169,10 @@ class AnthropicProvider(BaseLLMProvider):
 
     @staticmethod
     def _extract(data: dict[str, Any]) -> str:
-        return data["content"][0]["text"]
+        blocks = data.get("content") or []
+        if not blocks:
+            raise RuntimeError("Anthropic API returned empty 'content' array")
+        return blocks[0]["text"]
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -203,7 +207,10 @@ class GeminiProvider(BaseLLMProvider):
 
     @staticmethod
     def _extract(data: dict[str, Any]) -> str:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise RuntimeError("Gemini API returned empty 'candidates' array")
+        return candidates[0]["content"]["parts"][0]["text"]
 
 
 class GroqProvider(BaseLLMProvider):
@@ -234,7 +241,13 @@ class GroqProvider(BaseLLMProvider):
 
     @staticmethod
     def _extract(data: dict[str, Any]) -> str:
-        return data["choices"][0]["message"]["content"]
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("Groq API returned empty 'choices' array")
+        return choices[0]["message"]["content"]
+
+
+_MAX_ATTEMPTS = 3
 
 
 async def _post_with_retry(
@@ -243,15 +256,22 @@ async def _post_with_retry(
     payload: dict[str, Any],
     extract: Any,
 ) -> str:
-    """POST to url, retry once on timeout or 5xx. Raise on auth errors."""
+    """POST to url, retry up to 3 times on timeout or 5xx with exponential backoff.
+
+    Reads Retry-After header on 429 responses. Raises on auth errors.
+    """
     last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=60.0) as client:
-        for attempt in range(2):
+        for attempt in range(_MAX_ATTEMPTS):
             try:
                 response = await client.post(url, headers=headers, json=payload)
             except httpx.TimeoutException as exc:
-                logger.warning("LLM request timed out (attempt %d/2)", attempt + 1)
+                logger.warning(
+                    "LLM request timed out (attempt %d/%d)", attempt + 1, _MAX_ATTEMPTS
+                )
                 last_exc = exc
+                if attempt < _MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(2 ** attempt)
                 continue
 
             if response.status_code in {401, 403}:
@@ -262,11 +282,25 @@ async def _post_with_retry(
 
             if response.status_code in _RETRY_STATUSES:
                 logger.warning(
-                    "LLM API returned HTTP %d (attempt %d/2)", response.status_code, attempt + 1
+                    "LLM API returned HTTP %d (attempt %d/%d)",
+                    response.status_code,
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
                 )
                 last_exc = httpx.HTTPStatusError(
                     f"HTTP {response.status_code}", request=response.request, response=response
                 )
+                if attempt < _MAX_ATTEMPTS - 1:
+                    # Respect Retry-After header on 429; fall back to exponential backoff.
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after is not None:
+                        try:
+                            sleep_secs = float(retry_after)
+                        except ValueError:
+                            sleep_secs = 2 ** attempt
+                    else:
+                        sleep_secs = 2 ** attempt
+                    await asyncio.sleep(sleep_secs)
                 continue
 
             if response.status_code >= 400:
@@ -291,7 +325,7 @@ async def _post_with_retry(
                 ) from exc
 
     raise RuntimeError(
-        f"LLM request failed after 2 attempts. Last error: {last_exc}"
+        f"LLM request failed after {_MAX_ATTEMPTS} attempts. Last error: {last_exc}"
     )
 
 

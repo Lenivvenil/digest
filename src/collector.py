@@ -16,6 +16,7 @@ import feedparser  # type: ignore[import-untyped]
 import html as html_lib
 import httpx
 
+from src._util import atomic_json_write
 from src.config import Config, SourceConfig
 from src.source_scorer import SourceStats, update_stats
 
@@ -88,8 +89,7 @@ def _load_cache() -> dict[str, str]:
 def _save_cache(cache: dict[str, str]) -> None:
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with CACHE_FILE.open("w", encoding="utf-8") as fh:
-            json.dump(cache, fh, indent=2)
+        atomic_json_write(CACHE_FILE, cache)
     except Exception as exc:
         logger.warning("Failed to save deduplication cache: %s", exc)
 
@@ -152,7 +152,7 @@ async def _fetch_feed(
         return None
 
     articles: list[Article] = []
-    for entry in feed.entries:
+    for entry in feed.entries[:200]:
         title = getattr(entry, "title", "") or ""
         link = getattr(entry, "link", "") or ""
         if not title and not link:
@@ -299,7 +299,7 @@ async def collect(
 ) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
-    Applies 24h filtering, deduplication cache, and per-source/total limits.
+    Applies per-source recency filtering, deduplication cache, and per-source/total limits.
 
     Returns:
         A tuple of (articles_by_category, updated_cache). The caller is
@@ -310,7 +310,6 @@ async def collect(
     cache = _load_cache()
     cache = _prune_cache(cache)
     now = datetime.now(tz=timezone.utc)
-    cutoff_24h = now - timedelta(hours=24)
 
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
@@ -388,9 +387,10 @@ async def collect(
     ):
         if raw_articles is None:
             continue
+        source_cutoff = now - timedelta(hours=source.recency_hours)
         eligible: list[tuple[str, Article]] = []
         for article in raw_articles:
-            if not _is_recent(article, cutoff_24h):
+            if not _is_recent(article, source_cutoff):
                 continue
             h = _article_hash(article.title, article.link)
             if h in cache:

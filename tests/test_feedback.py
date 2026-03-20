@@ -113,6 +113,27 @@ def test_load_feedback_non_dict(tmp_path: Path) -> None:
     assert store.ratings == []
 
 
+def test_save_feedback_no_tmp_file_left(tmp_path: Path) -> None:
+    """After save_feedback, the .tmp file must not exist."""
+    store = FeedbackStore(last_update_id=7)
+    save_feedback(store, str(tmp_path))
+    tmp = tmp_path / "feedback.json.tmp"
+    assert not tmp.exists()
+
+
+def test_save_feedback_preserves_existing_on_write(tmp_path: Path) -> None:
+    """Existing feedback.json is intact before and after a successful save."""
+    original = FeedbackStore(last_update_id=42)
+    save_feedback(original, str(tmp_path))
+
+    updated = FeedbackStore(last_update_id=99)
+    save_feedback(updated, str(tmp_path))
+
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.last_update_id == 99
+    assert not (tmp_path / "feedback.json.tmp").exists()
+
+
 # ---------------------------------------------------------------------------
 # collect_feedback
 # ---------------------------------------------------------------------------
@@ -441,6 +462,39 @@ def test_get_source_feedback_score_only_old_returns_none() -> None:
         ArticleFeedback("h1", "Feed E", 1, old),
     ])
     assert get_source_feedback_score(store, "Feed E", days=14) is None
+
+
+# ---------------------------------------------------------------------------
+# save_feedback pruning
+# ---------------------------------------------------------------------------
+
+
+def test_save_feedback_prunes_old_ratings(tmp_path: Path) -> None:
+    """save_feedback should discard ratings older than 30 days."""
+    old_ts = (datetime.now(tz=timezone.utc) - timedelta(days=31)).isoformat()
+    fresh_ts = datetime.now(tz=timezone.utc).isoformat()
+    store = FeedbackStore(ratings=[
+        ArticleFeedback("h1", "Feed A", 1, old_ts),
+        ArticleFeedback("h2", "Feed B", -1, fresh_ts),
+    ])
+    save_feedback(store, str(tmp_path))
+
+    loaded = load_feedback(str(tmp_path))
+    assert len(loaded.ratings) == 1
+    assert loaded.ratings[0].source_name == "Feed B"
+
+
+def test_save_feedback_keeps_all_recent_ratings(tmp_path: Path) -> None:
+    """save_feedback should keep all ratings within 30 days."""
+    now = datetime.now(tz=timezone.utc)
+    store = FeedbackStore(ratings=[
+        ArticleFeedback("h1", "Feed A", 1, (now - timedelta(days=29)).isoformat()),
+        ArticleFeedback("h2", "Feed B", -1, (now - timedelta(days=1)).isoformat()),
+    ])
+    save_feedback(store, str(tmp_path))
+
+    loaded = load_feedback(str(tmp_path))
+    assert len(loaded.ratings) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -6,10 +6,12 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+
+from src._util import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +79,21 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
 
 
 def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
-    """Serialize feedback store to JSON."""
+    """Serialize feedback store to JSON. Prunes ratings older than 30 days."""
     path = Path(cache_dir) / FEEDBACK_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=30)
+    pruned_ratings: list[ArticleFeedback] = []
+    for r in store.ratings:
+        try:
+            ts = datetime.fromisoformat(r.timestamp)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                pruned_ratings.append(r)
+        except ValueError:
+            pruned_ratings.append(r)
+    store.ratings = pruned_ratings
     data = {
         "ratings": [asdict(r) for r in store.ratings],
         "last_update_id": store.last_update_id,
@@ -89,8 +103,7 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         "last_digest_time": store.last_digest_time,
     }
     try:
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
+        atomic_json_write(path, data)
     except Exception as exc:
         logger.warning("Failed to save feedback: %s", exc)
 
@@ -236,6 +249,7 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                     await client.post(
                         answer_url,
                         json={"callback_query_id": callback_id},
+                        timeout=5.0,
                     )
                 except Exception as exc:
                     logger.warning(

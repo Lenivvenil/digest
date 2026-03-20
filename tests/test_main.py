@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.collector import Article
-from src.main import RunStats, _parse_args, main, run
+from src.main import RunStats, _clean_summary, _parse_args, main, run
 from src.telegram import TelegramPartialDeliveryError
 
 
@@ -865,3 +865,51 @@ async def test_discover_sources_malformed_lines(config_file: Path) -> None:
     assert result == 0
     # Only one valid FEED line -> only 1 GET request
     assert mock_client.get.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _clean_summary tests
+# ---------------------------------------------------------------------------
+
+
+class TestCleanSummary:
+    def test_removes_link_line(self) -> None:
+        text = "Some digest text.\nLink: https://example.com/article\nMore text."
+        result = _clean_summary(text)
+        assert "Link: https://example.com/article" not in result
+        assert "Some digest text." in result
+        assert "More text." in result
+
+    def test_removes_url_line(self) -> None:
+        text = "Some digest text.\nURL: https://example.com/article\nMore text."
+        result = _clean_summary(text)
+        assert "URL: https://example.com/article" not in result
+
+    def test_removes_russian_link_line(self) -> None:
+        text = "Digest.\nСсылка: https://example.com/ru\nEnd."
+        result = _clean_summary(text)
+        assert "Ссылка: https://example.com/ru" not in result
+
+    def test_preserves_markdown_links(self) -> None:
+        text = "[Article Title](https://example.com/article) — comment."
+        result = _clean_summary(text)
+        assert "[Article Title](https://example.com/article)" in result
+
+    def test_preserves_normal_text(self) -> None:
+        text = "No URLs here. Just plain text."
+        result = _clean_summary(text)
+        assert result == text
+
+    def test_strips_leading_trailing_whitespace(self) -> None:
+        text = "\n\nSome content.\nLink: https://example.com\n\n"
+        result = _clean_summary(text)
+        assert not result.startswith("\n")
+        assert not result.endswith("\n")
+
+    def test_removes_multiple_link_lines(self) -> None:
+        text = "Title 1\nLink: https://a.com\nTitle 2\nURL: https://b.com\nEnd"
+        result = _clean_summary(text)
+        assert "https://a.com" not in result
+        assert "https://b.com" not in result
+        assert "Title 1" in result
+        assert "End" in result

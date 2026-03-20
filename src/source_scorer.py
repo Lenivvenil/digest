@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src._util import atomic_json_write
+
 if TYPE_CHECKING:
     from src.config import AdaptiveConfig, SourceConfig
 
@@ -82,8 +84,7 @@ def save_stats(stats: dict[str, SourceStats], cache_dir: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {name: asdict(s) for name, s in stats.items()}
     try:
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
+        atomic_json_write(path, data)
     except Exception as exc:
         logger.warning("Failed to save source stats: %s", exc)
 
@@ -156,11 +157,15 @@ def calculate_score(stats: SourceStats) -> float:
     # Reliability (weight: 0.3)
     reliability = stats.successful_fetches / stats.total_fetches
 
-    # Productivity (weight: 0.3)
-    if stats.total_articles_found == 0:
+    # Productivity (weight: 0.3) — based on last 7 snapshots to avoid
+    # penalising high-frequency sources (e.g. HN: 30 found / 5 taken = 0.17).
+    recent_snaps = stats.history[-7:] if stats.history else []
+    recent_found = sum(s.articles_found for s in recent_snaps)
+    recent_included = sum(s.articles_included for s in recent_snaps)
+    if recent_found == 0:
         productivity = 0.0
     else:
-        productivity = stats.articles_included_in_digest / stats.total_articles_found
+        productivity = min(1.0, recent_included / recent_found)
 
     # Description quality (weight: 0.2)
     if stats.avg_description_length >= 100:

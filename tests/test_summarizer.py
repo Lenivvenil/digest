@@ -215,12 +215,15 @@ class TestGetProvider:
 # ---------------------------------------------------------------------------
 
 
-def _mock_response(status: int, body: dict) -> MagicMock:
+def _mock_response(status: int, body: dict, retry_after: str | None = None) -> MagicMock:
     response = MagicMock(spec=httpx.Response)
     response.status_code = status
     response.json.return_value = body
     response.raise_for_status = MagicMock()
     response.request = MagicMock()
+    headers_mock = MagicMock()
+    headers_mock.get.return_value = retry_after
+    response.headers = headers_mock
     return response
 
 
@@ -274,7 +277,8 @@ class TestAnthropicProvider:
                 raise httpx.TimeoutException("timed out")
             return success_response
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("src.summarizer.asyncio.sleep", new=AsyncMock()) as mock_sleep:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -286,6 +290,7 @@ class TestAnthropicProvider:
 
         assert result == "Retry success."
         assert call_count == 2
+        mock_sleep.assert_called_once_with(1)  # 2**0
 
     @pytest.mark.asyncio
     async def test_fails_after_two_timeouts(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,7 +299,8 @@ class TestAnthropicProvider:
         async def mock_post(*args, **kwargs):  # type: ignore[no-untyped-def]
             raise httpx.TimeoutException("timed out")
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("src.summarizer.asyncio.sleep", new=AsyncMock()):
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -302,7 +308,24 @@ class TestAnthropicProvider:
             mock_client_cls.return_value = mock_client
 
             provider = AnthropicProvider(model="claude-sonnet-4-20250514")
-            with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+            with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+                await provider.summarize("test prompt")
+
+    @pytest.mark.asyncio
+    async def test_empty_content_array_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        body = {"content": []}
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = AnthropicProvider(model="claude-sonnet-4-20250514")
+            with pytest.raises(RuntimeError, match="empty 'content'"):
                 await provider.summarize("test prompt")
 
     @pytest.mark.asyncio
@@ -310,7 +333,6 @@ class TestAnthropicProvider:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         body = {"content": [{"text": "OK after retry."}]}
         error_response = _mock_response(503, {})
-        error_response.request = MagicMock()
         success_response = _mock_response(200, body)
 
         call_count = 0
@@ -322,7 +344,8 @@ class TestAnthropicProvider:
                 return error_response
             return success_response
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch("src.summarizer.asyncio.sleep", new=AsyncMock()) as mock_sleep:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -334,6 +357,7 @@ class TestAnthropicProvider:
 
         assert result == "OK after retry."
         assert call_count == 2
+        mock_sleep.assert_called_once_with(1)  # 2**0, no Retry-After header
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +400,23 @@ class TestGeminiProvider:
             with pytest.raises(PermissionError, match="authentication failed"):
                 await provider.summarize("test prompt")
 
+    @pytest.mark.asyncio
+    async def test_empty_candidates_array_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        body = {"candidates": []}
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = GeminiProvider(model="gemini-2.5-flash")
+            with pytest.raises(RuntimeError, match="empty 'candidates'"):
+                await provider.summarize("test prompt")
+
     def test_api_key_in_header_not_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GEMINI_API_KEY", "my-secret-key")
         provider = GeminiProvider(model="gemini-2.5-flash")
@@ -408,6 +449,23 @@ class TestGroqProvider:
             result = await provider.summarize("test prompt")
 
         assert result == "Groq result."
+
+    @pytest.mark.asyncio
+    async def test_empty_content_array_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        body = {"choices": []}
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = GroqProvider(model="llama-3.3-70b-versatile")
+            with pytest.raises(RuntimeError, match="empty 'choices'"):
+                await provider.summarize("test prompt")
 
     @pytest.mark.asyncio
     async def test_bearer_token_in_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:

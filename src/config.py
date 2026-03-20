@@ -48,6 +48,7 @@ class SourceConfig:
     trial: bool = False
     trial_started: str | None = None
     trial_days: int = 7
+    recency_hours: int = 24
 
 
 @dataclass
@@ -202,6 +203,17 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'trial_days' in sources[{i}] must be >= 1, "
                 f"got {raw_trial_days}."
             )
+        raw_recency_hours = item.get("recency_hours", 24)
+        if isinstance(raw_recency_hours, bool) or not isinstance(raw_recency_hours, int):
+            raise ValueError(
+                f"Config field 'recency_hours' in sources[{i}] must be an integer, "
+                f"got {type(raw_recency_hours).__name__} {raw_recency_hours!r}."
+            )
+        if raw_recency_hours < 1:
+            raise ValueError(
+                f"Config field 'recency_hours' in sources[{i}] must be >= 1, "
+                f"got {raw_recency_hours}."
+            )
         sources.append(
             SourceConfig(
                 name=str(name),
@@ -212,6 +224,7 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 trial=raw_trial,
                 trial_started=trial_started,
                 trial_days=raw_trial_days,
+                recency_hours=raw_recency_hours,
             )
         )
     seen_names: set[str] = set()

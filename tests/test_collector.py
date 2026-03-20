@@ -907,3 +907,117 @@ async def test_collect_trial_sources_separate_budget(
     assert trial_count <= 2
     # Regular should get more since it has the full budget
     assert regular_count > trial_count
+
+
+@pytest.mark.asyncio
+async def test_collect_per_source_recency_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Source with recency_hours=168 should include 48h-old articles that default 24h window would reject."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source = SourceConfig(
+        name="Weekly Blog",
+        url="https://weekly.example.com/feed",
+        category="Tech",
+        enabled=True,
+        priority=3,
+        recency_hours=168,
+    )
+    config = make_config(sources=[source])
+
+    old_rss = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Weekly Blog</title>
+            <item>
+              <title>Week-Old Article</title>
+              <link>https://weekly.example.com/1</link>
+              <description>Published 48 hours ago</description>
+              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(old_rss.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    # With recency_hours=168 the 48h-old article must be included
+    assert len(result.get("Tech", [])) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_default_recency_rejects_48h_old(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default recency_hours=24 should reject articles older than 24h."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    # make_source() returns SourceConfig with default recency_hours=24
+    config = make_config(sources=[make_source()])
+
+    old_rss = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Test Feed</title>
+            <item>
+              <title>Old Article</title>
+              <link>https://example.com/old</link>
+              <description>Published 48 hours ago</description>
+              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(old_rss.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert result.get("Tech", []) == []
+
+
+# ---------------------------------------------------------------------------
+# atomic_json_write round-trip (via src._util)
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_json_write_round_trip(tmp_path: Path) -> None:
+    """atomic_json_write writes correct JSON and leaves no .tmp file."""
+    import json
+
+    from src._util import atomic_json_write
+
+    target = tmp_path / "data.json"
+    data = {"key": "value", "num": 42}
+    atomic_json_write(target, data)
+
+    assert target.exists()
+    assert not (tmp_path / "data.json.tmp").exists()
+    loaded = json.loads(target.read_text(encoding="utf-8"))
+    assert loaded == data
+
+
+def test_atomic_json_write_overwrites_existing(tmp_path: Path) -> None:
+    """atomic_json_write replaces an existing file atomically."""
+    import json
+
+    from src._util import atomic_json_write
+
+    target = tmp_path / "data.json"
+    atomic_json_write(target, {"v": 1})
+    atomic_json_write(target, {"v": 2})
+
+    loaded = json.loads(target.read_text(encoding="utf-8"))
+    assert loaded == {"v": 2}
+    assert not (tmp_path / "data.json.tmp").exists()

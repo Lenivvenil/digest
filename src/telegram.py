@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import os
 import re
@@ -11,13 +10,9 @@ import re
 import httpx
 
 from src.config import Config
+from src.feedback import _category_hash
 
 logger = logging.getLogger(__name__)
-
-
-def _category_hash(category: str) -> str:
-    """Return an 8-character hex hash for a category name (for callback_data)."""
-    return hashlib.md5(category.encode()).hexdigest()[:8]
 
 
 class TelegramPartialDeliveryError(Exception):

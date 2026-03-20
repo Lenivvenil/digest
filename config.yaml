@@ -89,42 +89,49 @@ sources:
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
+    recency_hours: 168
 
   - name: "Brendan Gregg's Blog"
     url: "https://www.brendangregg.com/blog/rss.xml"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
+    recency_hours: 744
 
   - name: "Increment Magazine"
     url: "https://increment.com/feeds/all.rss"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
+    recency_hours: 744
 
   - name: "SRE Weekly"
     url: "https://sreweekly.com/feed/"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   - name: "Martin Fowler"
     url: "https://martinfowler.com/feed.atom"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
+    recency_hours: 744
 
   - name: "ACM Queue"
     url: "https://queue.acm.org/rss/feeds/queuecontent.xml"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 5
+    recency_hours: 168
 
   - name: "ByteByteGo"
     url: "https://blog.bytebytego.com/feed"
     category: "Architecture & Distributed Systems"
     enabled: true
     priority: 3
+    recency_hours: 168
 
   # Company Engineering Blogs
   - name: "Stripe Engineering"
@@ -132,84 +139,99 @@ sources:
     category: "Company Engineering"
     enabled: true
     priority: 5
+    recency_hours: 168
 
   - name: "Netflix TechBlog"
     url: "https://netflixtechblog.com/feed"
     category: "Company Engineering"
     enabled: true
     priority: 5
+    recency_hours: 168
 
   - name: "Uber Engineering"
     url: "https://eng.uber.com/feed/"
     category: "Company Engineering"
     enabled: true
     priority: 5
+    recency_hours: 168
 
   - name: "Airbnb Tech Blog"
+    # blocked from GitHub Actions IPs (Medium-hosted)
     url: "https://medium.com/airbnb-engineering/feed"
     category: "Company Engineering"
-    enabled: true
+    enabled: false
     priority: 4
+    recency_hours: 168
 
   - name: "Cloudflare Blog"
     url: "https://blog.cloudflare.com/rss/"
     category: "Company Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   - name: "Grab Tech Blog"
     url: "https://engineering.grab.com/feed.xml"
     category: "Company Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   - name: "Shopify Engineering"
     url: "https://shopify.engineering/feed"
     category: "Company Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   - name: "LinkedIn Engineering"
     url: "https://engineering.linkedin.com/blog.rss"
     category: "Company Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   - name: "DoorDash Engineering"
     url: "https://doordash.engineering/feed/"
     category: "Company Engineering"
     enabled: true
     priority: 3
+    recency_hours: 168
 
   - name: "Spotify Engineering"
     url: "https://engineering.atspotify.com/feed/"
     category: "Company Engineering"
     enabled: true
     priority: 3
+    recency_hours: 168
 
   - name: "Slack Engineering"
     url: "https://slack.engineering/feed/"
     category: "Company Engineering"
     enabled: true
     priority: 3
+    recency_hours: 168
 
   - name: "GitHub Engineering"
     url: "https://github.blog/engineering.atom"
     category: "Company Engineering"
     enabled: true
     priority: 2
+    recency_hours: 168
 
   - name: "Discord Engineering"
     url: "https://discord.com/blog/engineering-rss"
     category: "Company Engineering"
     enabled: true
     priority: 2
+    recency_hours: 168
 
   - name: "Meta Engineering"
     url: "https://engineering.fb.com/feed/"
     category: "Company Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   # Cloud & Infrastructure
   - name: "AWS Architecture Blog"
@@ -354,6 +376,7 @@ sources:
     category: "AI Engineering"
     enabled: true
     priority: 4
+    recency_hours: 168
 
   # Platform Engineering
   - name: "Prometheus Blog"
@@ -380,6 +403,7 @@ sources:
     category: "Enterprise Architecture"
     enabled: true
     priority: 3
+    recency_hours: 168
 
   - name: "Hacker News Best"
     url: "https://hnrss.org/best"

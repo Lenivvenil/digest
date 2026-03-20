@@ -187,6 +187,10 @@ def test_calculate_score_perfect_source() -> None:
         articles_included_in_digest=50,
         avg_description_length=200.0,
         last_seen=today,
+        history=[
+            DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=5, fetch_ok=True)
+            for i in range(1, 8)
+        ],
     )
     score = calculate_score(stats)
     # reliability=1.0*0.3 + productivity=1.0*0.3 + desc=1.0*0.2 + recency=1.0*0.2 = 1.0
@@ -234,6 +238,10 @@ def test_calculate_score_malformed_last_seen_date() -> None:
         articles_included_in_digest=50,
         avg_description_length=200.0,
         last_seen="2026/03/18",  # Invalid format (should be YYYY-MM-DD)
+        history=[
+            DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=5, fetch_ok=True)
+            for i in range(1, 8)
+        ],
     )
     score = calculate_score(stats)
     # With recency=0.0, score = 1.0*0.3 + 1.0*0.3 + 1.0*0.2 + 0.0*0.2 = 0.8
@@ -316,6 +324,10 @@ def test_effective_priorities_high_score_bad_feedback() -> None:
             name="A", total_fetches=10, successful_fetches=10,
             total_articles_found=50, articles_included_in_digest=50,
             avg_description_length=200.0, last_seen=today,
+            history=[
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=5, fetch_ok=True)
+                for i in range(1, 8)
+            ],
         )
     }
     feedback = {"A": 0.1}  # bad feedback
@@ -589,14 +601,19 @@ def test_evaluate_trial_boundary_just_above_0_3_not_demoted() -> None:
             total_fetches=10,
             successful_fetches=5,  # reliability = 0.5
             total_articles_found=10,
-            articles_included_in_digest=5,  # productivity = 0.5
-            avg_description_length=20.0,  # desc = 0.0
+            articles_included_in_digest=5,
+            avg_description_length=20.0,
             last_seen=None,  # recency = 0.0
+            # 7 snaps with 50% inclusion → productivity = 0.5
+            history=[
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2, articles_included=1, fetch_ok=True)
+                for i in range(1, 8)
+            ],
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # score = 0.5*0.3 + 0.5*0.3 + 0.0*0.2 + 0.0*0.2 = 0.15 + 0.15 = 0.3
-    # At exactly 0.3, should NOT be demoted (threshold is < 0.3)
+    # score = 0.5*0.3 + 0.5*0.3 + 0.2*0.2 + 0.0*0.2 = 0.34
+    # Above 0.3, should NOT be demoted (threshold is < 0.3)
     assert "Middling" not in demote
 
 
@@ -867,3 +884,32 @@ def test_update_stats_deduplicates_same_day() -> None:
     assert len(stats["Feed"].history) == 1
     assert stats["Feed"].history[0].articles_found == 8
     assert stats["Feed"].history[0].articles_included == 3
+
+
+def test_save_stats_atomic_write(tmp_path: Path) -> None:
+    """save_stats writes via tmp file and leaves no .tmp artifact."""
+    from src.source_scorer import SourceStats, save_stats
+
+    stats: dict[str, SourceStats] = {"Feed": SourceStats(name="Feed")}
+    save_stats(stats, str(tmp_path))
+
+    stats_file = tmp_path / "source_stats.json"
+    tmp_file = tmp_path / "source_stats.json.tmp"
+    assert stats_file.exists(), "source_stats.json should exist after save_stats"
+    assert not tmp_file.exists(), ".tmp file should be removed after atomic rename"
+
+
+def test_save_stats_round_trip(tmp_path: Path) -> None:
+    """save_stats then load_stats returns the same data."""
+    from src.source_scorer import SourceStats, load_stats, save_stats
+
+    stats: dict[str, SourceStats] = {"FeedA": SourceStats(name="FeedA")}
+    stats["FeedA"].total_fetches = 5
+    stats["FeedA"].successful_fetches = 4
+
+    save_stats(stats, str(tmp_path))
+    loaded = load_stats(str(tmp_path))
+
+    assert "FeedA" in loaded
+    assert loaded["FeedA"].total_fetches == 5
+    assert loaded["FeedA"].successful_fetches == 4

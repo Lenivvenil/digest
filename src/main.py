@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,21 @@ from src.summarizer import build_prompt, get_provider
 from src.telegram import TelegramPartialDeliveryError, send_category_feedback_message, send_digest
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_summary(text: str) -> str:
+    """Remove redundant URL lines that duplicate links already in article titles.
+
+    LLM providers sometimes emit standalone link lines like:
+      Link: https://...   URL: https://...   Source: https://...
+      Ссылка: https://... Источник: https://...
+    These are redundant because titles are already formatted as [Title](url).
+    """
+    return re.sub(
+        r"(?m)^\s*(Link|URL|Source|Read more|Ссылка|Источник|Читать далее)\s*:\s*https?://\S+\s*$",
+        "",
+        text,
+    ).strip()
 
 
 def _prune_digest_sources_map(
@@ -135,6 +151,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--discover",
         action="store_true",
         help="Use LLM to suggest new RSS sources for underrepresented categories, then exit.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate config and probe all feed URLs, then exit (0 = all OK, 1 = any failures).",
     )
     return parser.parse_args(argv)
 
@@ -277,7 +298,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     prompt = build_prompt(articles_by_category, config)
     provider = get_provider(config)
     logger.info("Summarizing with provider=%s model=%s", config.llm.provider, config.llm.model)
-    summary = await provider.summarize(prompt)
+    summary = _clean_summary(await provider.summarize(prompt))
     logger.info("Summary generated: %d chars", len(summary))
 
     # Build delivery text: summary + nano-status footer (not added to markdown/RunStats)
@@ -561,6 +582,115 @@ def _pin_dns(
     return _ctx()
 
 
+async def check_config(config_path: str) -> int:
+    """Validate config and probe all enabled feed URLs.
+
+    Checks:
+    - Config loads without errors
+    - Required env vars present for the configured LLM provider and Telegram
+    - No duplicate source names or URLs
+    - All enabled feed URLs respond and return parseable RSS/Atom content
+
+    Returns 0 if all checks pass, 1 if any failures.
+    """
+    import feedparser  # type: ignore[import-untyped]
+    import httpx
+
+    ok = True
+
+    # --- Load config ---
+    print("Checking config...")
+    try:
+        config = load_config(config_path)
+        print(f"  [OK] Config loaded: {len(config.enabled_sources)} enabled sources")
+    except Exception as exc:
+        print(f"  [FAIL] Config load error: {exc}")
+        return 1
+
+    # --- Env vars ---
+    print("\nChecking environment variables...")
+    provider_vars: dict[str, list[str]] = {
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "gemini": ["GEMINI_API_KEY"],
+        "groq": ["GROQ_API_KEY"],
+    }
+    telegram_vars = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
+    required_vars = provider_vars.get(config.llm.provider, []) + telegram_vars
+    for var in required_vars:
+        val = os.environ.get(var, "")
+        if val:
+            print(f"  [OK] {var} is set")
+        else:
+            print(f"  [WARN] {var} is not set (required for production)")
+
+    # --- Duplicate detection ---
+    print("\nChecking for duplicates...")
+    seen_names: dict[str, int] = {}
+    seen_urls: dict[str, str] = {}
+    for source in config.enabled_sources:
+        seen_names[source.name] = seen_names.get(source.name, 0) + 1
+        if source.url in seen_urls:
+            print(
+                f"  [WARN] Duplicate URL: {source.url!r} used by "
+                f"{seen_urls[source.url]!r} and {source.name!r}"
+            )
+        else:
+            seen_urls[source.url] = source.name
+    for name, count in seen_names.items():
+        if count > 1:
+            print(f"  [WARN] Duplicate source name: {name!r} appears {count} times")
+    if all(c == 1 for c in seen_names.values()) and len(seen_urls) == len(config.enabled_sources):
+        print("  [OK] No duplicate names or URLs")
+
+    # --- Feed probing ---
+    print(f"\nProbing {len(config.enabled_sources)} feed URLs...")
+
+    async def _probe(client: httpx.AsyncClient, source: Any) -> tuple[str, str, str]:
+        """Return (name, status_label, detail)."""
+        validated = _validate_url(source.url)
+        if validated is None:
+            return source.name, "BLOCKED", "unsafe URL (private/local/non-http)"
+        try:
+            with _pin_dns(validated.hostname, validated.pinned_addrinfos):
+                resp = await client.get(validated.url, timeout=15.0)
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
+            if feed.bozo and not feed.entries:
+                return source.name, "WARN", f"feedparser error: {feed.bozo_exception}"
+            entry_count = len(feed.entries)
+            return source.name, "OK", f"{entry_count} entries"
+        except httpx.TimeoutException:
+            return source.name, "FAIL", "timeout"
+        except Exception as exc:
+            return source.name, "FAIL", str(exc)
+
+    async with httpx.AsyncClient(
+        timeout=15.0, follow_redirects=True, trust_env=False
+    ) as client:
+        tasks = [asyncio.create_task(_probe(client, s)) for s in config.enabled_sources]
+        results = await asyncio.gather(*tasks)
+
+    for name, status, detail in sorted(results):
+        print(f"  [{status:6}] {name}: {detail}")
+        if status == "FAIL" or status == "BLOCKED":
+            ok = False
+
+    # --- Summary ---
+    fail_count = sum(1 for _, s, _ in results if s in ("FAIL", "BLOCKED"))
+    warn_count = sum(1 for _, s, _ in results if s == "WARN")
+    ok_count_feeds = sum(1 for _, s, _ in results if s == "OK")
+    print(
+        f"\nResult: {ok_count_feeds} OK, {warn_count} WARN, {fail_count} FAIL"
+        f" out of {len(config.enabled_sources)} feeds"
+    )
+    if ok:
+        print("All checks passed.")
+    else:
+        print("Some checks FAILED — fix the issues above before running the digest.")
+
+    return 0 if ok else 1
+
+
 async def discover_sources(config_path: str) -> int:
     """Use LLM to suggest new RSS sources for underrepresented categories.
 
@@ -640,6 +770,9 @@ async def main(argv: list[str] | None = None) -> int:
     _setup_logging(args.verbose)
 
     try:
+        if args.check:
+            return await check_config(config_path=args.config)
+
         if args.discover:
             return await discover_sources(config_path=args.config)
 
