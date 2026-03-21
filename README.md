@@ -1,191 +1,245 @@
-# Daily News Digest
+# Ежедневный новостной дайджест
 
-Personal daily news digest generator for a Technology Architect at a major bank.
-Collects RSS/Atom feeds, summarizes them via an LLM, sends to Telegram,
-and saves markdown files to the repository (for Obsidian via git-sync).
+Персональный генератор ежедневного новостного дайджеста для технического архитектора крупного банка.
+Собирает RSS/Atom-ленты, суммирует их через LLM, отправляет в Telegram
+и сохраняет markdown-файлы в репозиторий (для Obsidian через git-sync).
 
-Runs on **GitHub Actions** free tier — no VPS, no paid hosting required.
+Работает на **GitHub Actions** (бесплатный tier) — без VPS и платного хостинга.
 
-## Architecture
+## Архитектура
 
-```
-config.yaml
-    |
-    v
-collector.py  ──(feedparser + httpx)──>  RSS/Atom feeds (50 sources)
-    |
-    v  (Articles grouped by category, deduplicated, last 24h only)
-summarizer.py ──(httpx)──────────────>  LLM API
-    |                                    Anthropic Claude  (ANTHROPIC_API_KEY)
-    |                                    Google Gemini     (GEMINI_API_KEY)
-    |                                    Groq / LLaMA      (GROQ_API_KEY)
-    |
-    +──> telegram.py ──────────────────> Telegram Bot API  (MarkdownV2, chunked)
-    |
-    +──> markdown_writer.py ───────────> digests/YYYY-MM-DD.md
-                                              |
-                                  git commit by GitHub Actions
-                                              |
-                                   Obsidian (via git-sync plugin)
+```mermaid
+flowchart TD
+    CFG[config.yaml] --> COL[collector]
+    COL --> RSS[(RSS/Atom)]
+    COL --> SUM[summarizer]
+    SUM --> PC{ProviderChain}
+    PC --> P[Anthropic / Gemini / Groq / Mistral / DeepSeek]
+    SUM --> TG[Telegram Bot]
+    SUM --> MD[Markdown]
+    MD --> GH[GitHub Actions]
+    GH --> OBS[Obsidian]
 ```
 
-## Quick Start
+Каждая категория суммируется параллельно через назначенного провайдера (или цепочку по умолчанию, если маршрутизация не задана).
+**ProviderChain** автоматически переключается на следующего провайдера при сбое — дайджест всегда доставляется, даже если один API недоступен.
 
-### 1. Fork / clone the repository
+## Архитектура LLM-провайдеров
+
+### ProviderChain fallback
+
+```mermaid
+flowchart LR
+    REQ[Request] --> P1[Primary]
+    P1 -- OK --> RES[Result]
+    P1 -- Fail --> P2[Fallback 1]
+    P2 -- OK --> RES
+    P2 -- Fail --> P3[Fallback N]
+    P3 -- OK --> RES
+    P3 -- Fail --> ERR[RuntimeError]
+```
+
+### Параллельная обработка по категориям
+
+Каждая категория обрабатывается параллельно:
+
+1. `main.py` вызывает `resolve_category_providers` — получает словарь `категория → ProviderChain`
+2. Для каждой категории параллельно запускается `build_category_prompt` + вызов LLM
+3. После получения всех категорий строится `build_trends_prompt` и вызывается LLM для трендов
+4. Итоговый дайджест собирается из всех категорий + трендов
+
+## Маршрутизация по категориям
+
+Можно назначить конкретного LLM-провайдера отдельным категориям. Категории без маршрутизации используют цепочку по умолчанию. Если API-ключ назначенного провайдера отсутствует — автоматически используется цепочка по умолчанию.
+
+```yaml
+llm:
+  providers:
+    - name: "gemini"
+      model: "gemini-2.5-flash"
+    - name: "groq"
+      model: "llama-3.3-70b-versatile"
+  routing:
+    - categories: ["AI & LLM", "AI Engineering"]
+      provider: "gemini"
+      model: "gemini-2.5-flash"
+```
+
+## Рекомендации по выбору моделей
+
+Рекомендации основаны на комментариях в `config.yaml`. Это не жёсткие правила — любая модель справится с любой категорией, и вы можете настроить любую комбинацию.
+
+| Категория | Провайдер | Модель | Почему |
+|-----------|-----------|--------|--------|
+| AI & LLM, AI Engineering | Gemini | gemini-2.5-flash | Быстрый, хорошо разбирается в AI-тематике, бесплатный tier |
+| Banking & Fintech, Payments & Fintech | Groq | llama-3.3-70b-versatile | Быстрый inference, хорошо работает с финансовой аналитикой |
+| Architecture & Distributed Systems | DeepSeek | deepseek-chat | Силён в технических и архитектурных темах |
+| Остальные категории | По умолчанию | — | Используется цепочка из `llm.providers` |
+
+## Быстрый старт
+
+### 1. Форк / клон репозитория
 
 ```bash
 git clone https://github.com/<you>/digest.git
 cd digest
 ```
 
-### 2. Create a Telegram bot
+### 2. Создайте Telegram-бота
 
-1. Open Telegram, find **@BotFather**, send `/newbot`.
-2. Follow the prompts and save the **bot token** you receive.
-3. Send any message to your new bot, then open:
+1. Найдите **@BotFather** в Telegram, отправьте `/newbot`.
+2. Следуйте инструкциям и сохраните полученный **токен бота**.
+3. Напишите любое сообщение своему новому боту, затем откройте:
    `https://api.telegram.org/bot<TOKEN>/getUpdates`
-   Find your `chat.id` in the response. Alternatively use **@userinfobot**.
+   Найдите `chat.id` в ответе. Альтернативно используйте **@userinfobot**.
 
-### 3. Get an LLM API key
+### 3. Получите API-ключ LLM
 
-Choose one provider (Gemini and Groq have free tiers):
+Выберите одного или нескольких провайдеров (у Gemini и Groq есть бесплатные тиры):
 
-| Provider | Console | Free tier |
-|----------|---------|-----------|
-| Anthropic Claude | https://console.anthropic.com/ | Trial credits |
-| Google Gemini | https://aistudio.google.com/app/apikey | Yes |
-| Groq | https://console.groq.com/ | Yes |
+| Провайдер | Консоль | Бесплатный tier |
+|-----------|---------|----------------|
+| Anthropic Claude | https://console.anthropic.com/ | Пробные кредиты |
+| Google Gemini | https://aistudio.google.com/app/apikey | Да |
+| Groq | https://console.groq.com/ | Да |
+| Mistral | https://console.mistral.ai/ | Пробные кредиты |
+| DeepSeek | https://platform.deepseek.com/ | Пробные кредиты |
 
-### 4. Configure the digest
+### 4. Настройте дайджест
 
-Edit `config.yaml`:
+Отредактируйте `config.yaml`:
 
 ```yaml
 llm:
-  provider: "anthropic"   # or "gemini" or "groq"
+  provider: "anthropic"   # или "gemini", "groq"
   model: "claude-sonnet-4-20250514"
 
 digest:
-  language: "ru"          # "ru" or "en"
+  language: "ru"               # "ru" или "en"
   summary_style: "analytical"  # "analytical" | "brief" | "detailed"
 ```
 
-### 5. Add GitHub Secrets
+### 5. Добавьте GitHub Secrets
 
-In your fork: **Settings → Secrets and variables → Actions → New repository secret**.
+В вашем форке: **Settings → Secrets and variables → Actions → New repository secret**.
 
-Add the secrets matching your chosen provider:
+Добавьте секреты для выбранных провайдеров:
 
-| Secret name           | Description                              |
-|-----------------------|------------------------------------------|
-| `ANTHROPIC_API_KEY`   | Anthropic API key (if using Claude)      |
-| `GEMINI_API_KEY`      | Gemini API key (if using Gemini)         |
-| `GROQ_API_KEY`        | Groq API key (if using Groq)             |
-| `TELEGRAM_BOT_TOKEN`  | Telegram bot token from @BotFather       |
-| `TELEGRAM_CHAT_ID`    | Your Telegram chat ID                    |
+| Имя секрета           | Описание                                        |
+|-----------------------|-------------------------------------------------|
+| `ANTHROPIC_API_KEY`   | API-ключ Anthropic (если используете Claude)    |
+| `GEMINI_API_KEY`      | API-ключ Gemini (если используете Gemini)       |
+| `GROQ_API_KEY`        | API-ключ Groq (если используете Groq)           |
+| `MISTRAL_API_KEY`     | API-ключ Mistral (если используете Mistral)     |
+| `DEEPSEEK_API_KEY`    | API-ключ DeepSeek (если используете DeepSeek)   |
+| `TELEGRAM_BOT_TOKEN`  | Токен бота от @BotFather                        |
+| `TELEGRAM_CHAT_ID`    | Ваш Telegram chat ID                            |
 
-### 6. Enable the workflow
+### 6. Активируйте workflow
 
-The digest runs daily at **06:00 UTC** (11:00 Tashkent time, UTC+5).
+Дайджест запускается ежедневно в **06:00 UTC** (11:00 по Ташкенту, UTC+5).
 
-You can also trigger it manually:
+Также можно запустить вручную:
 **Actions → Daily News Digest → Run workflow**
 
-Generated digest files appear in `digests/` and are committed back to the repo automatically.
+Сгенерированные файлы дайджеста сохраняются в `digests/` и автоматически коммитятся в репозиторий.
 
-## Running locally
+## Локальный запуск
 
 ```bash
-# Install dependencies
+# Установить зависимости
 pip install -r requirements.txt
 
-# Copy and fill in credentials
+# Скопировать и заполнить credentials
 cp .env.example .env
-# edit .env with your keys
+# отредактировать .env с вашими ключами
 
-# Run the digest
+# Проверить конфиг и API-ключи
+python -m src --check
+
+# Запустить дайджест
 python -m src
 
-# Dry-run: collect and summarize, but do not send or save
+# Dry-run: собрать и суммировать, но не отправлять и не сохранять
 python -m src --dry-run --verbose
 
-# Use a different config file
+# Использовать другой конфиг-файл
 python -m src --config my-config.yaml
 
-# Discover new RSS sources via LLM
+# Найти новые RSS-источники через LLM
 python -m src --discover
 ```
 
-## Adding / removing sources
+## Добавление и удаление источников
 
-Edit the `sources` list in `config.yaml`. Each source has:
+Отредактируйте список `sources` в `config.yaml`. Каждый источник имеет поля:
 
 ```yaml
 sources:
-  - name: "My Feed"          # human-readable label used in the digest
-    url: "https://..."       # RSS or Atom feed URL
-    category: "AI & LLM"    # groups sources together in the digest
-    enabled: true            # set to false to temporarily disable
-    priority: 3              # 1 (lowest) to 5 (highest); default 3
+  - name: "My Feed"          # отображаемое название (используется в дайджесте)
+    url: "https://..."       # URL RSS или Atom-ленты
+    category: "AI & LLM"    # группирует источники в дайджесте
+    enabled: true            # false — временно отключить без удаления
+    priority: 3              # от 1 (низший) до 5 (высший); по умолчанию 3
 ```
 
-Optional fields for trial sources:
+Необязательные поля для пробных источников:
 
 ```yaml
-    trial: true               # test a new source with limited slots
-    trial_started: "2026-03-15" # auto-populated when trial begins
-    trial_days: 7              # days before auto-promotion/demotion (default 7)
+    trial: true                  # тестировать новый источник с ограниченными слотами
+    trial_started: "2026-03-15"  # заполняется автоматически при старте испытания
+    trial_days: 7                # дней до автоматического повышения/понижения (по умолчанию 7)
 ```
 
-The `priority` field controls how many article slots each source receives relative to others.
-Higher-priority sources are also processed first, so they always fill their quota before
-lower-priority sources consume the total budget.
+Поле `priority` определяет долю слотов статей, которую получает источник относительно других.
+Источники с высоким приоритетом также обрабатываются первыми и всегда заполняют свою квоту
+до того, как источники с низким приоритетом займут общий бюджет.
 
-## Adaptive Source Management
+## Адаптивное управление источниками
 
-When enabled (`adaptive.enabled: true` in config.yaml), the system automatically tunes source priorities:
+При включении (`adaptive.enabled: true` в config.yaml) система автоматически настраивает приоритеты источников:
 
-- **Feedback**: React with thumbs-up/down on digest messages in Telegram. Ratings influence priorities.
-- **Quality scoring**: Tracks reliability, productivity, and description quality per source.
-- **Trial sources**: New sources marked `trial: true` get a separate slot budget. After the trial period, high-quality sources promote to permanent; low-quality sources are disabled.
-- **Trend detection**: Sources with >50% article increase over 7 days get a priority bonus.
+- **Обратная связь**: реакции 👍/👎 на сообщения дайджеста в Telegram влияют на приоритеты.
+- **Оценка качества**: отслеживает надёжность, продуктивность и качество описаний по каждому источнику.
+- **Пробные источники**: новые источники с `trial: true` получают отдельный бюджет слотов. По истечении пробного периода качественные источники переходят в постоянные; некачественные отключаются.
+- **Определение трендов**: источники с ростом числа статей >50% за 7 дней получают бонус к приоритету.
 
-Pre-configured categories:
-- **Banking & Fintech** — Finextra, PYMNTS, The Financial Brand, American Banker
-- **AI & LLM** — MIT Technology Review, The Batch, Hugging Face Blog, Google DeepMind
-- **Platform Engineering** — High Scalability, Brendan Gregg, SRE Weekly, The New Stack
-- **Enterprise Architecture** — InfoQ, ThoughtWorks, Martin Fowler, Hacker News Best
+Предустановленные категории:
+- **Banking & Fintech** — Finextra, PYMNTS, Monzo Tech Blog
+- **AI & LLM** — MIT Technology Review, The Batch, Hugging Face Blog, OpenAI News
+- **Architecture & Distributed Systems** — High Scalability, Brendan Gregg, SRE Weekly, Martin Fowler
+- **Enterprise Architecture** — InfoQ, ThoughtWorks, Hacker News Best
 - **Geopolitics & CIS** — Spot.uz, Kun.uz
 
-## Digest format
+## Формат дайджеста
 
-The digest uses a **three perspectives** format for the most important news in each category:
+Дайджест использует формат **трёх перспектив** для наиболее важных новостей в каждой категории:
 
 ```
 ### AI & LLM
 
-**OpenAI releases GPT-5** — [OpenAI Blog](https://...)
+**OpenAI выпускает GPT-5** — [OpenAI Blog](https://...)
 
-Short analytical summary of the news item.
+Краткое аналитическое описание новости.
 
-🟢 **Optimist** — This is a breakthrough that will 10x developer productivity
-and finally bring AI agents to production-grade reliability.
+🟢 **Оптимист** — Это прорыв, который в 10 раз увеличит продуктивность разработчиков
+и наконец сделает AI-агентов надёжными в production.
 
-🔴 **Skeptic** — Benchmark inflation and hallucinations persist. Enterprise
-adoption will lag 12–18 months behind the hype cycle as usual.
+🔴 **Скептик** — Накрутка бенчмарков и галлюцинации сохраняются. Корпоративное
+внедрение отстанет от хайпа на 12–18 месяцев, как обычно.
 
-⚖️ **Realist** — A genuine capability jump, but integration complexity means
-most teams will benefit gradually over 6–12 months, not overnight.
+⚖️ **Реалист** — Реальный скачок возможностей, но сложность интеграции означает,
+что большинство команд будет получать пользу постепенно, за 6–12 месяцев.
 ```
 
-Minor news items receive a standard 2–3 sentence analytical comment without perspectives.
+Второстепенные новости получают стандартный аналитический комментарий в 2–3 предложения без перспектив.
 
-Summary styles (set via `digest.summary_style`):
-- `analytical` — trend analysis + three perspectives for top topics (default)
-- `brief` — one sentence per item, no perspectives
-- `detailed` — full context, three perspectives for all items
+Стили суммаризации (задаются через `digest.summary_style`):
+- `analytical` — анализ трендов + три перспективы для топ-тем (по умолчанию)
+- `brief` — одно предложение на новость, без перспектив
+- `detailed` — полный контекст, три перспективы для всех новостей
 
-## Example digest output
+## Пример вывода дайджеста
 
 ```markdown
 ---
@@ -201,13 +255,13 @@ tags:
 
 ## 🏦 Banking & Fintech
 
-**Visa launches real-time cross-border payment rail** — [Finextra](https://...)
+**Visa запускает рельсы для трансграничных платежей в реальном времени** — [Finextra](https://...)
 
-Visa's new infrastructure targets B2B corridor payments in 40 countries...
+Новая инфраструктура Visa нацелена на B2B-коридоры в 40 странах...
 
-🟢 **Optimist** — ...
-🔴 **Skeptic** — ...
-⚖️ **Realist** — ...
+🟢 **Оптимист** — ...
+🔴 **Скептик** — ...
+⚖️ **Реалист** — ...
 
 ---
 
@@ -217,25 +271,34 @@ Visa's new infrastructure targets B2B corridor payments in 40 countries...
 
 ## 📈 Ключевые тренды дня
 
-1. Real-time payments continue displacing correspondent banking...
+1. Платежи в реальном времени продолжают вытеснять корреспондентский банкинг...
 2. ...
 ```
 
-## Development
+## Разработка
 
 ```bash
-# Run tests
+# Запустить тесты
 python -m pytest tests/ -v
 
-# Type checking
+# Проверка типов
 python -m mypy src/ --ignore-missing-imports
 
-# Lint
+# Линтинг
 python -m ruff check src/
 ```
 
-## Environment variables
+## Переменные окружения
 
-See `.env.example` for the full list. All variables are optional — the script
-degrades gracefully: if Telegram credentials are missing, it skips delivery but
-still saves the markdown file.
+См. `.env.example` для полного списка. Все переменные необязательны — скрипт деградирует gracefully:
+если Telegram-credentials отсутствуют, доставка пропускается, но markdown-файл всё равно сохраняется.
+
+| Переменная            | Описание                          |
+|-----------------------|-----------------------------------|
+| `ANTHROPIC_API_KEY`   | API-ключ Anthropic Claude         |
+| `GEMINI_API_KEY`      | API-ключ Google Gemini            |
+| `GROQ_API_KEY`        | API-ключ Groq                     |
+| `MISTRAL_API_KEY`     | API-ключ Mistral                  |
+| `DEEPSEEK_API_KEY`    | API-ключ DeepSeek                 |
+| `TELEGRAM_BOT_TOKEN`  | Токен Telegram-бота               |
+| `TELEGRAM_CHAT_ID`    | Telegram chat ID                  |
