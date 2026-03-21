@@ -541,3 +541,31 @@ class TestGeminiSafetyFilter:
             provider = GeminiProvider(model="gemini-2.5-flash")
             with pytest.raises(RuntimeError, match="SAFETY"):
                 await provider.summarize("test prompt")
+
+    @pytest.mark.asyncio
+    async def test_gemini_max_tokens_returns_partial(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GeminiProvider returns partial text with a warning when finishReason is MAX_TOKENS."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+        partial_text = "Partial digest content that was cut off"
+        body = {
+            "candidates": [
+                {
+                    "finishReason": "MAX_TOKENS",
+                    "content": {"parts": [{"text": partial_text}]},
+                }
+            ]
+        }
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = GeminiProvider(model="gemini-2.5-flash")
+            result = await provider.summarize("test prompt")
+            assert result == partial_text

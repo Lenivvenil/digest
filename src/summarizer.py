@@ -195,7 +195,7 @@ class GeminiProvider(BaseLLMProvider):
         payload: dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "maxOutputTokens": 8192,
+                "maxOutputTokens": 65536,
                 "temperature": 0.7,
             },
         }
@@ -212,6 +212,14 @@ class GeminiProvider(BaseLLMProvider):
             raise RuntimeError("Gemini API returned empty 'candidates' array")
         candidate = candidates[0]
         finish_reason = candidate.get("finishReason", "STOP")
+        if finish_reason == "MAX_TOKENS":
+            text = candidate["content"]["parts"][0]["text"]
+            logger.warning(
+                "Gemini response truncated (finishReason=MAX_TOKENS, got %d chars). "
+                "Using partial result.",
+                len(text),
+            )
+            return text
         if finish_reason != "STOP":
             raise RuntimeError(
                 f"Gemini generation stopped with finishReason={finish_reason!r} "
