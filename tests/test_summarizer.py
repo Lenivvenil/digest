@@ -744,10 +744,12 @@ class TestGeminiSafetyFilter:
                 await provider.summarize("test prompt")
 
     @pytest.mark.asyncio
-    async def test_gemini_max_tokens_returns_partial(
+    async def test_gemini_max_tokens_raises_truncation_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """GeminiProvider returns partial text with a warning when finishReason is MAX_TOKENS."""
+        """GeminiProvider raises LLMTruncationError when finishReason is MAX_TOKENS."""
+        from src.summarizer import LLMTruncationError
+
         monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
         partial_text = "Partial digest content that was cut off"
         body = {
@@ -768,8 +770,8 @@ class TestGeminiSafetyFilter:
             mock_client_cls.return_value = mock_client
 
             provider = GeminiProvider(model="gemini-2.5-flash")
-            result = await provider.summarize("test prompt")
-            assert result == partial_text
+            with pytest.raises(LLMTruncationError, match="MAX_TOKENS"):
+                await provider.summarize("test prompt")
 
 
 # ---------------------------------------------------------------------------

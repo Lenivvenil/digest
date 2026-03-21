@@ -491,9 +491,32 @@ def apply_trial_decisions(
         lines = _set_field_in_block(lines, start, end, "trial_started", today)
         logger.info("Initialized trial_started for '%s' to %s", name, today)
 
+    bak_path = path.with_suffix(".yaml.bak")
     tmp_path = path.with_suffix(".yaml.tmp")
-    with tmp_path.open("w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
-        if lines:
-            fh.write("\n")
-    tmp_path.replace(path)
+    # Write a backup of the current config before mutating it.
+    # On success the backup is removed; on failure it remains for manual recovery.
+    try:
+        import shutil as _shutil
+        _shutil.copy2(path, bak_path)
+    except OSError as exc:
+        logger.warning("Could not create config backup '%s': %s", bak_path, exc)
+        bak_path = None  # type: ignore[assignment]
+
+    try:
+        with tmp_path.open("w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+            if lines:
+                fh.write("\n")
+        tmp_path.replace(path)
+        # Remove backup on success — the config was written atomically.
+        if bak_path is not None and bak_path.exists():
+            bak_path.unlink(missing_ok=True)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        if bak_path is not None and bak_path.exists():
+            logger.error(
+                "config.yaml write failed — backup preserved at '%s' for manual recovery.",
+                bak_path,
+            )
+        raise

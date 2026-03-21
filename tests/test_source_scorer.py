@@ -871,6 +871,69 @@ def test_apply_trial_decisions_clears_trial_started_on_promote(tmp_path: Path) -
     assert "trial_started" not in source
 
 
+def test_apply_trial_decisions_creates_and_removes_backup(tmp_path: Path) -> None:
+    """apply_trial_decisions creates a .yaml.bak before writing and removes it on success."""
+    import yaml
+
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "Feed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    bak_path = tmp_path / "config.yaml.bak"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    apply_trial_decisions(str(config_path), promote=["Feed"], demote=[])
+
+    # Backup must be cleaned up after a successful write
+    assert not bak_path.exists(), "Backup file should be removed after successful write"
+    # Config should still be valid
+    assert config_path.exists()
+
+
+def test_apply_trial_decisions_preserves_backup_on_write_failure(tmp_path: Path) -> None:
+    """apply_trial_decisions preserves .yaml.bak when the tmp write fails."""
+    import yaml
+    from unittest.mock import patch, mock_open, MagicMock
+
+    config_data = {
+        "llm": {"provider": "anthropic", "model": "test"},
+        "delivery": {"telegram": False, "markdown_to_repo": False},
+        "digest": {"language": "ru"},
+        "sources": [
+            {"name": "Feed", "url": "https://x.com", "category": "Tech",
+             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
+        ],
+    }
+    config_path = tmp_path / "config.yaml"
+    bak_path = tmp_path / "config.yaml.bak"
+    with config_path.open("w") as f:
+        yaml.dump(config_data, f)
+
+    # Patch Path.open to raise on the .yaml.tmp file only
+    real_open = open
+
+    def fail_on_tmp(self: "Path", mode: str = "r", **kwargs: object) -> object:
+        if str(self).endswith(".yaml.tmp"):
+            raise OSError("Disk full")
+        return real_open(str(self), mode, **kwargs)
+
+    import pytest as _pytest
+
+    with patch("pathlib.Path.open", fail_on_tmp):
+        with _pytest.raises(OSError, match="Disk full"):
+            apply_trial_decisions(str(config_path), promote=["Feed"], demote=[])
+
+    # Backup must survive the failed write for manual recovery
+    assert bak_path.exists(), "Backup file should remain when write fails"
+
+
 def test_update_stats_deduplicates_same_day() -> None:
     """Calling update_stats twice on the same day should update the snapshot, not append."""
     stats: dict[str, SourceStats] = {}

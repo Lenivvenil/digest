@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import socket as _socket
+
 import pytest
 
 from src.collector import (
@@ -21,6 +23,7 @@ from src.collector import (
     collect,
     save_dedup_cache,
 )
+from src._dns_pinning import ValidatedURL as _ValidatedURL
 from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, ProviderConfig, SourceConfig
 
 # ---------------------------------------------------------------------------
@@ -115,6 +118,46 @@ def make_config(
         ),
         sources=sources,
     )
+
+
+def _make_fake_validated(url: str) -> _ValidatedURL:
+    """Return a fake ValidatedURL for any URL (used in tests to avoid real DNS)."""
+    from urllib.parse import urlparse
+
+    hostname = urlparse(url).hostname or "example.com"
+    return _ValidatedURL(
+        url=url,
+        hostname=hostname,
+        pinned_addrinfos=[(_socket.AF_INET, _socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _mock_validate_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch _validate_url in collector to avoid real DNS lookups in tests.
+
+    Tests that specifically exercise SSRF rejection should override this by
+    patching src.collector._validate_url themselves (their patch takes precedence
+    because monkeypatch is function-scoped and applied after the autouse fixture).
+    """
+    monkeypatch.setattr(
+        "src.collector._validate_url",
+        lambda url: _make_fake_validated(url),
+    )
+    monkeypatch.setattr(
+        "src.collector._pin_dns",
+        lambda hostname, addrinfos: _NullCtx(),
+    )
+
+
+class _NullCtx:
+    """No-op context manager used by _mock_validate_url autouse fixture."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *_: object) -> bool:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1101,4 +1144,145 @@ async def test_fetch_feed_no_retry_404(tmp_path: Path, monkeypatch: pytest.Monke
     bad_calls = [c for c in calls if "bad" in c]
     assert len(bad_calls) == 1
     # Good source still returns articles
+    assert "Tech" in result
+
+
+def make_http_response_with_headers(
+    content: bytes, status_code: int = 200, headers: dict[str, str] | None = None
+) -> MagicMock:
+    """Like make_http_response but supports custom response headers."""
+    import httpx as _httpx
+
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.content = content
+    resp.headers = headers or {}
+    resp.raise_for_status = MagicMock()
+    if status_code >= 400:
+        resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
+            "error", request=MagicMock(), response=resp
+        )
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_429_retry_after_honoured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HTTP 429 with Retry-After within limit: waits and retries once."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source = make_source(name="RateLimited", url="https://example.com/rl")
+    config = make_config(sources=[source])
+    calls: list[str] = []
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        calls.append(url)
+        if len(calls) == 1:
+            # First attempt: 429 with Retry-After: 5
+            return make_http_response_with_headers(b"", 429, {"Retry-After": "5"})
+        # Second attempt: success
+        return make_http_response(make_rss_sample().encode())
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleep_calls.append(secs)
+
+    with patch("asyncio.sleep", side_effect=fake_sleep), patch(
+        "httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)
+    ):
+        result, _ = await collect(config)
+
+    # Two GET attempts (initial + retry)
+    assert len(calls) == 2
+    # Slept for the Retry-After value
+    assert sleep_calls == [5.0]
+    # Articles returned after retry
+    assert "Tech" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_429_retry_after_exceeds_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HTTP 429 with Retry-After exceeding _MAX_RETRY_AFTER_SECS: source skipped immediately."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source = make_source(name="SlowServer", url="https://example.com/slow")
+    config = make_config(sources=[source])
+    calls: list[str] = []
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        calls.append(url)
+        return make_http_response_with_headers(b"", 429, {"Retry-After": "600"})
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleep_calls.append(secs)
+
+    with patch("asyncio.sleep", side_effect=fake_sleep), patch(
+        "httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)
+    ):
+        # Single source fails → AllFeedsFailedError
+        with pytest.raises(AllFeedsFailedError):
+            await collect(config)
+
+    # Only one GET attempt — no retry when limit exceeded
+    assert len(calls) == 1
+    # No sleep — skipped immediately
+    assert sleep_calls == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_ssrf_unsafe_url_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_fetch_feed returns None immediately when _validate_url returns None."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source = make_source(name="Internal", url="http://192.168.1.1/feed.rss")
+    config = make_config(sources=[source])
+    calls: list[str] = []
+
+    # Override the autouse fixture: simulate validation failure for this URL
+    monkeypatch.setattr("src.collector._validate_url", lambda url: None)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:  # pragma: no cover
+        calls.append(url)
+        return make_http_response(make_rss_sample().encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        # All sources fail SSRF → AllFeedsFailedError
+        with pytest.raises(AllFeedsFailedError):
+            await collect(config)
+
+    # The HTTP client must never have been called
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_ssrf_valid_url_proceeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_fetch_feed fetches URLs that pass SSRF validation (autouse mock covers DNS)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    source = make_source(name="Good", url="https://example.com/feed.rss")
+    config = make_config(sources=[source])
+    calls: list[str] = []
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        calls.append(url)
+        return make_http_response(make_rss_sample().encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert calls == ["https://example.com/feed.rss"]
     assert "Tech" in result

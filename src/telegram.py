@@ -26,6 +26,10 @@ class TelegramPartialDeliveryError(Exception):
 # Telegram message size limit in characters
 _MAX_MESSAGE_LEN = 4096
 
+# Conservative split limit: leaves ~7% headroom for any post-split expansion
+# (e.g. hard-split backoff across backslash runs, future to_markdownv2 changes).
+_SPLIT_LIMIT = 3800
+
 # MarkdownV2 special characters that must be escaped (outside entities)
 _MARKDOWNV2_SPECIAL = r"_*[]()~`>#+-=|{}.!"
 
@@ -209,10 +213,23 @@ async def send_digest(
         )
         return False
 
-    # Convert to MarkdownV2 first, then split — this ensures every chunk fits
-    # within Telegram's 4096-char limit *after* escaping (not before).
+    # Convert to MarkdownV2 first (escaping + link restoration), then split
+    # using a conservative limit to leave headroom for edge cases in the
+    # hard-split backoff logic. Apply a hard clamp as a final safety net.
     md2_text = to_markdownv2(text)
-    chunks = split_message(md2_text)
+    chunks = split_message(md2_text, max_len=_SPLIT_LIMIT)
+    # Hard clamp: if any chunk still exceeds 4096 (shouldn't happen in practice
+    # but guards against future changes), truncate and log a warning.
+    safe_chunks: list[str] = []
+    for chunk in chunks:
+        if len(chunk) > _MAX_MESSAGE_LEN:
+            chunk = chunk[: _MAX_MESSAGE_LEN - 1] + "…"
+            logger.warning(
+                "A digest chunk exceeded Telegram's 4096-char limit even after "
+                "conservative splitting — truncated. Check to_markdownv2 output size."
+            )
+        safe_chunks.append(chunk)
+    chunks = safe_chunks
     api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     any_sent = False

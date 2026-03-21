@@ -221,6 +221,101 @@ async def test_run_full_pipeline(config_file: Path, sample_articles: dict, tmp_p
 
 
 # ---------------------------------------------------------------------------
+# Skipped categories warning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_skipped_category_warning_in_delivery_text(
+    tmp_path: Path, sample_articles: dict
+) -> None:
+    """When one category fails, delivery text must contain ⚠️ + category name."""
+    import textwrap
+    from datetime import datetime, timezone
+    from src.collector import Article
+
+    # Two-category articles map
+    art2 = Article(
+        title="Finance article",
+        link="https://example.com/2",
+        description="Finance article description.",
+        source="Finance Source",
+        category="Finance",
+        pub_date=datetime(2026, 3, 15, 6, 0, 0, tzinfo=timezone.utc),
+    )
+    two_cat_articles = {"Test": sample_articles["Test"], "Finance": [art2]}
+
+    config_text = textwrap.dedent(
+        """\
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+          markdown_dir: "digests"
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "Test Source"
+            url: "https://example.com/feed.rss"
+            category: "Test"
+            enabled: true
+          - name: "Finance Source"
+            url: "https://example.com/finance.rss"
+            category: "Finance"
+            enabled: true
+        """
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(config_text)
+
+    call_count = 0
+
+    async def _failing_summarize(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First category (Test) succeeds
+            return "Test category summary"
+        # Second category (Finance) fails
+        raise RuntimeError("LLM timeout")
+
+    captured_delivery: list[str] = []
+
+    async def _mock_send_digest(text: str, *args: object, **kwargs: object) -> bool:
+        captured_delivery.append(text)
+        return True
+
+    with (
+        patch("src.main.collect", new_callable=AsyncMock, return_value=(two_cat_articles, {})),
+        patch("src.main.save_dedup_cache"),
+        patch("src.main.save_stats"),
+        patch("src.main.save_feedback"),
+        patch("src.main.get_provider") as mock_get_provider,
+        patch("src.main.send_digest", side_effect=_mock_send_digest),
+        patch("src.main.write_digest", return_value=None),
+    ):
+        mock_provider = MagicMock()
+        mock_provider.name = "anthropic"
+        mock_provider.summarize = AsyncMock(side_effect=_failing_summarize)
+        mock_get_provider.return_value = mock_provider
+
+        stats = await run(config_path=str(config_file), dry_run=False)
+
+    assert stats.digest_length > 0
+    assert len(captured_delivery) == 1
+    delivery_text = captured_delivery[0]
+    assert "⚠️" in delivery_text
+    assert "Finance" in delivery_text
+    assert "category skipped" in delivery_text
+    assert "Test category summary" in delivery_text
+
+
+# ---------------------------------------------------------------------------
 # main() exit codes
 # ---------------------------------------------------------------------------
 
@@ -292,10 +387,10 @@ async def test_main_telegram_failure_still_exit_0(
 
 
 @pytest.mark.asyncio
-async def test_run_partial_telegram_no_markdown_skips_cache(
+async def test_run_partial_telegram_no_markdown_saves_cache(
     config_file: Path, sample_articles: dict
 ) -> None:
-    """Partial Telegram delivery without markdown: cache must NOT be saved so articles retry."""
+    """Partial Telegram delivery without markdown: cache IS saved to prevent duplicate sends."""
     with (
         patch("src.main.collect", new_callable=AsyncMock, return_value=(sample_articles, {})),
         patch("src.main.save_dedup_cache") as mock_save_cache,
@@ -313,7 +408,7 @@ async def test_run_partial_telegram_no_markdown_skips_cache(
 
         stats = await run(config_path=str(config_file), dry_run=False)
 
-    mock_save_cache.assert_not_called()
+    mock_save_cache.assert_called_once()
     assert stats.telegram_sent is False
     assert stats.telegram_partial is True
 

@@ -11,12 +11,22 @@ from typing import Any
 
 import httpx
 
+from src._sanitize import sanitize_article as _sanitize_article
 from src.collector import Article
 from src.config import Config
 
 logger = logging.getLogger(__name__)
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
+class LLMTruncationError(RuntimeError):
+    """Raised when an LLM response was cut off due to token limit.
+
+    The provider returned a partial result (finishReason=MAX_TOKENS or
+    equivalent). The caller should treat this as a failed summarization
+    and fall back to another provider or skip the category.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +239,10 @@ def build_prompt(articles_by_category: dict[str, list[Article]], config: Config)
     for category, articles in articles_by_category.items():
         articles_text_parts.append(f"\n## {category}\n")
         for art in articles:
+            title, description, source = _sanitize_article(art.title, art.description, art.source)
             articles_text_parts.append(
-                f"- [{art.title}]({art.link}) ({art.source})\n"
-                f"  {art.description}\n"
+                f"- [{title}]({art.link}) ({source})\n"
+                f"  {description}\n"
             )
 
     articles_text = "\n".join(articles_text_parts)
@@ -262,9 +273,10 @@ def build_category_prompt(
 
     articles_text_parts: list[str] = [f"\n## {category}\n"]
     for art in articles:
+        title, description, source = _sanitize_article(art.title, art.description, art.source)
         articles_text_parts.append(
-            f"- [{art.title}]({art.link}) ({art.source})\n"
-            f"  {art.description}\n"
+            f"- [{title}]({art.link}) ({source})\n"
+            f"  {description}\n"
         )
     articles_text = "\n".join(articles_text_parts)
 
@@ -376,12 +388,11 @@ class GeminiProvider(BaseLLMProvider):
         finish_reason = candidate.get("finishReason", "STOP")
         if finish_reason == "MAX_TOKENS":
             text = candidate["content"]["parts"][0]["text"]
-            logger.warning(
-                "Gemini response truncated (finishReason=MAX_TOKENS, got %d chars). "
-                "Using partial result.",
-                len(text),
+            raise LLMTruncationError(
+                f"Gemini response was cut off at token limit (finishReason=MAX_TOKENS, "
+                f"got {len(text)} chars). Use a model with a larger output token budget "
+                f"or reduce the number of articles per category."
             )
-            return text
         if finish_reason != "STOP":
             raise RuntimeError(
                 f"Gemini generation stopped with finishReason={finish_reason!r} "

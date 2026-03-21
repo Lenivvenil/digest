@@ -582,3 +582,62 @@ async def test_send_chunk_no_retry_on_400() -> None:
     # Exactly 2 calls: MarkdownV2 attempt + plain-text fallback, no retry loop
     assert respx.calls.call_count == 2
     mock_sleep.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Fix #6: conservative split limit + hard clamp tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_digest_uses_conservative_split_limit() -> None:
+    """send_digest splits using _SPLIT_LIMIT (3800), not the raw 4096 limit."""
+    config = make_config()
+    url = "https://api.telegram.org/botTOKEN/sendMessage"
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    # Build a text that would fit in one 4096-char chunk but exceeds 3800 after conversion.
+    # Use simple ASCII so to_markdownv2 doesn't significantly expand it, but make it
+    # long enough that split_message(max_len=3800) splits it into 2 parts.
+    paragraph_a = "A" * 1900 + " word"
+    paragraph_b = "B" * 1900 + " word"
+    text = paragraph_a + "\n\n" + paragraph_b  # total ~3810 chars — over 3800, under 4096
+
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "TOKEN", "TELEGRAM_CHAT_ID": "42"}):
+        sent = await send_digest(text, config)
+
+    assert sent is True
+    # Must have been split into 2 chunks (conservative limit kicked in)
+    assert respx.calls.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_digest_hard_clamps_oversized_chunk() -> None:
+    """A chunk that somehow exceeds 4096 after splitting is truncated with a warning."""
+    import src.telegram as tg_module
+
+    config = make_config()
+    url = "https://api.telegram.org/botTOKEN/sendMessage"
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    # Patch split_message to return a single chunk longer than _MAX_MESSAGE_LEN
+    oversized = "X" * 5000
+    with (
+        patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "TOKEN", "TELEGRAM_CHAT_ID": "42"}),
+        patch.object(tg_module, "split_message", return_value=[oversized]),
+        patch.object(tg_module.logger, "warning") as mock_warn,
+    ):
+        sent = await send_digest("any text", config)
+
+    assert sent is True
+    # The oversized chunk must have been truncated to ≤ 4096 chars before sending
+    sent_body = respx.calls[0].request.content
+    import json
+
+    payload = json.loads(sent_body)
+    assert len(payload["text"]) <= 4096
+    # Warning must have been logged
+    mock_warn.assert_called_once()
+    assert "4096" in mock_warn.call_args[0][0] or "truncated" in mock_warn.call_args[0][0].lower()

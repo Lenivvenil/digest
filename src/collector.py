@@ -16,6 +16,7 @@ import feedparser  # type: ignore[import-untyped]
 import html as html_lib
 import httpx
 
+from src._dns_pinning import pin_dns as _pin_dns, validate_url as _validate_url
 from src._util import atomic_json_write
 from src.config import Config, SourceConfig
 from src.source_scorer import SourceStats, update_stats
@@ -116,7 +117,12 @@ def _parse_feed_bytes(raw: bytes, url: str) -> feedparser.FeedParserDict:
     return feedparser.parse(raw, response_headers={"content-location": url})
 
 
-_FEED_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_FEED_RETRY_STATUSES = {500, 502, 503, 504}
+
+# Maximum Retry-After value (seconds) we will honour. If the server asks us
+# to wait longer, we skip the source for this run rather than blocking the
+# entire digest pipeline.
+_MAX_RETRY_AFTER_SECS = 300
 
 
 async def _fetch_feed(
@@ -125,12 +131,26 @@ async def _fetch_feed(
     """Fetch and parse a single RSS/Atom feed.
 
     Returns list of articles (possibly empty) on success, or None on fetch/parse error.
-    Transient errors (5xx/429/timeout) are retried once with a 2s backoff.
+    Transient errors (5xx/timeout) are retried once with a 2s backoff.
+    HTTP 429 respects the Retry-After response header: waits the requested
+    duration (up to _MAX_RETRY_AFTER_SECS) and retries once; if the requested
+    wait exceeds the maximum, the source is skipped for this run.
     """
+    validated = _validate_url(source.url)
+    if validated is None:
+        logger.warning(
+            "Skipping feed '%s': URL '%s' failed SSRF validation "
+            "(non-global or otherwise unsafe address)",
+            source.name,
+            source.url,
+        )
+        return None
+
     response: httpx.Response | None = None
     for attempt in range(2):
         try:
-            response = await client.get(source.url, timeout=FEED_TIMEOUT)
+            with _pin_dns(validated.hostname, validated.pinned_addrinfos):
+                response = await client.get(source.url, timeout=FEED_TIMEOUT)
             response.raise_for_status()
             break
         except httpx.TimeoutException:
@@ -141,17 +161,49 @@ async def _fetch_feed(
             logger.warning("Timeout fetching feed '%s' (%s) after retry", source.name, source.url)
             return None
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in _FEED_RETRY_STATUSES and attempt == 0:
+            status = exc.response.status_code
+            if status == 429:
+                # Parse Retry-After header; fall back to 2s if absent or unparseable.
+                retry_after_raw = exc.response.headers.get("Retry-After", "")
+                try:
+                    retry_after = float(retry_after_raw)
+                except (ValueError, TypeError):
+                    retry_after = 2.0
+                if retry_after > _MAX_RETRY_AFTER_SECS:
+                    logger.warning(
+                        "HTTP 429 fetching '%s' (%s): Retry-After=%ds exceeds limit (%ds) — "
+                        "skipping source for this run",
+                        source.name,
+                        source.url,
+                        int(retry_after),
+                        _MAX_RETRY_AFTER_SECS,
+                    )
+                    return None
+                if attempt == 0:
+                    logger.info(
+                        "HTTP 429 fetching '%s', waiting %.1fs (Retry-After)...",
+                        source.name,
+                        retry_after,
+                    )
+                    await asyncio.sleep(retry_after)
+                    continue
+                logger.warning(
+                    "HTTP 429 fetching feed '%s' (%s) after retry",
+                    source.name,
+                    source.url,
+                )
+                return None
+            if status in _FEED_RETRY_STATUSES and attempt == 0:
                 logger.info(
                     "HTTP %d fetching '%s', retrying...",
-                    exc.response.status_code,
+                    status,
                     source.name,
                 )
                 await asyncio.sleep(2)
                 continue
             logger.warning(
                 "HTTP %d fetching feed '%s' (%s)",
-                exc.response.status_code,
+                status,
                 source.name,
                 source.url,
             )

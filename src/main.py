@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 from datetime import datetime, timezone
 
+from src._dns_pinning import ValidatedURL as _ValidatedURL, pin_dns as _pin_dns, validate_url as _validate_url
 from src.collector import AllFeedsFailedError, collect, save_dedup_cache
 from src.config import load_config
 from src.feedback import (
@@ -336,16 +337,19 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         prompt = build_category_prompt(cat, arts, config)
         return cat, _clean_summary(await prov.summarize(prompt))
 
+    ordered_cats = list(articles_by_category.keys())
     gather_tasks = [
-        _summarize_one(cat, arts, category_providers.get(cat, default_provider))
-        for cat, arts in articles_by_category.items()
+        _summarize_one(cat, articles_by_category[cat], category_providers.get(cat, default_provider))
+        for cat in ordered_cats
     ]
     gather_results = await asyncio.gather(*gather_tasks, return_exceptions=True)
 
     category_summaries: dict[str, str] = {}
-    for res in gather_results:
+    skipped_categories: list[str] = []
+    for cat, res in zip(ordered_cats, gather_results):
         if isinstance(res, BaseException):
-            logger.error("Category summarization failed: %s", res)
+            logger.error("Category summarization failed for '%s': %s", cat, res)
+            skipped_categories.append(cat)
         else:
             cat_name, cat_text = res
             category_summaries[cat_name] = cat_text
@@ -354,6 +358,10 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         raise RuntimeError("All category summarizations failed — no content to deliver.")
 
     combined = "\n\n".join(category_summaries.values())
+
+    if skipped_categories:
+        warn_line = "⚠️ " + ", ".join(skipped_categories) + " — category skipped (LLM error)\n\n"
+        combined = warn_line + combined
 
     # Generate trends section separately across all categories (if >1 category)
     if len(category_summaries) > 1:
@@ -422,24 +430,23 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             markdown_saved = True
             markdown_path = str(markdown_result)
 
-        # Persist dedup cache only when at least one channel delivered the
-        # digest.  If both Telegram and markdown output are disabled or fail,
-        # do not mark articles as seen so they are retried on the next run.
+        # Persist dedup cache when at least one channel produced output.
+        # If both Telegram and markdown fail entirely, do not mark articles as
+        # seen so they are retried on the next run.
         #
-        # For partial Telegram delivery: save the cache only when the markdown
-        # fallback also succeeded.  The markdown file contains the full digest,
-        # so the user can read everything there.  If markdown was NOT written,
-        # articles from the failed chunks would be permanently lost — so we
-        # intentionally skip saving the cache so they are picked up on the
-        # next run.
-        if telegram_sent or markdown_saved:
+        # For partial Telegram delivery: ALWAYS save the cache to prevent
+        # re-sending the chunks that were already delivered to users.
+        # Accepting that failed chunks may be permanently lost is the lesser
+        # evil compared to duplicating already-delivered content.
+        if telegram_sent or markdown_saved or telegram_partial:
             save_dedup_cache(pending_cache)
-        elif telegram_partial and not markdown_saved:
-            logger.warning(
-                "Partial Telegram delivery with no markdown fallback — "
-                "dedup cache NOT updated; articles will be retried on the next run."
-            )
-        elif not (telegram_sent or markdown_saved or telegram_partial):
+            if telegram_partial and not markdown_saved:
+                logger.warning(
+                    "Partial Telegram delivery with no markdown fallback — "
+                    "dedup cache saved to prevent duplicate sends; "
+                    "some digest chunks may not have been delivered."
+                )
+        else:
             logger.warning(
                 "No delivery channel produced output — dedup cache not updated; "
                 "articles will be retried on the next run."
@@ -521,138 +528,6 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
     )
 
 
-@dataclass
-class _ValidatedURL:
-    """Result of URL validation with pinned DNS resolution."""
-
-    url: str
-    hostname: str
-    pinned_addrinfos: list[tuple[int, int, int, str, Any]]
-
-
-def _validate_url(url: str) -> _ValidatedURL | None:
-    """Validate URL safety by checking all resolved IPs are globally routable.
-
-    Returns a _ValidatedURL with pinned DNS results if safe, or None if the URL
-    resolves to non-global addresses (private, loopback, multicast, CGNAT, etc.).
-    The pinned addrinfos must be used for the actual fetch to prevent DNS rebinding.
-    """
-    import ipaddress
-    import socket
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return None
-
-    if parsed.scheme not in ("http", "https"):
-        return None
-
-    hostname = parsed.hostname
-    if not hostname:
-        return None
-
-    # Normalize IDN hostnames to ASCII/punycode so that _pin_dns
-    # matches the form that httpx/socket will actually use.
-    try:
-        hostname = hostname.encode("idna").decode("ascii")
-    except (UnicodeError, UnicodeDecodeError):
-        return None
-
-    # Reject out-of-range ports early (parsed.port raises ValueError)
-    try:
-        _ = parsed.port
-    except ValueError:
-        return None
-
-    # Block well-known cloud metadata endpoints
-    if hostname in ("localhost", "metadata.google.internal"):
-        return None
-
-    def _is_safe(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-        return addr.is_global and not addr.is_multicast
-
-    # Use is_global as allowlist — rejects private, loopback, link-local,
-    # reserved, CGNAT (100.64/10), and any other non-routable space.
-    # Multicast is excluded separately (Python considers it "global").
-    pinned_addrinfos: list[tuple[int, int, int, str, Any]] = []
-    try:
-        addr = ipaddress.ip_address(hostname)
-        if not _is_safe(addr):
-            return None
-        # IP literal — synthesize a single addrinfo entry
-        family = socket.AF_INET6 if addr.version == 6 else socket.AF_INET
-        sockaddr: Any = (
-            (str(addr), 0, 0, 0) if addr.version == 6 else (str(addr), 0)
-        )
-        pinned_addrinfos = [(family, socket.SOCK_STREAM, 0, "", sockaddr)]
-    except ValueError:
-        # hostname is a DNS name — resolve and check all resulting IPs
-        try:
-            addrinfos = socket.getaddrinfo(
-                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-            )
-        except (socket.gaierror, UnicodeError):
-            return None
-        for family, type_, proto, canonname, sockaddr in addrinfos:  # type: ignore[misc]
-            ip_str = str(sockaddr[0])
-            try:
-                addr = ipaddress.ip_address(ip_str)
-                if not _is_safe(addr):
-                    return None
-                pinned_addrinfos.append((family, type_, proto, canonname, sockaddr))
-            except ValueError:
-                return None
-
-    if not pinned_addrinfos:
-        return None
-
-    return _ValidatedURL(url=url, hostname=hostname, pinned_addrinfos=pinned_addrinfos)
-
-
-def _pin_dns(
-    hostname: str, addrinfos: list[tuple[int, int, int, str, Any]]
-) -> contextlib.AbstractContextManager[None]:
-    """Pin DNS resolution for *hostname* to pre-validated addresses.
-
-    Prevents DNS rebinding by ensuring httpx connects to the same IPs
-    that were checked during validation. Safe for sequential async I/O
-    (one outstanding fetch at a time).
-    """
-    import socket as _socket
-
-    @contextlib.contextmanager
-    def _ctx() -> Iterator[None]:
-        original = _socket.getaddrinfo
-
-        def _pinned(
-            host: str | bytes,
-            port: int | str | None,
-            family: int = 0,
-            type: int = 0,  # noqa: A002
-            proto: int = 0,
-            flags: int = 0,
-        ) -> list[tuple[int, int, int, str, Any]]:
-            _host = host.decode("ascii") if isinstance(host, bytes) else host
-            if _host == hostname:
-                p = int(port) if port is not None and str(port).isdigit() else 0
-                result: list[tuple[int, int, int, str, Any]] = []
-                for af, st, pr, cn, sa in addrinfos:
-                    if af == _socket.AF_INET:
-                        result.append((af, st, pr, cn, (sa[0], p)))
-                    else:
-                        result.append((af, st, pr, cn, (sa[0], p, sa[2], sa[3])))
-                return result
-            return original(host, port, family, type, proto, flags)  # type: ignore[return-value]
-
-        _socket.getaddrinfo = _pinned  # type: ignore[assignment]
-        try:
-            yield
-        finally:
-            _socket.getaddrinfo = original  # type: ignore[assignment]
-
-    return _ctx()
 
 
 async def check_config(config_path: str) -> int:
