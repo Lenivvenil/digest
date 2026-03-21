@@ -1,8 +1,72 @@
 {
   "ratings": [],
   "last_update_id": 0,
-  "last_digest_sources": [],
-  "digest_sources_map": {},
-  "digest_category_sources_map": {},
-  "last_digest_time": "2026-03-20 08:57 UTC"
+  "last_digest_sources": [
+    "ByteByteGo",
+    "Cloudflare Blog",
+    "Google Research Blog",
+    "Habr \u2014 Interesting",
+    "Hacker News Best",
+    "Hugging Face Blog",
+    "Kubernetes Blog",
+    "Martin Fowler",
+    "Meta Engineering",
+    "PYMNTS",
+    "Spot.uz",
+    "Stripe Engineering",
+    "ThoughtWorks Insights"
+  ],
+  "digest_sources_map": {
+    "20260321_163623": [
+      "ByteByteGo",
+      "Cloudflare Blog",
+      "Google Research Blog",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "Hugging Face Blog",
+      "Kubernetes Blog",
+      "Martin Fowler",
+      "Meta Engineering",
+      "PYMNTS",
+      "Spot.uz",
+      "Stripe Engineering",
+      "ThoughtWorks Insights"
+    ]
+  },
+  "digest_category_sources_map": {
+    "20260321_163623": {
+      "Architecture & Distributed Systems": [
+        "ByteByteGo",
+        "Martin Fowler"
+      ],
+      "Company Engineering": [
+        "Cloudflare Blog",
+        "Meta Engineering",
+        "Stripe Engineering"
+      ],
+      "Cloud & Infrastructure": [
+        "Kubernetes Blog"
+      ],
+      "Banking & Fintech": [
+        "PYMNTS"
+      ],
+      "AI & LLM": [
+        "Hugging Face Blog"
+      ],
+      "AI Engineering": [
+        "Google Research Blog"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best",
+        "ThoughtWorks Insights"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Geopolitics & CIS": [
+        "Spot.uz"
+      ]
+    }
+  },
+  "last_digest_time": "2026-03-21 16:37 UTC"
 }
