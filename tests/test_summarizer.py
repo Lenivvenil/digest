@@ -9,13 +9,25 @@ import httpx
 import pytest
 
 from src.collector import Article
-from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, SourceConfig
+from src.config import (
+    Config,
+    DeliveryConfig,
+    DigestConfig,
+    LLMConfig,
+    ProviderConfig,
+    RouteConfig,
+    SourceConfig,
+)
 from src.summarizer import (
     AnthropicProvider,
     GeminiProvider,
-    GroqProvider,
+    OpenAICompatibleProvider,
+    ProviderChain,
+    build_category_prompt,
     build_prompt,
+    build_trends_prompt,
     get_provider,
+    resolve_category_providers,
 )
 
 # ---------------------------------------------------------------------------
@@ -28,9 +40,13 @@ def _make_config(
     model: str = "claude-sonnet-4-20250514",
     language: str = "ru",
     summary_style: str = "analytical",
+    routing: list[RouteConfig] | None = None,
 ) -> Config:
     return Config(
-        llm=LLMConfig(provider=provider, model=model),
+        llm=LLMConfig(
+            providers=[ProviderConfig(name=provider, model=model)],
+            routing=routing or [],
+        ),
         delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
         digest=DigestConfig(
             language=language,
@@ -164,6 +180,98 @@ class TestBuildPrompt:
 
 
 # ---------------------------------------------------------------------------
+# build_category_prompt tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCategoryPrompt:
+    def test_single_category_contains_articles(self) -> None:
+        articles = [
+            _make_article("AI Breakthrough", "https://example.com/ai1", "AI news 1."),
+            _make_article("New LLM", "https://example.com/ai2", "AI news 2."),
+        ]
+        config = _make_config()
+        prompt = build_category_prompt("AI", articles, config)
+        assert "AI Breakthrough" in prompt
+        assert "New LLM" in prompt
+        assert "https://example.com/ai1" in prompt
+
+    def test_contains_category_name(self) -> None:
+        articles = [_make_article()]
+        config = _make_config()
+        prompt = build_category_prompt("Banking", articles, config)
+        assert "Banking" in prompt
+
+    def test_no_trends_instruction_in_prompt(self) -> None:
+        articles = [_make_article()]
+        config = _make_config(summary_style="analytical")
+        prompt = build_category_prompt("AI", articles, config)
+        # Per-category prompts must NOT contain a trends instruction
+        assert "тренды дня" not in prompt.lower()
+        assert "key trends of the day" not in prompt.lower()
+
+    def test_brief_style_no_perspectives(self) -> None:
+        articles = [_make_article()]
+        config = _make_config(summary_style="brief")
+        prompt = build_category_prompt("AI", articles, config)
+        assert "Оптимист" not in prompt
+        assert "Optimist" not in prompt
+
+    def test_analytical_style_mentions_perspectives(self) -> None:
+        articles = [_make_article()]
+        config = _make_config(summary_style="analytical")
+        prompt = build_category_prompt("AI", articles, config)
+        assert "Оптимист" in prompt or "Optimist" in prompt
+
+    def test_english_language(self) -> None:
+        articles = [_make_article()]
+        config = _make_config(language="en")
+        prompt = build_category_prompt("AI", articles, config)
+        assert "analyst" in prompt.lower()
+
+    def test_article_count_in_header(self) -> None:
+        articles = [_make_article(), _make_article("Second", "https://example.com/2", "desc2")]
+        config = _make_config(language="en")
+        prompt = build_category_prompt("AI", articles, config)
+        assert "2" in prompt
+
+
+# ---------------------------------------------------------------------------
+# build_trends_prompt tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTrendsPrompt:
+    def test_aggregation_contains_all_summaries(self) -> None:
+        category_summaries = {
+            "AI": "AI is advancing rapidly.",
+            "Banking": "Fintech is consolidating.",
+        }
+        config = _make_config()
+        prompt = build_trends_prompt(category_summaries, config)
+        assert "AI is advancing rapidly." in prompt
+        assert "Fintech is consolidating." in prompt
+
+    def test_contains_trends_instruction_ru(self) -> None:
+        category_summaries = {"AI": "summary"}
+        config = _make_config(language="ru")
+        prompt = build_trends_prompt(category_summaries, config)
+        assert "тренд" in prompt.lower()
+
+    def test_contains_trends_instruction_en(self) -> None:
+        category_summaries = {"AI": "summary"}
+        config = _make_config(language="en")
+        prompt = build_trends_prompt(category_summaries, config)
+        assert "trend" in prompt.lower()
+
+    def test_category_names_as_headers(self) -> None:
+        category_summaries = {"Banking & Fintech": "some content"}
+        config = _make_config()
+        prompt = build_trends_prompt(category_summaries, config)
+        assert "Banking & Fintech" in prompt
+
+
+# ---------------------------------------------------------------------------
 # Provider selection tests
 # ---------------------------------------------------------------------------
 
@@ -172,26 +280,29 @@ class TestGetProvider:
     def test_anthropic_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         config = _make_config(provider="anthropic")
-        provider = get_provider(config)
-        assert isinstance(provider, AnthropicProvider)
+        chain = get_provider(config)
+        assert isinstance(chain, ProviderChain)
+        assert isinstance(chain._providers[0][1], AnthropicProvider)
 
     def test_gemini_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         config = _make_config(provider="gemini", model="gemini-2.5-flash")
-        provider = get_provider(config)
-        assert isinstance(provider, GeminiProvider)
+        chain = get_provider(config)
+        assert isinstance(chain, ProviderChain)
+        assert isinstance(chain._providers[0][1], GeminiProvider)
 
     def test_groq_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GROQ_API_KEY", "test-key")
         config = _make_config(provider="groq", model="llama-3.3-70b-versatile")
-        provider = get_provider(config)
-        assert isinstance(provider, GroqProvider)
+        chain = get_provider(config)
+        assert isinstance(chain, ProviderChain)
+        assert isinstance(chain._providers[0][1], OpenAICompatibleProvider)
 
     def test_unknown_provider_raises(self) -> None:
-        config = _make_config(provider="openai")
-        # bypass config validation by mutating directly
-        config.llm.provider = "openai"
-        with pytest.raises(ValueError, match="Unknown LLM provider"):
+        config = _make_config(provider="anthropic")
+        # Bypass validation by mutating the providers list directly
+        config.llm.providers[0] = ProviderConfig(name="openai", model="gpt-4")
+        with pytest.raises(ValueError, match="Unknown"):
             get_provider(config)
 
     def test_missing_anthropic_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,7 +318,7 @@ class TestGetProvider:
     def test_missing_groq_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
         with pytest.raises(EnvironmentError, match="GROQ_API_KEY"):
-            GroqProvider(model="llama-3.3-70b-versatile")
+            OpenAICompatibleProvider(provider_name="groq", model="llama-3.3-70b-versatile")
 
 
 # ---------------------------------------------------------------------------
@@ -427,13 +538,13 @@ class TestGeminiProvider:
 
 
 # ---------------------------------------------------------------------------
-# GroqProvider.summarize tests
+# OpenAICompatibleProvider tests (replaces TestGroqProvider)
 # ---------------------------------------------------------------------------
 
 
-class TestGroqProvider:
+class TestOpenAICompatibleProvider:
     @pytest.mark.asyncio
-    async def test_successful_summarize(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_success_groq(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GROQ_API_KEY", "test-key")
         body = {"choices": [{"message": {"content": "Groq result."}}]}
         mock_response = _mock_response(200, body)
@@ -445,15 +556,15 @@ class TestGroqProvider:
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
 
-            provider = GroqProvider(model="llama-3.3-70b-versatile")
+            provider = OpenAICompatibleProvider(provider_name="groq", model="llama-3.3-70b-versatile")
             result = await provider.summarize("test prompt")
 
         assert result == "Groq result."
 
     @pytest.mark.asyncio
-    async def test_empty_content_array_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("GROQ_API_KEY", "test-key")
-        body = {"choices": []}
+    async def test_success_mistral(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+        body = {"choices": [{"message": {"content": "Mistral result."}}]}
         mock_response = _mock_response(200, body)
 
         with patch("httpx.AsyncClient") as mock_client_cls:
@@ -463,9 +574,24 @@ class TestGroqProvider:
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
 
-            provider = GroqProvider(model="llama-3.3-70b-versatile")
-            with pytest.raises(RuntimeError, match="empty 'choices'"):
-                await provider.summarize("test prompt")
+            provider = OpenAICompatibleProvider(provider_name="mistral", model="mistral-small")
+            result = await provider.summarize("test prompt")
+
+        assert result == "Mistral result."
+
+    def test_missing_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        with pytest.raises(EnvironmentError, match="GROQ_API_KEY"):
+            OpenAICompatibleProvider(provider_name="groq", model="llama-3.3-70b-versatile")
+
+    def test_missing_mistral_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+        with pytest.raises(EnvironmentError, match="MISTRAL_API_KEY"):
+            OpenAICompatibleProvider(provider_name="mistral", model="mistral-small")
+
+    def test_unknown_provider_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown OpenAI-compatible provider"):
+            OpenAICompatibleProvider(provider_name="openai", model="gpt-4")
 
     @pytest.mark.asyncio
     async def test_bearer_token_in_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -485,10 +611,85 @@ class TestGroqProvider:
             mock_client.post = mock_post
             mock_client_cls.return_value = mock_client
 
-            provider = GroqProvider(model="llama-3.3-70b-versatile")
+            provider = OpenAICompatibleProvider(provider_name="groq", model="llama-3.3-70b-versatile")
             await provider.summarize("test prompt")
 
         assert captured_headers.get("Authorization") == "Bearer groq-secret"
+
+    @pytest.mark.asyncio
+    async def test_empty_choices_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        body = {"choices": []}
+        mock_response = _mock_response(200, body)
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            provider = OpenAICompatibleProvider(provider_name="groq", model="llama-3.3-70b-versatile")
+            with pytest.raises(RuntimeError, match="empty 'choices'"):
+                await provider.summarize("test prompt")
+
+
+# ---------------------------------------------------------------------------
+# ProviderChain tests
+# ---------------------------------------------------------------------------
+
+
+class TestProviderChain:
+    @pytest.mark.asyncio
+    async def test_primary_succeeds_fallback_not_called(self) -> None:
+        primary = AsyncMock()
+        primary.summarize = AsyncMock(return_value="primary result")
+        fallback = AsyncMock()
+        fallback.summarize = AsyncMock(return_value="fallback result")
+
+        chain = ProviderChain([("primary", primary), ("fallback", fallback)])
+        result = await chain.summarize("prompt")
+
+        assert result == "primary result"
+        primary.summarize.assert_called_once()
+        fallback.summarize.assert_not_called()
+        assert chain.last_provider == "primary"
+        assert chain.last_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_used_on_primary_failure(self) -> None:
+        primary = AsyncMock()
+        primary.summarize = AsyncMock(side_effect=RuntimeError("primary failed"))
+        fallback = AsyncMock()
+        fallback.summarize = AsyncMock(return_value="fallback result")
+
+        chain = ProviderChain([("primary", primary), ("fallback", fallback)])
+        result = await chain.summarize("prompt")
+
+        assert result == "fallback result"
+        assert chain.last_provider == "fallback"
+        assert chain.last_attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_all_providers_fail_raises(self) -> None:
+        p1 = AsyncMock()
+        p1.summarize = AsyncMock(side_effect=RuntimeError("p1 failed"))
+        p2 = AsyncMock()
+        p2.summarize = AsyncMock(side_effect=RuntimeError("p2 failed"))
+
+        chain = ProviderChain([("p1", p1), ("p2", p2)])
+        with pytest.raises(RuntimeError, match="All 2 provider"):
+            await chain.summarize("prompt")
+
+    @pytest.mark.asyncio
+    async def test_single_provider_chain(self) -> None:
+        provider = AsyncMock()
+        provider.summarize = AsyncMock(return_value="single result")
+
+        chain = ProviderChain([("only", provider)])
+        result = await chain.summarize("prompt")
+        assert result == "single result"
+        assert chain.last_attempts == 1
 
 
 # ---------------------------------------------------------------------------
@@ -569,3 +770,64 @@ class TestGeminiSafetyFilter:
             provider = GeminiProvider(model="gemini-2.5-flash")
             result = await provider.summarize("test prompt")
             assert result == partial_text
+
+
+# ---------------------------------------------------------------------------
+# resolve_category_providers tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCategoryProviders:
+    def test_unrouted_uses_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        config = _make_config(provider="anthropic")
+        result = resolve_category_providers(["AI", "Banking"], config)
+        assert "AI" in result
+        assert "Banking" in result
+        assert isinstance(result["AI"], ProviderChain)
+
+    def test_routing_assigns_separate_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        config = _make_config(
+            provider="anthropic",
+            routing=[
+                RouteConfig(categories=["AI"], provider="gemini", model="gemini-2.5-flash"),
+            ],
+        )
+        result = resolve_category_providers(["AI", "Banking"], config)
+        assert isinstance(result["AI"], ProviderChain)
+        # Routed AI should have gemini as primary
+        ai_chain = result["AI"]
+        assert ai_chain._providers[0][0] == "gemini"
+        # Unrouted Banking uses default (anthropic)
+        assert isinstance(result["Banking"], ProviderChain)
+
+    def test_unrouted_category_uses_default_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        config = _make_config(
+            provider="anthropic",
+            routing=[
+                RouteConfig(categories=["AI"], provider="gemini", model="gemini-2.5-flash"),
+            ],
+        )
+        result = resolve_category_providers(["AI", "Banking"], config)
+        banking_chain = result["Banking"]
+        assert banking_chain._providers[0][0] == "anthropic"
+
+    def test_missing_key_for_routed_provider_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        config = _make_config(
+            provider="anthropic",
+            routing=[
+                RouteConfig(categories=["AI"], provider="groq", model="llama-3.3-70b-versatile"),
+            ],
+        )
+        result = resolve_category_providers(["AI"], config)
+        # Should fall back to default (anthropic) chain
+        ai_chain = result["AI"]
+        assert ai_chain._providers[0][0] == "anthropic"

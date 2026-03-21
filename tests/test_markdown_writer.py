@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
+from src.config import Config, LLMConfig, ProviderConfig, DeliveryConfig, DigestConfig
 from src.markdown_writer import write_digest, _build_frontmatter
 
 
@@ -21,7 +21,7 @@ def make_config(
     markdown_dir: str = "digests",
 ) -> Config:
     return Config(
-        llm=LLMConfig(provider="anthropic", model="claude-sonnet-4-20250514"),
+        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="claude-sonnet-4-20250514")]),
         delivery=DeliveryConfig(
             telegram=False,
             markdown_to_repo=markdown_to_repo,

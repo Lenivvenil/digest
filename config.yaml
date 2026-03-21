@@ -2,16 +2,28 @@
 # Edit this file to customize your digest
 
 llm:
-  # Provider: "anthropic" | "gemini" | "groq"
-  # anthropic — Claude (requires ANTHROPIC_API_KEY)
-  # gemini    — Google Gemini (requires GEMINI_API_KEY, has free tier)
-  # groq      — Groq (requires GROQ_API_KEY, has free tier)
-  provider: "gemini"
-  # Model to use (provider-specific):
-  #   anthropic: claude-sonnet-4-6 | claude-haiku-4-5-20251001
-  #   gemini:    gemini-2.5-flash
-  #   groq:      llama-3.3-70b-versatile
-  model: "gemini-2.5-flash"
+  # Provider chain: first entry is primary, rest are fallbacks.
+  # Supported providers: anthropic | gemini | groq | mistral | deepseek
+  # If a provider's API key is missing it is skipped (only the primary is required).
+  providers:
+    - name: "gemini"
+      model: "gemini-2.5-flash"
+    - name: "groq"
+      model: "llama-3.3-70b-versatile"
+
+  # Per-category model routing (optional).
+  # Categories not listed here use the default providers chain above.
+  # If a routed provider's API key is missing, falls back to default chain.
+  routing:
+    - categories: ["AI & LLM", "AI Engineering"]
+      provider: "gemini"
+      model: "gemini-2.5-flash"
+    - categories: ["Banking & Fintech", "Payments & Fintech"]
+      provider: "groq"
+      model: "llama-3.3-70b-versatile"
+    - categories: ["Architecture & Distributed Systems"]
+      provider: "deepseek"
+      model: "deepseek-chat"
 
 delivery:
   # Send digest via Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)

@@ -40,7 +40,12 @@ from src.source_scorer import (
     load_stats,
     save_stats,
 )
-from src.summarizer import build_prompt, get_provider
+from src.summarizer import (
+    build_category_prompt,
+    build_trends_prompt,
+    get_provider,
+    resolve_category_providers,
+)
 from src.telegram import TelegramPartialDeliveryError, send_category_feedback_message, send_digest
 
 logger = logging.getLogger(__name__)
@@ -86,9 +91,22 @@ def _build_nano_status(
     Line 1: feed counts for this run and LLM model.
     Line 2: adaptive priority changes and average quality score.
     """
+    # Collect unique provider names from the providers chain + routing
+    provider_names: list[str] = []
+    seen: set[str] = set()
+    for pc in config.llm.providers:
+        if pc.name not in seen:
+            provider_names.append(pc.name)
+            seen.add(pc.name)
+    for route in config.llm.routing:
+        if route.provider not in seen:
+            provider_names.append(route.provider)
+            seen.add(route.provider)
+    models_str = ", ".join(provider_names) if provider_names else config.llm.model
+
     line1 = (
         f"\U0001f4ca {feeds_count} src | {total_articles} art | "
-        f"{ok_count} ok / {err_count} err | {config.llm.model}"
+        f"{ok_count} ok / {err_count} err | {models_str}"
     )
 
     promoted_count = 0
@@ -301,11 +319,52 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         else ""
     )
 
-    prompt = build_prompt(articles_by_category, config)
-    provider = get_provider(config)
-    logger.info("Summarizing with provider=%s model=%s", config.llm.provider, config.llm.model)
     _t_summarize_start = time.monotonic()
-    summary = _clean_summary(await provider.summarize(prompt))
+    default_provider = get_provider(config)
+    category_providers = resolve_category_providers(
+        list(articles_by_category.keys()), config, default_chain=default_provider
+    )
+    logger.info(
+        "Summarizing %d categories in parallel (providers: %s)",
+        len(articles_by_category),
+        ", ".join(sorted({p.name for p in config.llm.providers})),
+    )
+
+    async def _summarize_one(
+        cat: str, arts: list[Any], prov: Any
+    ) -> tuple[str, str]:
+        prompt = build_category_prompt(cat, arts, config)
+        return cat, _clean_summary(await prov.summarize(prompt))
+
+    gather_tasks = [
+        _summarize_one(cat, arts, category_providers.get(cat, default_provider))
+        for cat, arts in articles_by_category.items()
+    ]
+    gather_results = await asyncio.gather(*gather_tasks, return_exceptions=True)
+
+    category_summaries: dict[str, str] = {}
+    for res in gather_results:
+        if isinstance(res, BaseException):
+            logger.error("Category summarization failed: %s", res)
+        else:
+            cat_name, cat_text = res
+            category_summaries[cat_name] = cat_text
+
+    if not category_summaries:
+        raise RuntimeError("All category summarizations failed — no content to deliver.")
+
+    combined = "\n\n".join(category_summaries.values())
+
+    # Generate trends section separately across all categories (if >1 category)
+    if len(category_summaries) > 1:
+        trends_prompt = build_trends_prompt(category_summaries, config)
+        try:
+            trends = _clean_summary(await default_provider.summarize(trends_prompt))
+            combined = f"{combined}\n\n{trends}"
+        except Exception as exc:
+            logger.warning("Trends generation failed, skipping: %s", exc)
+
+    summary = combined
     _t_summarize = time.monotonic() - _t_summarize_start
     logger.info("Stage: summarize %.1fs", _t_summarize)
     logger.info("Summary generated: %d chars", len(summary))
@@ -623,14 +682,29 @@ async def check_config(config_path: str) -> int:
 
     # --- Env vars ---
     print("\nChecking environment variables...")
-    provider_vars: dict[str, list[str]] = {
-        "anthropic": ["ANTHROPIC_API_KEY"],
-        "gemini": ["GEMINI_API_KEY"],
-        "groq": ["GROQ_API_KEY"],
+    _provider_env_vars: dict[str, str] = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
     }
+    # Collect all unique provider names from providers list + routing
+    all_provider_names: set[str] = {pc.name for pc in config.llm.providers}
+    for route in config.llm.routing:
+        all_provider_names.add(route.provider)
+
     telegram_vars = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
-    required_vars = provider_vars.get(config.llm.provider, []) + telegram_vars
-    for var in required_vars:
+    for provider_name in sorted(all_provider_names):
+        var = _provider_env_vars.get(provider_name, "")
+        if not var:
+            continue
+        val = os.environ.get(var, "")
+        if val:
+            print(f"  [OK] {var} is set ({provider_name})")
+        else:
+            print(f"  [WARN] {var} is not set (required for {provider_name})")
+    for var in telegram_vars:
         val = os.environ.get(var, "")
         if val:
             print(f"  [OK] {var} is set")

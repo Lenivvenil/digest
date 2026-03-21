@@ -8,7 +8,7 @@ import httpx
 from unittest.mock import patch
 
 from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, send_category_feedback_message, TelegramPartialDeliveryError, _feedback_keyboard, _send_chunk
-from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
+from src.config import Config, LLMConfig, ProviderConfig, DeliveryConfig, DigestConfig
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ from src.config import Config, LLMConfig, DeliveryConfig, DigestConfig
 
 def make_config(*, telegram: bool = True, markdown_to_repo: bool = False) -> Config:
     return Config(
-        llm=LLMConfig(provider="anthropic", model="claude-sonnet-4-20250514"),
+        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="claude-sonnet-4-20250514")]),
         delivery=DeliveryConfig(
             telegram=telegram,
             markdown_to_repo=markdown_to_repo,

@@ -13,15 +13,38 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_PROVIDERS = {"anthropic", "gemini", "groq"}
+VALID_PROVIDERS = {"anthropic", "gemini", "groq", "mistral", "deepseek"}
 VALID_SUMMARY_STYLES = {"analytical", "brief", "detailed"}
 VALID_LANGUAGES = {"ru", "en"}
 
 
 @dataclass
-class LLMConfig:
+class ProviderConfig:
+    name: str
+    model: str
+
+
+@dataclass
+class RouteConfig:
+    categories: list[str]
     provider: str
     model: str
+
+
+@dataclass
+class LLMConfig:
+    providers: list[ProviderConfig]
+    routing: list[RouteConfig] = field(default_factory=list)
+
+    @property
+    def provider(self) -> str:
+        """Primary provider name (backward-compat)."""
+        return self.providers[0].name
+
+    @property
+    def model(self) -> str:
+        """Primary model name (backward-compat)."""
+        return self.providers[0].model
 
 
 @dataclass
@@ -120,14 +143,90 @@ def _require_bool(data: dict[str, Any], key: str, section: str) -> bool:
 
 def _load_llm(data: dict[str, Any]) -> LLMConfig:
     section = _require(data, "llm", "root")
-    provider = _require(section, "provider", "llm")
-    if provider not in VALID_PROVIDERS:
-        raise ValueError(
-            f"Invalid llm.provider '{provider}'. "
-            f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
+
+    # New format: providers list
+    if "providers" in section:
+        raw_providers = section["providers"]
+        if not isinstance(raw_providers, list) or len(raw_providers) == 0:
+            raise ValueError(
+                "Config field 'providers' in section 'llm' must be a non-empty list. "
+                "See config.yaml for reference."
+            )
+        providers: list[ProviderConfig] = []
+        seen_provider_names: set[str] = set()
+        for i, item in enumerate(raw_providers):
+            if not isinstance(item, dict):
+                raise ValueError(f"providers[{i}] in section 'llm' must be a mapping.")
+            name = _require(item, "name", f"llm.providers[{i}]")
+            if name not in VALID_PROVIDERS:
+                raise ValueError(
+                    f"Invalid llm.providers[{i}].name '{name}'. "
+                    f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
+                )
+            if name in seen_provider_names:
+                raise ValueError(
+                    f"Duplicate provider name '{name}' in llm.providers. "
+                    "Each provider may appear at most once."
+                )
+            seen_provider_names.add(name)
+            model = _require(item, "model", f"llm.providers[{i}]")
+            providers.append(ProviderConfig(name=str(name), model=str(model)))
+    elif "provider" in section:
+        # Legacy format: provider + model → auto-convert with warning
+        provider_name = section["provider"]
+        if provider_name not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid llm.provider '{provider_name}'. "
+                f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
+            )
+        model_name = _require(section, "model", "llm")
+        logger.warning(
+            "Config uses legacy llm.provider/llm.model format. "
+            "Consider migrating to the llm.providers list format."
         )
-    model = _require(section, "model", "llm")
-    return LLMConfig(provider=provider, model=model)
+        providers = [ProviderConfig(name=str(provider_name), model=str(model_name))]
+    else:
+        # Neither key present — raise the classic "missing field" error for backward compat
+        _require(section, "provider", "llm")
+        providers = []  # unreachable
+
+    # Load routing (optional)
+    routing: list[RouteConfig] = []
+    if "routing" in section:
+        raw_routing = section["routing"]
+        if not isinstance(raw_routing, list):
+            raise ValueError("Config field 'routing' in section 'llm' must be a list.")
+        seen_categories: set[str] = set()
+        for i, item in enumerate(raw_routing):
+            if not isinstance(item, dict):
+                raise ValueError(f"routing[{i}] in section 'llm' must be a mapping.")
+            categories_raw = _require(item, "categories", f"llm.routing[{i}]")
+            if not isinstance(categories_raw, list):
+                raise ValueError(f"llm.routing[{i}].categories must be a list.")
+            categories = [str(c) for c in categories_raw]
+            for cat in categories:
+                if cat in seen_categories:
+                    raise ValueError(
+                        f"Duplicate category '{cat}' in llm.routing. "
+                        "Each category may appear in at most one route."
+                    )
+                seen_categories.add(cat)
+            route_provider = _require(item, "provider", f"llm.routing[{i}]")
+            if route_provider not in VALID_PROVIDERS:
+                raise ValueError(
+                    f"Invalid provider '{route_provider}' in llm.routing[{i}]. "
+                    f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
+                )
+            route_model = _require(item, "model", f"llm.routing[{i}]")
+            routing.append(
+                RouteConfig(
+                    categories=categories,
+                    provider=str(route_provider),
+                    model=str(route_model),
+                )
+            )
+
+    return LLMConfig(providers=providers, routing=routing)
 
 
 def _load_delivery(data: dict[str, Any]) -> DeliveryConfig:

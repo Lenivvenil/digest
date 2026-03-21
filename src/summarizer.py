@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -16,6 +17,43 @@ from src.config import Config
 logger = logging.getLogger(__name__)
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
+# ---------------------------------------------------------------------------
+# Provider registry (OpenAI-compatible providers)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderMeta:
+    base_url: str
+    api_key_env: str
+    doc_url: str
+
+
+PROVIDER_REGISTRY: dict[str, ProviderMeta] = {
+    "groq": ProviderMeta(
+        base_url="https://api.groq.com/openai/v1/chat/completions",
+        api_key_env="GROQ_API_KEY",
+        doc_url="https://console.groq.com/keys",
+    ),
+    "mistral": ProviderMeta(
+        base_url="https://api.mistral.ai/v1/chat/completions",
+        api_key_env="MISTRAL_API_KEY",
+        doc_url="https://console.mistral.ai/api-keys/",
+    ),
+    "deepseek": ProviderMeta(
+        base_url="https://api.deepseek.com/chat/completions",
+        api_key_env="DEEPSEEK_API_KEY",
+        doc_url="https://platform.deepseek.com/api_keys",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates
+# ---------------------------------------------------------------------------
+
 
 PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
     "ru": {
@@ -57,6 +95,44 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
             "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
+        # Per-category prompt templates (no "trends" section — generated separately)
+        "instructions_category_analytical": (
+            "Выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
+            "Для 1 наиболее значимой темы добавь блок из трёх перспектив:\n"
+            "🟢 **Оптимист** — 1 предложение\n"
+            "🔴 **Скептик** — 1 предложение\n"
+            "⚖️ **Реалист** — 1 предложение\n"
+            "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
+            "Второстепенные новости получают обычный комментарий без перспектив. "
+            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+        ),
+        "instructions_category_brief": (
+            "Для каждой статьи дай одно предложение-комментарий. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат. "
+            "НЕ добавляй отдельную строку Link:. "
+            "Используй markdown-форматирование. Никаких перспектив. НЕ добавляй раздел трендов."
+        ),
+        "instructions_category_detailed": (
+            "Выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
+            "Для КАЖДОЙ значимой темы добавь блок из трёх перспектив:\n"
+            "🟢 **Оптимист** — 1 предложение\n"
+            "🔴 **Скептик** — 1 предложение\n"
+            "⚖️ **Реалист** — 1 предложение\n"
+            "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
+            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+        ),
+        "instructions_trends": (
+            "На основе саммари по категориям выдели 2-3 ключевых тренда дня. "
+            "Каждый тренд — 1 предложение. Используй маркированный список. "
+            "Озаглавь раздел «## Ключевые тренды дня»."
+        ),
+        "category_header": "Категория «{category}» содержит {count} статей.",
     },
     "en": {
         "header": "Today's digest contains {total} articles across {categories} categories.",
@@ -97,6 +173,44 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
             "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
+        # Per-category prompt templates (no "trends" section — generated separately)
+        "instructions_category_analytical": (
+            "Pick 3-5 most important articles. "
+            "For each article provide a 1-2 sentence analytical comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
+            "For 1 most significant topic add a block of three perspectives:\n"
+            "🟢 **Optimist** — 1 sentence\n"
+            "🔴 **Skeptic** — 1 sentence\n"
+            "⚖️ **Realist** — 1 sentence\n"
+            "Perspectives must represent genuinely different reasoning, not just tonal variation. "
+            "Minor news items get a regular comment without perspectives. "
+            "Use emoji for the category header. Do NOT add a trends section."
+        ),
+        "instructions_category_brief": (
+            "For each article write one sentence comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format. "
+            "Do NOT add a separate Link: line. "
+            "Use markdown formatting. No perspectives. Do NOT add a trends section."
+        ),
+        "instructions_category_detailed": (
+            "Pick 3-5 most important articles. "
+            "For each article provide a detailed analytical comment with full context. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
+            "For EVERY significant topic add a block of three perspectives:\n"
+            "🟢 **Optimist** — 1 sentence\n"
+            "🔴 **Skeptic** — 1 sentence\n"
+            "⚖️ **Realist** — 1 sentence\n"
+            "Perspectives must represent genuinely different reasoning, not just tonal variation. "
+            "Use emoji for the category header. Do NOT add a trends section."
+        ),
+        "instructions_trends": (
+            "Based on the category summaries below, identify 2-3 key trends of the day. "
+            "Each trend is 1 sentence. Use a bulleted list. "
+            "Title the section '## Key Trends of the Day'."
+        ),
+        "category_header": "Category '{category}' contains {count} articles.",
     },
 }
 
@@ -127,6 +241,54 @@ def build_prompt(articles_by_category: dict[str, list[Article]], config: Config)
     header = header_tmpl.format(total=total, categories=len(articles_by_category)) + "\n"
 
     return f"{role}\n\n{instructions}\n\n{header}\n{articles_text}"
+
+
+def build_category_prompt(
+    category: str, articles: list[Article], config: Config
+) -> str:
+    """Build the LLM prompt for a single category."""
+    lang = config.digest.language
+    style = config.digest.summary_style
+    tmpl = PROMPT_TEMPLATES.get(lang, PROMPT_TEMPLATES["ru"])
+
+    role = tmpl["role"]
+    instructions_key = f"instructions_category_{style}"
+    instructions = tmpl.get(instructions_key, tmpl["instructions_category_analytical"])
+
+    category_header_tmpl = tmpl.get(
+        "category_header", PROMPT_TEMPLATES["en"]["category_header"]
+    )
+    category_header = category_header_tmpl.format(category=category, count=len(articles))
+
+    articles_text_parts: list[str] = [f"\n## {category}\n"]
+    for art in articles:
+        articles_text_parts.append(
+            f"- [{art.title}]({art.link}) ({art.source})\n"
+            f"  {art.description}\n"
+        )
+    articles_text = "\n".join(articles_text_parts)
+
+    return f"{role}\n\n{instructions}\n\n{category_header}\n{articles_text}"
+
+
+def build_trends_prompt(category_summaries: dict[str, str], config: Config) -> str:
+    """Build the LLM prompt for aggregating key trends from category summaries."""
+    lang = config.digest.language
+    tmpl = PROMPT_TEMPLATES.get(lang, PROMPT_TEMPLATES["ru"])
+
+    role = tmpl["role"]
+    instructions = tmpl["instructions_trends"]
+
+    summaries_text = "\n\n".join(
+        f"### {cat}\n{summary}" for cat, summary in category_summaries.items()
+    )
+
+    return f"{role}\n\n{instructions}\n\n{summaries_text}"
+
+
+# ---------------------------------------------------------------------------
+# LLM provider abstractions
+# ---------------------------------------------------------------------------
 
 
 class BaseLLMProvider(ABC):
@@ -229,18 +391,24 @@ class GeminiProvider(BaseLLMProvider):
         return candidate["content"]["parts"][0]["text"]
 
 
-class GroqProvider(BaseLLMProvider):
-    """Calls the Groq OpenAI-compatible chat completions API."""
+class OpenAICompatibleProvider(BaseLLMProvider):
+    """Calls any OpenAI-compatible chat completions API (Groq, Mistral, DeepSeek, etc.)."""
 
-    API_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-    def __init__(self, model: str) -> None:
+    def __init__(self, provider_name: str, model: str) -> None:
+        meta = PROVIDER_REGISTRY.get(provider_name)
+        if meta is None:
+            raise ValueError(
+                f"Unknown OpenAI-compatible provider '{provider_name}'. "
+                f"Known providers: {', '.join(sorted(PROVIDER_REGISTRY))}."
+            )
+        self.provider_name = provider_name
         self.model = model
-        api_key = os.environ.get("GROQ_API_KEY")
+        self._api_url = meta.base_url
+        api_key = os.environ.get(meta.api_key_env)
         if not api_key:
             raise EnvironmentError(
-                "GROQ_API_KEY environment variable is not set. "
-                "Get your key at https://console.groq.com/keys"
+                f"{meta.api_key_env} environment variable is not set. "
+                f"Get your key at {meta.doc_url}"
             )
         self._api_key = api_key
 
@@ -253,14 +421,46 @@ class GroqProvider(BaseLLMProvider):
             "Authorization": f"Bearer {self._api_key}",
             "content-type": "application/json",
         }
-        return await _post_with_retry(self.API_URL, headers, payload, self._extract)
+        return await _post_with_retry(self._api_url, headers, payload, self._extract)
 
     @staticmethod
     def _extract(data: dict[str, Any]) -> str:
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError("Groq API returned empty 'choices' array")
+            raise RuntimeError("OpenAI-compatible API returned empty 'choices' array")
         return choices[0]["message"]["content"]
+
+
+class ProviderChain(BaseLLMProvider):
+    """Cascading fallback: tries providers in order, uses first success."""
+
+    def __init__(self, providers: list[tuple[str, BaseLLMProvider]]) -> None:
+        self._providers = providers
+        self.last_provider: str = ""
+        self.last_attempts: int = 0
+
+    async def summarize(self, prompt: str) -> str:
+        errors: list[tuple[str, str]] = []
+        for i, (name, provider) in enumerate(self._providers):
+            try:
+                result = await provider.summarize(prompt)
+                self.last_provider = name
+                self.last_attempts = i + 1
+                if i > 0:
+                    logger.warning("Primary provider failed, used fallback: %s", name)
+                return result
+            except Exception as exc:
+                logger.warning("Provider %s failed: %s", name, exc)
+                errors.append((name, str(exc)))
+        error_details = "; ".join(f"{n}: {e}" for n, e in errors)
+        raise RuntimeError(
+            f"All {len(errors)} provider(s) failed: {error_details}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Retry helper
+# ---------------------------------------------------------------------------
 
 
 _MAX_ATTEMPTS = 3
@@ -339,7 +539,7 @@ async def _post_with_retry(
                     f"the payload did not match the expected schema (possibly blocked or empty). "
                     f"Error: {exc}. Response: {data}"
                 ) from exc
-            # Log token usage when available (Anthropic/Gemini/Groq all expose it).
+            # Log token usage when available (Anthropic/Gemini/Groq/Mistral/DeepSeek all expose it).
             usage = data.get("usage") or data.get("usageMetadata") or {}
             input_t = (
                 usage.get("input_tokens")
@@ -366,19 +566,94 @@ async def _post_with_retry(
     )
 
 
-def get_provider(config: Config) -> BaseLLMProvider:
-    """Factory: returns the appropriate LLM provider based on config."""
-    provider_name = config.llm.provider
-    model = config.llm.model
+# ---------------------------------------------------------------------------
+# Provider factory helpers
+# ---------------------------------------------------------------------------
 
-    if provider_name == "anthropic":
+
+def _make_single_provider(name: str, model: str) -> BaseLLMProvider:
+    """Create a single provider instance by name and model."""
+    if name == "anthropic":
         return AnthropicProvider(model=model)
-    if provider_name == "gemini":
+    if name == "gemini":
         return GeminiProvider(model=model)
-    if provider_name == "groq":
-        return GroqProvider(model=model)
-
+    # groq, mistral, deepseek — all OpenAI-compatible
+    if name in PROVIDER_REGISTRY:
+        return OpenAICompatibleProvider(provider_name=name, model=model)
     raise ValueError(
-        f"Unknown LLM provider '{provider_name}'. "
-        "Must be one of: anthropic, gemini, groq."
+        f"Unknown LLM provider '{name}'. "
+        "Must be one of: anthropic, gemini, groq, mistral, deepseek."
     )
+
+
+def get_provider(config: Config) -> ProviderChain:
+    """Factory: returns a ProviderChain from the config providers list."""
+    chain: list[tuple[str, BaseLLMProvider]] = []
+    for pc in config.llm.providers:
+        try:
+            provider = _make_single_provider(pc.name, pc.model)
+            chain.append((pc.name, provider))
+        except EnvironmentError as exc:
+            if len(config.llm.providers) == 1:
+                # Only one provider configured — must succeed
+                raise
+            logger.warning(
+                "Skipping provider '%s' (API key not set): %s", pc.name, exc
+            )
+    if not chain:
+        raise EnvironmentError(
+            "No LLM providers are available — all API keys are missing. "
+            "Set at least one of: ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, "
+            "MISTRAL_API_KEY, DEEPSEEK_API_KEY."
+        )
+    return ProviderChain(chain)
+
+
+def resolve_category_providers(
+    categories: list[str],
+    config: Config,
+    default_chain: BaseLLMProvider | None = None,
+) -> dict[str, BaseLLMProvider]:
+    """Return a provider for each category, respecting routing config.
+
+    Categories not listed in routing use the default ProviderChain.
+    If a routed provider's API key is missing, falls back to the default chain.
+    If *default_chain* is not provided it is built by calling get_provider(config).
+    """
+    if default_chain is None:
+        default_chain = get_provider(config)
+
+    # Build a lookup: category → RouteConfig
+    route_map: dict[str, tuple[str, str]] = {}
+    for route in config.llm.routing:
+        for cat in route.categories:
+            route_map[cat] = (route.provider, route.model)
+
+    result: dict[str, BaseLLMProvider] = {}
+    for cat in categories:
+        if cat not in route_map:
+            result[cat] = default_chain
+            continue
+
+        provider_name, model = route_map[cat]
+        try:
+            single = _make_single_provider(provider_name, model)
+            # Wrap in a ProviderChain with default as fallback.
+            # default_chain is always a ProviderChain (built by get_provider).
+            default_providers = (
+                list(default_chain._providers)  # type: ignore[union-attr]
+                if isinstance(default_chain, ProviderChain)
+                else []
+            )
+            result[cat] = ProviderChain([(provider_name, single)] + default_providers)
+        except EnvironmentError as exc:
+            logger.warning(
+                "Routed provider '%s' for category '%s' has no API key (%s). "
+                "Falling back to default chain.",
+                provider_name,
+                cat,
+                exc,
+            )
+            result[cat] = default_chain
+
+    return result

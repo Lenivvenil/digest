@@ -9,6 +9,9 @@ import pytest
 
 from src.config import (
     Config,
+    LLMConfig,
+    ProviderConfig,
+    RouteConfig,
     load_config,
 )
 
@@ -1052,3 +1055,159 @@ def test_empty_sources(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="at least one source"):
         load_config(cfg_path)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6: providers list + routing
+# ---------------------------------------------------------------------------
+
+PROVIDERS_BASE = """
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+          markdown_dir: "digests"
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
+"""
+
+
+def test_providers_list_loads(tmp_path: Path) -> None:
+    """New providers list format is parsed into LLMConfig.providers."""
+    content = """
+        llm:
+          providers:
+            - name: "gemini"
+              model: "gemini-2.5-flash"
+            - name: "groq"
+              model: "llama-3.3-70b-versatile"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert isinstance(config.llm, LLMConfig)
+    assert len(config.llm.providers) == 2
+    assert config.llm.providers[0].name == "gemini"
+    assert config.llm.providers[0].model == "gemini-2.5-flash"
+    assert config.llm.providers[1].name == "groq"
+    # Backward-compat properties read from providers[0]
+    assert config.llm.provider == "gemini"
+    assert config.llm.model == "gemini-2.5-flash"
+
+
+def test_legacy_format_backward_compat(tmp_path: Path) -> None:
+    """Old provider/model keys auto-convert to providers list with one entry."""
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert len(config.llm.providers) == 1
+    assert config.llm.providers[0] == ProviderConfig(name="anthropic", model="claude-sonnet-4-20250514")
+    assert config.llm.provider == "anthropic"
+    assert config.llm.model == "claude-sonnet-4-20250514"
+
+
+def test_providers_list_empty_rejected(tmp_path: Path) -> None:
+    """Empty providers list raises ValueError."""
+    content = """
+        llm:
+          providers: []
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="providers"):
+        load_config(cfg_path)
+
+
+def test_routing_loads(tmp_path: Path) -> None:
+    """routing section with valid categories and providers is parsed correctly."""
+    content = """
+        llm:
+          providers:
+            - name: "gemini"
+              model: "gemini-2.5-flash"
+          routing:
+            - categories: ["AI & LLM", "AI Engineering"]
+              provider: "groq"
+              model: "llama-3.3-70b-versatile"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert len(config.llm.routing) == 1
+    route = config.llm.routing[0]
+    assert isinstance(route, RouteConfig)
+    assert route.categories == ["AI & LLM", "AI Engineering"]
+    assert route.provider == "groq"
+    assert route.model == "llama-3.3-70b-versatile"
+
+
+def test_routing_duplicate_category_rejected(tmp_path: Path) -> None:
+    """Same category appearing in two routes raises ValueError."""
+    content = """
+        llm:
+          providers:
+            - name: "gemini"
+              model: "gemini-2.5-flash"
+          routing:
+            - categories: ["AI & LLM"]
+              provider: "groq"
+              model: "llama-3.3-70b-versatile"
+            - categories: ["AI & LLM"]
+              provider: "gemini"
+              model: "gemini-2.5-flash"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="[Dd]uplicate.*categor|categor.*[Dd]uplicate"):
+        load_config(cfg_path)
+
+
+def test_routing_invalid_provider_rejected(tmp_path: Path) -> None:
+    """Provider name not in VALID_PROVIDERS raises ValueError."""
+    content = """
+        llm:
+          providers:
+            - name: "gemini"
+              model: "gemini-2.5-flash"
+          routing:
+            - categories: ["AI & LLM"]
+              provider: "openai"
+              model: "gpt-4"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="[Ii]nvalid.*provider|provider.*[Ii]nvalid"):
+        load_config(cfg_path)
+
+
+def test_routing_optional(tmp_path: Path) -> None:
+    """Config without routing key works fine and defaults to empty list."""
+    content = """
+        llm:
+          providers:
+            - name: "gemini"
+              model: "gemini-2.5-flash"
+    """ + PROVIDERS_BASE
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.llm.routing == []
+
+
+def test_mistral_deepseek_accepted(tmp_path: Path) -> None:
+    """mistral and deepseek are valid provider names."""
+    for provider in ("mistral", "deepseek"):
+        content = f"""
+        llm:
+          providers:
+            - name: "{provider}"
+              model: "some-model"
+        """ + PROVIDERS_BASE
+        cfg_path = _write_config(tmp_path, content)
+        config = load_config(cfg_path)
+        assert config.llm.providers[0].name == provider

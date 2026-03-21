@@ -21,7 +21,7 @@ from src.collector import (
     collect,
     save_dedup_cache,
 )
-from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, SourceConfig
+from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, ProviderConfig, SourceConfig
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -105,7 +105,7 @@ def make_config(
     if sources is None:
         sources = [make_source()]
     return Config(
-        llm=LLMConfig(provider="anthropic", model="claude-sonnet-4-20250514"),
+        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="claude-sonnet-4-20250514")]),
         delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
         digest=DigestConfig(
             language="ru",
@@ -884,7 +884,7 @@ async def test_collect_trial_sources_separate_budget(
         enabled=True, priority=3, trial=True, trial_started="2026-03-01",
     )
     config = Config(
-        llm=LLMConfig(provider="anthropic", model="test"),
+        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="test")]),
         delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
         digest=DigestConfig(
             language="ru", max_articles_per_source=10,
