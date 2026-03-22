@@ -113,7 +113,7 @@ sources:
   - name: "Increment Magazine"
     url: "https://increment.com/feeds/all.rss"
     category: "Architecture & Distributed Systems"
-    enabled: true
+    enabled: false  # 403, журнал заархивирован
     priority: 5
     recency_hours: 744
 
@@ -156,14 +156,14 @@ sources:
   - name: "Netflix TechBlog"
     url: "https://netflixtechblog.com/feed"
     category: "Company Engineering"
-    enabled: true
+    enabled: false  # Medium-hosted, заблокирован с GitHub Actions IPs
     priority: 5
     recency_hours: 168
 
   - name: "Uber Engineering"
     url: "https://eng.uber.com/feed/"
     category: "Company Engineering"
-    enabled: true
+    enabled: false  # 404, редиректы ведут в никуда
     priority: 5
     recency_hours: 168
 
@@ -190,7 +190,7 @@ sources:
     recency_hours: 168
 
   - name: "Shopify Engineering"
-    url: "https://shopify.engineering/feed"
+    url: "https://shopify.engineering/blog.atom"
     category: "Company Engineering"
     enabled: true
     priority: 4
@@ -206,7 +206,7 @@ sources:
   - name: "DoorDash Engineering"
     url: "https://doordash.engineering/feed/"
     category: "Company Engineering"
-    enabled: true
+    enabled: false  # 403, новый URL неподтверждён
     priority: 3
     recency_hours: 168
 
@@ -232,7 +232,7 @@ sources:
     recency_hours: 168
 
   - name: "Discord Engineering"
-    url: "https://discord.com/blog/engineering-rss"
+    url: "https://discord.com/blog/rss.xml"
     category: "Company Engineering"
     enabled: true
     priority: 2
@@ -259,13 +259,13 @@ sources:
     priority: 3
 
   - name: "CNCF Blog"
-    url: "https://www.cncf.io/feed/"
+    url: "https://www.cncf.io/blog/feed"
     category: "Cloud & Infrastructure"
     enabled: true
     priority: 3
 
   - name: "Istio Blog"
-    url: "https://istio.io/blog/index.xml"
+    url: "https://istio.io/feed.xml"
     category: "Cloud & Infrastructure"
     enabled: true
     priority: 3
@@ -274,7 +274,7 @@ sources:
   - name: "Cockroach Labs Blog"
     url: "https://www.cockroachlabs.com/blog/rss.xml"
     category: "Data & Databases"
-    enabled: true
+    enabled: false  # 404, RSS не найден
     priority: 4
 
   - name: "ScyllaDB Blog"
@@ -284,7 +284,7 @@ sources:
     priority: 4
 
   - name: "Databricks Blog"
-    url: "https://www.databricks.com/blog/rss.xml"
+    url: "https://databricks.com/feed"
     category: "Data & Databases"
     enabled: true
     priority: 3
@@ -292,7 +292,7 @@ sources:
   - name: "Confluent Blog"
     url: "https://www.confluent.io/blog/feed/"
     category: "Data & Databases"
-    enabled: true
+    enabled: false  # 404, публичного RSS нет
     priority: 4
 
   - name: "TimescaleDB Blog"
@@ -317,7 +317,7 @@ sources:
   - name: "Square Developer Blog"
     url: "https://developer.squareup.com/blog/index.rss"
     category: "Banking & Fintech"
-    enabled: true
+    enabled: false  # 404, RSS не найден
     priority: 2
 
   - name: "Finovate"
@@ -327,14 +327,14 @@ sources:
     priority: 1
 
   - name: "Monzo Tech Blog"
-    url: "https://monzo.com/blog/technology/feed"
+    url: "https://monzo.com/feed.xml"
     category: "Banking & Fintech"
     enabled: true
     priority: 5
 
   # Payments & Fintech
   - name: "Adyen Tech Blog"
-    url: "https://www.adyen.com/knowledge-hub/rss.xml"
+    url: "https://adyen.medium.com/feed"
     category: "Payments & Fintech"
     enabled: true
     priority: 4

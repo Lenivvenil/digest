@@ -12,17 +12,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import logging
 import os
 import re
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 from datetime import datetime, timezone
 
-from src._dns_pinning import ValidatedURL as _ValidatedURL, pin_dns as _pin_dns, validate_url as _validate_url
+from src._dns_pinning import pin_dns as _pin_dns, validate_url as _validate_url
 from src.collector import AllFeedsFailedError, collect, save_dedup_cache
 from src.config import load_config
 from src.feedback import (

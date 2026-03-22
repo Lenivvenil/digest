@@ -1,43 +1,8 @@
 {
   "ratings": [],
   "last_update_id": 0,
-  "last_digest_sources": [
-    "Habr \u2014 Interesting",
-    "Hacker News Best",
-    "Martin Fowler",
-    "PYMNTS",
-    "Spot.uz",
-    "ThoughtWorks Insights"
-  ],
-  "digest_sources_map": {
-    "20260321_194039": [
-      "Habr \u2014 Interesting",
-      "Hacker News Best",
-      "Martin Fowler",
-      "PYMNTS",
-      "Spot.uz",
-      "ThoughtWorks Insights"
-    ]
-  },
-  "digest_category_sources_map": {
-    "20260321_194039": {
-      "Architecture & Distributed Systems": [
-        "Martin Fowler"
-      ],
-      "Banking & Fintech": [
-        "PYMNTS"
-      ],
-      "Enterprise Architecture": [
-        "Hacker News Best",
-        "ThoughtWorks Insights"
-      ],
-      "Russian Tech": [
-        "Habr \u2014 Interesting"
-      ],
-      "Geopolitics & CIS": [
-        "Spot.uz"
-      ]
-    }
-  },
-  "last_digest_time": "2026-03-21 19:41 UTC"
+  "last_digest_sources": [],
+  "digest_sources_map": {},
+  "digest_category_sources_map": {},
+  "last_digest_time": "2026-03-21 20:59 UTC"
 }

@@ -900,7 +900,7 @@ def test_apply_trial_decisions_creates_and_removes_backup(tmp_path: Path) -> Non
 def test_apply_trial_decisions_preserves_backup_on_write_failure(tmp_path: Path) -> None:
     """apply_trial_decisions preserves .yaml.bak when the tmp write fails."""
     import yaml
-    from unittest.mock import patch, mock_open, MagicMock
+    from unittest.mock import patch
 
     config_data = {
         "llm": {"provider": "anthropic", "model": "test"},
