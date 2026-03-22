@@ -686,7 +686,8 @@ def test_run_stats_new_fields() -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
     """discover_sources should parse FEED| lines and validate URLs."""
-    from src.main import _ValidatedURL, discover_sources
+    from src._dns_pinning import ValidatedURL as _ValidatedURL
+    from src.main import discover_sources
 
     llm_response = (
         "Here are some suggestions:\n"
@@ -746,7 +747,8 @@ async def test_discover_sources_no_suggestions(config_file: Path) -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
     """discover_sources must not fetch private/localhost URLs from LLM output."""
-    from src.main import _ValidatedURL, discover_sources
+    from src._dns_pinning import ValidatedURL as _ValidatedURL
+    from src.main import discover_sources
 
     llm_response = (
         "FEED|http://169.254.169.254/latest/meta-data/|Cloud|Metadata\n"
@@ -920,7 +922,8 @@ def test_prune_digest_sources_map_preserves_newest() -> None:
 @pytest.mark.asyncio
 async def test_discover_sources_malformed_lines(config_file: Path) -> None:
     """discover_sources should skip lines with wrong number of fields."""
-    from src.main import _ValidatedURL, discover_sources
+    from src._dns_pinning import ValidatedURL as _ValidatedURL
+    from src.main import discover_sources
 
     llm_response = (
         "FEED|only-two-parts|Category\n"
