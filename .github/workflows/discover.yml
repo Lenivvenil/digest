@@ -51,27 +51,27 @@ jobs:
           fi
           DATE=$(date -u +%Y-%m-%d)
           python3 - "$DATE" <<'PYEOF'
-import sys, os, json, urllib.request
+          import sys, os, json, urllib.request
 
-date = sys.argv[1]
-token = os.environ["TELEGRAM_BOT_TOKEN"]
-chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          date = sys.argv[1]
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-with open("discover_output.txt", encoding="utf-8") as f:
-    output = f.read().strip() or "(no output)"
+          with open("discover_output.txt", encoding="utf-8") as f:
+              output = f.read().strip() or "(no output)"
 
-# Truncate safely (keep under 3800 chars to leave room for header+backticks)
-if len(output) > 3800:
-    output = output[:3800] + "\n… (truncated)"
+          # Truncate safely (keep under 3800 chars to leave room for header+backticks)
+          if len(output) > 3800:
+              output = output[:3800] + "\n… (truncated)"
 
-text = f"\U0001f50d Weekly source discovery \u2014 {date}\n```\n{output}\n```"
+          text = f"\U0001f50d Weekly source discovery \u2014 {date}\n```\n{output}\n```"
 
-body = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
-req = urllib.request.Request(
-    f"https://api.telegram.org/bot{token}/sendMessage",
-    data=body,
-    headers={"Content-Type": "application/json"},
-)
-with urllib.request.urlopen(req) as resp:
-    print(f"Telegram response: {resp.status}")
-PYEOF
+          body = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=body,
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req) as resp:
+              print(f"Telegram response: {resp.status}")
+          PYEOF
