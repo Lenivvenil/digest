@@ -1,8 +1,40 @@
 {
   "ratings": [],
   "last_update_id": 0,
-  "last_digest_sources": [],
-  "digest_sources_map": {},
-  "digest_category_sources_map": {},
-  "last_digest_time": "2026-03-21 20:59 UTC"
+  "last_digest_sources": [
+    "ByteByteGo",
+    "Discord Engineering",
+    "Habr \u2014 Interesting",
+    "Hacker News Best",
+    "Spot.uz"
+  ],
+  "digest_sources_map": {
+    "20260322_173130": [
+      "ByteByteGo",
+      "Discord Engineering",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "Spot.uz"
+    ]
+  },
+  "digest_category_sources_map": {
+    "20260322_173130": {
+      "Company Engineering": [
+        "Discord Engineering"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Geopolitics & CIS": [
+        "Spot.uz"
+      ],
+      "Architecture & Distributed Systems": [
+        "ByteByteGo"
+      ]
+    }
+  },
+  "last_digest_time": "2026-03-22 17:32 UTC"
 }
