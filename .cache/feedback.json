@@ -2,11 +2,14 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
+    "Cloudflare Blog",
     "Finextra",
     "Habr \u2014 Interesting",
     "Hacker News Best",
+    "MIT Technology Review AI",
+    "NVIDIA Developer Blog",
     "PYMNTS",
-    "SRE Weekly"
+    "Spot.uz"
   ],
   "digest_sources_map": {
     "20260322_173130": [
@@ -22,6 +25,16 @@
       "Hacker News Best",
       "PYMNTS",
       "SRE Weekly"
+    ],
+    "20260323_140826": [
+      "Cloudflare Blog",
+      "Finextra",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "MIT Technology Review AI",
+      "NVIDIA Developer Blog",
+      "PYMNTS",
+      "Spot.uz"
     ]
   },
   "digest_category_sources_map": {
@@ -56,7 +69,29 @@
       "Architecture & Distributed Systems": [
         "SRE Weekly"
       ]
+    },
+    "20260323_140826": {
+      "Company Engineering": [
+        "Cloudflare Blog"
+      ],
+      "Banking & Fintech": [
+        "Finextra",
+        "PYMNTS"
+      ],
+      "AI & LLM": [
+        "MIT Technology Review AI",
+        "NVIDIA Developer Blog"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Geopolitics & CIS": [
+        "Spot.uz"
+      ]
     }
   },
-  "last_digest_time": "2026-03-23 04:26 UTC"
+  "last_digest_time": "2026-03-23 14:08 UTC"
 }
