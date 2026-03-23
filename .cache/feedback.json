@@ -2,11 +2,11 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "ByteByteGo",
-    "Discord Engineering",
+    "Finextra",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Spot.uz"
+    "PYMNTS",
+    "SRE Weekly"
   ],
   "digest_sources_map": {
     "20260322_173130": [
@@ -15,6 +15,13 @@
       "Habr \u2014 Interesting",
       "Hacker News Best",
       "Spot.uz"
+    ],
+    "20260323_042550": [
+      "Finextra",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "PYMNTS",
+      "SRE Weekly"
     ]
   },
   "digest_category_sources_map": {
@@ -34,7 +41,22 @@
       "Architecture & Distributed Systems": [
         "ByteByteGo"
       ]
+    },
+    "20260323_042550": {
+      "Banking & Fintech": [
+        "Finextra",
+        "PYMNTS"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Architecture & Distributed Systems": [
+        "SRE Weekly"
+      ]
     }
   },
-  "last_digest_time": "2026-03-22 17:32 UTC"
+  "last_digest_time": "2026-03-23 04:26 UTC"
 }
