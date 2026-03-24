@@ -2,13 +2,18 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "Cloudflare Blog",
+    "AWS Architecture Blog",
+    "ByteByteGo",
+    "Databricks Blog",
     "Finextra",
     "Habr \u2014 Interesting",
     "Hacker News Best",
+    "Hugging Face Blog",
     "MIT Technology Review AI",
+    "Martin Fowler",
     "NVIDIA Developer Blog",
     "PYMNTS",
+    "ScyllaDB Blog",
     "Spot.uz"
   ],
   "digest_sources_map": {
@@ -34,6 +39,21 @@
       "MIT Technology Review AI",
       "NVIDIA Developer Blog",
       "PYMNTS",
+      "Spot.uz"
+    ],
+    "20260324_041438": [
+      "AWS Architecture Blog",
+      "ByteByteGo",
+      "Databricks Blog",
+      "Finextra",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "Hugging Face Blog",
+      "MIT Technology Review AI",
+      "Martin Fowler",
+      "NVIDIA Developer Blog",
+      "PYMNTS",
+      "ScyllaDB Blog",
       "Spot.uz"
     ]
   },
@@ -91,7 +111,38 @@
       "Geopolitics & CIS": [
         "Spot.uz"
       ]
+    },
+    "20260324_041438": {
+      "Data & Databases": [
+        "Databricks Blog",
+        "ScyllaDB Blog"
+      ],
+      "Cloud & Infrastructure": [
+        "AWS Architecture Blog"
+      ],
+      "Banking & Fintech": [
+        "Finextra",
+        "PYMNTS"
+      ],
+      "AI & LLM": [
+        "Hugging Face Blog",
+        "MIT Technology Review AI",
+        "NVIDIA Developer Blog"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Geopolitics & CIS": [
+        "Spot.uz"
+      ],
+      "Architecture & Distributed Systems": [
+        "ByteByteGo",
+        "Martin Fowler"
+      ]
     }
   },
-  "last_digest_time": "2026-03-23 14:08 UTC"
+  "last_digest_time": "2026-03-24 04:15 UTC"
 }
