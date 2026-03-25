@@ -184,11 +184,16 @@ def calculate_score(stats: SourceStats) -> float:
 
     # Productivity (weight: 0.3) — based on last 7 snapshots to avoid
     # penalising high-frequency sources (e.g. HN: 30 found / 5 taken = 0.17).
+    # Falls back to cumulative totals when history is not yet populated.
     recent_snaps = stats.history[-7:] if stats.history else []
     recent_found = sum(s.articles_found for s in recent_snaps)
     recent_included = sum(s.articles_included for s in recent_snaps)
     if recent_found == 0:
-        productivity = 0.0
+        # Fallback to cumulative totals
+        if stats.total_articles_found > 0:
+            productivity = min(1.0, stats.articles_included_in_digest / stats.total_articles_found)
+        else:
+            productivity = 0.0
     else:
         productivity = min(1.0, recent_included / recent_found)
 
