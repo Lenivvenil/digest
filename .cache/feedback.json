@@ -2,14 +2,18 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "Cloudflare Blog",
+    "ByteByteGo",
     "Databricks Blog",
+    "Discord Engineering",
     "Finextra",
+    "Google Research Blog",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Martin Fowler",
+    "NVIDIA Developer Blog",
+    "OpenAI News",
     "PYMNTS",
-    "Spot.uz"
+    "Spot.uz",
+    "Stripe Engineering"
   ],
   "digest_sources_map": {
     "20260322_173130": [
@@ -60,6 +64,20 @@
       "Martin Fowler",
       "PYMNTS",
       "Spot.uz"
+    ],
+    "20260325_080249": [
+      "ByteByteGo",
+      "Databricks Blog",
+      "Discord Engineering",
+      "Finextra",
+      "Google Research Blog",
+      "Habr \u2014 Interesting",
+      "Hacker News Best",
+      "NVIDIA Developer Blog",
+      "OpenAI News",
+      "PYMNTS",
+      "Spot.uz",
+      "Stripe Engineering"
     ]
   },
   "digest_category_sources_map": {
@@ -171,7 +189,39 @@
       "Architecture & Distributed Systems": [
         "Martin Fowler"
       ]
+    },
+    "20260325_080249": {
+      "Company Engineering": [
+        "Discord Engineering",
+        "Stripe Engineering"
+      ],
+      "Data & Databases": [
+        "Databricks Blog"
+      ],
+      "Banking & Fintech": [
+        "Finextra",
+        "PYMNTS"
+      ],
+      "AI & LLM": [
+        "NVIDIA Developer Blog",
+        "OpenAI News"
+      ],
+      "AI Engineering": [
+        "Google Research Blog"
+      ],
+      "Enterprise Architecture": [
+        "Hacker News Best"
+      ],
+      "Russian Tech": [
+        "Habr \u2014 Interesting"
+      ],
+      "Geopolitics & CIS": [
+        "Spot.uz"
+      ],
+      "Architecture & Distributed Systems": [
+        "ByteByteGo"
+      ]
     }
   },
-  "last_digest_time": "2026-03-24 14:14 UTC"
+  "last_digest_time": "2026-03-25 08:03 UTC"
 }
