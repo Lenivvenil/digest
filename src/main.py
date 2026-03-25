@@ -615,6 +615,15 @@ async def check_config(config_path: str) -> int:
             with _pin_dns(validated.hostname, validated.pinned_addrinfos):
                 resp = await client.get(validated.url, timeout=15.0)
             resp.raise_for_status()
+            if source.type == "html":
+                from bs4 import BeautifulSoup  # type: ignore[import-untyped]
+                soup = BeautifulSoup(resp.content, "html.parser")
+                selectors = source.selectors or {}
+                matches = soup.select(selectors.get("article", ""))
+                count = len(matches)
+                if count == 0:
+                    return source.name, "WARN", "HTML source: 'article' selector matched 0 elements"
+                return source.name, "OK", f"{count} article elements found"
             feed = feedparser.parse(resp.text)
             if feed.bozo and not feed.entries:
                 return source.name, "WARN", f"feedparser error: {feed.bozo_exception}"

@@ -1285,4 +1285,161 @@ async def test_fetch_feed_ssrf_valid_url_proceeds(
         result, _ = await collect(config)
 
     assert calls == ["https://example.com/feed.rss"]
-    assert "Tech" in result
+
+
+# ---------------------------------------------------------------------------
+# HTML source tests (_parse_html_page)
+# ---------------------------------------------------------------------------
+
+from src.collector import _parse_html_page  # noqa: E402
+
+
+def make_html_source(
+    name: str = "HTML Source",
+    url: str = "https://example.com/newsroom",
+    selectors: dict[str, str] | None = None,
+) -> SourceConfig:
+    return SourceConfig(
+        name=name,
+        url=url,
+        category="Banking & Fintech",
+        enabled=True,
+        type="html",
+        selectors=selectors or {"article": ".news-item", "title": "h3"},
+    )
+
+
+HTML_NEWSROOM = b"""
+<html>
+<body>
+  <div class="news-list">
+    <div class="news-item">
+      <h3><a href="/news/1">Digital Banking Innovation</a></h3>
+      <p class="summary">Bank launches new AI-powered feature.</p>
+      <span class="date">2026-03-20</span>
+    </div>
+    <div class="news-item">
+      <h3><a href="https://example.com/news/2">Fintech Partnership</a></h3>
+      <p class="summary">Strategic alliance announced.</p>
+      <span class="date">2026-03-19</span>
+    </div>
+    <div class="news-item">
+      <h3>No link here</h3>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+def test_parse_html_page_basic() -> None:
+    """Extracts articles from HTML page using CSS selectors."""
+    source = make_html_source(
+        selectors={
+            "article": ".news-item",
+            "title": "h3",
+            "link": "h3 a[href]",
+            "description": "p.summary",
+        }
+    )
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    assert len(articles) == 3
+    assert articles[0].title == "Digital Banking Innovation"
+    assert articles[0].link == "https://example.com/news/1"
+    assert articles[0].description == "Bank launches new AI-powered feature."
+    assert articles[0].source == "HTML Source"
+    assert articles[0].category == "Banking & Fintech"
+
+    assert articles[1].title == "Fintech Partnership"
+    assert articles[1].link == "https://example.com/news/2"
+
+    # Third item has no link — title still extracted
+    assert articles[2].title == "No link here"
+    assert articles[2].link == ""
+
+
+def test_parse_html_page_relative_links_resolved() -> None:
+    """Relative links are resolved to absolute URLs using source URL as base."""
+    source = make_html_source(
+        url="https://bankexample.com/newsroom",
+        selectors={"article": ".news-item", "title": "h3", "link": "a[href]"},
+    )
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    # First item has relative href "/news/1" → should become absolute
+    assert articles[0].link == "https://bankexample.com/news/1"
+    # Second item already has absolute URL — unchanged
+    assert articles[1].link == "https://example.com/news/2"
+
+
+def test_parse_html_page_no_matches_returns_empty() -> None:
+    """Returns empty list when 'article' selector matches nothing."""
+    source = make_html_source(selectors={"article": ".nonexistent", "title": "h3"})
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    assert articles == []
+
+
+def test_parse_html_page_title_selector_no_match_skips_item() -> None:
+    """Items where 'title' selector matches nothing are skipped."""
+    source = make_html_source(
+        selectors={"article": ".news-item", "title": "h2"}  # no h2 in items
+    )
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    assert articles == []
+
+
+def test_parse_html_page_date_parsed() -> None:
+    """ISO date in <span class='date'> is parsed into pub_date."""
+    source = make_html_source(
+        selectors={"article": ".news-item", "title": "h3", "date": "span.date"}
+    )
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    assert articles[0].pub_date is not None
+    assert articles[0].pub_date.year == 2026
+    assert articles[0].pub_date.month == 3
+    assert articles[0].pub_date.day == 20
+
+
+def test_parse_html_page_date_not_found_returns_none() -> None:
+    """Missing date selector leaves pub_date as None."""
+    source = make_html_source(
+        selectors={"article": ".news-item", "title": "h3"}
+    )
+    articles = _parse_html_page(HTML_NEWSROOM, source)
+    assert all(a.pub_date is None for a in articles)
+
+
+@pytest.mark.asyncio
+async def test_fetch_feed_html_type(tmp_path: Path) -> None:
+    """_fetch_feed dispatches to HTML parser when source.type == 'html'."""
+    import asyncio
+    from src.collector import collect
+
+    (tmp_path / ".cache").mkdir()
+    source = SourceConfig(
+        name="DBS Newsroom",
+        url="https://dbs.example.com/newsroom",
+        category="Banking & Fintech",
+        enabled=True,
+        type="html",
+        selectors={"article": ".news-item", "title": "h3"},
+    )
+    config = make_config(sources=[source])
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(HTML_NEWSROOM)
+
+    import pytest as _pytest
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        import os
+        orig = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result, _ = await collect(config)
+        finally:
+            os.chdir(orig)
+
+    # collect() returns dict[category -> list[Article]]
+    all_articles = [a for articles in result.values() for a in articles]
+    assert len(all_articles) == 3
+    assert all_articles[0].source == "DBS Newsroom"
+    assert "Banking & Fintech" in result

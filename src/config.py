@@ -73,6 +73,8 @@ class SourceConfig:
     trial_started: str | None = None
     trial_days: int = 7
     recency_hours: int = 24
+    type: str = "rss"  # "rss" | "html"
+    selectors: dict[str, str] | None = None  # CSS selectors for type="html"
 
 
 @dataclass
@@ -345,6 +347,30 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'recency_hours' in sources[{i}] must be >= 1, "
                 f"got {raw_recency_hours}."
             )
+        raw_type = item.get("type", "rss")
+        if not isinstance(raw_type, str) or raw_type not in ("rss", "html"):
+            raise ValueError(
+                f"Config field 'type' in sources[{i}] must be 'rss' or 'html', "
+                f"got {raw_type!r}."
+            )
+        raw_selectors = item.get("selectors", None)
+        if raw_type == "html":
+            if not isinstance(raw_selectors, dict):
+                raise ValueError(
+                    f"Source '{name}' has type='html' but 'selectors' is missing or not a mapping. "
+                    f"Provide at least 'article' and 'title' CSS selectors."
+                )
+            for required_key in ("article", "title"):
+                if required_key not in raw_selectors:
+                    raise ValueError(
+                        f"Source '{name}' has type='html' but 'selectors' is missing required key "
+                        f"'{required_key}'. Provide CSS selectors for 'article' and 'title'."
+                    )
+            selectors: dict[str, str] | None = {
+                k: str(v) for k, v in raw_selectors.items()
+            }
+        else:
+            selectors = None
         sources.append(
             SourceConfig(
                 name=str(name),
@@ -356,6 +382,8 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 trial_started=trial_started,
                 trial_days=raw_trial_days,
                 recency_hours=raw_recency_hours,
+                type=raw_type,
+                selectors=selectors,
             )
         )
     if not sources:

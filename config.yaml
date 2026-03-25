@@ -44,7 +44,7 @@ adaptive:
   # Weight of base (static) priority from config in priority calculation (0.0–1.0)
   base_weight: 0.2
   # Number of article slots reserved for trial sources (separate from main budget)
-  trial_slots: 2
+  trial_slots: 4
   # Effective priority range after recalculation
   min_priority: 1
   max_priority: 5
@@ -314,36 +314,91 @@ sources:
     enabled: true
     priority: 2
 
-  - name: "Square Developer Blog"
-    url: "https://developer.squareup.com/blog/index.rss"
-    category: "Banking & Fintech"
-    enabled: false  # 404, RSS не найден
-    priority: 2
-
   - name: "Finovate"
     url: "https://finovate.com/feed/"
     category: "Banking & Fintech"
-    enabled: false
-    priority: 1
+    enabled: true
+    priority: 2
 
   - name: "Monzo Tech Blog"
     url: "https://monzo.com/feed.xml"
     category: "Banking & Fintech"
     enabled: true
-    priority: 5
+    priority: 3
 
-  # Payments & Fintech
   - name: "Adyen Tech Blog"
     url: "https://adyen.medium.com/feed"
-    category: "Payments & Fintech"
+    category: "Banking & Fintech"
     enabled: true
     priority: 4
 
   - name: "Plaid Blog"
     url: "https://plaid.com/blog/rss.xml"
-    category: "Payments & Fintech"
+    category: "Banking & Fintech"
     enabled: true
     priority: 4
+
+  - name: "FinTech Futures"
+    url: "https://www.fintechfutures.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+
+  - name: "The Financial Brand"
+    url: "https://thefinancialbrand.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+
+  - name: "Bank Automation News"
+    url: "https://bankautomationnews.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+
+  - name: "Finextra AI"
+    url: "https://www.finextra.com/rss/channel.aspx?channel=ai"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 2
+
+  - name: "Global Finance Magazine"
+    url: "https://gfmag.com/feed/"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 2
+
+  - name: "JPMorgan Chase IR"
+    url: "https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+    trial: true
+    trial_days: 14
+
+  - name: "Bank of America Newsroom"
+    url: "https://newsroom.bankofamerica.com/rss"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+    trial: true
+    trial_days: 14
+
+  - name: "CaixaBank Research"
+    url: "https://www.caixabankresearch.com/en/rss.xml"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 3
+    trial: true
+    trial_days: 14
+
+  - name: "Ally Financial IR"
+    url: "https://ally.gcs-web.com/rss/news-releases.xml"
+    category: "Banking & Fintech"
+    enabled: true
+    priority: 2
+    trial: true
+    trial_days: 14
 
   # AI & LLM
   - name: "MIT Technology Review AI"

@@ -1210,4 +1210,123 @@ def test_mistral_deepseek_accepted(tmp_path: Path) -> None:
         """ + PROVIDERS_BASE
         cfg_path = _write_config(tmp_path, content)
         config = load_config(cfg_path)
+
+
+# ---------------------------------------------------------------------------
+# HTML source type validation tests
+# ---------------------------------------------------------------------------
+
+_HTML_SOURCE_BASE = """
+    llm:
+      provider: "anthropic"
+      model: "claude-sonnet-4-20250514"
+    delivery:
+      telegram: false
+      markdown_to_repo: false
+      markdown_dir: "digests"
+    digest:
+      language: "ru"
+      max_articles_per_source: 5
+      max_total_articles: 30
+      summary_style: "analytical"
+"""
+
+
+def test_html_source_type_rss_default(tmp_path: Path) -> None:
+    """Source without 'type' field defaults to 'rss'."""
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+    assert config.sources[0].type == "rss"
+    assert config.sources[0].selectors is None
+
+
+def test_html_source_type_html_valid(tmp_path: Path) -> None:
+    """Source with type='html' and valid selectors loads correctly."""
+    content = _HTML_SOURCE_BASE + """
+    sources:
+      - name: "DBS Newsroom"
+        url: "https://www.dbs.com/newsroom"
+        category: "Banking & Fintech"
+        enabled: true
+        type: html
+        selectors:
+          article: ".news-item"
+          title: "h3"
+          link: "a[href]"
+          description: "p.summary"
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    src = config.sources[0]
+    assert src.type == "html"
+    assert src.selectors == {
+        "article": ".news-item",
+        "title": "h3",
+        "link": "a[href]",
+        "description": "p.summary",
+    }
+
+
+def test_html_source_type_invalid_value(tmp_path: Path) -> None:
+    """Source with type='xml' raises ValueError."""
+    content = _HTML_SOURCE_BASE + """
+    sources:
+      - name: "Bad"
+        url: "https://example.com"
+        category: "Test"
+        enabled: true
+        type: xml
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="must be 'rss' or 'html'"):
+        load_config(cfg_path)
+
+
+def test_html_source_missing_selectors(tmp_path: Path) -> None:
+    """Source with type='html' but no selectors raises ValueError."""
+    content = _HTML_SOURCE_BASE + """
+    sources:
+      - name: "NoSelectors"
+        url: "https://example.com/newsroom"
+        category: "Test"
+        enabled: true
+        type: html
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="selectors.*missing"):
+        load_config(cfg_path)
+
+
+def test_html_source_missing_article_selector(tmp_path: Path) -> None:
+    """Source with type='html' but missing 'article' key raises ValueError."""
+    content = _HTML_SOURCE_BASE + """
+    sources:
+      - name: "NoArticle"
+        url: "https://example.com/newsroom"
+        category: "Test"
+        enabled: true
+        type: html
+        selectors:
+          title: "h3"
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="'article'"):
+        load_config(cfg_path)
+
+
+def test_html_source_missing_title_selector(tmp_path: Path) -> None:
+    """Source with type='html' but missing 'title' key raises ValueError."""
+    content = _HTML_SOURCE_BASE + """
+    sources:
+      - name: "NoTitle"
+        url: "https://example.com/newsroom"
+        category: "Test"
+        enabled: true
+        type: html
+        selectors:
+          article: ".item"
+    """
+    cfg_path = _write_config(tmp_path, content)
+    with pytest.raises(ValueError, match="'title'"):
+        load_config(cfg_path)
         assert config.llm.providers[0].name == provider

@@ -117,6 +117,95 @@ def _parse_feed_bytes(raw: bytes, url: str) -> feedparser.FeedParserDict:
     return feedparser.parse(raw, response_headers={"content-location": url})
 
 
+def _parse_html_page(html: bytes, source: SourceConfig) -> list[Article]:
+    """Extract articles from an HTML page using CSS selectors.
+
+    Requires source.selectors with at least 'article' and 'title' keys.
+    Optional keys: 'link' (defaults to first <a> href), 'description', 'date'.
+    """
+    from bs4 import BeautifulSoup  # type: ignore[import-untyped]
+    from urllib.parse import urljoin, urlparse
+
+    selectors = source.selectors or {}
+    soup = BeautifulSoup(html, "html.parser")
+    base_url = f"{urlparse(source.url).scheme}://{urlparse(source.url).netloc}"
+
+    articles: list[Article] = []
+    for container in soup.select(selectors["article"])[:200]:
+        # Title
+        title_sel = selectors["title"]
+        title_tag = container.select_one(title_sel)
+        if title_tag is None:
+            continue
+        title = _strip_html(title_tag.get_text())
+        if not title:
+            continue
+
+        # Link — prefer explicit 'link' selector, fallback to first <a> in container
+        link = ""
+        link_sel = selectors.get("link")
+        if link_sel:
+            link_tag = container.select_one(link_sel)
+            if link_tag:
+                href = link_tag.get("href", "")
+                link = urljoin(base_url, str(href)) if href else ""
+        if not link:
+            a_tag = container.select_one("a[href]")
+            if a_tag:
+                href = a_tag.get("href", "")
+                link = urljoin(base_url, str(href)) if href else ""
+
+        if not title and not link:
+            continue
+
+        # Description (optional)
+        description = ""
+        desc_sel = selectors.get("description")
+        if desc_sel:
+            desc_tag = container.select_one(desc_sel)
+            if desc_tag:
+                description = _strip_html(desc_tag.get_text())[:DESCRIPTION_MAX_CHARS]
+
+        # Date (optional) — best-effort parsing
+        pub_date: datetime | None = None
+        date_sel = selectors.get("date")
+        if date_sel:
+            date_tag = container.select_one(date_sel)
+            if date_tag:
+                # Try datetime attribute first, then text content
+                dt_attr = date_tag.get("datetime", "")
+                date_str = str(dt_attr).strip() if dt_attr else date_tag.get_text().strip()
+                if date_str:
+                    for fmt in (
+                        "%Y-%m-%dT%H:%M:%S%z",
+                        "%Y-%m-%dT%H:%M:%SZ",
+                        "%Y-%m-%d",
+                        "%d %b %Y",
+                        "%B %d, %Y",
+                    ):
+                        try:
+                            pub_date = datetime.strptime(date_str[:25], fmt).replace(
+                                tzinfo=timezone.utc
+                            )
+                            break
+                        except ValueError:
+                            continue
+
+        articles.append(
+            Article(
+                title=title,
+                link=link,
+                description=description,
+                source=source.name,
+                category=source.category,
+                pub_date=pub_date,
+            )
+        )
+
+    logger.debug("Parsed %d articles from HTML page '%s'", len(articles), source.name)
+    return articles
+
+
 _FEED_RETRY_STATUSES = {500, 502, 503, 504}
 
 # Maximum Retry-After value (seconds) we will honour. If the server asks us
@@ -214,6 +303,13 @@ async def _fetch_feed(
 
     if response is None:
         return None
+
+    if source.type == "html":
+        try:
+            return _parse_html_page(response.content, source)
+        except Exception as exc:
+            logger.warning("Error parsing HTML page '%s' (%s): %s", source.name, source.url, exc)
+            return None
 
     try:
         feed = _parse_feed_bytes(response.content, source.url)
