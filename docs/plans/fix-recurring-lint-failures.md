@@ -26,10 +26,10 @@ CI регулярно падает из-за одних и тех же lint-ош
 
 ### Task 3: Add Makefile with lint/test targets
 Добавить Makefile как единую точку входа для локальных проверок — удобнее, чем запоминать команды.
-- [ ] Create `Makefile` in project root with targets: `lint` (`ruff check src/ tests/`), `lint-fix` (`ruff check --fix src/ tests/`), `typecheck` (`mypy src/`), `test` (`pytest tests/ -v`), `check` (runs lint + typecheck + test sequentially)
-- [ ] Add `.PHONY` declarations for all targets
-- [ ] Verify `make check` passes end-to-end
-- [ ] Mark completed
+- [x] Create `Makefile` in project root with targets: `lint` (`ruff check src/ tests/`), `lint-fix` (`ruff check --fix src/ tests/`), `typecheck` (`mypy src/`), `test` (`pytest tests/ -v`), `check` (runs lint + typecheck + test sequentially)
+- [x] Add `.PHONY` declarations for all targets
+- [x] Verify `make check` passes end-to-end
+- [x] Mark completed
 
 ### Task 4: Update CLAUDE.md with lint-before-commit rule
 Дать AI-агентам (Claude, Codex) явную инструкцию всегда запускать ruff перед коммитом. Это уменьшит количество fix-коммитов.
