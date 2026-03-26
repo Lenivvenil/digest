@@ -1209,7 +1209,7 @@ def test_mistral_deepseek_accepted(tmp_path: Path) -> None:
               model: "some-model"
         """ + PROVIDERS_BASE
         cfg_path = _write_config(tmp_path, content)
-        config = load_config(cfg_path)
+        load_config(cfg_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,4 +1329,3 @@ def test_html_source_missing_title_selector(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="'title'"):
         load_config(cfg_path)
-        assert config.llm.providers[0].name == provider

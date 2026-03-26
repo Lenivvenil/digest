@@ -1411,7 +1411,6 @@ def test_parse_html_page_date_not_found_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_fetch_feed_html_type(tmp_path: Path) -> None:
     """_fetch_feed dispatches to HTML parser when source.type == 'html'."""
-    import asyncio
     from src.collector import collect
 
     (tmp_path / ".cache").mkdir()
@@ -1428,7 +1427,6 @@ async def test_fetch_feed_html_type(tmp_path: Path) -> None:
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(HTML_NEWSROOM)
 
-    import pytest as _pytest
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         import os
         orig = os.getcwd()
