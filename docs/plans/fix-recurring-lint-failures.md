@@ -33,11 +33,11 @@ CI регулярно падает из-за одних и тех же lint-ош
 
 ### Task 4: Update CLAUDE.md with lint-before-commit rule
 Дать AI-агентам (Claude, Codex) явную инструкцию всегда запускать ruff перед коммитом. Это уменьшит количество fix-коммитов.
-- [ ] Add section "## Pre-commit Checklist" to `CLAUDE.md` with rule: "Always run `ruff check src/ tests/` before committing. Fix all errors before creating a commit."
-- [ ] Add to "## Code Style" section: "Never import symbols that are not used in the file. Never assign to variables that are not read."
-- [ ] Add to "## Testing" section: "After writing or modifying test files, run `ruff check tests/` to catch unused imports and undefined names before committing."
-- [ ] Verify by reading the updated `CLAUDE.md` and confirming instructions are clear and actionable
-- [ ] Mark completed
+- [x] Add section "## Pre-commit Checklist" to `CLAUDE.md` with rule: "Always run `ruff check src/ tests/` before committing. Fix all errors before creating a commit."
+- [x] Add to "## Code Style" section: "Never import symbols that are not used in the file. Never assign to variables that are not read."
+- [x] Add to "## Testing" section: "After writing or modifying test files, run `ruff check tests/` to catch unused imports and undefined names before committing."
+- [x] Verify by reading the updated `CLAUDE.md` and confirming instructions are clear and actionable
+- [x] Mark completed
 
 ### Task 5: Harden CI lint step
 Улучшить CI lint step: показывать diff автофиксов, чтобы разработчик сразу видел решение.

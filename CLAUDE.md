@@ -27,6 +27,7 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 - Error messages must be clear and actionable, with URLs to documentation where relevant
 - Logging via `logging` module, not `print()`
 - All strings that face the user (log messages, errors) in English. The digest content language is controlled by config
+- Never import symbols that are not used in the file. Never assign to variables that are not read.
 
 ## Project Structure
 
@@ -72,6 +73,7 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 - Use fixtures for sample RSS/Atom XML data
 - Mock all HTTP calls in tests (never make real network requests in tests)
 - Test edge cases: malformed feeds, empty feeds, missing config fields, API errors
+- After writing or modifying test files, run `ruff check tests/` to catch unused imports and undefined names before committing.
 
 ## Important Constraints
 
@@ -80,6 +82,10 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 - Config is YAML only (no TOML, no JSON for config)
 - The digest markdown files and cache are committed back to the repo by GitHub Actions
 - Must work offline for testing (all external calls mockable)
+
+## Pre-commit Checklist
+
+Always run `ruff check src/ tests/` before committing. Fix all errors before creating a commit.
 
 ## Digest Format: Three Perspectives
 
