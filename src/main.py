@@ -344,7 +344,7 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
 
     category_summaries: dict[str, str] = {}
     skipped_categories: list[str] = []
-    for cat, res in zip(ordered_cats, gather_results, strict=False):
+    for cat, res in zip(ordered_cats, gather_results, strict=True):
         if isinstance(res, BaseException):
             logger.error("Category summarization failed for '%s': %s", cat, res)
             skipped_categories.append(cat)

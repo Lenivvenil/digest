@@ -5,6 +5,7 @@ lint:
 
 lint-fix:
 	ruff check --fix src/ tests/
+	ruff format src/ tests/
 
 typecheck:
 	mypy src/
