@@ -7,7 +7,11 @@ import respx
 import httpx
 from unittest.mock import patch
 
-from src.telegram import escape_markdownv2, to_markdownv2, split_message, send_digest, send_category_feedback_message, TelegramPartialDeliveryError, _feedback_keyboard, _send_chunk
+from src.telegram import (
+    escape_markdownv2, to_markdownv2, split_message, send_digest,
+    send_category_feedback_message, TelegramPartialDeliveryError,
+    _feedback_keyboard, _send_chunk,
+)
 from src.config import Config, LLMConfig, ProviderConfig, DeliveryConfig, DigestConfig
 
 

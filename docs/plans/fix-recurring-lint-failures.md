@@ -10,11 +10,11 @@ CI регулярно падает из-за одних и тех же lint-ош
 
 ### Task 1: Add ruff configuration
 Создать явную конфигурацию ruff вместо неявных дефолтов. Зафиксировать правила, target-version, per-file-ignores для тестов.
-- [ ] Create `ruff.toml` in project root with `target-version = "py312"`, `select = ["E", "F", "B"]`, `line-length = 120`
-- [ ] Add `[per-file-ignores]` section: for `tests/**` ignore `F811` (pytest fixtures often shadow names)
-- [ ] Verify `ruff check src/ tests/` passes with new config (no new violations introduced)
-- [ ] Add a test: create `tests/test_ruff_config.py` that runs `subprocess.run(["ruff", "check", "src/", "tests/"])` and asserts returncode == 0
-- [ ] Mark completed
+- [x] Create `ruff.toml` in project root with `target-version = "py312"`, `select = ["E", "F", "B"]`, `line-length = 120`
+- [x] Add `[per-file-ignores]` section: for `tests/**` ignore `F811` (pytest fixtures often shadow names)
+- [x] Verify `ruff check src/ tests/` passes with new config (no new violations introduced)
+- [x] Add a test: create `tests/test_ruff_config.py` that runs `subprocess.run(["ruff", "check", "src/", "tests/"])` and asserts returncode == 0
+- [x] Mark completed
 
 ### Task 2: Add pre-commit hooks
 Установить pre-commit framework с ruff hook, чтобы lint-ошибки блокировались до push.
