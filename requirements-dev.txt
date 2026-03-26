@@ -5,3 +5,4 @@ respx==0.22.0
 mypy==1.19.1
 types-PyYAML==6.0.12.20250915
 ruff==0.15.6
+pre-commit==4.2.0

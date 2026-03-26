@@ -38,7 +38,11 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Lint
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ --output-format=github
+
+      - name: Lint autofix diff (informational)
+        if: always()
+        run: ruff check src/ tests/ --fix --diff || true
 
       - name: Type check
         run: mypy src/

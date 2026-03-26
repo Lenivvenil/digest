@@ -277,6 +277,27 @@ tags:
 
 ## Разработка
 
+Установите зависимости для разработки и активируйте pre-commit хуки:
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
+```
+
+После этого перед каждым коммитом автоматически запускается ruff (lint + format).
+
+Используйте `Makefile` для стандартных задач:
+
+```bash
+make lint       # ruff check src/ tests/
+make lint-fix   # ruff check --fix + ruff format
+make typecheck  # mypy src/
+make test       # pytest tests/ -v
+make check      # lint + typecheck + test
+```
+
+Или прямые команды:
+
 ```bash
 # Запустить тесты
 python -m pytest tests/ -v

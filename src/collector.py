@@ -499,7 +499,7 @@ async def collect(
 
     # Update source stats after fetching
     if source_stats is not None:
-        for source, raw_articles in zip(config.enabled_sources, results):
+        for source, raw_articles in zip(config.enabled_sources, results, strict=True):
             fetch_ok = raw_articles is not None
             articles_found = len(raw_articles) if raw_articles else 0
             avg_desc_len = 0.0
@@ -523,7 +523,7 @@ async def collect(
         )
 
     successful_sources = [
-        s for s, r in zip(config.enabled_sources, results) if r is not None
+        s for s, r in zip(config.enabled_sources, results, strict=True) if r is not None
     ]
     # Override priorities with effective values when provided
     if effective_priorities:
@@ -562,7 +562,7 @@ async def collect(
 
     source_eligible: list[tuple[SourceConfig, list[tuple[str, Article]]]] = []
     for source, raw_articles in sorted(
-        zip(config.enabled_sources, results),
+        zip(config.enabled_sources, results, strict=True),
         key=lambda x: _effective_priority(x[0]),
         reverse=True,
     ):

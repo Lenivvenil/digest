@@ -106,21 +106,21 @@ class Config:
 def _safe_int(value: Any, field: str, section: str) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as err:
         raise ValueError(
             f"Config field '{field}' in section '{section}' must be an integer, "
             f"got {type(value).__name__} {value!r}."
-        )
+        ) from err
 
 
 def _safe_float(value: Any, field: str, section: str) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as err:
         raise ValueError(
             f"Config field '{field}' in section '{section}' must be a number, "
             f"got {type(value).__name__} {value!r}."
-        )
+        ) from err
 
 
 def _require(data: dict[str, Any], key: str, section: str) -> Any:

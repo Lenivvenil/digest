@@ -1048,10 +1048,11 @@ def test_empty_name(tmp_path: Path) -> None:
 
 def test_empty_sources(tmp_path: Path) -> None:
     """An empty sources list raises ValueError."""
-    content = MINIMAL_CONFIG.replace(
-        "    sources:\n      - name: \"Test Feed\"\n        url: \"https://example.com/feed\"\n        category: \"Test\"\n        enabled: true",
-        "    sources: []",
+    old_sources = (
+        "    sources:\n      - name: \"Test Feed\"\n        url: \"https://example.com/feed\"\n"
+        "        category: \"Test\"\n        enabled: true"
     )
+    content = MINIMAL_CONFIG.replace(old_sources, "    sources: []")
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="at least one source"):
         load_config(cfg_path)
@@ -1209,7 +1210,7 @@ def test_mistral_deepseek_accepted(tmp_path: Path) -> None:
               model: "some-model"
         """ + PROVIDERS_BASE
         cfg_path = _write_config(tmp_path, content)
-        config = load_config(cfg_path)
+        load_config(cfg_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,4 +1330,3 @@ def test_html_source_missing_title_selector(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, content)
     with pytest.raises(ValueError, match="'title'"):
         load_config(cfg_path)
-        assert config.llm.providers[0].name == provider
