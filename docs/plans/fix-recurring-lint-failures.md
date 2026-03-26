@@ -18,11 +18,11 @@ CI регулярно падает из-за одних и тех же lint-ош
 
 ### Task 2: Add pre-commit hooks
 Установить pre-commit framework с ruff hook, чтобы lint-ошибки блокировались до push.
-- [ ] Create `.pre-commit-config.yaml` with `astral-sh/ruff-pre-commit` hook (rev matching `ruff==0.15.6` from requirements-dev.txt)
-- [ ] Configure two hooks: `ruff` (with `--fix` for safe autofixes) and `ruff-format` (check only)
-- [ ] Add `pre-commit` to `requirements-dev.txt`
-- [ ] Verify: intentionally add unused import to a test file, run `pre-commit run --all-files`, confirm it catches/fixes the error, then revert
-- [ ] Mark completed
+- [x] Create `.pre-commit-config.yaml` with `astral-sh/ruff-pre-commit` hook (rev matching `ruff==0.15.6` from requirements-dev.txt)
+- [x] Configure two hooks: `ruff` (with `--fix` for safe autofixes) and `ruff-format` (check only)
+- [x] Add `pre-commit` to `requirements-dev.txt`
+- [x] Verify: intentionally add unused import to a test file, run `pre-commit run --all-files`, confirm it catches/fixes the error, then revert
+- [x] Mark completed
 
 ### Task 3: Add Makefile with lint/test targets
 Добавить Makefile как единую точку входа для локальных проверок — удобнее, чем запоминать команды.
