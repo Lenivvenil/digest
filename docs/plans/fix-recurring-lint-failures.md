@@ -41,8 +41,8 @@ CI регулярно падает из-за одних и тех же lint-ош
 
 ### Task 5: Harden CI lint step
 Улучшить CI lint step: показывать diff автофиксов, чтобы разработчик сразу видел решение.
-- [ ] In `.github/workflows/digest.yml`, change lint step from `ruff check src/ tests/` to `ruff check src/ tests/ --output-format=github` for inline annotations on PR diffs
-- [ ] Add a second lint step `ruff check src/ tests/ --fix --diff` that shows what autofix would do (informational, non-blocking)
-- [ ] Verify CI still fails on lint errors (the first step must remain blocking)
-- [ ] Run `pytest tests/ -v` to confirm no test regressions
-- [ ] Mark completed
+- [x] In `.github/workflows/digest.yml`, change lint step from `ruff check src/ tests/` to `ruff check src/ tests/ --output-format=github` for inline annotations on PR diffs
+- [x] Add a second lint step `ruff check src/ tests/ --fix --diff` that shows what autofix would do (informational, non-blocking)
+- [x] Verify CI still fails on lint errors (the first step must remain blocking)
+- [x] Run `pytest tests/ -v` to confirm no test regressions (381 passed)
+- [x] Mark completed
