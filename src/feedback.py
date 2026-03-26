@@ -43,6 +43,8 @@ class FeedbackStore:
     digest_category_sources_map: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     # ISO timestamp of the last successfully delivered digest (set in main.py).
     last_digest_time: str = ""
+    # Pending source approval decisions: source_hash -> "approved" | "rejected"
+    source_decisions: dict[str, str] = field(default_factory=dict)
 
 
 def load_feedback(cache_dir: str) -> FeedbackStore:
@@ -76,6 +78,7 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
             digest_sources_map=data.get("digest_sources_map", {}),
             digest_category_sources_map=data.get("digest_category_sources_map", {}),
             last_digest_time=data.get("last_digest_time", ""),
+            source_decisions=data.get("source_decisions", {}),
         )
     except Exception as exc:
         logger.warning("Failed to load feedback: %s", exc)
@@ -105,6 +108,7 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         "digest_sources_map": store.digest_sources_map,
         "digest_category_sources_map": store.digest_category_sources_map,
         "last_digest_time": store.last_digest_time,
+        "source_decisions": store.source_decisions,
     }
     try:
         atomic_json_write(path, data)
@@ -170,10 +174,19 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                     callback_id = callback_query.get("id", "")
                     now = datetime.now(tz=timezone.utc).isoformat()
 
-                    if not parts or parts[0] != "fb":
+                    if not parts:
                         continue
 
-                    if len(parts) == 5 and parts[1] == "cat" and parts[2] in ("good", "bad"):
+                    if parts[0] == "src" and len(parts) == 3 and parts[1] in ("ok", "no"):
+                        # Source approval: src:{ok|no}:{source_hash}
+                        decision = "approved" if parts[1] == "ok" else "rejected"
+                        store.source_decisions[parts[2]] = decision
+                        logger.info(
+                            "Source approval decision: %s for hash %s", decision, parts[2]
+                        )
+                    elif parts[0] != "fb":
+                        continue
+                    elif len(parts) == 5 and parts[1] == "cat" and parts[2] in ("good", "bad"):
                         # Per-category feedback: fb:cat:{good|bad}:{cat_hash}:{digest_id}
                         rating = 1 if parts[2] == "good" else -1
                         cat_hash = parts[3]

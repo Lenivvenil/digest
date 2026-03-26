@@ -23,6 +23,13 @@ from datetime import datetime, timezone
 from src._dns_pinning import pin_dns as _pin_dns, validate_url as _validate_url
 from src.collector import AllFeedsFailedError, collect, save_dedup_cache
 from src.config import load_config
+from src.discovery import (
+    PendingSource,
+    add_source_to_config,
+    load_pending,
+    save_pending,
+    send_source_approval_message,
+)
 from src.feedback import (
     collect_feedback,
     get_source_feedback_score,
@@ -511,6 +518,27 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
                 sources_demoted,
             )
 
+    # Process pending source approvals collected via Telegram buttons
+    if not dry_run and feedback_store.source_decisions:
+        pending = load_pending(cache_dir)
+        if pending:
+            remaining: list[PendingSource] = []
+            for ps in pending:
+                decision = feedback_store.source_decisions.pop(ps.source_hash, None)
+                if decision == "approved":
+                    try:
+                        add_source_to_config(config_path, ps)
+                    except Exception as exc:
+                        logger.error("Failed to add source '%s' to config: %s", ps.name, exc)
+                        remaining.append(ps)
+                elif decision == "rejected":
+                    logger.info("Source '%s' rejected by user, removing from pending", ps.name)
+                else:
+                    remaining.append(ps)
+            save_pending(remaining, cache_dir)
+            # Persist updated source_decisions (with processed hashes removed)
+            save_feedback(feedback_store, cache_dir)
+
     return RunStats(
         feeds_fetched=feeds_count,
         new_articles=total_articles,
@@ -710,6 +738,14 @@ async def discover_sources(config_path: str) -> int:
 
     print(f"\nValidating {len(suggestions)} suggested feeds...\n")
 
+    cache_dir = ".cache"
+    existing_pending = load_pending(cache_dir)
+    existing_hashes = {s.source_hash for s in existing_pending}
+
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    new_pending: list[PendingSource] = []
+
     async with httpx.AsyncClient(
         timeout=15.0, follow_redirects=False, trust_env=False
     ) as client:
@@ -730,7 +766,30 @@ async def discover_sources(config_path: str) -> int:
             print(f"    Category: {category}")
             print()
 
-    print("Add valid sources to config.yaml manually.")
+            if status == "OK":
+                pending = PendingSource(
+                    name=name,
+                    url=url,
+                    category=category,
+                    discovered_at=datetime.now(tz=timezone.utc).isoformat(),
+                )
+                if pending.source_hash in existing_hashes:
+                    logger.info("Source '%s' already pending, skipping", name)
+                    continue
+                new_pending.append(pending)
+                if bot_token and chat_id:
+                    await send_source_approval_message(pending, bot_token, chat_id)
+                else:
+                    logger.warning(
+                        "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — "
+                        "cannot send approval message for '%s'",
+                        name,
+                    )
+
+    if new_pending:
+        save_pending(existing_pending + new_pending, cache_dir)
+        logger.info("Saved %d new pending source(s) for approval", len(new_pending))
+
     return 0
 
 

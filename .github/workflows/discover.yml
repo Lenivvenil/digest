@@ -13,6 +13,9 @@ concurrency:
   group: digest
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -41,43 +44,22 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python -m src --discover > discover_output.txt 2>&1 || true
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m src --discover 2>&1 | tee discover_output.txt || true
 
       - name: Show discovery output
         run: cat discover_output.txt
 
-      - name: Send results to Telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Commit pending sources cache
         run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram credentials not set — skipping notification."
-            exit 0
+          git config user.name "digest-bot"
+          git config user.email "digest-bot@users.noreply.github.com"
+          git add .cache/
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — no new pending sources."
+          else
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "discover: pending sources ${DATE}"
+            git push origin HEAD
           fi
-          DATE=$(date -u +%Y-%m-%d)
-          python3 - "$DATE" <<'PYEOF'
-          import sys, os, json, urllib.request
-
-          date = sys.argv[1]
-          token = os.environ["TELEGRAM_BOT_TOKEN"]
-          chat_id = os.environ["TELEGRAM_CHAT_ID"]
-
-          with open("discover_output.txt", encoding="utf-8") as f:
-              output = f.read().strip() or "(no output)"
-
-          # Truncate safely (keep under 3800 chars to leave room for header+backticks)
-          if len(output) > 3800:
-              output = output[:3800] + "\n… (truncated)"
-
-          text = f"\U0001f50d Weekly source discovery \u2014 {date}\n```\n{output}\n```"
-
-          body = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
-          req = urllib.request.Request(
-              f"https://api.telegram.org/bot{token}/sendMessage",
-              data=body,
-              headers={"Content-Type": "application/json"},
-          )
-          with urllib.request.urlopen(req) as resp:
-              print(f"Telegram response: {resp.status}")
-          PYEOF

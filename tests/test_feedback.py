@@ -658,6 +658,97 @@ async def test_collect_feedback_category_unknown_hash_records_unscoped() -> None
 
 
 # ---------------------------------------------------------------------------
+# source_decisions persistence
+# ---------------------------------------------------------------------------
+
+
+def test_source_decisions_round_trip(tmp_path: Path) -> None:
+    store = FeedbackStore(source_decisions={"abc12345": "approved", "def67890": "rejected"})
+    save_feedback(store, str(tmp_path))
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.source_decisions == {"abc12345": "approved", "def67890": "rejected"}
+
+
+def test_source_decisions_default_empty(tmp_path: Path) -> None:
+    store = FeedbackStore()
+    save_feedback(store, str(tmp_path))
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.source_decisions == {}
+
+
+def test_source_decisions_missing_key_loads_empty(tmp_path: Path) -> None:
+    """Feedback file without source_decisions key loads as empty dict (backward compat)."""
+    import json as _json
+    data = {"last_update_id": 5, "ratings": []}
+    (tmp_path / "feedback.json").write_text(_json.dumps(data), encoding="utf-8")
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.source_decisions == {}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_src_ok_callback() -> None:
+    """src:ok:HASH callback stores 'approved' decision."""
+    token = "testtoken"
+    store = FeedbackStore()
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 10001,
+                    "callback_query": {
+                        "id": "cq10",
+                        "data": "src:ok:abcd1234",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 10001
+    assert result.source_decisions == {"abcd1234": "approved"}
+    assert len(result.ratings) == 0  # no digest ratings added
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_src_no_callback() -> None:
+    """src:no:HASH callback stores 'rejected' decision."""
+    token = "testtoken"
+    store = FeedbackStore()
+
+    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 10002,
+                    "callback_query": {
+                        "id": "cq11",
+                        "data": "src:no:efgh5678",
+                        "from": {"id": 123},
+                    },
+                }
+            ],
+        })
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    result = await collect_feedback(token, store)
+    assert result.last_update_id == 10002
+    assert result.source_decisions == {"efgh5678": "rejected"}
+
+
+# ---------------------------------------------------------------------------
 # /status command handling
 # ---------------------------------------------------------------------------
 
