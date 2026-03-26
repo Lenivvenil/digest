@@ -52,7 +52,7 @@ def _strip_html(text: str) -> str:
     return text.strip()
 
 
-def _article_hash(title: str, link: str) -> str:
+def article_hash(title: str, link: str) -> str:
     return hashlib.md5(f"{title}|{link}".encode()).hexdigest()
 
 
@@ -573,7 +573,7 @@ async def collect(
         for article in raw_articles:
             if not _is_recent(article, source_cutoff):
                 continue
-            h = _article_hash(article.title, article.link)
+            h = article_hash(article.title, article.link)
             if h in cache:
                 logger.debug("Skipping cached article: %s", article.title)
                 continue

@@ -176,9 +176,10 @@ def test_save_feedback_preserves_existing_on_write(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_good_rating() -> None:
+async def test_collect_feedback_per_article_good() -> None:
+    """fb:a:g:HASH callback records a good rating for the article's source."""
     token = "testtoken"
-    store = FeedbackStore()
+    store = FeedbackStore(article_source_map={"abcd1234": "My Source"})
 
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
@@ -188,7 +189,7 @@ async def test_collect_feedback_good_rating() -> None:
                     "update_id": 1001,
                     "callback_query": {
                         "id": "cq1",
-                        "data": "fb:good:0",
+                        "data": "fb:a:g:abcd1234",
                         "from": {"id": 123},
                     },
                 }
@@ -203,14 +204,16 @@ async def test_collect_feedback_good_rating() -> None:
     assert result.last_update_id == 1001
     assert len(result.ratings) == 1
     assert result.ratings[0].rating == 1
-    assert result.ratings[0].article_hash == "fb:good:0"
+    assert result.ratings[0].article_hash == "abcd1234"
+    assert result.ratings[0].source_name == "My Source"
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_bad_rating() -> None:
+async def test_collect_feedback_per_article_bad() -> None:
+    """fb:a:b:HASH callback records a bad rating for the article's source."""
     token = "testtoken"
-    store = FeedbackStore()
+    store = FeedbackStore(article_source_map={"ef567890": "Other Feed"})
 
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
@@ -220,7 +223,7 @@ async def test_collect_feedback_bad_rating() -> None:
                     "update_id": 2001,
                     "callback_query": {
                         "id": "cq2",
-                        "data": "fb:bad:0",
+                        "data": "fb:a:b:ef567890",
                         "from": {"id": 123},
                     },
                 }
@@ -234,6 +237,7 @@ async def test_collect_feedback_bad_rating() -> None:
     result = await collect_feedback(token, store)
     assert len(result.ratings) == 1
     assert result.ratings[0].rating == -1
+    assert result.ratings[0].source_name == "Other Feed"
 
 
 @pytest.mark.asyncio
@@ -280,12 +284,10 @@ async def test_collect_feedback_empty_updates() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_four_part_format_with_digest_id() -> None:
-    """4-part callback (fb:good:N:digest_id) attributes feedback to correct sources."""
+async def test_collect_feedback_per_article_unknown_hash_records_empty_source() -> None:
+    """Per-article callback with unknown hash records rating with empty source_name."""
     token = "testtoken"
-    store = FeedbackStore(
-        digest_sources_map={"20260318_101530": ["Source A", "Source B"]},
-    )
+    store = FeedbackStore()  # empty article_source_map
 
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
@@ -295,7 +297,7 @@ async def test_collect_feedback_four_part_format_with_digest_id() -> None:
                     "update_id": 4001,
                     "callback_query": {
                         "id": "cq4",
-                        "data": "fb:good:0:20260318_101530",
+                        "data": "fb:a:g:deadbeef",
                         "from": {"id": 123},
                     },
                 }
@@ -308,17 +310,15 @@ async def test_collect_feedback_four_part_format_with_digest_id() -> None:
 
     result = await collect_feedback(token, store)
     assert result.last_update_id == 4001
-    # Should create one rating per source in the digest
-    assert len(result.ratings) == 2
-    source_names = {r.source_name for r in result.ratings}
-    assert source_names == {"Source A", "Source B"}
-    assert all(r.rating == 1 for r in result.ratings)
+    assert len(result.ratings) == 1
+    assert result.ratings[0].source_name == ""
+    assert result.ratings[0].rating == 1
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_unknown_digest_id_records_unscoped() -> None:
-    """4-part callback with unknown digest_id records unscoped feedback."""
+async def test_collect_feedback_legacy_callback_answered_not_recorded() -> None:
+    """Legacy fb:good:N callbacks are answered (spinner dismissed) but not recorded."""
     token = "testtoken"
     store = FeedbackStore()
 
@@ -330,7 +330,7 @@ async def test_collect_feedback_unknown_digest_id_records_unscoped() -> None:
                     "update_id": 5001,
                     "callback_query": {
                         "id": "cq5",
-                        "data": "fb:bad:0:unknown_digest_id",
+                        "data": "fb:good:0",
                         "from": {"id": 123},
                     },
                 }
@@ -343,9 +343,8 @@ async def test_collect_feedback_unknown_digest_id_records_unscoped() -> None:
 
     result = await collect_feedback(token, store)
     assert result.last_update_id == 5001
-    assert len(result.ratings) == 1
-    assert result.ratings[0].source_name == ""
-    assert result.ratings[0].rating == -1
+    # Legacy callback answered but NOT recorded
+    assert len(result.ratings) == 0
 
 
 @pytest.mark.asyncio
@@ -383,7 +382,7 @@ async def test_collect_feedback_handles_failed_answer_callback() -> None:
                 "callback_query": {
                     "id": "q1",
                     "from": {"id": 123},
-                    "data": "fb:good:0",  # Valid format: fb:{good|bad}:{chunk_index}
+                    "data": "fb:a:g:abcd1234",
                 },
                 "message": {"message_id": 1, "chat": {"id": 456}, "text": "test"},
             }
@@ -533,128 +532,38 @@ def test_save_feedback_keeps_all_recent_ratings(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-category feedback (5-part callback_data)
+# article_source_map persistence
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_collect_feedback_category_good() -> None:
-    """5-part fb:cat:good callback attributes rating to sources in that category."""
-    from src.feedback import _category_hash
+def test_article_source_map_round_trip(tmp_path: Path) -> None:
+    """article_source_map is saved and loaded correctly."""
+    store = FeedbackStore(article_source_map={"abcd1234": "Feed A", "ef567890": "Feed B"})
+    save_feedback(store, str(tmp_path))
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.article_source_map == {"abcd1234": "Feed A", "ef567890": "Feed B"}
 
-    token = "testtoken"
-    cat_hash = _category_hash("AI & LLM")
-    digest_id = "20260320_120000"
+
+def test_article_source_map_pruned_to_1000(tmp_path: Path) -> None:
+    """article_source_map is pruned to 1000 entries on save (FIFO)."""
     store = FeedbackStore(
-        digest_category_sources_map={
-            digest_id: {"AI & LLM": ["Source A", "Source B"]}
-        }
+        article_source_map={f"hash{i:04d}": f"Source {i}" for i in range(1200)}
     )
-
-    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
-        return_value=httpx.Response(200, json={
-            "ok": True,
-            "result": [
-                {
-                    "update_id": 6001,
-                    "callback_query": {
-                        "id": "cq6",
-                        "data": f"fb:cat:good:{cat_hash}:{digest_id}",
-                        "from": {"id": 123},
-                    },
-                }
-            ],
-        })
-    )
-    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
-        return_value=httpx.Response(200, json={"ok": True})
-    )
-
-    result = await collect_feedback(token, store)
-    assert result.last_update_id == 6001
-    assert len(result.ratings) == 2
-    assert {r.source_name for r in result.ratings} == {"Source A", "Source B"}
-    assert all(r.rating == 1 for r in result.ratings)
+    save_feedback(store, str(tmp_path))
+    loaded = load_feedback(str(tmp_path))
+    assert len(loaded.article_source_map) == 1000
+    # Newest 1000 entries kept (hash0200 .. hash1199)
+    assert "hash0000" not in loaded.article_source_map
+    assert "hash1199" in loaded.article_source_map
 
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_collect_feedback_category_bad() -> None:
-    """5-part fb:cat:bad callback records negative rating for sources in category."""
-    from src.feedback import _category_hash
-
-    token = "testtoken"
-    cat_hash = _category_hash("Fintech")
-    digest_id = "20260320_130000"
-    store = FeedbackStore(
-        digest_category_sources_map={
-            digest_id: {"Fintech": ["Finextra"]}
-        }
-    )
-
-    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
-        return_value=httpx.Response(200, json={
-            "ok": True,
-            "result": [
-                {
-                    "update_id": 7001,
-                    "callback_query": {
-                        "id": "cq7",
-                        "data": f"fb:cat:bad:{cat_hash}:{digest_id}",
-                        "from": {"id": 123},
-                    },
-                }
-            ],
-        })
-    )
-    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
-        return_value=httpx.Response(200, json={"ok": True})
-    )
-
-    result = await collect_feedback(token, store)
-    assert result.last_update_id == 7001
-    assert len(result.ratings) == 1
-    assert result.ratings[0].source_name == "Finextra"
-    assert result.ratings[0].rating == -1
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_collect_feedback_category_unknown_hash_records_unscoped() -> None:
-    """5-part callback with unrecognised category hash records unscoped feedback."""
-    token = "testtoken"
-    digest_id = "20260320_140000"
-    store = FeedbackStore(
-        digest_category_sources_map={
-            digest_id: {"Cloud": ["AWS Blog"]}
-        }
-    )
-
-    respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
-        return_value=httpx.Response(200, json={
-            "ok": True,
-            "result": [
-                {
-                    "update_id": 8001,
-                    "callback_query": {
-                        "id": "cq8",
-                        "data": f"fb:cat:good:deadbeef:{digest_id}",
-                        "from": {"id": 123},
-                    },
-                }
-            ],
-        })
-    )
-    respx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery").mock(
-        return_value=httpx.Response(200, json={"ok": True})
-    )
-
-    result = await collect_feedback(token, store)
-    assert result.last_update_id == 8001
-    assert len(result.ratings) == 1
-    assert result.ratings[0].source_name == ""
-    assert result.ratings[0].rating == 1
+def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
+    """Feedback file without article_source_map key loads as empty dict."""
+    import json as _json
+    data = {"last_update_id": 5, "ratings": []}
+    (tmp_path / "feedback.json").write_text(_json.dumps(data), encoding="utf-8")
+    loaded = load_feedback(str(tmp_path))
+    assert loaded.article_source_map == {}
 
 
 # ---------------------------------------------------------------------------

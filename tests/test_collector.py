@@ -14,7 +14,7 @@ import pytest
 from src.collector import (
     AllFeedsFailedError,
     Article,
-    _article_hash,
+    article_hash,
     _is_recent,
     _parse_pub_date,
     _prune_cache,
@@ -180,10 +180,10 @@ class TestStripHtml:
 
 class TestArticleHash:
     def test_deterministic(self) -> None:
-        assert _article_hash("Title", "https://x.com") == _article_hash("Title", "https://x.com")
+        assert article_hash("Title", "https://x.com") == article_hash("Title", "https://x.com")
 
     def test_different_for_different_inputs(self) -> None:
-        assert _article_hash("A", "B") != _article_hash("C", "D")
+        assert article_hash("A", "B") != article_hash("C", "D")
 
 
 class TestParsePubDate:

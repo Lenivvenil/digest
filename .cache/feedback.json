@@ -19,64 +19,7 @@
     "Spot.uz",
     "TimescaleDB Blog"
   ],
-  "digest_sources_map": {
-    "20260326_185638": [
-      "AWS Architecture Blog",
-      "ByteByteGo",
-      "CaixaBank Research",
-      "Cloudflare Blog",
-      "Databricks Blog",
-      "Finextra",
-      "Finextra AI",
-      "Finovate",
-      "Google Research Blog",
-      "Habr \u2014 Interesting",
-      "Hacker News Best",
-      "Martin Fowler",
-      "PYMNTS",
-      "ScyllaDB Blog",
-      "Spot.uz",
-      "TimescaleDB Blog"
-    ]
-  },
-  "digest_category_sources_map": {
-    "20260326_185638": {
-      "Cloud & Infrastructure": [
-        "AWS Architecture Blog"
-      ],
-      "Data & Databases": [
-        "Databricks Blog",
-        "ScyllaDB Blog",
-        "TimescaleDB Blog"
-      ],
-      "Banking & Fintech": [
-        "CaixaBank Research",
-        "Finextra",
-        "Finextra AI",
-        "Finovate",
-        "PYMNTS"
-      ],
-      "AI Engineering": [
-        "Google Research Blog"
-      ],
-      "Enterprise Architecture": [
-        "Hacker News Best"
-      ],
-      "Russian Tech": [
-        "Habr \u2014 Interesting"
-      ],
-      "Geopolitics & CIS": [
-        "Spot.uz"
-      ],
-      "Architecture & Distributed Systems": [
-        "ByteByteGo",
-        "Martin Fowler"
-      ],
-      "Company Engineering": [
-        "Cloudflare Blog"
-      ]
-    }
-  },
-  "last_digest_time": "2026-03-26 20:37 UTC",
-  "source_decisions": {}
+  "last_digest_time": "2026-03-26 21:01 UTC",
+  "source_decisions": {},
+  "article_source_map": {}
 }

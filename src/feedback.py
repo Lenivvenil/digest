@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -18,11 +17,6 @@ logger = logging.getLogger(__name__)
 FEEDBACK_FILE = "feedback.json"
 
 
-def _category_hash(category: str) -> str:
-    """Return an 8-character hex hash for a category name (for callback_data)."""
-    return hashlib.md5(category.encode()).hexdigest()[:8]
-
-
 @dataclass
 class ArticleFeedback:
     article_hash: str
@@ -36,15 +30,13 @@ class FeedbackStore:
     ratings: list[ArticleFeedback] = field(default_factory=list)
     last_update_id: int = 0
     last_digest_sources: list[str] = field(default_factory=list)
-    # Mapping of digest_id (YYYYMMDD_HHMMSS) -> contributing source names.
-    # Allows correct attribution when feedback arrives for older digests.
-    digest_sources_map: dict[str, list[str]] = field(default_factory=dict)
-    # Mapping of digest_id -> {category: [source_names]} for per-category feedback.
-    digest_category_sources_map: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     # ISO timestamp of the last successfully delivered digest (set in main.py).
     last_digest_time: str = ""
     # Pending source approval decisions: source_hash -> "approved" | "rejected"
     source_decisions: dict[str, str] = field(default_factory=dict)
+    # Per-article feedback attribution: article_hash (8-char) -> source_name.
+    # Populated after each digest delivery; capped at 1000 entries.
+    article_source_map: dict[str, str] = field(default_factory=dict)
 
 
 def load_feedback(cache_dir: str) -> FeedbackStore:
@@ -75,10 +67,9 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
             ratings=ratings,
             last_update_id=data.get("last_update_id", 0),
             last_digest_sources=data.get("last_digest_sources", []),
-            digest_sources_map=data.get("digest_sources_map", {}),
-            digest_category_sources_map=data.get("digest_category_sources_map", {}),
             last_digest_time=data.get("last_digest_time", ""),
             source_decisions=data.get("source_decisions", {}),
+            article_source_map=data.get("article_source_map", {}),
         )
     except Exception as exc:
         logger.warning("Failed to load feedback: %s", exc)
@@ -101,14 +92,18 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         except ValueError:
             pruned_ratings.append(r)
     store.ratings = pruned_ratings
+    # Prune article_source_map to the last 1000 entries (FIFO)
+    if len(store.article_source_map) > 1000:
+        keys = list(store.article_source_map.keys())
+        for k in keys[: len(keys) - 1000]:
+            del store.article_source_map[k]
     data = {
         "ratings": [asdict(r) for r in store.ratings],
         "last_update_id": store.last_update_id,
         "last_digest_sources": store.last_digest_sources,
-        "digest_sources_map": store.digest_sources_map,
-        "digest_category_sources_map": store.digest_category_sources_map,
         "last_digest_time": store.last_digest_time,
         "source_decisions": store.source_decisions,
+        "article_source_map": store.article_source_map,
     }
     try:
         atomic_json_write(path, data)
@@ -184,80 +179,28 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                         logger.info(
                             "Source approval decision: %s for hash %s", decision, parts[2]
                         )
-                    elif parts[0] != "fb":
-                        continue
-                    elif len(parts) == 5 and parts[1] == "cat" and parts[2] in ("good", "bad"):
-                        # Per-category feedback: fb:cat:{good|bad}:{cat_hash}:{digest_id}
-                        rating = 1 if parts[2] == "good" else -1
-                        cat_hash = parts[3]
-                        digest_id_cat = parts[4]
-                        cat_map = store.digest_category_sources_map.get(digest_id_cat, {})
-                        sources: list[str] = []
-                        for cat_name, cat_sources_list in cat_map.items():
-                            if _category_hash(cat_name) == cat_hash:
-                                sources = cat_sources_list
-                                break
-                        if sources:
-                            for src_name in sources:
-                                store.ratings.append(
-                                    ArticleFeedback(
-                                        article_hash=callback_data,
-                                        source_name=src_name,
-                                        rating=rating,
-                                        timestamp=now,
-                                    )
-                                )
-                        else:
-                            store.ratings.append(
-                                ArticleFeedback(
-                                    article_hash=callback_data,
-                                    source_name="",
-                                    rating=rating,
-                                    timestamp=now,
-                                )
+                    elif (
+                        parts[0] == "fb"
+                        and len(parts) == 4
+                        and parts[1] == "a"
+                        and parts[2] in ("g", "b")
+                    ):
+                        # Per-article feedback: fb:a:{g|b}:{article_hash}
+                        rating = 1 if parts[2] == "g" else -1
+                        art_hash = parts[3]
+                        source = store.article_source_map.get(art_hash, "")
+                        store.ratings.append(
+                            ArticleFeedback(
+                                article_hash=art_hash,
+                                source_name=source,
+                                rating=rating,
+                                timestamp=now,
                             )
-                    elif len(parts) in (3, 4) and parts[1] in ("good", "bad"):
-                        # Digest-level feedback: fb:{good|bad}:{chunk_index}[:{digest_id}]
-                        rating = 1 if parts[1] == "good" else -1
-                        digest_id = parts[3] if len(parts) == 4 else None
-
-                        # Look up sources for the specific digest.
-                        # - New-format callback with known digest_id → exact match
-                        # - New-format callback with unknown digest_id (pruned/lost) → skip
-                        #   attribution rather than misattributing to the wrong digest
-                        # - Legacy callback (no digest_id) → fall back to last_digest_sources
-                        if digest_id and digest_id in store.digest_sources_map:
-                            digest_sources = store.digest_sources_map[digest_id]
-                        elif digest_id:
-                            # digest_id present but not found — pruned or unknown;
-                            # record unscoped feedback rather than misattribute
-                            logger.debug(
-                                "Digest %s not in sources map; recording unscoped feedback",
-                                digest_id,
-                            )
-                            digest_sources = []
-                        else:
-                            digest_sources = store.last_digest_sources
-                        if digest_sources:
-                            for src_name in digest_sources:
-                                store.ratings.append(
-                                    ArticleFeedback(
-                                        article_hash=callback_data,
-                                        source_name=src_name,
-                                        rating=rating,
-                                        timestamp=now,
-                                    )
-                                )
-                        else:
-                            # Fallback: no source mapping available (legacy data)
-                            store.ratings.append(
-                                ArticleFeedback(
-                                    article_hash=callback_data,
-                                    source_name="",
-                                    rating=rating,
-                                    timestamp=now,
-                                )
-                            )
+                        )
+                    elif parts[0] == "fb":
+                        # Legacy digest/category callbacks — answer to dismiss spinner,
+                        # but do not record (signal was too coarse to be useful).
+                        logger.debug("Ignoring legacy feedback callback: %s", callback_data)
                     else:
                         continue
 

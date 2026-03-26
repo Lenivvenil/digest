@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 from src.telegram import (
     escape_markdownv2, to_markdownv2, split_message, send_digest,
-    send_category_feedback_message, TelegramPartialDeliveryError,
-    _feedback_keyboard, _send_chunk,
+    send_article_cards, TelegramPartialDeliveryError, _send_chunk,
 )
+from src.collector import Article
 from src.config import Config, LLMConfig, ProviderConfig, DeliveryConfig, DigestConfig
 
 
@@ -382,129 +382,155 @@ async def test_send_digest_partial_delivery_raises_partial_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Feedback keyboard
+# send_article_cards
 # ---------------------------------------------------------------------------
 
 
-def test_feedback_keyboard_structure() -> None:
-    kb = _feedback_keyboard(0)
-    assert "inline_keyboard" in kb
-    buttons = kb["inline_keyboard"][0]
-    assert len(buttons) == 2
-    assert buttons[0]["callback_data"] == "fb:good:0"
-    assert buttons[1]["callback_data"] == "fb:bad:0"
-
-
-def test_feedback_keyboard_chunk_index() -> None:
-    kb = _feedback_keyboard(3)
-    buttons = kb["inline_keyboard"][0]
-    assert buttons[0]["callback_data"] == "fb:good:3"
-    assert buttons[1]["callback_data"] == "fb:bad:3"
+def _make_article(title: str, link: str, source: str, category: str, desc: str = "") -> Article:
+    return Article(
+        title=title,
+        link=link,
+        source=source,
+        category=category,
+        description=desc or f"Description of {title}",
+        pub_date=None,
+    )
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_send_digest_single_message_has_feedback_buttons() -> None:
+async def test_send_article_cards_sends_one_message_per_article() -> None:
+    """send_article_cards sends one message per article with 👍/👎 buttons."""
+
     config = make_config(telegram=True)
-    env = {"TELEGRAM_BOT_TOKEN": "kbtoken", "TELEGRAM_CHAT_ID": "99"}
-    url = "https://api.telegram.org/botkbtoken/sendMessage"
+    env = {"TELEGRAM_BOT_TOKEN": "cardtoken", "TELEGRAM_CHAT_ID": "55"}
+    url = "https://api.telegram.org/botcardtoken/sendMessage"
 
     respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
 
-    with patch.dict("os.environ", env, clear=True):
-        await send_digest("Short digest", config, show_feedback=True)
+    articles_by_category = {
+        "AI": [
+            _make_article("Article One", "https://a.com/1", "Source A", "AI"),
+            _make_article("Article Two", "https://a.com/2", "Source B", "AI"),
+        ],
+    }
 
-    assert respx.calls.call_count == 1
-    import json as _json
-    payload = _json.loads(respx.calls[0].request.content)
-    assert "reply_markup" in payload
-    buttons = payload["reply_markup"]["inline_keyboard"][0]
-    assert buttons[0]["callback_data"] == "fb:good:0"
-    assert buttons[1]["callback_data"] == "fb:bad:0"
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_send_digest_multi_chunk_only_last_has_buttons() -> None:
-    config = make_config(telegram=True)
-    env = {"TELEGRAM_BOT_TOKEN": "kbtoken2", "TELEGRAM_CHAT_ID": "88"}
-    url = "https://api.telegram.org/botkbtoken2/sendMessage"
-
-    text = "A" * 3000 + "\n\n" + "B" * 3000
-
-    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
-
-    with patch.dict("os.environ", env, clear=True):
-        await send_digest(text, config, show_feedback=True)
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
+        result = await send_article_cards(articles_by_category, config)
 
     assert respx.calls.call_count == 2
-    import json as _json
-    first_payload = _json.loads(respx.calls[0].request.content)
-    last_payload = _json.loads(respx.calls[1].request.content)
-    assert "reply_markup" not in first_payload
-    assert "reply_markup" in last_payload
-
-
-# ---------------------------------------------------------------------------
-# send_category_feedback_message
-# ---------------------------------------------------------------------------
+    assert len(result) == 2
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_send_category_feedback_message_sends_keyboard() -> None:
-    """send_category_feedback_message POSTs a message with inline keyboard per category."""
+async def test_send_article_cards_has_correct_callback_data() -> None:
+    """Each article card has fb:a:g:HASH and fb:a:b:HASH buttons."""
     import json as _json
+    from src.collector import article_hash
 
     config = make_config(telegram=True)
-    env = {"TELEGRAM_BOT_TOKEN": "cattoken", "TELEGRAM_CHAT_ID": "77"}
-    url = "https://api.telegram.org/botcattoken/sendMessage"
+    env = {"TELEGRAM_BOT_TOKEN": "cbtoken", "TELEGRAM_CHAT_ID": "66"}
+    url = "https://api.telegram.org/botcbtoken/sendMessage"
 
     respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
 
-    cat_sources = {
-        "AI & LLM": ["Source A", "Source B"],
-        "Cloud": ["AWS Blog"],
-    }
-    with patch.dict("os.environ", env, clear=True):
-        await send_category_feedback_message(cat_sources, config, "20260320_120000")
+    article = _make_article("My Title", "https://example.com/article", "My Source", "Tech")
+    expected_hash = article_hash("My Title", "https://example.com/article")[:8]
 
-    assert respx.calls.call_count == 1
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
+        result = await send_article_cards({"Tech": [article]}, config)
+
     payload = _json.loads(respx.calls[0].request.content)
-    assert payload["chat_id"] == "77"
-    assert payload["text"] == "Оцените категории:"
-    keyboard = payload["reply_markup"]["inline_keyboard"]
-    # Two categories → two rows
-    assert len(keyboard) == 2
-    # Each row has two buttons: 👍 and 👎
-    for row in keyboard:
-        assert len(row) == 2
-        good_btn, bad_btn = row
-        assert good_btn["callback_data"].startswith("fb:cat:good:")
-        assert bad_btn["callback_data"].startswith("fb:cat:bad:")
-
-
-@pytest.mark.asyncio
-async def test_send_category_feedback_message_skips_when_disabled() -> None:
-    """No HTTP request when telegram delivery is disabled."""
-    config = make_config(telegram=False)
-    # Would raise if any HTTP call is made
-    await send_category_feedback_message({"AI": ["S"]}, config, "20260320_120000")
+    keyboard = payload["reply_markup"]["inline_keyboard"][0]
+    assert keyboard[0]["callback_data"] == f"fb:a:g:{expected_hash}"
+    assert keyboard[1]["callback_data"] == f"fb:a:b:{expected_hash}"
+    assert len(keyboard[0]["callback_data"].encode()) <= 64
+    assert result == {expected_hash: "My Source"}
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_send_category_feedback_message_skips_empty_categories() -> None:
-    """No HTTP request when category_sources dict is empty."""
+async def test_send_article_cards_disable_notification() -> None:
+    """Each article card is sent with disable_notification=True."""
+    import json as _json
+
     config = make_config(telegram=True)
-    env = {"TELEGRAM_BOT_TOKEN": "cattoken2", "TELEGRAM_CHAT_ID": "88"}
-    url = "https://api.telegram.org/botcattoken2/sendMessage"
+    env = {"TELEGRAM_BOT_TOKEN": "notiftoken", "TELEGRAM_CHAT_ID": "77"}
+    url = "https://api.telegram.org/botnotiftoken/sendMessage"
+
     respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
 
-    with patch.dict("os.environ", env, clear=True):
-        await send_category_feedback_message({}, config, "20260320_120000")
+    article = _make_article("Title", "https://x.com/1", "Src", "Cat")
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
+        await send_article_cards({"Cat": [article]}, config)
 
-    assert respx.calls.call_count == 0
+    payload = _json.loads(respx.calls[0].request.content)
+    assert payload.get("disable_notification") is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_article_cards_returns_source_map() -> None:
+    """Returned dict maps article short hash → source name."""
+    from src.collector import article_hash
+
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "maptoken", "TELEGRAM_CHAT_ID": "88"}
+    url = "https://api.telegram.org/botmaptoken/sendMessage"
+
+    respx.post(url).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    articles = [
+        _make_article("T1", "https://s1.com/a", "Source One", "X"),
+        _make_article("T2", "https://s2.com/b", "Source Two", "Y"),
+    ]
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
+        result = await send_article_cards({"X": [articles[0]], "Y": [articles[1]]}, config)
+
+    assert result[article_hash("T1", "https://s1.com/a")[:8]] == "Source One"
+    assert result[article_hash("T2", "https://s2.com/b")[:8]] == "Source Two"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_send_article_cards_continues_on_failure() -> None:
+    """If one article send fails, the rest are still attempted."""
+    from src.collector import article_hash
+
+    config = make_config(telegram=True)
+    env = {"TELEGRAM_BOT_TOKEN": "failtoken", "TELEGRAM_CHAT_ID": "99"}
+    url = "https://api.telegram.org/botfailtoken/sendMessage"
+
+    respx.post(url).mock(
+        side_effect=[
+            httpx.Response(500, json={"ok": False}),  # first article fails (3 retries)
+            httpx.Response(500, json={"ok": False}),
+            httpx.Response(500, json={"ok": False}),
+            httpx.Response(200, json={"ok": True}),  # second article succeeds
+        ]
+    )
+
+    articles = [
+        _make_article("Fail", "https://f.com/1", "Src A", "Z"),
+        _make_article("OK", "https://f.com/2", "Src B", "Z"),
+    ]
+    with patch("asyncio.sleep"), patch.dict("os.environ", env, clear=True):
+        result = await send_article_cards({"Z": articles}, config)
+
+    # Both articles attempted; second one recorded in map
+    ok_hash = article_hash("OK", "https://f.com/2")[:8]
+    assert ok_hash in result
+    assert result[ok_hash] == "Src B"
+
+
+@pytest.mark.asyncio
+async def test_send_article_cards_disabled_returns_empty() -> None:
+    """No HTTP calls when telegram delivery is disabled."""
+    config = make_config(telegram=False)
+    article = _make_article("T", "https://x.com", "S", "C")
+    result = await send_article_cards({"C": [article]}, config)
+    assert result == {}
 
 
 # ---------------------------------------------------------------------------

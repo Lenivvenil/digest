@@ -52,7 +52,7 @@ from src.summarizer import (
     get_provider,
     resolve_category_providers,
 )
-from src.telegram import TelegramPartialDeliveryError, send_category_feedback_message, send_digest
+from src.telegram import TelegramPartialDeliveryError, send_article_cards, send_digest
 
 logger = logging.getLogger(__name__)
 
@@ -71,16 +71,6 @@ def _clean_summary(text: str) -> str:
         text,
     ).strip()
 
-
-def _prune_digest_sources_map(
-    mapping: dict[str, Any], max_entries: int = 30
-) -> None:
-    """Remove oldest entries from digest_sources_map to prevent unbounded growth."""
-    if len(mapping) <= max_entries:
-        return
-    sorted_keys = sorted(mapping.keys())
-    for key in sorted_keys[: len(sorted_keys) - max_entries]:
-        del mapping[key]
 
 
 def _build_nano_status(
@@ -313,16 +303,8 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             feedback_collected=feedback_collected,
         )
 
-    # Record which sources contributed to this digest so that chunk-level
-    # Telegram feedback can be distributed to the right sources next run.
-    # Updated after delivery — see below.
     contributing_sources = sorted(
         {a.source for articles in articles_by_category.values() for a in articles}
-    )
-    digest_id = (
-        datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-        if config.adaptive.enabled
-        else ""
     )
 
     _t_summarize_start = time.monotonic()
@@ -409,8 +391,6 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
             send_digest(
                 delivery_text,
                 config,
-                digest_id=digest_id,
-                show_feedback=config.adaptive.enabled,
             )
         )
         markdown_result = write_digest(
@@ -464,22 +444,10 @@ async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunSta
         # wrong set of sources.
         if telegram_sent:
             feedback_store.last_digest_sources = contributing_sources
-            if digest_id:
-                feedback_store.digest_sources_map[digest_id] = contributing_sources
-            # Prune old entries (keep last 30 days)
-            _prune_digest_sources_map(feedback_store.digest_sources_map, max_entries=30)
 
-            # Build per-category source map and send category feedback buttons
-            if digest_id and config.adaptive.enabled:
-                cat_sources: dict[str, list[str]] = {
-                    cat: sorted({a.source for a in arts})
-                    for cat, arts in articles_by_category.items()
-                }
-                feedback_store.digest_category_sources_map[digest_id] = cat_sources
-                _prune_digest_sources_map(
-                    feedback_store.digest_category_sources_map, max_entries=30
-                )
-                await send_category_feedback_message(cat_sources, config, digest_id)
+            # Send per-article cards with 👍/👎 buttons and record the hash→source map
+            article_source_map = await send_article_cards(articles_by_category, config)
+            feedback_store.article_source_map.update(article_source_map)
 
         delivery_succeeded = telegram_sent or markdown_saved
         if delivery_succeeded:

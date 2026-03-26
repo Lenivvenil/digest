@@ -297,6 +297,7 @@ async def test_run_skipped_category_warning_in_delivery_text(
         patch("src.main.save_feedback"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", side_effect=_mock_send_digest),
+        patch("src.main.send_article_cards", new_callable=AsyncMock, return_value={}),
         patch("src.main.write_digest", return_value=None),
     ):
         mock_provider = MagicMock()
@@ -515,6 +516,7 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
         patch("src.main.save_dedup_cache"),
         patch("src.main.get_provider") as mock_get_provider,
         patch("src.main.send_digest", new_callable=AsyncMock, return_value=True),
+        patch("src.main.send_article_cards", new_callable=AsyncMock, return_value={}),
         patch("src.main.write_digest", return_value=None),
         patch("src.main.evaluate_trial_sources", return_value=([], [], [])),
         patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test-token"}),
@@ -536,7 +538,7 @@ async def test_run_adaptive_loads_and_saves_stats_feedback(
     mock_save_stats.assert_called_once()
     # save_feedback is called twice: once immediately after polling (to
     # persist last_update_id) and once after delivery (to persist
-    # last_digest_sources / digest_sources_map).
+    # last_digest_sources / article_source_map).
     assert mock_save_feedback.call_count == 2
 
 
@@ -573,8 +575,7 @@ async def test_run_adaptive_delivery_failure_skips_stats_and_trials(
     # Stats are always saved to accumulate quality data even on delivery failure
     mock_save_stats.assert_called_once()
     # Feedback is saved twice: once immediately after polling (to persist
-    # last_update_id) and once after delivery attempt (to persist any
-    # digest_sources_map updates).
+    # last_update_id) and once after delivery attempt.
     assert mock_save_feedback.call_count == 2
     # Trial evaluation must NOT run when delivery fails
     mock_eval.assert_not_called()
@@ -864,59 +865,6 @@ def test_pin_dns_overrides_resolution_bytes_host() -> None:
         assert result[0][4] == ("93.184.216.34", 443)
 
 
-def test_prune_digest_sources_map_under_limit() -> None:
-    """Pruning should not modify map when it's under max_entries."""
-    from src.main import _prune_digest_sources_map
-
-    mapping = {
-        "2026-03-01": ["Feed1"],
-        "2026-03-05": ["Feed2"],
-        "2026-03-10": ["Feed3"],
-    }
-    _prune_digest_sources_map(mapping, max_entries=5)
-    # All 3 entries should remain (3 < 5)
-    assert len(mapping) == 3
-
-
-def test_prune_digest_sources_map_exceeds_limit() -> None:
-    """Pruning should remove oldest entries when exceeding max_entries."""
-    from src.main import _prune_digest_sources_map
-
-    mapping = {
-        "2026-03-01": ["Feed1"],
-        "2026-03-02": ["Feed2"],
-        "2026-03-03": ["Feed3"],
-        "2026-03-04": ["Feed4"],
-        "2026-03-05": ["Feed5"],
-    }
-    _prune_digest_sources_map(mapping, max_entries=3)
-    # Should keep only the 3 newest entries (by key sort order)
-    assert len(mapping) == 3
-    # Oldest two entries (2026-03-01, 2026-03-02) should be removed
-    assert "2026-03-01" not in mapping
-    assert "2026-03-02" not in mapping
-    # Newest three should remain
-    assert "2026-03-03" in mapping
-    assert "2026-03-04" in mapping
-    assert "2026-03-05" in mapping
-
-
-def test_prune_digest_sources_map_preserves_newest() -> None:
-    """Pruning should preserve the entries with highest sort order (newest)."""
-    from src.main import _prune_digest_sources_map
-
-    mapping = {
-        "2026-01-01": ["Old"],
-        "2026-03-18_120000": ["Recent1"],
-        "2026-03-19_090000": ["Recent2"],
-        "2026-03-20_140000": ["Recent3"],
-    }
-    _prune_digest_sources_map(mapping, max_entries=2)
-    # Should keep 2 newest (highest sort order)
-    assert len(mapping) == 2
-    assert "2026-03-19_090000" in mapping
-    assert "2026-03-20_140000" in mapping
-    assert "2026-01-01" not in mapping
 
 
 @pytest.mark.asyncio

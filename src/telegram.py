@@ -9,8 +9,8 @@ import re
 
 import httpx
 
+from src.collector import Article, article_hash
 from src.config import Config
-from src.feedback import _category_hash
 
 logger = logging.getLogger(__name__)
 
@@ -179,22 +179,11 @@ def split_message(text: str, max_len: int = _MAX_MESSAGE_LEN) -> list[str]:
     return chunks if chunks else [text]
 
 
-async def send_digest(
-    text: str, config: Config, *, digest_id: str = "", show_feedback: bool = False
-) -> bool:
+async def send_digest(text: str, config: Config) -> bool:
     """Send the digest text to Telegram.
-
-    Args:
-        text: The digest text to send.
-        config: Application config.
-        digest_id: Optional digest identifier (YYYYMMDD_HHMMSS) embedded in
-            feedback buttons so late feedback is attributed to the correct digest.
-        show_feedback: Attach thumbs-up/down feedback buttons to the last chunk.
-            Should only be True when adaptive source management is enabled.
 
     Returns True if the message was actually sent, False if delivery was
     disabled or credentials were missing.
-    If credentials are missing, logs a warning and returns without crashing.
     Long messages are split at paragraph boundaries and sent sequentially with
     a 1-second delay between parts.
     """
@@ -238,13 +227,7 @@ async def send_digest(
             for i, chunk in enumerate(chunks):
                 if i > 0:
                     await asyncio.sleep(1)
-                is_last = i == len(chunks) - 1
-                reply_markup = (
-                    _feedback_keyboard(i, digest_id=digest_id)
-                    if is_last and show_feedback
-                    else None
-                )
-                await _send_chunk(client, api_url, chat_id, chunk, reply_markup=reply_markup)
+                await _send_chunk(client, api_url, chat_id, chunk)
                 any_sent = True
     except Exception as exc:
         if any_sent:
@@ -261,75 +244,84 @@ async def send_digest(
     return True
 
 
-def _feedback_keyboard(
-    chunk_index: int, digest_id: str = ""
-) -> dict[str, list[list[dict[str, str]]]]:
-    """Build an InlineKeyboardMarkup with thumbs up/down feedback buttons.
-
-    The digest_id (YYYYMMDD_HHMMSS) is embedded in the callback payload so
-    that feedback can be attributed to the correct digest even if a newer
-    one has already been sent.
-    """
-    suffix = f":{digest_id}" if digest_id else ""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "\U0001f44d", "callback_data": f"fb:good:{chunk_index}{suffix}"},
-                {"text": "\U0001f44e", "callback_data": f"fb:bad:{chunk_index}{suffix}"},
-            ]
-        ]
-    }
-
-
-async def send_category_feedback_message(
-    category_sources: dict[str, list[str]],
+async def send_article_cards(
+    articles_by_category: dict[str, list[Article]],
     config: Config,
-    digest_id: str,
-) -> None:
-    """Send an inline-keyboard message with per-category 👍/👎 buttons.
+) -> dict[str, str]:
+    """Send per-article messages with 👍/👎 buttons after the digest.
 
-    Sends a separate message after the main digest so users can rate individual
-    categories. Ratings are attributed only to sources in that category.
-    Non-critical: logs a warning and returns silently on any failure.
+    Each article is sent as a separate silent Telegram message containing the
+    title (as a link), source, category, and a short description snippet.
+    Buttons carry callback_data ``fb:a:g:<hash>`` / ``fb:a:b:<hash>`` where
+    ``<hash>`` is the first 8 hex chars of the article's MD5 identity hash.
+
+    Returns a mapping of ``{article_hash_short: source_name}`` so the caller
+    can persist it in ``FeedbackStore.article_source_map`` for later attribution.
+    Non-critical: logs a warning and continues on any per-message failure.
     """
     if not config.delivery.telegram:
-        return
+        return {}
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
-        return
-
-    keyboard: list[list[dict[str, str]]] = []
-    for category in sorted(category_sources.keys()):
-        cat_hash = _category_hash(category)
-        keyboard.append(
-            [
-                {
-                    "text": f"{category} \U0001f44d",
-                    "callback_data": f"fb:cat:good:{cat_hash}:{digest_id}",
-                },
-                {
-                    "text": f"{category} \U0001f44e",
-                    "callback_data": f"fb:cat:bad:{cat_hash}:{digest_id}",
-                },
-            ]
-        )
-    if not keyboard:
-        return
+        return {}
 
     api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload: dict[str, object] = {
-        "chat_id": chat_id,
-        "text": "Оцените категории:",
-        "reply_markup": {"inline_keyboard": keyboard},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(api_url, json=payload)
-            response.raise_for_status()
-            logger.info("Category feedback message sent with %d categories.", len(keyboard))
-    except Exception as exc:
-        logger.warning("Failed to send category feedback message: %s", exc)
+    article_source_map: dict[str, str] = {}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        first = True
+        for articles in articles_by_category.values():
+            for article in articles:
+                full_hash = article_hash(article.title, article.link)
+                short_hash = full_hash[:8]
+                article_source_map[short_hash] = article.source
+
+                # Build card text: title as link, then source / category / snippet
+                title_escaped = escape_markdownv2(article.title)
+                url_v2 = article.link.replace("\\", "\\\\").replace(")", "\\)")
+                title_link = f"[{title_escaped}]({url_v2})"
+                source_escaped = escape_markdownv2(article.source)
+                category_escaped = escape_markdownv2(article.category)
+                snippet = article.description[:200].rstrip()
+                if len(article.description) > 200:
+                    snippet += "…"
+                snippet_escaped = escape_markdownv2(snippet)
+                card_text = (
+                    f"{title_link}\n"
+                    f"*{source_escaped}* · _{category_escaped}_\n"
+                    f"{snippet_escaped}"
+                )
+
+                keyboard: dict[str, list[list[dict[str, str]]]] = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "\U0001f44d", "callback_data": f"fb:a:g:{short_hash}"},
+                            {"text": "\U0001f44e", "callback_data": f"fb:a:b:{short_hash}"},
+                        ]
+                    ]
+                }
+
+                if not first:
+                    await asyncio.sleep(0.5)
+                first = False
+
+                try:
+                    await _send_chunk(
+                        client,
+                        api_url,
+                        chat_id,
+                        card_text,
+                        reply_markup=keyboard,
+                        disable_notification=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to send article card for '%s': %s", article.title, exc
+                    )
+
+    logger.info("Sent %d article cards.", len(article_source_map))
+    return article_source_map
 
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -342,6 +334,7 @@ async def _send_chunk(
     md2_text: str,
     *,
     reply_markup: dict[str, list[list[dict[str, str]]]] | None = None,
+    disable_notification: bool = False,
 ) -> None:
     """Send a single pre-converted MarkdownV2 chunk to Telegram.
 
@@ -359,6 +352,8 @@ async def _send_chunk(
     }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+    if disable_notification:
+        payload["disable_notification"] = True
 
     response: httpx.Response | None = None
     for attempt in range(3):
