@@ -376,6 +376,7 @@ sources:
     trial: true
     trial_days: 14
 
+    trial_started: 2026-03-27
   - name: "Bank of America Newsroom"
     url: "https://newsroom.bankofamerica.com/rss"
     category: "Banking & Fintech"
@@ -384,6 +385,7 @@ sources:
     trial: true
     trial_days: 14
 
+    trial_started: 2026-03-27
   - name: "CaixaBank Research"
     url: "https://www.caixabankresearch.com/en/rss.xml"
     category: "Banking & Fintech"
@@ -392,6 +394,7 @@ sources:
     trial: true
     trial_days: 14
 
+    trial_started: 2026-03-27
   - name: "Ally Financial IR"
     url: "https://ally.gcs-web.com/rss/news-releases.xml"
     category: "Banking & Fintech"
@@ -401,6 +404,7 @@ sources:
     trial_days: 14
 
   # AI & LLM
+    trial_started: 2026-03-27
   - name: "MIT Technology Review AI"
     url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
     category: "AI & LLM"
