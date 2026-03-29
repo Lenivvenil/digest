@@ -2,13 +2,11 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "ByteByteGo",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Martin Fowler",
     "Spot.uz"
   ],
-  "last_digest_time": "2026-03-29 04:35 UTC",
+  "last_digest_time": "2026-03-29 13:45 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -137,6 +135,17 @@
     "890e96a0": "Martin Fowler",
     "c63eb58d": "Martin Fowler",
     "fc5d217f": "Martin Fowler",
-    "a271bce2": "ByteByteGo"
+    "a271bce2": "ByteByteGo",
+    "79d98a33": "Hacker News Best",
+    "df2092bd": "Hacker News Best",
+    "2f4132e6": "Hacker News Best",
+    "70ceda53": "Hacker News Best",
+    "d1e00e32": "Habr \u2014 Interesting",
+    "bea6533d": "Habr \u2014 Interesting",
+    "07c9f28d": "Habr \u2014 Interesting",
+    "62f678f5": "Habr \u2014 Interesting",
+    "d92810b9": "Habr \u2014 Interesting",
+    "8dc265f0": "Spot.uz",
+    "d98787ca": "Spot.uz"
   }
 }
