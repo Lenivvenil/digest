@@ -27,6 +27,27 @@
       "category": "Cat",
       "discovered_at": "2026-03-26T20:37:39.919953+00:00",
       "source_hash": "3309b063"
+    },
+    {
+      "name": "Krebs on Security",
+      "url": "https://krebsonsecurity.com/feed/",
+      "category": "Security",
+      "discovered_at": "2026-03-29T07:02:39.132990+00:00",
+      "source_hash": "27cf5ce3"
+    },
+    {
+      "name": "Azure Blog",
+      "url": "https://azure.microsoft.com/en-us/blog/feed/",
+      "category": "Cloud & Infrastructure",
+      "discovered_at": "2026-03-29T07:02:39.738217+00:00",
+      "source_hash": "cf9b09ed"
+    },
+    {
+      "name": "The New Stack",
+      "url": "https://thenewstack.io/feed/",
+      "category": "Cloud & Infrastructure",
+      "discovered_at": "2026-03-29T07:02:40.382295+00:00",
+      "source_hash": "1e46cbed"
     }
   ]
 }
