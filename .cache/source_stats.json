@@ -1,9 +1,9 @@
 {
   "High Scalability": {
     "name": "High Scalability",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 499.1,
     "last_seen": "2026-03-30",
@@ -36,9 +36,9 @@
   },
   "Brendan Gregg's Blog": {
     "name": "Brendan Gregg's Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -71,11 +71,11 @@
   },
   "SRE Weekly": {
     "name": "SRE Weekly",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 35,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 40,
     "articles_included_in_digest": 1,
-    "avg_description_length": 358.4599999999999,
+    "avg_description_length": 358.9219999999999,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -99,16 +99,16 @@
       {
         "date": "2026-03-30",
         "articles_found": 5,
-        "articles_included": 1,
+        "articles_included": 0,
         "fetch_ok": true
       }
     ]
   },
   "Martin Fowler": {
     "name": "Martin Fowler",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 210,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 240,
     "articles_included_in_digest": 5,
     "avg_description_length": 443.23333333333335,
     "last_seen": "2026-03-30",
@@ -141,9 +141,9 @@
   },
   "ACM Queue": {
     "name": "ACM Queue",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 57,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 66,
     "articles_included_in_digest": 2,
     "avg_description_length": 0.0,
     "last_seen": "2026-03-30",
@@ -176,11 +176,11 @@
   },
   "ByteByteGo": {
     "name": "ByteByteGo",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 140,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 160,
     "articles_included_in_digest": 2,
-    "avg_description_length": 128.5843315,
+    "avg_description_length": 128.46903204999998,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -211,9 +211,9 @@
   },
   "Stripe Engineering": {
     "name": "Stripe Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 267.7,
     "last_seen": "2026-03-30",
@@ -246,11 +246,11 @@
   },
   "Cloudflare Blog": {
     "name": "Cloudflare Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 140,
-    "articles_included_in_digest": 1,
-    "avg_description_length": 213.4323675,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 160,
+    "articles_included_in_digest": 2,
+    "avg_description_length": 213.67765724999998,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -274,16 +274,16 @@
       {
         "date": "2026-03-30",
         "articles_found": 20,
-        "articles_included": 0,
+        "articles_included": 1,
         "fetch_ok": true
       }
     ]
   },
   "Grab Tech Blog": {
     "name": "Grab Tech Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -316,7 +316,7 @@
   },
   "Shopify Engineering": {
     "name": "Shopify Engineering",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -351,8 +351,8 @@
   },
   "LinkedIn Engineering": {
     "name": "LinkedIn Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 6,
+    "total_fetches": 8,
+    "successful_fetches": 7,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
     "avg_description_length": 0.0,
@@ -386,9 +386,9 @@
   },
   "Spotify Engineering": {
     "name": "Spotify Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 35,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 40,
     "articles_included_in_digest": 0,
     "avg_description_length": 212.6,
     "last_seen": "2026-03-30",
@@ -421,9 +421,9 @@
   },
   "Slack Engineering": {
     "name": "Slack Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 56,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 64,
     "articles_included_in_digest": 0,
     "avg_description_length": 348.75,
     "last_seen": "2026-03-30",
@@ -456,9 +456,9 @@
   },
   "GitHub Engineering": {
     "name": "GitHub Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 252.9,
     "last_seen": "2026-03-30",
@@ -491,11 +491,11 @@
   },
   "Discord Engineering": {
     "name": "Discord Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 700,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 800,
     "articles_included_in_digest": 1,
-    "avg_description_length": 166.88512299999996,
+    "avg_description_length": 166.94058609999996,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -526,9 +526,9 @@
   },
   "Meta Engineering": {
     "name": "Meta Engineering",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 63,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 72,
     "articles_included_in_digest": 0,
     "avg_description_length": 490.66666666666663,
     "last_seen": "2026-03-30",
@@ -561,9 +561,9 @@
   },
   "AWS Architecture Blog": {
     "name": "AWS Architecture Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 140,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 160,
     "articles_included_in_digest": 0,
     "avg_description_length": 337.0,
     "last_seen": "2026-03-30",
@@ -596,9 +596,9 @@
   },
   "Kubernetes Blog": {
     "name": "Kubernetes Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 350,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 400,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -631,7 +631,7 @@
   },
   "CNCF Blog": {
     "name": "CNCF Blog",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -666,9 +666,9 @@
   },
   "Istio Blog": {
     "name": "Istio Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 1400,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 1600,
     "articles_included_in_digest": 0,
     "avg_description_length": 481.7099999999999,
     "last_seen": "2026-03-30",
@@ -701,9 +701,9 @@
   },
   "ScyllaDB Blog": {
     "name": "ScyllaDB Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 140,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 160,
     "articles_included_in_digest": 0,
     "avg_description_length": 129.15,
     "last_seen": "2026-03-30",
@@ -736,11 +736,11 @@
   },
   "Databricks Blog": {
     "name": "Databricks Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
-    "articles_included_in_digest": 1,
-    "avg_description_length": 95.00168399999998,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
+    "articles_included_in_digest": 2,
+    "avg_description_length": 95.1211788,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -764,18 +764,18 @@
       {
         "date": "2026-03-30",
         "articles_found": 10,
-        "articles_included": 0,
+        "articles_included": 1,
         "fetch_ok": true
       }
     ]
   },
   "TimescaleDB Blog": {
     "name": "TimescaleDB Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 7,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 8,
     "articles_included_in_digest": 1,
-    "avg_description_length": 137.73121999999998,
+    "avg_description_length": 135.41185399999998,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -806,11 +806,11 @@
   },
   "Finextra": {
     "name": "Finextra",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 322,
-    "articles_included_in_digest": 19,
-    "avg_description_length": 279.9377751521739,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 368,
+    "articles_included_in_digest": 24,
+    "avg_description_length": 272.0194860847826,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -834,18 +834,18 @@
       {
         "date": "2026-03-30",
         "articles_found": 46,
-        "articles_included": 2,
+        "articles_included": 5,
         "fetch_ok": true
       }
     ]
   },
   "PYMNTS": {
     "name": "PYMNTS",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
-    "articles_included_in_digest": 25,
-    "avg_description_length": 466.55839289999994,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
+    "articles_included_in_digest": 30,
+    "avg_description_length": 465.22087502999995,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -876,11 +876,11 @@
   },
   "Finovate": {
     "name": "Finovate",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 84,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 96,
     "articles_included_in_digest": 2,
-    "avg_description_length": 482.46567333333326,
+    "avg_description_length": 482.7009713333332,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -911,9 +911,9 @@
   },
   "Monzo Tech Blog": {
     "name": "Monzo Tech Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 14,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 16,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -946,9 +946,9 @@
   },
   "Adyen Tech Blog": {
     "name": "Adyen Tech Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -981,9 +981,9 @@
   },
   "Plaid Blog": {
     "name": "Plaid Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 105,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 120,
     "articles_included_in_digest": 0,
     "avg_description_length": 138.46666666666667,
     "last_seen": "2026-03-30",
@@ -1016,7 +1016,7 @@
   },
   "FinTech Futures": {
     "name": "FinTech Futures",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1051,7 +1051,7 @@
   },
   "The Financial Brand": {
     "name": "The Financial Brand",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1086,7 +1086,7 @@
   },
   "Bank Automation News": {
     "name": "Bank Automation News",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1121,11 +1121,11 @@
   },
   "Finextra AI": {
     "name": "Finextra AI",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 308,
-    "articles_included_in_digest": 2,
-    "avg_description_length": 274.4474816363636,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 352,
+    "articles_included_in_digest": 5,
+    "avg_description_length": 274.59960078181814,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1149,16 +1149,16 @@
       {
         "date": "2026-03-30",
         "articles_found": 44,
-        "articles_included": 0,
+        "articles_included": 3,
         "fetch_ok": true
       }
     ]
   },
   "Global Finance Magazine": {
     "name": "Global Finance Magazine",
-    "total_fetches": 7,
-    "successful_fetches": 6,
-    "total_articles_found": 60,
+    "total_fetches": 8,
+    "successful_fetches": 7,
+    "total_articles_found": 70,
     "articles_included_in_digest": 0,
     "avg_description_length": 226.59999999999997,
     "last_seen": "2026-03-30",
@@ -1191,9 +1191,9 @@
   },
   "JPMorgan Chase IR": {
     "name": "JPMorgan Chase IR",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 70,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 80,
     "articles_included_in_digest": 0,
     "avg_description_length": 280.4,
     "last_seen": "2026-03-30",
@@ -1226,7 +1226,7 @@
   },
   "Bank of America Newsroom": {
     "name": "Bank of America Newsroom",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1261,11 +1261,11 @@
   },
   "CaixaBank Research": {
     "name": "CaixaBank Research",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 350,
-    "articles_included_in_digest": 1,
-    "avg_description_length": 347.7732850416666,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 400,
+    "articles_included_in_digest": 2,
+    "avg_description_length": 346.2850495291666,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1289,14 +1289,14 @@
       {
         "date": "2026-03-30",
         "articles_found": 50,
-        "articles_included": 0,
+        "articles_included": 1,
         "fetch_ok": true
       }
     ]
   },
   "Ally Financial IR": {
     "name": "Ally Financial IR",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1331,12 +1331,12 @@
   },
   "MIT Technology Review AI": {
     "name": "MIT Technology Review AI",
-    "total_fetches": 7,
-    "successful_fetches": 5,
-    "total_articles_found": 50,
+    "total_fetches": 8,
+    "successful_fetches": 6,
+    "total_articles_found": 60,
     "articles_included_in_digest": 0,
     "avg_description_length": 341.3333333333333,
-    "last_seen": "2026-03-29",
+    "last_seen": "2026-03-30",
     "history": [
       {
         "date": "2026-03-27",
@@ -1358,15 +1358,15 @@
       },
       {
         "date": "2026-03-30",
-        "articles_found": 0,
+        "articles_found": 10,
         "articles_included": 0,
-        "fetch_ok": false
+        "fetch_ok": true
       }
     ]
   },
   "The Batch by Andrew Ng": {
     "name": "The Batch by Andrew Ng",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1401,9 +1401,9 @@
   },
   "Hugging Face Blog": {
     "name": "Hugging Face Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 1400,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 1600,
     "articles_included_in_digest": 0,
     "avg_description_length": 0.0,
     "last_seen": "2026-03-30",
@@ -1436,11 +1436,11 @@
   },
   "OpenAI News": {
     "name": "OpenAI News",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 1400,
-    "articles_included_in_digest": 1,
-    "avg_description_length": 181.769951786802,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 1600,
+    "articles_included_in_digest": 2,
+    "avg_description_length": 181.65622513401013,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1464,16 +1464,16 @@
       {
         "date": "2026-03-30",
         "articles_found": 200,
-        "articles_included": 0,
+        "articles_included": 1,
         "fetch_ok": true
       }
     ]
   },
   "NVIDIA Developer Blog": {
     "name": "NVIDIA Developer Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 700,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 800,
     "articles_included_in_digest": 0,
     "avg_description_length": 159.17,
     "last_seen": "2026-03-30",
@@ -1506,9 +1506,9 @@
   },
   "Google Research Blog": {
     "name": "Google Research Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 700,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 800,
     "articles_included_in_digest": 0,
     "avg_description_length": 18.63,
     "last_seen": "2026-03-30",
@@ -1541,9 +1541,9 @@
   },
   "Prometheus Blog": {
     "name": "Prometheus Blog",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 392,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 448,
     "articles_included_in_digest": 0,
     "avg_description_length": 500.0,
     "last_seen": "2026-03-30",
@@ -1576,7 +1576,7 @@
   },
   "OpenTelemetry Blog": {
     "name": "OpenTelemetry Blog",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1611,7 +1611,7 @@
   },
   "InfoQ": {
     "name": "InfoQ",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
@@ -1646,9 +1646,9 @@
   },
   "ThoughtWorks Insights": {
     "name": "ThoughtWorks Insights",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 1400,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 1600,
     "articles_included_in_digest": 0,
     "avg_description_length": 64.025,
     "last_seen": "2026-03-30",
@@ -1681,11 +1681,11 @@
   },
   "Hacker News Best": {
     "name": "Hacker News Best",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 210,
-    "articles_included_in_digest": 34,
-    "avg_description_length": 178.8442306333333,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 240,
+    "articles_included_in_digest": 39,
+    "avg_description_length": 180.1009614433333,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1716,11 +1716,11 @@
   },
   "Habr \u2014 Interesting": {
     "name": "Habr \u2014 Interesting",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 280,
-    "articles_included_in_digest": 35,
-    "avg_description_length": 437.98356509999996,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 320,
+    "articles_included_in_digest": 40,
+    "avg_description_length": 434.17849557,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1751,11 +1751,11 @@
   },
   "Spot.uz": {
     "name": "Spot.uz",
-    "total_fetches": 7,
-    "successful_fetches": 7,
-    "total_articles_found": 140,
-    "articles_included_in_digest": 23,
-    "avg_description_length": 99.14434139999999,
+    "total_fetches": 8,
+    "successful_fetches": 8,
+    "total_articles_found": 160,
+    "articles_included_in_digest": 26,
+    "avg_description_length": 98.47103897999997,
     "last_seen": "2026-03-30",
     "history": [
       {
@@ -1779,14 +1779,14 @@
       {
         "date": "2026-03-30",
         "articles_found": 20,
-        "articles_included": 0,
+        "articles_included": 3,
         "fetch_ok": true
       }
     ]
   },
   "Kun.uz EN": {
     "name": "Kun.uz EN",
-    "total_fetches": 7,
+    "total_fetches": 8,
     "successful_fetches": 0,
     "total_articles_found": 0,
     "articles_included_in_digest": 0,
