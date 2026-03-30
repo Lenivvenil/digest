@@ -2,11 +2,13 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
+    "Finextra",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Spot.uz"
+    "PYMNTS",
+    "SRE Weekly"
   ],
-  "last_digest_time": "2026-03-29 13:45 UTC",
+  "last_digest_time": "2026-03-30 04:43 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -146,6 +148,24 @@
     "62f678f5": "Habr \u2014 Interesting",
     "d92810b9": "Habr \u2014 Interesting",
     "8dc265f0": "Spot.uz",
-    "d98787ca": "Spot.uz"
+    "d98787ca": "Spot.uz",
+    "ef073bce": "PYMNTS",
+    "a4e96a8e": "Finextra",
+    "c4325b07": "PYMNTS",
+    "3bb55b0e": "PYMNTS",
+    "48348fca": "PYMNTS",
+    "9c68dbb5": "PYMNTS",
+    "53aa21d9": "Finextra",
+    "8e812ef6": "Hacker News Best",
+    "df9ac654": "Hacker News Best",
+    "6b82e80b": "Hacker News Best",
+    "7c024e73": "Hacker News Best",
+    "cde77c74": "Hacker News Best",
+    "7b285123": "Habr \u2014 Interesting",
+    "21be82d9": "Habr \u2014 Interesting",
+    "4021503c": "Habr \u2014 Interesting",
+    "4ecb23c5": "Habr \u2014 Interesting",
+    "c3b65324": "Habr \u2014 Interesting",
+    "38b6421c": "SRE Weekly"
   }
 }
