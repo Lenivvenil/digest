@@ -2,14 +2,12 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "ACM Queue",
-    "Finextra",
+    "ByteByteGo",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "PYMNTS",
     "Spot.uz"
   ],
-  "last_digest_time": "2026-04-04 13:46 UTC",
+  "last_digest_time": "2026-04-05 04:35 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -479,6 +477,21 @@
     "09ae1b12": "Spot.uz",
     "f745ae29": "ACM Queue",
     "80094e1c": "ACM Queue",
-    "1fe84b92": "ACM Queue"
+    "1fe84b92": "ACM Queue",
+    "d007e8df": "Hacker News Best",
+    "e48d8394": "Hacker News Best",
+    "99ede31b": "Hacker News Best",
+    "5982fd19": "Hacker News Best",
+    "212376e9": "Hacker News Best",
+    "51ac7792": "Habr \u2014 Interesting",
+    "02eed90c": "Habr \u2014 Interesting",
+    "baecd8d3": "Habr \u2014 Interesting",
+    "93370c9f": "Habr \u2014 Interesting",
+    "5afd0759": "Habr \u2014 Interesting",
+    "baad4224": "Spot.uz",
+    "7cbdb68a": "Spot.uz",
+    "e476a362": "Spot.uz",
+    "670a6ce5": "Spot.uz",
+    "805c9009": "ByteByteGo"
   }
 }
