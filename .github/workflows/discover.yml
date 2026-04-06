@@ -61,5 +61,6 @@ jobs:
           else
             DATE=$(date -u +%Y-%m-%d)
             git commit -m "discover: pending sources ${DATE}"
+            git pull --rebase origin main
             git push origin HEAD
           fi

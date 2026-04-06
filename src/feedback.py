@@ -119,12 +119,28 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
     """
     offset = store.last_update_id + 1 if store.last_update_id > 0 else None
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-    params: dict[str, str | int] = {"allowed_updates": '["callback_query", "message"]'}
-    if offset is not None:
-        params["offset"] = offset
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Diagnostic: check current webhook state before doing anything.
+            info_url = f"https://api.telegram.org/bot{bot_token}/getWebhookInfo"
+            try:
+                info_resp = await client.get(info_url, timeout=10.0)
+                info_data = info_resp.json()
+                wh_url = info_data.get("result", {}).get("url", "")
+                pending = info_data.get("result", {}).get("pending_update_count", 0)
+                if wh_url:
+                    logger.warning(
+                        "Active webhook detected: url=%s, pending_updates=%d — "
+                        "deleting to enable polling",
+                        wh_url,
+                        pending,
+                    )
+                else:
+                    logger.info("No webhook configured (pending_updates=%d)", pending)
+            except Exception as exc:
+                logger.warning("getWebhookInfo failed: %s", exc)
+
             # Ensure polling mode: delete any active webhook so getUpdates receives updates.
             # A configured webhook silently swallows all updates and getUpdates returns nothing.
             delete_url = f"https://api.telegram.org/bot{bot_token}/deleteWebhook"
@@ -138,7 +154,12 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
             except Exception as exc:
                 logger.warning("deleteWebhook failed (continuing anyway): %s", exc)
 
-            response = await client.get(api_url, params=params)
+            # Use POST with JSON body — more reliable than GET + URL-encoded params
+            # when allowed_updates contains a JSON array.
+            body: dict[str, object] = {"allowed_updates": ["callback_query", "message"]}
+            if offset is not None:
+                body["offset"] = offset
+            response = await client.post(api_url, json=body)
             response.raise_for_status()
             data = response.json()
 
@@ -147,10 +168,11 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                 return store
 
             results = data.get("result", [])
-            if not results and store.last_update_id == 0:
+            if not results:
                 logger.info(
-                    "getUpdates returned 0 results on first poll — "
-                    "no pending feedback or user has not pressed any buttons yet"
+                    "getUpdates returned 0 results (offset=%s, last_update_id=%d)",
+                    offset,
+                    store.last_update_id,
                 )
 
             for update in results:

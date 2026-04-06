@@ -101,7 +101,8 @@ jobs:
           else
             DATE=$(date -u +%Y-%m-%d)
             git commit -m "digest: ${DATE}"
-            # Push to whichever branch we are on (supports both main and master)
+            # Pull latest before push to handle concurrent writes (e.g. discover workflow)
+            git pull --rebase origin main
             git push origin HEAD
           fi
 
