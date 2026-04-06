@@ -2,17 +2,14 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "Databricks Blog",
+    "ByteByteGo",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "JPMorgan Chase IR",
-    "MIT Technology Review AI",
-    "OpenAI News",
+    "Meta Engineering",
     "PYMNTS",
-    "Spot.uz",
-    "TimescaleDB Blog"
+    "Spot.uz"
   ],
-  "last_digest_time": "2026-04-06 14:06 UTC",
+  "last_digest_time": "2026-04-06 20:09 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -550,6 +547,16 @@
     "c9beee90": "Spot.uz",
     "35e96e62": "Spot.uz",
     "b5770db1": "Spot.uz",
-    "abf636da": "Spot.uz"
+    "abf636da": "Spot.uz",
+    "47461a08": "Hacker News Best",
+    "a5964608": "Habr \u2014 Interesting",
+    "17156419": "Spot.uz",
+    "431fd4eb": "Meta Engineering",
+    "c93cc536": "PYMNTS",
+    "ea36f7d0": "PYMNTS",
+    "f5fcf0ab": "PYMNTS",
+    "4611ce60": "PYMNTS",
+    "7f0b36fe": "PYMNTS",
+    "961f867c": "ByteByteGo"
   }
 }
