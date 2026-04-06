@@ -2,14 +2,14 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "ByteByteGo",
+    "Discord Engineering",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Meta Engineering",
     "PYMNTS",
-    "Spot.uz"
+    "Spot.uz",
+    "Spotify Engineering"
   ],
-  "last_digest_time": "2026-04-06 20:09 UTC",
+  "last_digest_time": "2026-04-06 20:52 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -557,6 +557,16 @@
     "f5fcf0ab": "PYMNTS",
     "4611ce60": "PYMNTS",
     "7f0b36fe": "PYMNTS",
-    "961f867c": "ByteByteGo"
+    "961f867c": "ByteByteGo",
+    "1b8de055": "Hacker News Best",
+    "b3fb784c": "Habr \u2014 Interesting",
+    "e887fcaf": "Spot.uz",
+    "14eed8c0": "PYMNTS",
+    "2aca16f4": "PYMNTS",
+    "865c343b": "PYMNTS",
+    "dd385372": "PYMNTS",
+    "09e59638": "PYMNTS",
+    "9ec323c0": "Spotify Engineering",
+    "ef485f0d": "Discord Engineering"
   }
 }
