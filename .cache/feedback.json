@@ -2,13 +2,17 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
+    "Databricks Blog",
     "Habr \u2014 Interesting",
     "Hacker News Best",
+    "JPMorgan Chase IR",
+    "MIT Technology Review AI",
+    "OpenAI News",
     "PYMNTS",
-    "SRE Weekly",
-    "Spot.uz"
+    "Spot.uz",
+    "TimescaleDB Blog"
   ],
-  "last_digest_time": "2026-04-06 04:42 UTC",
+  "last_digest_time": "2026-04-06 14:06 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -521,6 +525,31 @@
     "28f97ce5": "Habr \u2014 Interesting",
     "6ed74a31": "Habr \u2014 Interesting",
     "f7d4384b": "Spot.uz",
-    "28b2d4ad": "SRE Weekly"
+    "28b2d4ad": "SRE Weekly",
+    "1dc70d2f": "TimescaleDB Blog",
+    "c481f309": "Databricks Blog",
+    "277f63a3": "PYMNTS",
+    "a4350e47": "JPMorgan Chase IR",
+    "cee86fe2": "PYMNTS",
+    "17af80d3": "PYMNTS",
+    "3cd8b261": "PYMNTS",
+    "0f42f134": "PYMNTS",
+    "49121870": "MIT Technology Review AI",
+    "c96f1616": "OpenAI News",
+    "e50f953f": "Hacker News Best",
+    "fc08762f": "Hacker News Best",
+    "36064516": "Hacker News Best",
+    "de1cfff4": "Hacker News Best",
+    "985328c5": "Hacker News Best",
+    "6ad22d4e": "Habr \u2014 Interesting",
+    "5a1a821f": "Habr \u2014 Interesting",
+    "ee73669c": "Habr \u2014 Interesting",
+    "53eedb7f": "Habr \u2014 Interesting",
+    "eeba2720": "Habr \u2014 Interesting",
+    "a2304224": "Spot.uz",
+    "c9beee90": "Spot.uz",
+    "35e96e62": "Spot.uz",
+    "b5770db1": "Spot.uz",
+    "abf636da": "Spot.uz"
   }
 }
