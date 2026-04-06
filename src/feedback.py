@@ -125,6 +125,19 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Ensure polling mode: delete any active webhook so getUpdates receives updates.
+            # A configured webhook silently swallows all updates and getUpdates returns nothing.
+            delete_url = f"https://api.telegram.org/bot{bot_token}/deleteWebhook"
+            try:
+                wh_resp = await client.post(delete_url, timeout=10.0)
+                wh_data = wh_resp.json()
+                if not wh_data.get("ok"):
+                    logger.warning("deleteWebhook returned not ok: %s", wh_data)
+                else:
+                    logger.debug("deleteWebhook ok (polling mode ensured)")
+            except Exception as exc:
+                logger.warning("deleteWebhook failed (continuing anyway): %s", exc)
+
             response = await client.get(api_url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -133,7 +146,14 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                 logger.warning("Telegram getUpdates returned not ok: %s", data)
                 return store
 
-            for update in data.get("result", []):
+            results = data.get("result", [])
+            if not results and store.last_update_id == 0:
+                logger.info(
+                    "getUpdates returned 0 results on first poll — "
+                    "no pending feedback or user has not pressed any buttons yet"
+                )
+
+            for update in results:
                 update_id = update.get("update_id", 0)
 
                 try:

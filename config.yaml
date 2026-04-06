@@ -55,12 +55,15 @@ digest:
   # Maximum number of articles fetched per RSS source
   max_articles_per_source: 5
   # Maximum total articles across all sources
-  max_total_articles: 30
+  max_total_articles: 10
   # Summary style:
   #   "analytical" — with trend analysis and three perspectives for top topics (default)
   #   "brief"      — one sentence per news item, no perspectives
   #   "detailed"   — full context, three perspectives for all items
   summary_style: "analytical"
+  # Enable three perspectives (🟢 Optimist / 🔴 Skeptic / ⚖️ Realist) for top articles.
+  # Applies to "analytical" and "detailed" styles only. Ignored in "brief" mode.
+  perspectives: false
 
 sources:
   # ============================================================

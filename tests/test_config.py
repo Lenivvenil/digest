@@ -686,6 +686,38 @@ def test_max_total_articles_negative_rejected(tmp_path: Path) -> None:
         load_config(cfg_path)
 
 
+def test_perspectives_default_false(tmp_path: Path) -> None:
+    """perspectives defaults to False when not specified in config."""
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+    assert config.digest.perspectives is False
+
+
+def test_perspectives_explicit_true(tmp_path: Path) -> None:
+    content = """
+        llm:
+          provider: "anthropic"
+          model: "claude-sonnet-4-20250514"
+        delivery:
+          telegram: false
+          markdown_to_repo: false
+        digest:
+          language: "ru"
+          max_articles_per_source: 5
+          max_total_articles: 30
+          summary_style: "analytical"
+          perspectives: true
+        sources:
+          - name: "Feed"
+            url: "https://example.com/feed"
+            category: "Test"
+            enabled: true
+    """
+    cfg_path = _write_config(tmp_path, content)
+    config = load_config(cfg_path)
+    assert config.digest.perspectives is True
+
+
 def test_adaptive_weights_not_summing_to_one_rejected(tmp_path: Path) -> None:
     content = """
         llm:

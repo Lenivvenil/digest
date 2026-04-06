@@ -181,6 +181,9 @@ async def test_collect_feedback_per_article_good() -> None:
     token = "testtoken"
     store = FeedbackStore(article_source_map={"abcd1234": "My Source"})
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -215,6 +218,9 @@ async def test_collect_feedback_per_article_bad() -> None:
     token = "testtoken"
     store = FeedbackStore(article_source_map={"ef567890": "Other Feed"})
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -246,6 +252,9 @@ async def test_collect_feedback_non_feedback_callback_ignored() -> None:
     token = "testtoken"
     store = FeedbackStore()
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -273,6 +282,9 @@ async def test_collect_feedback_empty_updates() -> None:
     token = "testtoken"
     store = FeedbackStore()
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": []})
     )
@@ -289,6 +301,9 @@ async def test_collect_feedback_per_article_unknown_hash_records_empty_source() 
     token = "testtoken"
     store = FeedbackStore()  # empty article_source_map
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -322,6 +337,9 @@ async def test_collect_feedback_legacy_callback_answered_not_recorded() -> None:
     token = "testtoken"
     store = FeedbackStore()
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -389,6 +407,9 @@ async def test_collect_feedback_handles_failed_answer_callback() -> None:
         ],
     }
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json=updates_response)
     )
@@ -412,6 +433,9 @@ async def test_collect_feedback_getupdates_not_ok() -> None:
     token = "testtoken"
     store = FeedbackStore(last_update_id=10, last_digest_sources=["Feed1"])
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={"ok": False, "description": "Unauthorized"})
     )
@@ -428,6 +452,9 @@ async def test_collect_feedback_network_error() -> None:
     token = "testtoken"
     store = FeedbackStore(last_update_id=5, last_digest_sources=["Feed1"])
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         side_effect=httpx.ConnectError("Connection refused")
     )
@@ -601,6 +628,9 @@ async def test_collect_feedback_src_ok_callback() -> None:
     token = "testtoken"
     store = FeedbackStore()
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -633,6 +663,9 @@ async def test_collect_feedback_src_no_callback() -> None:
     token = "testtoken"
     store = FeedbackStore()
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,
@@ -673,6 +706,9 @@ async def test_collect_feedback_status_command() -> None:
         last_digest_sources=["Source A", "Source B", "Source C"],
     )
 
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
     respx.get(f"https://api.telegram.org/bot{token}/getUpdates").mock(
         return_value=httpx.Response(200, json={
             "ok": True,

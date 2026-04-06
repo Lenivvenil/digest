@@ -41,6 +41,7 @@ def _make_config(
     language: str = "ru",
     summary_style: str = "analytical",
     routing: list[RouteConfig] | None = None,
+    perspectives: bool = True,
 ) -> Config:
     return Config(
         llm=LLMConfig(
@@ -53,6 +54,7 @@ def _make_config(
             max_articles_per_source=5,
             max_total_articles=30,
             summary_style=summary_style,
+            perspectives=perspectives,
         ),
         sources=[
             SourceConfig(name="Test Source", url="https://example.com/rss", category="AI", enabled=True)
@@ -178,6 +180,21 @@ class TestBuildPrompt:
         assert "No Date" in prompt  # title is still in prompt
         assert "unknown date" not in prompt  # date no longer included
 
+    def test_perspectives_false_removes_perspectives_from_analytical(self) -> None:
+        articles = _make_articles_by_category()
+        config = _make_config(summary_style="analytical", perspectives=False)
+        prompt = build_prompt(articles, config)
+        assert "Оптимист" not in prompt
+        assert "Скептик" not in prompt
+        assert "Реалист" not in prompt
+
+    def test_perspectives_false_removes_perspectives_from_detailed(self) -> None:
+        articles = _make_articles_by_category()
+        config = _make_config(summary_style="detailed", perspectives=False)
+        prompt = build_prompt(articles, config)
+        assert "Оптимист" not in prompt
+        assert "Скептик" not in prompt
+
 
 # ---------------------------------------------------------------------------
 # build_category_prompt tests
@@ -222,6 +239,14 @@ class TestBuildCategoryPrompt:
         config = _make_config(summary_style="analytical")
         prompt = build_category_prompt("AI", articles, config)
         assert "Оптимист" in prompt or "Optimist" in prompt
+
+    def test_perspectives_false_removes_perspectives_from_category_prompt(self) -> None:
+        articles = [_make_article()]
+        config = _make_config(summary_style="analytical", perspectives=False)
+        prompt = build_category_prompt("AI", articles, config)
+        assert "Оптимист" not in prompt
+        assert "Скептик" not in prompt
+        assert "Реалист" not in prompt
 
     def test_english_language(self) -> None:
         articles = [_make_article()]

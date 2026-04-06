@@ -60,6 +60,7 @@ class DigestConfig:
     max_articles_per_source: int
     max_total_articles: int
     summary_style: str
+    perspectives: bool = False
 
 
 @dataclass
@@ -273,11 +274,13 @@ def _load_digest(data: dict[str, Any]) -> DigestConfig:
             f"Invalid digest.summary_style '{summary_style}'. "
             f"Must be one of: {', '.join(sorted(VALID_SUMMARY_STYLES))}."
         )
+    perspectives = bool(section.get("perspectives", False))
     return DigestConfig(
         language=language,
         max_articles_per_source=max_articles_per_source,
         max_total_articles=max_total_articles,
         summary_style=summary_style,
+        perspectives=perspectives,
     )
 
 

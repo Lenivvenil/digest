@@ -86,6 +86,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
             "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
+        "instructions_analytical_no_persp": (
+            "Сгруппируй новости по категориям. В каждой категории выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
+            "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
+            "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
+        ),
         "instructions_brief": (
             "Сгруппируй новости по категориям. Для каждой статьи дай одно предложение-комментарий. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат. "
@@ -105,6 +113,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
             "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
+        "instructions_detailed_no_persp": (
+            "Сгруппируй новости по категориям. В каждой категории выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
+            "В конце добавь раздел «Ключевые тренды дня» — 2-3 пункта, по 1 предложению каждый. "
+            "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
+        ),
         # Per-category prompt templates (no "trends" section — generated separately)
         "instructions_category_analytical": (
             "Выбери 3-5 самых важных статей. "
@@ -117,6 +133,13 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
             "Второстепенные новости получают обычный комментарий без перспектив. "
+            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+        ),
+        "instructions_category_analytical_no_persp": (
+            "Выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
             "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
         ),
         "instructions_category_brief": (
@@ -135,6 +158,13 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "🔴 **Скептик** — 1 предложение\n"
             "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
+            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+        ),
+        "instructions_category_detailed_no_persp": (
+            "Выбери 3-5 самых важных статей. "
+            "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
+            "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
             "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
         ),
         "instructions_trends": (
@@ -164,6 +194,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
             "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
+        "instructions_analytical_no_persp": (
+            "Group news by category. Within each category pick 3-5 most important articles. "
+            "For each article provide a 1-2 sentence analytical comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
+            "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
+            "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
+        ),
         "instructions_brief": (
             "Group news by category. For each article write one sentence comment. "
             "Article titles already contain links in [Title](URL) format — preserve this format. "
@@ -183,6 +221,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
             "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
+        "instructions_detailed_no_persp": (
+            "Group news by category. Within each category pick 3-5 most important articles. "
+            "For each article provide a detailed analytical comment with full context. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
+            "Add a 'Key Trends of the Day' section at the end — 2-3 bullet points, 1 sentence each. "
+            "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
+        ),
         # Per-category prompt templates (no "trends" section — generated separately)
         "instructions_category_analytical": (
             "Pick 3-5 most important articles. "
@@ -195,6 +241,13 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "⚖️ **Realist** — 1 sentence\n"
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
             "Minor news items get a regular comment without perspectives. "
+            "Use emoji for the category header. Do NOT add a trends section."
+        ),
+        "instructions_category_analytical_no_persp": (
+            "Pick 3-5 most important articles. "
+            "For each article provide a 1-2 sentence analytical comment. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
             "Use emoji for the category header. Do NOT add a trends section."
         ),
         "instructions_category_brief": (
@@ -215,6 +268,13 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
             "Use emoji for the category header. Do NOT add a trends section."
         ),
+        "instructions_category_detailed_no_persp": (
+            "Pick 3-5 most important articles. "
+            "For each article provide a detailed analytical comment with full context. "
+            "Article titles already contain links in [Title](URL) format — preserve this format in output. "
+            "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
+            "Use emoji for the category header. Do NOT add a trends section."
+        ),
         "instructions_trends": (
             "Based on the category summaries below, identify 2-3 key trends of the day. "
             "Each trend is 1 sentence. Use a bulleted list. "
@@ -233,6 +293,10 @@ def build_prompt(articles_by_category: dict[str, list[Article]], config: Config)
 
     role = tmpl["role"]
     instructions_key = f"instructions_{style}"
+    if not config.digest.perspectives:
+        no_persp_key = f"instructions_{style}_no_persp"
+        if no_persp_key in tmpl:
+            instructions_key = no_persp_key
     instructions = tmpl.get(instructions_key, tmpl["instructions_analytical"])
 
     articles_text_parts: list[str] = []
@@ -264,6 +328,10 @@ def build_category_prompt(
 
     role = tmpl["role"]
     instructions_key = f"instructions_category_{style}"
+    if not config.digest.perspectives:
+        no_persp_key = f"instructions_category_{style}_no_persp"
+        if no_persp_key in tmpl:
+            instructions_key = no_persp_key
     instructions = tmpl.get(instructions_key, tmpl["instructions_category_analytical"])
 
     category_header_tmpl = tmpl.get(
