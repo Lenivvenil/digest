@@ -55,6 +55,13 @@
       "category": "Cat",
       "discovered_at": "2026-04-06T14:30:21.481277+00:00",
       "source_hash": "3309b063"
+    },
+    {
+      "name": "OWASP News",
+      "url": "https://owasp.org/feed.xml",
+      "category": "Security",
+      "discovered_at": "2026-04-06T20:17:52.068436+00:00",
+      "source_hash": "752c5ebd"
     }
   ]
 }
