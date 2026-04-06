@@ -4,10 +4,11 @@
   "last_digest_sources": [
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Martin Fowler",
+    "PYMNTS",
+    "SRE Weekly",
     "Spot.uz"
   ],
-  "last_digest_time": "2026-04-05 13:47 UTC",
+  "last_digest_time": "2026-04-06 04:42 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -503,6 +504,23 @@
     "a9eae15c": "Habr \u2014 Interesting",
     "7db32def": "Habr \u2014 Interesting",
     "5e79eba0": "Habr \u2014 Interesting",
-    "b670a798": "Spot.uz"
+    "b670a798": "Spot.uz",
+    "98cbd08e": "PYMNTS",
+    "fded57f4": "PYMNTS",
+    "358681a6": "PYMNTS",
+    "608dcf42": "PYMNTS",
+    "c914403a": "PYMNTS",
+    "251cddb9": "Hacker News Best",
+    "1fd51789": "Hacker News Best",
+    "47143adc": "Hacker News Best",
+    "01e4801a": "Hacker News Best",
+    "96d154fc": "Hacker News Best",
+    "b3c35ac8": "Habr \u2014 Interesting",
+    "fa97892a": "Habr \u2014 Interesting",
+    "263cf26f": "Habr \u2014 Interesting",
+    "28f97ce5": "Habr \u2014 Interesting",
+    "6ed74a31": "Habr \u2014 Interesting",
+    "f7d4384b": "Spot.uz",
+    "28b2d4ad": "SRE Weekly"
   }
 }
