@@ -33,16 +33,20 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 
 ```
 ├── src/
-│   ├── __init__.py
+│   ├── __init__.py          # __version__ = "1.0.0"
 │   ├── __main__.py          # enables `python -m src`
-│   ├── main.py              # entrypoint, orchestration, --discover CLI
+│   ├── main.py              # entrypoint, orchestration, CLI flags
 │   ├── config.py            # config loading and validation (incl. adaptive config)
 │   ├── collector.py         # RSS/Atom feed fetching, parsing, slot allocation
 │   ├── source_scorer.py     # source quality scoring, stats persistence, priority calc
 │   ├── feedback.py          # Telegram feedback collection and storage
 │   ├── summarizer.py        # LLM provider abstraction and prompt building
 │   ├── telegram.py          # Telegram Bot API delivery (with feedback buttons)
-│   └── markdown_writer.py   # Markdown file output for Obsidian
+│   ├── markdown_writer.py   # Markdown file output for Obsidian
+│   ├── discovery.py         # LLM-powered RSS source discovery and pending source management
+│   ├── _dns_pinning.py      # DNS pinning and SSRF protection for outbound HTTP
+│   ├── _sanitize.py         # HTML/text sanitization for feed content
+│   └── _util.py             # atomic_json_write and other shared utilities
 ├── tests/
 │   ├── __init__.py
 │   ├── test_config.py
@@ -52,17 +56,27 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 │   ├── test_summarizer.py
 │   ├── test_telegram.py
 │   ├── test_main.py
-│   └── test_markdown_writer.py
+│   ├── test_markdown_writer.py
+│   ├── test_discovery.py
+│   ├── test_sanitize.py
+│   └── test_ruff_config.py
+├── docs/
+│   └── ARCHITECTURE.md      # detailed architecture documentation
 ├── digests/                  # generated markdown files (committed to repo)
 │   └── .gitkeep
 ├── .cache/                   # deduplication cache, source stats, feedback (committed to repo)
 │   └── .gitkeep
 ├── .github/workflows/
-│   └── digest.yml
+│   ├── digest.yml            # daily digest (02:00 + 13:00 UTC), includes test gate
+│   └── discover.yml          # weekly source discovery (Sundays 06:00 UTC), includes test gate
 ├── config.yaml               # user-editable configuration
+├── Makefile                  # lint, typecheck, test, check targets
+├── .pre-commit-config.yaml   # ruff pre-commit hooks
 ├── .env.example
 ├── requirements.txt
+├── requirements-dev.txt
 ├── .gitignore
+├── CHANGELOG.md
 ├── CLAUDE.md
 └── README.md
 ```

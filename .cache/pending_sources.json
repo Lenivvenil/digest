@@ -29,34 +29,6 @@
       "source_hash": "0012430c"
     },
     {
-      "name": "Security Weekly",
-      "url": "https://example.com/feed1.xml",
-      "category": "Security",
-      "discovered_at": "2026-04-06T14:30:21.473256+00:00",
-      "source_hash": "29c50a1f"
-    },
-    {
-      "name": "Cloud Blog",
-      "url": "https://example.com/feed2.xml",
-      "category": "Cloud",
-      "discovered_at": "2026-04-06T14:30:21.473366+00:00",
-      "source_hash": "dfaa55f2"
-    },
-    {
-      "name": "Safe Feed",
-      "url": "https://example.com/feed.xml",
-      "category": "Tech",
-      "discovered_at": "2026-04-06T14:30:21.477459+00:00",
-      "source_hash": "f7880620"
-    },
-    {
-      "name": "Name",
-      "url": "https://ok.com/feed",
-      "category": "Cat",
-      "discovered_at": "2026-04-06T14:30:21.481277+00:00",
-      "source_hash": "3309b063"
-    },
-    {
       "name": "OWASP News",
       "url": "https://owasp.org/feed.xml",
       "category": "Security",

@@ -719,6 +719,9 @@ async def test_discover_sources_parses_llm_response(config_file: Path) -> None:
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
         patch("src.main._validate_url", side_effect=fake_validate),
+        patch("src.main.save_pending"),
+        patch("src.main.load_pending", return_value=[]),
+        patch("src.main.send_source_approval_message"),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)
@@ -779,6 +782,9 @@ async def test_discover_sources_blocks_unsafe_urls(config_file: Path) -> None:
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
         patch("src.main._validate_url", side_effect=fake_validate),
+        patch("src.main.save_pending"),
+        patch("src.main.load_pending", return_value=[]),
+        patch("src.main.send_source_approval_message"),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)
@@ -901,6 +907,9 @@ async def test_discover_sources_malformed_lines(config_file: Path) -> None:
         patch("src.main.get_provider") as mock_get_provider,
         patch("httpx.AsyncClient", return_value=mock_client),
         patch("src.main._validate_url", side_effect=fake_validate),
+        patch("src.main.save_pending"),
+        patch("src.main.load_pending", return_value=[]),
+        patch("src.main.send_source_approval_message"),
     ):
         mock_provider = MagicMock()
         mock_provider.summarize = AsyncMock(return_value=llm_response)
