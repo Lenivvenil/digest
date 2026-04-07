@@ -1,15 +1,53 @@
 {
-  "ratings": [],
-  "last_update_id": 0,
+  "ratings": [
+    {
+      "article_hash": "a4122eb1",
+      "source_name": "AWS Architecture Blog",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:45.934452+00:00"
+    },
+    {
+      "article_hash": "f7857c26",
+      "source_name": "PYMNTS",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:46.037772+00:00"
+    },
+    {
+      "article_hash": "4ffb6d5c",
+      "source_name": "PYMNTS",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:46.138027+00:00"
+    },
+    {
+      "article_hash": "722927b0",
+      "source_name": "PYMNTS",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:46.234615+00:00"
+    },
+    {
+      "article_hash": "b3618692",
+      "source_name": "PYMNTS",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:46.331942+00:00"
+    },
+    {
+      "article_hash": "109a61cf",
+      "source_name": "PYMNTS",
+      "rating": 1,
+      "timestamp": "2026-04-07T07:43:46.445594+00:00"
+    }
+  ],
+  "last_update_id": 660808613,
   "last_digest_sources": [
-    "AWS Architecture Blog",
-    "Cloudflare Blog",
+    "CaixaBank Research",
+    "Finextra",
     "Habr \u2014 Interesting",
     "Hacker News Best",
+    "Martin Fowler",
     "PYMNTS",
     "Spot.uz"
   ],
-  "last_digest_time": "2026-04-07 04:31 UTC",
+  "last_digest_time": "2026-04-07 07:44 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -577,6 +615,15 @@
     "722927b0": "PYMNTS",
     "4ffb6d5c": "PYMNTS",
     "f7857c26": "PYMNTS",
-    "a4122eb1": "AWS Architecture Blog"
+    "a4122eb1": "AWS Architecture Blog",
+    "4c068cfa": "CaixaBank Research",
+    "ad0ee507": "PYMNTS",
+    "5de8b51e": "PYMNTS",
+    "0c30c401": "PYMNTS",
+    "aeaa8ae8": "PYMNTS",
+    "5ee2a724": "Finextra",
+    "2cf35b4c": "Hacker News Best",
+    "7b95ff70": "Habr \u2014 Interesting",
+    "17fc7e47": "Spot.uz"
   }
 }
