@@ -2,14 +2,14 @@
   "ratings": [],
   "last_update_id": 0,
   "last_digest_sources": [
-    "Discord Engineering",
+    "AWS Architecture Blog",
+    "Cloudflare Blog",
     "Habr \u2014 Interesting",
     "Hacker News Best",
     "PYMNTS",
-    "Spot.uz",
-    "Spotify Engineering"
+    "Spot.uz"
   ],
-  "last_digest_time": "2026-04-06 20:52 UTC",
+  "last_digest_time": "2026-04-07 04:31 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -567,6 +567,16 @@
     "dd385372": "PYMNTS",
     "09e59638": "PYMNTS",
     "9ec323c0": "Spotify Engineering",
-    "ef485f0d": "Discord Engineering"
+    "ef485f0d": "Discord Engineering",
+    "56bc4c68": "Hacker News Best",
+    "a25400b2": "Habr \u2014 Interesting",
+    "fb2c5d46": "Spot.uz",
+    "57cbe168": "Cloudflare Blog",
+    "109a61cf": "PYMNTS",
+    "b3618692": "PYMNTS",
+    "722927b0": "PYMNTS",
+    "4ffb6d5c": "PYMNTS",
+    "f7857c26": "PYMNTS",
+    "a4122eb1": "AWS Architecture Blog"
   }
 }
