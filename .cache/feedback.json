@@ -39,15 +39,15 @@
   ],
   "last_update_id": 660808613,
   "last_digest_sources": [
-    "CaixaBank Research",
-    "Finextra",
+    "Cloudflare Blog",
     "Habr \u2014 Interesting",
     "Hacker News Best",
     "Martin Fowler",
     "PYMNTS",
+    "ScyllaDB Blog",
     "Spot.uz"
   ],
-  "last_digest_time": "2026-04-07 12:04 UTC",
+  "last_digest_time": "2026-04-07 14:27 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -624,6 +624,14 @@
     "5ee2a724": "Finextra",
     "2cf35b4c": "Hacker News Best",
     "7b95ff70": "Habr \u2014 Interesting",
-    "17fc7e47": "Spot.uz"
+    "17fc7e47": "Spot.uz",
+    "0ae3504c": "Hacker News Best",
+    "d40016d4": "Habr \u2014 Interesting",
+    "7316abfc": "Spot.uz",
+    "fecc0735": "Martin Fowler",
+    "14e499b7": "Cloudflare Blog",
+    "b96c94e8": "ScyllaDB Blog",
+    "ebd7e227": "PYMNTS",
+    "d3e0177d": "PYMNTS"
   }
 }
