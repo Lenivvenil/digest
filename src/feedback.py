@@ -156,7 +156,12 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
 
             # Use POST with JSON body — more reliable than GET + URL-encoded params
             # when allowed_updates contains a JSON array.
-            body: dict[str, object] = {"allowed_updates": ["callback_query", "message"]}
+            # timeout=10 enables long polling — critical for infrequently polling bots,
+            # otherwise Telegram's distributed backend may return empty on short poll.
+            body: dict[str, object] = {
+                "allowed_updates": ["callback_query", "message"],
+                "timeout": 10,
+            }
             if offset is not None:
                 body["offset"] = offset
             response = await client.post(api_url, json=body)
