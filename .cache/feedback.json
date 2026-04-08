@@ -39,15 +39,14 @@
   ],
   "last_update_id": 660808613,
   "last_digest_sources": [
-    "Cloudflare Blog",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Martin Fowler",
     "PYMNTS",
-    "ScyllaDB Blog",
-    "Spot.uz"
+    "Spot.uz",
+    "Stripe Engineering",
+    "TimescaleDB Blog"
   ],
-  "last_digest_time": "2026-04-07 14:27 UTC",
+  "last_digest_time": "2026-04-08 04:35 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -632,6 +631,16 @@
     "14e499b7": "Cloudflare Blog",
     "b96c94e8": "ScyllaDB Blog",
     "ebd7e227": "PYMNTS",
-    "d3e0177d": "PYMNTS"
+    "d3e0177d": "PYMNTS",
+    "53d2cc79": "Hacker News Best",
+    "106fb4f9": "Habr \u2014 Interesting",
+    "568b7320": "Spot.uz",
+    "346fe9e4": "Stripe Engineering",
+    "03f934cc": "TimescaleDB Blog",
+    "f7748e79": "PYMNTS",
+    "f700f3e5": "PYMNTS",
+    "b194fa74": "PYMNTS",
+    "7150bd7b": "PYMNTS",
+    "7f721ffd": "PYMNTS"
   }
 }
