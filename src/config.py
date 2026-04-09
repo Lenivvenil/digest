@@ -1,9 +1,8 @@
-"""Configuration loading and validation for the daily digest."""
+"""Configuration loading and validation for the daily digest v2."""
 
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,54 +12,49 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_PROVIDERS = {"anthropic", "gemini", "groq", "mistral", "deepseek"}
+VALID_PROVIDERS = {"gemini", "groq", "deepseek"}
+VALID_ROLES = {"summarize", "extract_narratives", "generate_queries", "rank_signals", "fallback"}
 VALID_SUMMARY_STYLES = {"analytical", "brief", "detailed"}
 VALID_LANGUAGES = {"ru", "en"}
+VALID_SOURCES = {"hackernews", "reddit", "arxiv", "devto", "lobsters"}
 
 
 @dataclass
 class ProviderConfig:
     name: str
     model: str
-
-
-@dataclass
-class RouteConfig:
-    categories: list[str]
-    provider: str
-    model: str
+    role: list[str] = field(default_factory=list)
 
 
 @dataclass
 class LLMConfig:
     providers: list[ProviderConfig]
-    routing: list[RouteConfig] = field(default_factory=list)
-
-    @property
-    def provider(self) -> str:
-        """Primary provider name (backward-compat)."""
-        return self.providers[0].name
-
-    @property
-    def model(self) -> str:
-        """Primary model name (backward-compat)."""
-        return self.providers[0].model
 
 
 @dataclass
-class DeliveryConfig:
-    telegram: bool
-    markdown_to_repo: bool
-    markdown_dir: str
-
-
-@dataclass
-class DigestConfig:
-    language: str
-    max_articles_per_source: int
-    max_total_articles: int
-    summary_style: str
+class RadarConfig:
+    language: str = "ru"
+    max_articles_per_category: int = 5
+    summary_style: str = "analytical"
     perspectives: bool = False
+
+
+@dataclass
+class IrritatorConfig:
+    max_narratives: int = 5
+    queries_per_narrative: int = 3
+    top_signals: int = 3
+    min_signal_score: int = 7
+    sources: list[str] = field(default_factory=lambda: list(VALID_SOURCES))
+    reddit_subreddits: list[str] = field(
+        default_factory=lambda: [
+            "programming",
+            "ExperiencedDevs",
+            "softwarearchitecture",
+            "banking",
+            "fintech",
+        ]
+    )
 
 
 @dataclass
@@ -70,56 +64,57 @@ class SourceConfig:
     category: str
     enabled: bool
     priority: int = 3
-    trial: bool = False
-    trial_started: str | None = None
-    trial_days: int = 7
     recency_hours: int = 24
-    type: str = "rss"  # "rss" | "html"
-    selectors: dict[str, str] | None = None  # CSS selectors for type="html"
 
 
 @dataclass
-class AdaptiveConfig:
-    enabled: bool
-    feedback_weight: float = 0.3
-    score_weight: float = 0.5
-    base_weight: float = 0.2
-    trial_slots: int = 2
-    min_priority: int = 1
-    max_priority: int = 5
+class FiltersConfig:
+    blocklist_keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TelegramConfig:
+    enabled: bool = True
+    split_messages: bool = True
+
+
+@dataclass
+class ObsidianConfig:
+    enabled: bool = True
+    output_dir: str = "digests"
 
 
 @dataclass
 class Config:
     llm: LLMConfig
-    delivery: DeliveryConfig
-    digest: DigestConfig
-    sources: list[SourceConfig] = field(default_factory=list)
-    adaptive: AdaptiveConfig = field(
-        default_factory=lambda: AdaptiveConfig(enabled=False)
-    )
+    radar: RadarConfig
+    irritator: IrritatorConfig
+    sources: list[SourceConfig]
+    filters: FiltersConfig
+    telegram: TelegramConfig
+    obsidian: ObsidianConfig
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
         return [s for s in self.sources if s.enabled]
 
 
-def _safe_int(value: Any, field: str, section: str) -> int:
+def _safe_int(value: Any, field_name: str, section: str) -> int:
     try:
         return int(value)
     except (TypeError, ValueError) as err:
         raise ValueError(
-            f"Config field '{field}' in section '{section}' must be an integer, "
+            f"Config field '{field_name}' in section '{section}' must be an integer, "
             f"got {type(value).__name__} {value!r}."
         ) from err
 
 
-def _safe_float(value: Any, field: str, section: str) -> float:
+def _safe_float(value: Any, field_name: str, section: str) -> float:
     try:
         return float(value)
     except (TypeError, ValueError) as err:
         raise ValueError(
-            f"Config field '{field}' in section '{section}' must be a number, "
+            f"Config field '{field_name}' in section '{section}' must be a number, "
             f"got {type(value).__name__} {value!r}."
         ) from err
 
@@ -146,141 +141,149 @@ def _require_bool(data: dict[str, Any], key: str, section: str) -> bool:
 
 def _load_llm(data: dict[str, Any]) -> LLMConfig:
     section = _require(data, "llm", "root")
-
-    # New format: providers list
-    if "providers" in section:
-        raw_providers = section["providers"]
-        if not isinstance(raw_providers, list) or len(raw_providers) == 0:
+    raw_providers = _require(section, "providers", "llm")
+    if not isinstance(raw_providers, list) or len(raw_providers) == 0:
+        raise ValueError(
+            "Config field 'providers' in section 'llm' must be a non-empty list. "
+            "See config.yaml for reference."
+        )
+    providers: list[ProviderConfig] = []
+    seen_names: set[str] = set()
+    for i, item in enumerate(raw_providers):
+        if not isinstance(item, dict):
+            raise ValueError(f"providers[{i}] in section 'llm' must be a mapping.")
+        name = str(_require(item, "name", f"llm.providers[{i}]"))
+        if name not in VALID_PROVIDERS:
             raise ValueError(
-                "Config field 'providers' in section 'llm' must be a non-empty list. "
-                "See config.yaml for reference."
-            )
-        providers: list[ProviderConfig] = []
-        seen_provider_names: set[str] = set()
-        for i, item in enumerate(raw_providers):
-            if not isinstance(item, dict):
-                raise ValueError(f"providers[{i}] in section 'llm' must be a mapping.")
-            name = _require(item, "name", f"llm.providers[{i}]")
-            if name not in VALID_PROVIDERS:
-                raise ValueError(
-                    f"Invalid llm.providers[{i}].name '{name}'. "
-                    f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
-                )
-            if name in seen_provider_names:
-                raise ValueError(
-                    f"Duplicate provider name '{name}' in llm.providers. "
-                    "Each provider may appear at most once."
-                )
-            seen_provider_names.add(name)
-            model = _require(item, "model", f"llm.providers[{i}]")
-            providers.append(ProviderConfig(name=str(name), model=str(model)))
-    elif "provider" in section:
-        # Legacy format: provider + model → auto-convert with warning
-        provider_name = section["provider"]
-        if provider_name not in VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid llm.provider '{provider_name}'. "
+                f"Invalid llm.providers[{i}].name '{name}'. "
                 f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
             )
-        model_name = _require(section, "model", "llm")
-        logger.warning(
-            "Config uses legacy llm.provider/llm.model format. "
-            "Consider migrating to the llm.providers list format."
-        )
-        providers = [ProviderConfig(name=str(provider_name), model=str(model_name))]
-    else:
-        # Neither key present — raise the classic "missing field" error for backward compat
-        _require(section, "provider", "llm")
-        providers = []  # unreachable
-
-    # Load routing (optional)
-    routing: list[RouteConfig] = []
-    if "routing" in section:
-        raw_routing = section["routing"]
-        if not isinstance(raw_routing, list):
-            raise ValueError("Config field 'routing' in section 'llm' must be a list.")
-        seen_categories: set[str] = set()
-        for i, item in enumerate(raw_routing):
-            if not isinstance(item, dict):
-                raise ValueError(f"routing[{i}] in section 'llm' must be a mapping.")
-            categories_raw = _require(item, "categories", f"llm.routing[{i}]")
-            if not isinstance(categories_raw, list):
-                raise ValueError(f"llm.routing[{i}].categories must be a list.")
-            categories = [str(c) for c in categories_raw]
-            for cat in categories:
-                if cat in seen_categories:
-                    raise ValueError(
-                        f"Duplicate category '{cat}' in llm.routing. "
-                        "Each category may appear in at most one route."
-                    )
-                seen_categories.add(cat)
-            route_provider = _require(item, "provider", f"llm.routing[{i}]")
-            if route_provider not in VALID_PROVIDERS:
-                raise ValueError(
-                    f"Invalid provider '{route_provider}' in llm.routing[{i}]. "
-                    f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
-                )
-            route_model = _require(item, "model", f"llm.routing[{i}]")
-            routing.append(
-                RouteConfig(
-                    categories=categories,
-                    provider=str(route_provider),
-                    model=str(route_model),
-                )
+        if name in seen_names:
+            raise ValueError(
+                f"Duplicate provider name '{name}' in llm.providers. "
+                "Each provider may appear at most once."
             )
+        seen_names.add(name)
+        model = str(_require(item, "model", f"llm.providers[{i}]"))
+        raw_role = item.get("role", [])
+        if not isinstance(raw_role, list):
+            raise ValueError(
+                f"Config field 'role' in llm.providers[{i}] must be a list."
+            )
+        roles: list[str] = []
+        for r in raw_role:
+            r_str = str(r)
+            if r_str not in VALID_ROLES:
+                raise ValueError(
+                    f"Invalid role '{r_str}' in llm.providers[{i}].role. "
+                    f"Must be one of: {', '.join(sorted(VALID_ROLES))}."
+                )
+            roles.append(r_str)
+        providers.append(ProviderConfig(name=name, model=model, role=roles))
+    # Validate: at least one provider handles 'summarize' or 'fallback'
+    all_roles: set[str] = {r for p in providers for r in p.role}
+    if not (all_roles & {"summarize", "fallback"}):
+        raise ValueError(
+            "At least one provider must have role 'summarize' or 'fallback'. "
+            "Check llm.providers[].role in config.yaml."
+        )
+    return LLMConfig(providers=providers)
 
-    return LLMConfig(providers=providers, routing=routing)
 
-
-def _load_delivery(data: dict[str, Any]) -> DeliveryConfig:
-    section = _require(data, "delivery", "root")
-    telegram = _require_bool(section, "telegram", "delivery")
-    markdown_to_repo = _require_bool(section, "markdown_to_repo", "delivery")
-    markdown_dir = section.get("markdown_dir", "digests")
-    return DeliveryConfig(
-        telegram=telegram,
-        markdown_to_repo=markdown_to_repo,
-        markdown_dir=str(markdown_dir),
-    )
-
-
-def _load_digest(data: dict[str, Any]) -> DigestConfig:
-    section = _require(data, "digest", "root")
-    language = section.get("language", "ru")
+def _load_radar(data: dict[str, Any]) -> RadarConfig:
+    section = data.get("radar")
+    if section is None:
+        return RadarConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'radar' must be a mapping.")
+    language = str(section.get("language", "ru"))
     if language not in VALID_LANGUAGES:
         raise ValueError(
-            f"Invalid digest.language '{language}'. "
+            f"Invalid radar.language '{language}'. "
             f"Must be one of: {', '.join(sorted(VALID_LANGUAGES))}."
         )
-    max_articles_per_source = _safe_int(
-        section.get("max_articles_per_source", 5), "max_articles_per_source", "digest"
+    max_articles = _safe_int(
+        section.get("max_articles_per_category", 5),
+        "max_articles_per_category",
+        "radar",
     )
-    max_total_articles = _safe_int(
-        section.get("max_total_articles", 30), "max_total_articles", "digest"
-    )
-    if max_articles_per_source < 1:
+    if max_articles < 1:
         raise ValueError(
-            f"Config field 'max_articles_per_source' must be >= 1, "
-            f"got {max_articles_per_source}."
+            f"radar.max_articles_per_category must be >= 1, got {max_articles}."
         )
-    if max_total_articles < 1:
-        raise ValueError(
-            f"Config field 'max_total_articles' must be >= 1, "
-            f"got {max_total_articles}."
-        )
-    summary_style = section.get("summary_style", "analytical")
+    summary_style = str(section.get("summary_style", "analytical"))
     if summary_style not in VALID_SUMMARY_STYLES:
         raise ValueError(
-            f"Invalid digest.summary_style '{summary_style}'. "
+            f"Invalid radar.summary_style '{summary_style}'. "
             f"Must be one of: {', '.join(sorted(VALID_SUMMARY_STYLES))}."
         )
     perspectives = bool(section.get("perspectives", False))
-    return DigestConfig(
+    return RadarConfig(
         language=language,
-        max_articles_per_source=max_articles_per_source,
-        max_total_articles=max_total_articles,
+        max_articles_per_category=max_articles,
         summary_style=summary_style,
         perspectives=perspectives,
+    )
+
+
+def _load_irritator(data: dict[str, Any]) -> IrritatorConfig:
+    section = data.get("irritator")
+    if section is None:
+        return IrritatorConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'irritator' must be a mapping.")
+    max_narratives = _safe_int(
+        section.get("max_narratives", 5), "max_narratives", "irritator"
+    )
+    if max_narratives < 1:
+        raise ValueError(
+            f"irritator.max_narratives must be >= 1, got {max_narratives}."
+        )
+    queries_per_narrative = _safe_int(
+        section.get("queries_per_narrative", 3), "queries_per_narrative", "irritator"
+    )
+    if queries_per_narrative < 1:
+        raise ValueError(
+            f"irritator.queries_per_narrative must be >= 1, got {queries_per_narrative}."
+        )
+    top_signals = _safe_int(
+        section.get("top_signals", 3), "top_signals", "irritator"
+    )
+    if top_signals < 1:
+        raise ValueError(
+            f"irritator.top_signals must be >= 1, got {top_signals}."
+        )
+    min_signal_score = _safe_int(
+        section.get("min_signal_score", 7), "min_signal_score", "irritator"
+    )
+    if min_signal_score < 1 or min_signal_score > 10:
+        raise ValueError(
+            f"irritator.min_signal_score must be between 1 and 10, got {min_signal_score}."
+        )
+    raw_sources = section.get("sources", list(VALID_SOURCES))
+    if not isinstance(raw_sources, list):
+        raise ValueError("irritator.sources must be a list.")
+    for s in raw_sources:
+        if str(s) not in VALID_SOURCES:
+            raise ValueError(
+                f"Invalid irritator source '{s}'. "
+                f"Must be one of: {', '.join(sorted(VALID_SOURCES))}."
+            )
+    sources = [str(s) for s in raw_sources]
+    raw_subreddits = section.get(
+        "reddit_subreddits",
+        ["programming", "ExperiencedDevs", "softwarearchitecture", "banking", "fintech"],
+    )
+    if not isinstance(raw_subreddits, list):
+        raise ValueError("irritator.reddit_subreddits must be a list.")
+    reddit_subreddits = [str(s) for s in raw_subreddits]
+    return IrritatorConfig(
+        max_narratives=max_narratives,
+        queries_per_narrative=queries_per_narrative,
+        top_signals=top_signals,
+        min_signal_score=min_signal_score,
+        sources=sources,
+        reddit_subreddits=reddit_subreddits,
     )
 
 
@@ -292,16 +295,16 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
     for i, item in enumerate(raw_sources):
         if not isinstance(item, dict):
             raise ValueError(f"Source at index {i} must be a mapping.")
-        name = _require(item, "name", f"sources[{i}]")
-        if not str(name).strip():
+        name = str(_require(item, "name", f"sources[{i}]"))
+        if not name.strip():
             raise ValueError(f"Source name at index {i} must not be empty.")
-        url = _require(item, "url", f"sources[{i}]")
-        if urlparse(str(url)).scheme not in ("http", "https"):
+        url = str(_require(item, "url", f"sources[{i}]"))
+        if urlparse(url).scheme not in ("http", "https"):
             raise ValueError(
                 f"Source '{name}' has an invalid URL scheme. "
-                f"Only http and https are allowed, got: {str(url)!r}."
+                f"Only http and https are allowed, got: {url!r}."
             )
-        category = _require(item, "category", f"sources[{i}]")
+        category = str(_require(item, "category", f"sources[{i}]"))
         raw_enabled = item.get("enabled", True)
         if not isinstance(raw_enabled, bool):
             raise ValueError(
@@ -319,74 +322,25 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'priority' in sources[{i}] must be between 1 and 5, "
                 f"got {raw_priority!r}."
             )
-        raw_trial = item.get("trial", False)
-        if not isinstance(raw_trial, bool):
-            raise ValueError(
-                f"Config field 'trial' in sources[{i}] must be a boolean "
-                f"(true or false without quotes), got {type(raw_trial).__name__} {raw_trial!r}."
-            )
-        trial_started = item.get("trial_started", None)
-        if trial_started is not None:
-            trial_started = str(trial_started)
-        raw_trial_days = item.get("trial_days", 7)
-        if isinstance(raw_trial_days, bool) or not isinstance(raw_trial_days, int):
-            raise ValueError(
-                f"Config field 'trial_days' in sources[{i}] must be an integer, "
-                f"got {type(raw_trial_days).__name__} {raw_trial_days!r}."
-            )
-        if raw_trial_days < 1:
-            raise ValueError(
-                f"Config field 'trial_days' in sources[{i}] must be >= 1, "
-                f"got {raw_trial_days}."
-            )
-        raw_recency_hours = item.get("recency_hours", 24)
-        if isinstance(raw_recency_hours, bool) or not isinstance(raw_recency_hours, int):
+        raw_recency = item.get("recency_hours", 24)
+        if isinstance(raw_recency, bool) or not isinstance(raw_recency, int):
             raise ValueError(
                 f"Config field 'recency_hours' in sources[{i}] must be an integer, "
-                f"got {type(raw_recency_hours).__name__} {raw_recency_hours!r}."
+                f"got {type(raw_recency).__name__} {raw_recency!r}."
             )
-        if raw_recency_hours < 1:
+        if raw_recency < 1:
             raise ValueError(
                 f"Config field 'recency_hours' in sources[{i}] must be >= 1, "
-                f"got {raw_recency_hours}."
+                f"got {raw_recency}."
             )
-        raw_type = item.get("type", "rss")
-        if not isinstance(raw_type, str) or raw_type not in ("rss", "html"):
-            raise ValueError(
-                f"Config field 'type' in sources[{i}] must be 'rss' or 'html', "
-                f"got {raw_type!r}."
-            )
-        raw_selectors = item.get("selectors", None)
-        if raw_type == "html":
-            if not isinstance(raw_selectors, dict):
-                raise ValueError(
-                    f"Source '{name}' has type='html' but 'selectors' is missing or not a mapping. "
-                    f"Provide at least 'article' and 'title' CSS selectors."
-                )
-            for required_key in ("article", "title"):
-                if required_key not in raw_selectors:
-                    raise ValueError(
-                        f"Source '{name}' has type='html' but 'selectors' is missing required key "
-                        f"'{required_key}'. Provide CSS selectors for 'article' and 'title'."
-                    )
-            selectors: dict[str, str] | None = {
-                k: str(v) for k, v in raw_selectors.items()
-            }
-        else:
-            selectors = None
         sources.append(
             SourceConfig(
-                name=str(name),
-                url=str(url),
-                category=str(category),
+                name=name,
+                url=url,
+                category=category,
                 enabled=raw_enabled,
                 priority=raw_priority,
-                trial=raw_trial,
-                trial_started=trial_started,
-                trial_days=raw_trial_days,
-                recency_hours=raw_recency_hours,
-                type=raw_type,
-                selectors=selectors,
+                recency_hours=raw_recency,
             )
         )
     if not sources:
@@ -402,71 +356,38 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
     return sources
 
 
-def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
-    section = data.get("adaptive")
+def _load_filters(data: dict[str, Any]) -> FiltersConfig:
+    section = data.get("filters")
     if section is None:
-        return AdaptiveConfig(enabled=False)
+        return FiltersConfig()
     if not isinstance(section, dict):
-        raise ValueError("Config field 'adaptive' must be a mapping.")
-    enabled = section.get("enabled", False)
-    if not isinstance(enabled, bool):
-        raise ValueError(
-            f"Config field 'enabled' in section 'adaptive' must be a boolean, "
-            f"got {type(enabled).__name__} {enabled!r}."
-        )
-    feedback_weight = _safe_float(section.get("feedback_weight", 0.3), "feedback_weight", "adaptive")
-    score_weight = _safe_float(section.get("score_weight", 0.5), "score_weight", "adaptive")
-    base_weight = _safe_float(section.get("base_weight", 0.2), "base_weight", "adaptive")
-    min_priority = _safe_int(section.get("min_priority", 1), "min_priority", "adaptive")
-    max_priority = _safe_int(section.get("max_priority", 5), "max_priority", "adaptive")
+        raise ValueError("Config field 'filters' must be a mapping.")
+    raw_keywords = section.get("blocklist_keywords", [])
+    if not isinstance(raw_keywords, list):
+        raise ValueError("filters.blocklist_keywords must be a list.")
+    return FiltersConfig(blocklist_keywords=[str(k) for k in raw_keywords])
 
-    for wname, wval in [
-        ("feedback_weight", feedback_weight),
-        ("score_weight", score_weight),
-        ("base_weight", base_weight),
-    ]:
-        if not math.isfinite(wval) or wval < 0.0 or wval > 1.0:
-            raise ValueError(
-                f"adaptive.{wname} must be between 0.0 and 1.0, got {wval}."
-            )
 
-    if min_priority < 1:
-        raise ValueError(
-            f"adaptive.min_priority must be >= 1, got {min_priority}."
-        )
-    if max_priority < 1:
-        raise ValueError(
-            f"adaptive.max_priority must be >= 1, got {max_priority}."
-        )
-    if min_priority >= max_priority:
-        raise ValueError(
-            f"adaptive.min_priority ({min_priority}) must be less than "
-            f"adaptive.max_priority ({max_priority})."
-        )
+def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
+    section = data.get("telegram")
+    if section is None:
+        return TelegramConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'telegram' must be a mapping.")
+    enabled = bool(section.get("enabled", True))
+    split_messages = bool(section.get("split_messages", True))
+    return TelegramConfig(enabled=enabled, split_messages=split_messages)
 
-    weight_sum = feedback_weight + score_weight + base_weight
-    if abs(weight_sum - 1.0) > 0.01:
-        raise ValueError(
-            f"Adaptive weights must sum to 1.0 (got {weight_sum:.2f}): "
-            f"feedback_weight={feedback_weight}, score_weight={score_weight}, "
-            f"base_weight={base_weight}."
-        )
 
-    trial_slots = _safe_int(section.get("trial_slots", 2), "trial_slots", "adaptive")
-    if trial_slots < 0:
-        raise ValueError(
-            f"adaptive.trial_slots must be non-negative, got {trial_slots}."
-        )
-
-    return AdaptiveConfig(
-        enabled=enabled,
-        feedback_weight=feedback_weight,
-        score_weight=score_weight,
-        base_weight=base_weight,
-        trial_slots=trial_slots,
-        min_priority=min_priority,
-        max_priority=max_priority,
-    )
+def _load_obsidian(data: dict[str, Any]) -> ObsidianConfig:
+    section = data.get("obsidian")
+    if section is None:
+        return ObsidianConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'obsidian' must be a mapping.")
+    enabled = bool(section.get("enabled", True))
+    output_dir = str(section.get("output_dir", "digests"))
+    return ObsidianConfig(enabled=enabled, output_dir=output_dir)
 
 
 def load_config(config_path: str | Path = "config.yaml") -> Config:
@@ -491,29 +412,25 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         raise ValueError("Config file must be a YAML mapping at the top level.")
 
     llm = _load_llm(data)
-    delivery = _load_delivery(data)
-    digest = _load_digest(data)
+    radar = _load_radar(data)
+    irritator = _load_irritator(data)
     sources = _load_sources(data)
-    adaptive = _load_adaptive(data)
-
-    # Validate cross-section constraints
-    if adaptive.enabled and adaptive.trial_slots > digest.max_total_articles:
-        raise ValueError(
-            f"adaptive.trial_slots ({adaptive.trial_slots}) must not exceed "
-            f"digest.max_total_articles ({digest.max_total_articles})."
-        )
+    filters = _load_filters(data)
+    telegram = _load_telegram(data)
+    obsidian = _load_obsidian(data)
 
     logger.info(
-        "Config loaded: provider=%s, sources=%d (%d enabled), adaptive=%s",
-        llm.provider,
+        "Config loaded: providers=%s, sources=%d (%d enabled)",
+        [p.name for p in llm.providers],
         len(sources),
         sum(1 for s in sources if s.enabled),
-        adaptive.enabled,
     )
     return Config(
         llm=llm,
-        delivery=delivery,
-        digest=digest,
+        radar=radar,
+        irritator=irritator,
         sources=sources,
-        adaptive=adaptive,
+        filters=filters,
+        telegram=telegram,
+        obsidian=obsidian,
     )

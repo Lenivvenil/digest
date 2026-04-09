@@ -1,70 +1,25 @@
-"""Main entrypoint for the daily news digest generator.
+"""Main entrypoint for the daily news digest generator v2.
 
 Run as:
     python -m src
     python -m src --config path/to/config.yaml
     python -m src --dry-run
     python -m src --verbose
-    python -m src --discover
+    python -m src --check
+    python -m src --radar-only
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import re
-import time
-from dataclasses import dataclass
-from typing import Any
-from datetime import datetime, timezone
-
-from src._dns_pinning import pin_dns as _pin_dns, validate_url as _validate_url
-from src.collector import AllFeedsFailedError, collect, save_dedup_cache
-from src.config import load_config
-from src.discovery import (
-    PendingSource,
-    add_source_to_config,
-    load_pending,
-    save_pending,
-    send_source_approval_message,
-)
-from src.feedback import (
-    collect_feedback,
-    get_source_feedback_score,
-    load_feedback,
-    save_feedback,
-)
-from src.markdown_writer import write_digest
-from src.source_scorer import (
-    SourceStats,
-    apply_trial_decisions,
-    calculate_effective_priorities,
-    calculate_score,
-    evaluate_trial_sources,
-    load_stats,
-    save_stats,
-)
-from src.summarizer import (
-    build_category_prompt,
-    build_trends_prompt,
-    get_provider,
-    resolve_category_providers,
-)
-from src.telegram import TelegramPartialDeliveryError, send_article_cards, send_digest
-
-logger = logging.getLogger(__name__)
+import sys
 
 
 def _clean_summary(text: str) -> str:
-    """Remove redundant URL lines that duplicate links already in article titles.
-
-    LLM providers sometimes emit standalone link lines like:
-      Link: https://...   URL: https://...   Source: https://...
-      Ссылка: https://... Источник: https://...
-    These are redundant because titles are already formatted as [Title](url).
-    """
+    """Remove redundant URL lines that duplicate links already in article titles."""
     return re.sub(
         r"(?m)^\s*(Link|URL|Source|Read more|Ссылка|Источник|Читать далее)\s*:\s*https?://\S+\s*$",
         "",
@@ -72,744 +27,210 @@ def _clean_summary(text: str) -> str:
     ).strip()
 
 
-
-def _build_nano_status(
-    feeds_count: int,
-    total_articles: int,
-    ok_count: int,
-    err_count: int,
-    source_stats: dict[str, SourceStats],
-    config: Any,
-    effective_priorities: dict[str, int] | None,
-) -> str:
-    """Build a two-line status footer for the digest message.
-
-    Line 1: feed counts for this run and LLM model.
-    Line 2: adaptive priority changes and average quality score.
-    """
-    # Collect unique provider names from the providers chain + routing
-    provider_names: list[str] = []
-    seen: set[str] = set()
-    for pc in config.llm.providers:
-        if pc.name not in seen:
-            provider_names.append(pc.name)
-            seen.add(pc.name)
-    for route in config.llm.routing:
-        if route.provider not in seen:
-            provider_names.append(route.provider)
-            seen.add(route.provider)
-    models_str = ", ".join(provider_names) if provider_names else config.llm.model
-
-    line1 = (
-        f"\U0001f4ca {feeds_count} src | {total_articles} art | "
-        f"{ok_count} ok / {err_count} err | {models_str}"
-    )
-
-    promoted_count = 0
-    demoted_count = 0
-    if effective_priorities:
-        for source in config.enabled_sources:
-            ep = effective_priorities.get(source.name)
-            if ep is not None:
-                if ep > source.priority:
-                    promoted_count += 1
-                elif ep < source.priority:
-                    demoted_count += 1
-
-    scores = [calculate_score(s) for s in source_stats.values() if s.total_fetches > 0]
-    avg_score = sum(scores) / len(scores) if scores else 0.0
-
-    line2 = (
-        f"\U0001f4c8 {promoted_count} \u2191 | {demoted_count} \u2193 | "
-        f"avg score: {avg_score:.2f}"
-    )
-    return f"{line1}\n{line2}"
-
-
-@dataclass
-class RunStats:
-    feeds_fetched: int
-    new_articles: int
-    digest_length: int
-    telegram_sent: bool
-    telegram_partial: bool
-    markdown_saved: bool
-    markdown_path: str
-    sources_promoted: int = 0
-    sources_demoted: int = 0
-    feedback_collected: int = 0
-    duration_seconds: float = 0.0
-
-
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Daily news digest generator — collects RSS feeds, summarizes via LLM, "
-        "delivers to Telegram and saves markdown for Obsidian.",
-        prog="python -m src",
-    )
-    parser.add_argument(
-        "--config",
-        default="config.yaml",
-        metavar="PATH",
-        help="Path to config YAML file (default: config.yaml)",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Collect and summarize but do not send to Telegram or write markdown files.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable debug-level logging.",
-    )
-    parser.add_argument(
-        "--discover",
-        action="store_true",
-        help="Use LLM to suggest new RSS sources for underrepresented categories, then exit.",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Validate config and probe all feed URLs, then exit (0 = all OK, 1 = any failures).",
-    )
-    return parser.parse_args(argv)
-
-
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
     )
-
-
-def _print_stats(stats: RunStats) -> None:
-    print("\n--- Digest Run Summary ---")
-    print(f"Feeds fetched:      {stats.feeds_fetched}")
-    print(f"New articles:       {stats.new_articles}")
-    print(f"Digest length:      {stats.digest_length} chars")
-    if stats.telegram_partial:
-        print("Telegram sent:      partial (some chunks failed)")
-    else:
-        print(f"Telegram sent:      {'yes' if stats.telegram_sent else 'no'}")
-    if stats.markdown_saved:
-        print(f"Markdown saved:     {stats.markdown_path}")
-    else:
-        print("Markdown saved:     no")
-    if stats.feedback_collected:
-        print(f"Feedback collected: {stats.feedback_collected}")
-    if stats.sources_promoted:
-        print(f"Sources promoted:   {stats.sources_promoted}")
-    if stats.sources_demoted:
-        print(f"Sources demoted:    {stats.sources_demoted}")
-    print("--------------------------\n")
-
-
-async def run(config_path: str = "config.yaml", dry_run: bool = False) -> RunStats:
-    """Execute the full digest pipeline and return run statistics.
-
-    Args:
-        config_path: Path to the YAML config file.
-        dry_run: If True, skip delivery (Telegram + markdown write).
-
-    Returns:
-        RunStats with counters and delivery status.
-    """
-    _t_run_start = time.monotonic()
-    config = load_config(config_path)
-    feeds_count = len(config.enabled_sources)
-    logger.info("Starting digest run: %d enabled sources, dry_run=%s", feeds_count, dry_run)
-
-    # Load source stats and feedback
-    cache_dir = ".cache"
-    source_stats = load_stats(cache_dir)
-    feedback_store = load_feedback(cache_dir)
-    effective_priorities: dict[str, int] | None = None
-    feedback_collected = 0
-
-    if config.adaptive.enabled:
-        # Poll new Telegram feedback — skip in dry-run to avoid advancing
-        # last_update_id without persisting, which would cause duplicate
-        # ratings on the next real run.
-        if not dry_run:
-            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            if bot_token:
-                old_count = len(feedback_store.ratings)
-                feedback_store = await collect_feedback(bot_token, feedback_store)
-                feedback_collected = len(feedback_store.ratings) - old_count
-                if feedback_collected:
-                    logger.info("Collected %d new feedback ratings", feedback_collected)
-                # Persist updated last_update_id immediately so that
-                # already-answered callbacks are not reprocessed if a later
-                # stage (collect, summarize, deliver) raises an exception.
-                save_feedback(feedback_store, cache_dir)
-
-        # Calculate effective priorities
-        feedback_scores: dict[str, float] = {}
-        for source in config.enabled_sources:
-            score = get_source_feedback_score(feedback_store, source.name)
-            if score is not None:
-                feedback_scores[source.name] = score
-        effective_priorities = calculate_effective_priorities(
-            config.enabled_sources, source_stats, feedback_scores, config.adaptive
-        )
-        logger.info("Computed effective priorities for %d sources", len(effective_priorities))
-
-    # Snapshot fetch counters before collect so we can compute per-run ok/err counts
-    _stats_snapshot: dict[str, tuple[int, int]] = {
-        name: (s.total_fetches, s.successful_fetches) for name, s in source_stats.items()
-    }
-
-    _t_collect_start = time.monotonic()
-    articles_by_category, pending_cache = await collect(
-        config, source_stats=source_stats, effective_priorities=effective_priorities
-    )
-    _t_collect = time.monotonic() - _t_collect_start
-    logger.info("Stage: collect %.1fs", _t_collect)
-    total_articles = sum(len(v) for v in articles_by_category.values())
-    logger.info("Collected %d new articles across %d categories", total_articles, len(articles_by_category))
-
-    # Compute ok/err counts from the delta between snapshot and current stats
-    ok_count = 0
-    err_count = 0
-    for source in config.enabled_sources:
-        name = source.name
-        if name in source_stats:
-            old_total, old_ok = _stats_snapshot.get(name, (0, 0))
-            new_total = source_stats[name].total_fetches
-            new_ok = source_stats[name].successful_fetches
-            if new_total > old_total:
-                if new_ok > old_ok:
-                    ok_count += 1
-                else:
-                    err_count += 1
-
-    if not articles_by_category:
-        logger.info("No new articles found. Nothing to summarize.")
-        if not dry_run:
-            save_dedup_cache(pending_cache)
-            save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
-            save_feedback(feedback_store, cache_dir)
-        return RunStats(
-            feeds_fetched=feeds_count,
-            new_articles=0,
-            digest_length=0,
-            telegram_sent=False,
-            telegram_partial=False,
-            markdown_saved=False,
-            markdown_path="",
-            feedback_collected=feedback_collected,
-        )
-
-    contributing_sources = sorted(
-        {a.source for articles in articles_by_category.values() for a in articles}
-    )
-
-    _t_summarize_start = time.monotonic()
-    default_provider = get_provider(config)
-    category_providers = resolve_category_providers(
-        list(articles_by_category.keys()), config, default_chain=default_provider
-    )
-    logger.info(
-        "Summarizing %d categories in parallel (providers: %s)",
-        len(articles_by_category),
-        ", ".join(sorted({p.name for p in config.llm.providers})),
-    )
-
-    async def _summarize_one(
-        cat: str, arts: list[Any], prov: Any
-    ) -> tuple[str, str]:
-        prompt = build_category_prompt(cat, arts, config)
-        return cat, _clean_summary(await prov.summarize(prompt))
-
-    ordered_cats = list(articles_by_category.keys())
-    gather_tasks = [
-        _summarize_one(cat, articles_by_category[cat], category_providers.get(cat, default_provider))
-        for cat in ordered_cats
-    ]
-    gather_results = await asyncio.gather(*gather_tasks, return_exceptions=True)
-
-    category_summaries: dict[str, str] = {}
-    skipped_categories: list[str] = []
-    for cat, res in zip(ordered_cats, gather_results, strict=True):
-        if isinstance(res, BaseException):
-            logger.error("Category summarization failed for '%s': %s", cat, res)
-            skipped_categories.append(cat)
-        else:
-            cat_name, cat_text = res
-            category_summaries[cat_name] = cat_text
-
-    if not category_summaries:
-        raise RuntimeError("All category summarizations failed — no content to deliver.")
-
-    combined = "\n\n".join(category_summaries.values())
-
-    if skipped_categories:
-        warn_line = "⚠️ " + ", ".join(skipped_categories) + " — category skipped (LLM error)\n\n"
-        combined = warn_line + combined
-
-    # Generate trends section separately across all categories (if >1 category)
-    if len(category_summaries) > 1:
-        trends_prompt = build_trends_prompt(category_summaries, config)
-        try:
-            trends = _clean_summary(await default_provider.summarize(trends_prompt))
-            combined = f"{combined}\n\n{trends}"
-        except Exception as exc:
-            logger.warning("Trends generation failed, skipping: %s", exc)
-
-    summary = combined
-    _t_summarize = time.monotonic() - _t_summarize_start
-    logger.info("Stage: summarize %.1fs", _t_summarize)
-    logger.info("Summary generated: %d chars", len(summary))
-
-    # Build delivery text: summary + nano-status footer (not added to markdown/RunStats)
-    nano_status = _build_nano_status(
-        feeds_count=feeds_count,
-        total_articles=total_articles,
-        ok_count=ok_count,
-        err_count=err_count,
-        source_stats=source_stats,
-        config=config,
-        effective_priorities=effective_priorities,
-    )
-    delivery_text = f"{summary}\n\n{nano_status}"
-
-    telegram_sent = False
-    telegram_partial = False
-    markdown_saved = False
-    markdown_path = ""
-    delivery_succeeded = False
-
-    _t_deliver_start = time.monotonic()
-    if dry_run:
-        logger.info("Dry-run mode: skipping delivery.")
-    else:
-        # Run telegram delivery and markdown write in parallel
-        telegram_task = asyncio.create_task(
-            send_digest(
-                delivery_text,
-                config,
-            )
-        )
-        markdown_result = write_digest(
-            summary,
-            config,
-            sources_count=feeds_count,
-            articles_count=total_articles,
-        )
-
-        try:
-            telegram_sent = await telegram_task
-        except TelegramPartialDeliveryError as exc:
-            # Some chunks were delivered but later chunks failed.
-            # Do NOT persist the cache here — we need to know whether the
-            # markdown fallback succeeded first (see logic below).
-            logger.warning("Telegram delivery partially failed (non-critical): %s", exc)
-            telegram_partial = True
-        except Exception as exc:
-            logger.warning("Telegram delivery failed (non-critical): %s", exc)
-
-        if markdown_result is not None:
-            markdown_saved = True
-            markdown_path = str(markdown_result)
-
-        # Persist dedup cache when at least one channel produced output.
-        # If both Telegram and markdown fail entirely, do not mark articles as
-        # seen so they are retried on the next run.
-        #
-        # For partial Telegram delivery: ALWAYS save the cache to prevent
-        # re-sending the chunks that were already delivered to users.
-        # Accepting that failed chunks may be permanently lost is the lesser
-        # evil compared to duplicating already-delivered content.
-        if telegram_sent or markdown_saved or telegram_partial:
-            save_dedup_cache(pending_cache)
-            if telegram_partial and not markdown_saved:
-                logger.warning(
-                    "Partial Telegram delivery with no markdown fallback — "
-                    "dedup cache saved to prevent duplicate sends; "
-                    "some digest chunks may not have been delivered."
-                )
-        else:
-            logger.warning(
-                "No delivery channel produced output — dedup cache not updated; "
-                "articles will be retried on the next run."
-            )
-
-        # Only update last_digest_sources when Telegram delivery succeeded,
-        # because feedback buttons only exist in Telegram messages.  If we
-        # always overwrite, a failed run would cause the *next* run to
-        # attribute feedback from the previous successful digest to the
-        # wrong set of sources.
-        if telegram_sent:
-            feedback_store.last_digest_sources = contributing_sources
-
-            # Send per-article cards with 👍/👎 buttons and record the hash→source map
-            article_source_map = await send_article_cards(articles_by_category, config)
-            feedback_store.article_source_map.update(article_source_map)
-
-        delivery_succeeded = telegram_sent or markdown_saved
-        if delivery_succeeded:
-            feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
-                "%Y-%m-%d %H:%M UTC"
-            )
-
-        # Save feedback unconditionally — it tracks polled Telegram callbacks
-        # (last_update_id) from previous digests and must be persisted even if
-        # the current delivery fails, to avoid re-processing answered callbacks.
-        save_feedback(feedback_store, cache_dir)
-
-        # Always persist source stats so the adaptive system accumulates data
-        # even when delivery fails (e.g. Telegram is down, markdown write fails).
-        active_source_names = {s.name for s in config.enabled_sources}
-        save_stats(source_stats, cache_dir, active_sources=active_source_names)
-        _t_deliver = time.monotonic() - _t_deliver_start
-        logger.info("Stage: deliver %.1fs", _t_deliver)
-
-    # Evaluate trial sources only after successful delivery — promoting or
-    # demoting based on a digest the user never received is misleading.
-    sources_promoted = 0
-    sources_demoted = 0
-    if config.adaptive.enabled and not dry_run and delivery_succeeded:
-        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-        promote, demote, needs_start = evaluate_trial_sources(
-            config.enabled_sources, source_stats, today
-        )
-        if promote or demote or needs_start:
-            apply_trial_decisions(config_path, promote, demote, needs_start=needs_start)
-            sources_promoted = len(promote)
-            sources_demoted = len(demote)
-            logger.info(
-                "Trial evaluation: %d promoted, %d demoted",
-                sources_promoted,
-                sources_demoted,
-            )
-
-    # Process pending source approvals collected via Telegram buttons
-    if not dry_run and feedback_store.source_decisions:
-        pending = load_pending(cache_dir)
-        if pending:
-            remaining: list[PendingSource] = []
-            for ps in pending:
-                decision = feedback_store.source_decisions.pop(ps.source_hash, None)
-                if decision == "approved":
-                    try:
-                        add_source_to_config(config_path, ps)
-                    except Exception as exc:
-                        logger.error("Failed to add source '%s' to config: %s", ps.name, exc)
-                        remaining.append(ps)
-                elif decision == "rejected":
-                    logger.info("Source '%s' rejected by user, removing from pending", ps.name)
-                else:
-                    remaining.append(ps)
-            save_pending(remaining, cache_dir)
-            # Persist updated source_decisions (with processed hashes removed)
-            save_feedback(feedback_store, cache_dir)
-
-    return RunStats(
-        feeds_fetched=feeds_count,
-        new_articles=total_articles,
-        digest_length=len(summary),
-        telegram_sent=telegram_sent,
-        telegram_partial=telegram_partial,
-        markdown_saved=markdown_saved,
-        markdown_path=markdown_path,
-        sources_promoted=sources_promoted,
-        sources_demoted=sources_demoted,
-        feedback_collected=feedback_collected,
-        duration_seconds=time.monotonic() - _t_run_start,
-    )
-
-
 
 
 async def check_config(config_path: str) -> int:
-    """Validate config and probe all enabled feed URLs.
+    """Validate configuration and check required environment variables."""
+    from src.config import load_config
 
-    Checks:
-    - Config loads without errors
-    - Required env vars present for the configured LLM provider and Telegram
-    - No duplicate source names or URLs
-    - All enabled feed URLs respond and return parseable RSS/Atom content
-
-    Returns 0 if all checks pass, 1 if any failures.
-    """
-    import feedparser  # type: ignore[import-untyped]
-    import httpx
-
-    ok = True
-
-    # --- Load config ---
-    print("Checking config...")
     try:
         config = load_config(config_path)
-        print(f"  [OK] Config loaded: {len(config.enabled_sources)} enabled sources")
-    except Exception as exc:
-        print(f"  [FAIL] Config load error: {exc}")
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
         return 1
 
-    # --- Env vars ---
-    print("\nChecking environment variables...")
-    _provider_env_vars: dict[str, str] = {
-        "anthropic": "ANTHROPIC_API_KEY",
+    errors: list[str] = []
+    provider_env_map = {
         "gemini": "GEMINI_API_KEY",
         "groq": "GROQ_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
     }
-    # Collect all unique provider names from providers list + routing
-    all_provider_names: set[str] = {pc.name for pc in config.llm.providers}
-    for route in config.llm.routing:
-        all_provider_names.add(route.provider)
+    for p in config.llm.providers:
+        env_var = provider_env_map.get(p.name)
+        if env_var and not os.environ.get(env_var):
+            errors.append(f"Missing env var {env_var} for provider '{p.name}'")
+    if config.telegram.enabled:
+        for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+            if not os.environ.get(var):
+                errors.append(f"Missing env var {var} (required for telegram delivery)")
 
-    telegram_vars = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
-    for provider_name in sorted(all_provider_names):
-        var = _provider_env_vars.get(provider_name, "")
-        if not var:
-            continue
-        val = os.environ.get(var, "")
-        if val:
-            print(f"  [OK] {var} is set ({provider_name})")
-        else:
-            print(f"  [WARN] {var} is not set (required for {provider_name})")
-    for var in telegram_vars:
-        val = os.environ.get(var, "")
-        if val:
-            print(f"  [OK] {var} is set")
-        else:
-            print(f"  [WARN] {var} is not set (required for production)")
-
-    # --- Duplicate detection ---
-    print("\nChecking for duplicates...")
-    seen_names: dict[str, int] = {}
-    seen_urls: dict[str, str] = {}
-    for source in config.enabled_sources:
-        seen_names[source.name] = seen_names.get(source.name, 0) + 1
-        if source.url in seen_urls:
-            print(
-                f"  [WARN] Duplicate URL: {source.url!r} used by "
-                f"{seen_urls[source.url]!r} and {source.name!r}"
-            )
-        else:
-            seen_urls[source.url] = source.name
-    for name, count in seen_names.items():
-        if count > 1:
-            print(f"  [WARN] Duplicate source name: {name!r} appears {count} times")
-    if all(c == 1 for c in seen_names.values()) and len(seen_urls) == len(config.enabled_sources):
-        print("  [OK] No duplicate names or URLs")
-
-    # --- Feed probing ---
-    print(f"\nProbing {len(config.enabled_sources)} feed URLs...")
-
-    async def _probe(client: httpx.AsyncClient, source: Any) -> tuple[str, str, str]:
-        """Return (name, status_label, detail)."""
-        validated = _validate_url(source.url)
-        if validated is None:
-            return source.name, "BLOCKED", "unsafe URL (private/local/non-http)"
-        try:
-            with _pin_dns(validated.hostname, validated.pinned_addrinfos):
-                resp = await client.get(validated.url, timeout=15.0)
-            resp.raise_for_status()
-            if source.type == "html":
-                from bs4 import BeautifulSoup  # type: ignore[import-untyped]
-                soup = BeautifulSoup(resp.content, "html.parser")
-                selectors = source.selectors or {}
-                matches = soup.select(selectors.get("article", ""))
-                count = len(matches)
-                if count == 0:
-                    return source.name, "WARN", "HTML source: 'article' selector matched 0 elements"
-                return source.name, "OK", f"{count} article elements found"
-            feed = feedparser.parse(resp.text)
-            if feed.bozo and not feed.entries:
-                return source.name, "WARN", f"feedparser error: {feed.bozo_exception}"
-            entry_count = len(feed.entries)
-            return source.name, "OK", f"{entry_count} entries"
-        except httpx.TimeoutException:
-            return source.name, "FAIL", "timeout"
-        except Exception as exc:
-            return source.name, "FAIL", str(exc)
-
-    async with httpx.AsyncClient(
-        timeout=15.0, follow_redirects=True, trust_env=False
-    ) as client:
-        tasks = [asyncio.create_task(_probe(client, s)) for s in config.enabled_sources]
-        results = await asyncio.gather(*tasks)
-
-    for name, status, detail in sorted(results):
-        print(f"  [{status:6}] {name}: {detail}")
-        if status == "FAIL" or status == "BLOCKED":
-            ok = False
-
-    # --- Summary ---
-    fail_count = sum(1 for _, s, _ in results if s in ("FAIL", "BLOCKED"))
-    warn_count = sum(1 for _, s, _ in results if s == "WARN")
-    ok_count_feeds = sum(1 for _, s, _ in results if s == "OK")
+    if errors:
+        for err in errors:
+            print(f"  WARNING: {err}", file=sys.stderr)
+        # Warn but don't fail — keys may be set at runtime
     print(
-        f"\nResult: {ok_count_feeds} OK, {warn_count} WARN, {fail_count} FAIL"
-        f" out of {len(config.enabled_sources)} feeds"
+        f"Config OK: {len(config.sources)} sources "
+        f"({len(config.enabled_sources)} enabled), "
+        f"providers={[p.name for p in config.llm.providers]}"
     )
-    if ok:
-        print("All checks passed.")
-    else:
-        print("Some checks FAILED — fix the issues above before running the digest.")
-
-    return 0 if ok else 1
+    return 0
 
 
-async def discover_sources(config_path: str) -> int:
-    """Use LLM to suggest new RSS sources for underrepresented categories.
-
-    Builds a prompt with current categories and source names, asks the LLM
-    to suggest 2-3 RSS feed URLs, validates them by attempting to fetch,
-    and prints valid suggestions to stdout.
-    """
-    import httpx
+async def run(
+    config_path: str, dry_run: bool, radar_only: bool, verbose: bool
+) -> int:
+    """Full pipeline: radar → (irritator) → delivery."""
+    from src.config import load_config
+    from src.radar import collect, save_dedup_cache, summarize_all
 
     config = load_config(config_path)
-    categories: dict[str, list[str]] = {}
-    for source in config.enabled_sources:
-        categories.setdefault(source.category, []).append(source.name)
-
-    category_summary = "\n".join(
-        f"- {cat}: {', '.join(names)}" for cat, names in categories.items()
-    )
-    prompt = (
-        "You are an expert at finding high-quality RSS/Atom feeds for technology professionals.\n\n"
-        f"Current categories and sources:\n{category_summary}\n\n"
-        "Suggest 2-3 new RSS feed URLs for categories that are underrepresented or missing. "
-        "Focus on feeds relevant to a Technology Architect at a bank: "
-        "architecture, distributed systems, fintech, security, cloud infrastructure.\n\n"
-        "For each suggestion, output EXACTLY this format (one per line):\n"
-        "FEED|<url>|<category>|<name>\n\n"
-        "Only suggest feeds you are confident have working RSS/Atom URLs."
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Starting digest pipeline dry_run=%s radar_only=%s", dry_run, radar_only
     )
 
-    provider = get_provider(config)
-    logger.info("Asking LLM for source suggestions...")
-    response = await provider.summarize(prompt)
-
-    suggestions: list[tuple[str, str, str]] = []
-    for line in response.strip().splitlines():
-        line = line.strip()
-        if not line.startswith("FEED|"):
-            continue
-        parts = line.split("|")
-        if len(parts) != 4:
-            continue
-        _, url, category, name = parts
-        suggestions.append((url.strip(), category.strip(), name.strip()))
-
-    if not suggestions:
-        print("No suggestions returned by LLM.")
+    # Radar pipeline (Phase 1)
+    articles_by_category, cache = await collect(config)
+    if not articles_by_category:
+        logger.info("No new articles found. Nothing to summarize.")
         return 0
 
-    print(f"\nValidating {len(suggestions)} suggested feeds...\n")
+    summaries, trends = await summarize_all(articles_by_category, config)
+    if not summaries:
+        logger.error("All category summarizations failed.")
+        return 1
 
-    cache_dir = ".cache"
-    existing_pending = load_pending(cache_dir)
-    existing_hashes = {s.source_hash for s in existing_pending}
+    combined = "\n\n".join(s.summary_text for s in summaries)
+    if trends:
+        combined = f"{combined}\n\n{trends}"
+    combined = _clean_summary(combined)
 
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    new_pending: list[PendingSource] = []
+    if not dry_run:
+        save_dedup_cache(cache)
 
-    async with httpx.AsyncClient(
-        timeout=15.0, follow_redirects=False, trust_env=False
-    ) as client:
-        for url, category, name in suggestions:
-            validated = _validate_url(url)
-            if validated is None:
-                status = "BLOCKED (unsafe URL: private/local network or non-http scheme)"
-            else:
-                try:
-                    with _pin_dns(validated.hostname, validated.pinned_addrinfos):
-                        resp = await client.get(validated.url)
-                    resp.raise_for_status()
-                    status = "OK"
-                except Exception as exc:
-                    status = f"FAILED ({exc})"
-            print(f"  [{status}] {name}")
-            print(f"    URL:      {url}")
-            print(f"    Category: {category}")
-            print()
+    if radar_only:
+        print(combined)
+        return 0
 
-            if status == "OK":
-                pending = PendingSource(
-                    name=name,
-                    url=url,
-                    category=category,
-                    discovered_at=datetime.now(tz=timezone.utc).isoformat(),
-                )
-                if pending.source_hash in existing_hashes:
-                    logger.info("Source '%s' already pending, skipping", name)
-                    continue
-                new_pending.append(pending)
-                if bot_token and chat_id:
-                    await send_source_approval_message(pending, bot_token, chat_id)
-                else:
-                    logger.warning(
-                        "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — "
-                        "cannot send approval message for '%s'",
-                        name,
+    # Irritator pipeline (Phase 2-5)
+    from src.irritator import (
+        extract_narratives,
+        generate_queries,
+        rank_signals,
+        search_all_sources,
+        validate_signals,
+    )
+
+    narratives: list = []
+    all_ranked: list = []
+    try:
+        narratives = await extract_narratives(summaries, config)
+        if narratives:
+            queries_by_narrative = await generate_queries(narratives, config)
+            all_queries = [
+                q for qs in queries_by_narrative.values() for q in qs
+            ]
+            if all_queries:
+                import httpx
+
+                async with httpx.AsyncClient() as client:
+                    raw_signals = await search_all_sources(
+                        all_queries, config, client
                     )
+                signals = validate_signals(
+                    raw_signals, config.filters.blocklist_keywords
+                )
+                for narrative in narratives:
+                    ranked = await rank_signals(narrative, signals, config)
+                    all_ranked.extend(ranked)
+    except Exception as exc:
+        logger.error("Irritator pipeline failed: %s", exc)
 
-    if new_pending:
-        save_pending(existing_pending + new_pending, cache_dir)
-        logger.info("Saved %d new pending source(s) for approval", len(new_pending))
+    if verbose and narratives:
+        print("\n=== DOMINANT NARRATIVES ===\n")
+        for i, n in enumerate(narratives, 1):
+            print(f"{i}. {n.claim}")
+            print(f"   Category: {n.category}")
+            print("   Assumptions:")
+            for a in n.implicit_assumptions:
+                print(f"     - {a}")
+            print(f"   Why challenge: {n.why_worth_challenging}\n")
+
+    if verbose and all_ranked:
+        print("\n=== COUNTER-SIGNALS ===\n")
+        for r in all_ranked:
+            print(f"[{r.score}/10] {r.signal.title}")
+            print(f"   {r.signal.url}")
+            print(f"   Narrative: {r.narrative_claim[:60]}")
+            print(f"   Reasoning: {r.reasoning}\n")
+
+    # Delivery (Phase 6)
+    if dry_run:
+        print(combined)
+        if all_ranked:
+            print("\n=== COUNTER-SIGNALS ===\n")
+            for r in all_ranked:
+                print(f"[{r.score}/10] {r.signal.title}")
+                print(f"   {r.signal.url}")
+                print(f"   {r.reasoning}\n")
+        return 0
+
+    from src.delivery import send_counter_signals, send_radar, write_digest
+
+    total_articles = sum(len(arts) for arts in articles_by_category.values())
+    total_sources = len(articles_by_category)
+
+    # Obsidian markdown
+    md_path = write_digest(
+        combined,
+        config,
+        ranked_signals=all_ranked or None,
+        sources_count=total_sources,
+        articles_count=total_articles,
+    )
+    if md_path:
+        logger.info("Markdown digest written to %s", md_path)
+
+    # Telegram
+    if config.telegram.enabled:
+        tg_ok = await send_radar(combined, config)
+        if tg_ok:
+            logger.info("Radar digest sent to Telegram")
+        if all_ranked:
+            await send_counter_signals(all_ranked, config)
 
     return 0
 
 
 async def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint. Returns exit code (0 = success, 1 = critical failure)."""
-    args = _parse_args(argv)
+    parser = argparse.ArgumentParser(
+        description="Daily News Digest — Radar + Irritator v2"
+    )
+    parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to config.yaml (default: config.yaml)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run pipeline without sending to Telegram or writing files",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate config and env vars, then exit",
+    )
+    parser.add_argument(
+        "--radar-only",
+        action="store_true",
+        help="Run only the radar pipeline (skip irritator)",
+    )
+    args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
-    try:
-        if args.check:
-            return await check_config(config_path=args.config)
-
-        if args.discover:
-            return await discover_sources(config_path=args.config)
-
-        stats = await run(config_path=args.config, dry_run=args.dry_run)
-        _print_stats(stats)
-        # Partial Telegram delivery with no markdown fallback means the user
-        # received an incomplete digest and has no way to see the full content.
-        # Exit 1 so GitHub Actions triggers the failure notification step.
-        if stats.telegram_partial and not stats.markdown_saved:
-            return 1
-        # If new articles were collected but nothing was delivered to any channel
-        # (both Telegram and markdown failed/disabled), treat as a critical failure
-        # so the failure notification step fires.
-        if (
-            not args.dry_run
-            and stats.new_articles > 0
-            and not (stats.telegram_sent or stats.markdown_saved or stats.telegram_partial)
-        ):
-            logger.error(
-                "No delivery channel produced output despite %d new articles — "
-                "check Telegram credentials and markdown_to_repo config.",
-                stats.new_articles,
-            )
-            return 1
-        return 0
-    except FileNotFoundError as exc:
-        logger.error("Config file not found: %s", exc)
-        return 1
-    except ValueError as exc:
-        logger.error("Configuration error: %s", exc)
-        return 1
-    except EnvironmentError as exc:
-        logger.error("Environment setup error: %s", exc)
-        return 1
-    except AllFeedsFailedError as exc:
-        logger.error("All feeds failed: %s", exc)
-        return 1
-    except RuntimeError as exc:
-        logger.error("LLM error — digest generation failed: %s", exc)
-        return 1
-    except Exception as exc:
-        logger.error("Unexpected error: %s", exc, exc_info=True)
-        return 1
+    if args.check:
+        return await check_config(args.config)
+    return await run(args.config, args.dry_run, args.radar_only, args.verbose)
