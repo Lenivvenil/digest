@@ -1,4 +1,4 @@
-"""Tests for src/collector.py"""
+"""Tests for src/radar/collector.py"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import socket as _socket
 
 import pytest
 
-from src.collector import (
+from src.radar.collector import (
     AllFeedsFailedError,
     Article,
     article_hash,
@@ -24,11 +24,22 @@ from src.collector import (
     save_dedup_cache,
 )
 from src._dns_pinning import ValidatedURL as _ValidatedURL
-from src.config import Config, DeliveryConfig, DigestConfig, LLMConfig, ProviderConfig, SourceConfig
+from src.config import (
+    Config,
+    FiltersConfig,
+    IrritatorConfig,
+    LLMConfig,
+    ObsidianConfig,
+    ProviderConfig,
+    RadarConfig,
+    SourceConfig,
+    TelegramConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _rfc2822(hours_ago: int = 2) -> str:
     """Return an RFC 2822 date string for a recent time."""
@@ -100,23 +111,21 @@ def make_source(
     return SourceConfig(name=name, url=url, category=category, enabled=enabled, priority=priority)
 
 
-def make_config(
+def _make_config(
     sources: list[SourceConfig] | None = None,
-    max_articles_per_source: int = 10,
-    max_total_articles: int = 50,
+    max_articles_per_category: int = 10,
+    blocklist_keywords: list[str] | None = None,
 ) -> Config:
     if sources is None:
         sources = [make_source()]
     return Config(
-        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="claude-sonnet-4-20250514")]),
-        delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
-        digest=DigestConfig(
-            language="ru",
-            max_articles_per_source=max_articles_per_source,
-            max_total_articles=max_total_articles,
-            summary_style="analytical",
-        ),
+        llm=LLMConfig(providers=[ProviderConfig(name="groq", model="llama-3.3-70b-versatile")]),
+        radar=RadarConfig(max_articles_per_category=max_articles_per_category),
+        irritator=IrritatorConfig(),
         sources=sources,
+        filters=FiltersConfig(blocklist_keywords=blocklist_keywords or []),
+        telegram=TelegramConfig(enabled=False),
+        obsidian=ObsidianConfig(enabled=False),
     )
 
 
@@ -134,18 +143,13 @@ def _make_fake_validated(url: str) -> _ValidatedURL:
 
 @pytest.fixture(autouse=True)
 def _mock_validate_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch _validate_url in collector to avoid real DNS lookups in tests.
-
-    Tests that specifically exercise SSRF rejection should override this by
-    patching src.collector._validate_url themselves (their patch takes precedence
-    because monkeypatch is function-scoped and applied after the autouse fixture).
-    """
+    """Patch _validate_url in collector to avoid real DNS lookups in tests."""
     monkeypatch.setattr(
-        "src.collector._validate_url",
+        "src.radar.collector._validate_url",
         lambda url: _make_fake_validated(url),
     )
     monkeypatch.setattr(
-        "src.collector._pin_dns",
+        "src.radar.collector._pin_dns",
         lambda hostname, addrinfos: _NullCtx(),
     )
 
@@ -163,6 +167,7 @@ class _NullCtx:
 # ---------------------------------------------------------------------------
 # Unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestStripHtml:
     def test_removes_tags(self) -> None:
@@ -262,6 +267,7 @@ class TestPruneCache:
 # Integration-style tests using mocked HTTP
 # ---------------------------------------------------------------------------
 
+
 def make_http_response(content: bytes, status_code: int = 200) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
@@ -280,7 +286,7 @@ async def test_collect_rss_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
@@ -300,7 +306,7 @@ async def test_collect_atom_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source(name="Atom", url="https://atom.example.com/feed")])
+    config = _make_config(sources=[make_source(name="Atom", url="https://atom.example.com/feed")])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(ATOM_SAMPLE.encode())
@@ -318,7 +324,7 @@ async def test_collect_deduplication(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
@@ -342,7 +348,7 @@ async def test_collect_malformed_feed_continues(
 
     good_source = make_source(name="Good", url="https://good.example.com/feed", category="Tech")
     bad_source = make_source(name="Bad", url="https://bad.example.com/feed", category="Tech")
-    config = make_config(sources=[bad_source, good_source])
+    config = _make_config(sources=[bad_source, good_source])
 
     call_count = 0
 
@@ -357,7 +363,6 @@ async def test_collect_malformed_feed_continues(
         result, _ = await collect(config)
 
     assert call_count == 2
-    # Good feed should still produce articles
     assert len(result.get("Tech", [])) > 0
 
 
@@ -371,7 +376,7 @@ async def test_collect_http_error_continues(
 
     good_source = make_source(name="Good", url="https://good.example.com/feed")
     bad_source = make_source(name="Bad", url="https://bad.example.com/feed")
-    config = make_config(sources=[good_source, bad_source])
+    config = _make_config(sources=[good_source, bad_source])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         if "bad" in url:
@@ -392,7 +397,7 @@ async def test_collect_all_feeds_http_error_raises(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(b"", status_code=500)
@@ -410,18 +415,18 @@ async def test_collect_timeout_continues(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    import httpx
+    import httpx as _httpx
 
     good_source = make_source(name="Good", url="https://good.example.com/feed")
-    slow_source = make_source(name="Slow", url="https://slow.example.com/feed")
-    config = make_config(sources=[good_source, slow_source])
+    bad_source = make_source(name="Bad", url="https://bad.example.com/feed")
+    config = _make_config(sources=[good_source, bad_source])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
-        if "slow" in url:
-            raise httpx.TimeoutException("timeout")
+        if "bad" in url:
+            raise _httpx.TimeoutException("timed out")
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) > 0
@@ -435,26 +440,27 @@ async def test_collect_all_feeds_timeout_raises(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    import httpx
+    import httpx as _httpx
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
-        raise httpx.TimeoutException("timeout")
+        raise _httpx.TimeoutException("timed out")
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
 
 
 @pytest.mark.asyncio
-async def test_collect_respects_max_per_source(
+async def test_collect_respects_max_per_category(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """max_articles_per_category=1 should limit a single-category run to 1 article."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()], max_articles_per_source=1)
+    config = _make_config(sources=[make_source()], max_articles_per_category=1)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
@@ -466,9 +472,10 @@ async def test_collect_respects_max_per_source(
 
 
 @pytest.mark.asyncio
-async def test_collect_respects_max_total(
+async def test_collect_respects_total_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """total_budget = max_articles_per_category * n_categories; enforced across all sources."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
@@ -476,7 +483,8 @@ async def test_collect_respects_max_total(
         make_source(name=f"S{i}", url=f"https://s{i}.example.com/feed", category="Tech")
         for i in range(3)
     ]
-    config = make_config(sources=sources, max_total_articles=3)
+    # 3 sources, 1 category → total_budget = max_per_cat * 1 = 3
+    config = _make_config(sources=sources, max_articles_per_category=3)
 
     def make_unique_rss(idx: int) -> bytes:
         return textwrap.dedent(f"""\
@@ -537,7 +545,7 @@ async def test_collect_filters_old_articles(
         </rss>
     """)
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(old_rss.encode())
@@ -559,7 +567,7 @@ async def test_collect_groups_by_category(
         make_source(name="Tech Feed", url="https://t.example.com/feed", category="Tech"),
         make_source(name="Finance Feed", url="https://f.example.com/feed", category="Finance"),
     ]
-    config = make_config(sources=sources)
+    config = _make_config(sources=sources)
 
     def make_rss_for(domain: str) -> bytes:
         return textwrap.dedent(f"""\
@@ -594,7 +602,7 @@ async def test_collect_html_stripped_in_description(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
@@ -611,6 +619,7 @@ async def test_collect_html_stripped_in_description(
 # ---------------------------------------------------------------------------
 # allocate_slots tests
 # ---------------------------------------------------------------------------
+
 
 class TestAllocateSlots:
     def test_proportional(self) -> None:
@@ -635,7 +644,6 @@ class TestAllocateSlots:
         slots = allocate_slots(sources, total_budget=10)
         assert slots["A"] == 1
         assert slots["B"] == 1
-
 
 
 @pytest.mark.asyncio
@@ -667,8 +675,8 @@ async def test_collect_respects_priority(
 
     high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
     low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
-    # Budget=6, weights=6 → High gets round(6*5/6)=5 slots, Low gets round(6*1/6)=1 slot
-    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
+    # Budget=6 (max_per_cat=6, 1 category), weights=6 → High=5 slots, Low=1 slot
+    config = _make_config(sources=[high, low], max_articles_per_category=6)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         prefix = "High" if "high" in url else "Low"
@@ -709,12 +717,13 @@ async def test_collect_redistributes_unused_slots(
             </rss>
         """).encode()
 
-    # priority=5 quiet feed gets large slot allocation but only has 0 articles.
-    # priority=1 active feed has 5 articles but only gets 1 proportional slot.
+    # Quiet gets large proportional slot but has 0 articles.
+    # Active has 5 articles but only gets 1 proportional slot.
     # With redistribution the active feed should fill the remaining budget.
     quiet = make_source(name="Quiet", url="https://quiet.example.com/feed", category="Tech", priority=5)
     active = make_source(name="Active", url="https://active.example.com/feed", category="Tech", priority=1)
-    config = make_config(sources=[quiet, active], max_total_articles=6, max_articles_per_source=5)
+    # Budget = max_per_cat * 1 category = 5
+    config = _make_config(sources=[quiet, active], max_articles_per_category=5)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         if "quiet" in url:
@@ -726,303 +735,143 @@ async def test_collect_redistributes_unused_slots(
 
     total = sum(len(v) for v in result.values())
     active_count = sum(1 for a in result.get("Tech", []) if a.source == "Active")
-    # Without redistribution only 1 article would be collected; with it up to 5 should be.
     assert active_count > 1
     assert total > 1
 
 
 # ---------------------------------------------------------------------------
-# effective_priorities tests
+# Blocklist filtering tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_collect_uses_effective_priorities(
+async def test_collect_blocklist_filters_by_title(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When effective_priorities are provided, they override static priorities."""
+    """Articles whose title matches a blocklist keyword must be excluded."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
-        items = "\n".join(
-            f"""<item>
-              <title>{prefix} Article {i}</title>
-              <link>https://{prefix.lower()}.example.com/{i}</link>
-              <description>Body {i}</description>
-              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
-            </item>"""
-            for i in range(count)
-        )
-        return textwrap.dedent(f"""\
-            <?xml version="1.0" encoding="UTF-8"?>
-            <rss version="2.0">
-              <channel><title>{prefix}</title>
-                {items}
-              </channel>
-            </rss>
-        """).encode()
-
-    # Static: High=5, Low=1. Effective: flip them — High=1, Low=5.
-    high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
-    low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
-    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
-
-    effective = {"High": 1, "Low": 5}
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        prefix = "High" if "high" in url else "Low"
-        return make_http_response(make_multi_rss(prefix, count=5))
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config, effective_priorities=effective)
-
-    low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
-    high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
-    # With flipped effective priorities, Low should get more slots
-    assert low_count > high_count
-
-
-@pytest.mark.asyncio
-async def test_collect_falls_back_to_static_priorities(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When effective_priorities is None, static priorities are used."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
-        items = "\n".join(
-            f"""<item>
-              <title>{prefix} Article {i}</title>
-              <link>https://{prefix.lower()}.example.com/{i}</link>
-              <description>Body {i}</description>
-              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
-            </item>"""
-            for i in range(count)
-        )
-        return textwrap.dedent(f"""\
-            <?xml version="1.0" encoding="UTF-8"?>
-            <rss version="2.0">
-              <channel><title>{prefix}</title>
-                {items}
-              </channel>
-            </rss>
-        """).encode()
-
-    high = make_source(name="High", url="https://high.example.com/feed", category="Tech", priority=5)
-    low = make_source(name="Low", url="https://low.example.com/feed", category="Tech", priority=1)
-    config = make_config(sources=[high, low], max_total_articles=6, max_articles_per_source=5)
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        prefix = "High" if "high" in url else "Low"
-        return make_http_response(make_multi_rss(prefix, count=5))
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config, effective_priorities=None)
-
-    high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
-    low_count = sum(1 for a in result.get("Tech", []) if a.source == "Low")
-    # With static priorities, High (priority=5) should get more
-    assert high_count > low_count
-
-
-# ---------------------------------------------------------------------------
-# Trial source slot budget tests
-# ---------------------------------------------------------------------------
-
-
-class TestAllocateSlotsTrial:
-    def test_trial_sources_get_separate_budget(self) -> None:
-        """Trial sources should use trial_budget, reserved from total budget."""
-        regular = make_source(name="Regular", priority=5)
-        trial = SourceConfig(
-            name="Trial", url="https://t.com/feed", category="Tech",
-            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
-        )
-        slots = allocate_slots([regular, trial], total_budget=10, trial_budget=2)
-        # Regular should get total_budget - trial_budget = 8
-        assert slots["Regular"] == 8
-        # Trial should get all 2 of the trial budget
-        assert slots["Trial"] == 2
-
-    def test_trial_no_budget_treated_as_regular(self) -> None:
-        """Without trial_budget, trial sources compete with regular sources."""
-        regular = make_source(name="Regular", priority=5)
-        trial = SourceConfig(
-            name="Trial", url="https://t.com/feed", category="Tech",
-            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
-        )
-        slots = allocate_slots([regular, trial], total_budget=8)
-        # total_weight=8, Regular=round(8*5/8)=5, Trial=round(8*3/8)=3
-        assert slots["Regular"] == 5
-        assert slots["Trial"] == 3
-
-    def test_trial_budget_reserved_from_regular(self) -> None:
-        """Trial budget is subtracted from total, so regular sources get the remainder."""
-        sources = [
-            make_source(name="R1", priority=3),
-            make_source(name="R2", priority=3),
-            SourceConfig(
-                name="T1", url="https://t.com", category="Tech",
-                enabled=True, priority=3, trial=True, trial_started="2026-03-01",
-            ),
-        ]
-        slots = allocate_slots(sources, total_budget=10, trial_budget=2)
-        # Regular sources split (10 - 2) = 8 evenly
-        assert slots["R1"] == 4
-        assert slots["R2"] == 4
-        # Trial gets from trial budget
-        assert slots["T1"] == 2
-
-    def test_trial_budget_equals_total_no_regular_overflow(self) -> None:
-        """When trial_budget == total_budget, regular sources must get 0 slots."""
-        regular_a = make_source(name="RegularA", priority=3)
-        regular_b = make_source(name="RegularB", priority=3)
-        trial = SourceConfig(
-            name="Trial", url="https://t.com/feed", category="Tech",
-            enabled=True, priority=3, trial=True, trial_started="2026-03-01",
-        )
-        slots = allocate_slots(
-            [regular_a, regular_b, trial], total_budget=2, trial_budget=2
-        )
-        assert slots["RegularA"] == 0
-        assert slots["RegularB"] == 0
-        assert slots["Trial"] == 2
-        assert sum(slots.values()) <= 2
-
-
-@pytest.mark.asyncio
-async def test_collect_trial_sources_separate_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Trial sources should get a separate slot budget when adaptive is enabled."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    from src.config import AdaptiveConfig
-
-    def make_multi_rss(prefix: str, count: int = 5) -> bytes:
-        items = "\n".join(
-            f"""<item>
-              <title>{prefix} Article {i}</title>
-              <link>https://{prefix.lower()}.example.com/{i}</link>
-              <description>Body {i}</description>
-              <pubDate>{_rfc2822(hours_ago=i + 1)}</pubDate>
-            </item>"""
-            for i in range(count)
-        )
-        return textwrap.dedent(f"""\
-            <?xml version="1.0" encoding="UTF-8"?>
-            <rss version="2.0">
-              <channel><title>{prefix}</title>
-                {items}
-              </channel>
-            </rss>
-        """).encode()
-
-    regular = make_source(name="Regular", url="https://regular.example.com/feed", priority=5)
-    trial = SourceConfig(
-        name="Trial", url="https://trial.example.com/feed", category="Tech",
-        enabled=True, priority=3, trial=True, trial_started="2026-03-01",
-    )
-    config = Config(
-        llm=LLMConfig(providers=[ProviderConfig(name="anthropic", model="test")]),
-        delivery=DeliveryConfig(telegram=False, markdown_to_repo=False, markdown_dir="digests"),
-        digest=DigestConfig(
-            language="ru", max_articles_per_source=10,
-            max_total_articles=10, summary_style="analytical",
-        ),
-        sources=[regular, trial],
-        adaptive=AdaptiveConfig(enabled=True, trial_slots=2),
-    )
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        prefix = "Regular" if "regular" in url else "Trial"
-        return make_http_response(make_multi_rss(prefix, count=5))
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    regular_count = sum(1 for a in result.get("Tech", []) if a.source == "Regular")
-    trial_count = sum(1 for a in result.get("Tech", []) if a.source == "Trial")
-    # Trial should get at most trial_slots=2
-    assert trial_count <= 2
-    # Regular should get more since it has the full budget
-    assert regular_count > trial_count
-
-
-@pytest.mark.asyncio
-async def test_collect_per_source_recency_hours(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Source with recency_hours=168 should include 48h-old articles that default 24h window would reject."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    source = SourceConfig(
-        name="Weekly Blog",
-        url="https://weekly.example.com/feed",
-        category="Tech",
-        enabled=True,
-        priority=3,
-        recency_hours=168,
-    )
-    config = make_config(sources=[source])
-
-    old_rss = textwrap.dedent(f"""\
+    blocked_rss = textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0">
-          <channel>
-            <title>Weekly Blog</title>
+          <channel><title>Test</title>
             <item>
-              <title>Week-Old Article</title>
-              <link>https://weekly.example.com/1</link>
-              <description>Published 48 hours ago</description>
-              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+              <title>Trump signs executive order on tariffs</title>
+              <link>https://example.com/blocked1</link>
+              <description>Politics news</description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
+            </item>
+            <item>
+              <title>Tech Innovation Breakthrough</title>
+              <link>https://example.com/allowed</link>
+              <description>Clean tech description</description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
             </item>
           </channel>
         </rss>
     """)
 
+    config = _make_config(sources=[make_source()], blocklist_keywords=["trump", "tariff"])
+
     async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(old_rss.encode())
+        return make_http_response(blocked_rss.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
-    # With recency_hours=168 the 48h-old article must be included
-    assert len(result.get("Tech", [])) == 1
+    articles = result.get("Tech", [])
+    titles = [a.title for a in articles]
+    assert "Tech Innovation Breakthrough" in titles
+    assert all("trump" not in t.lower() and "tariff" not in t.lower() for t in titles)
 
 
 @pytest.mark.asyncio
-async def test_collect_default_recency_rejects_48h_old(
+async def test_collect_blocklist_filters_by_description(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default recency_hours=24 should reject articles older than 24h."""
+    """Articles whose description matches a blocklist keyword must be excluded."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    # make_source() returns SourceConfig with default recency_hours=24
-    config = make_config(sources=[make_source()])
-
-    old_rss = textwrap.dedent(f"""\
+    blocked_rss = textwrap.dedent(f"""\
         <?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0">
-          <channel>
-            <title>Test Feed</title>
+          <channel><title>Test</title>
             <item>
-              <title>Old Article</title>
-              <link>https://example.com/old</link>
-              <description>Published 48 hours ago</description>
-              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+              <title>Economy Update</title>
+              <link>https://example.com/blocked2</link>
+              <description>Market reacts to new cryptocurrency scam wave</description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
+            </item>
+            <item>
+              <title>AI Research News</title>
+              <link>https://example.com/allowed2</link>
+              <description>Researchers publish new benchmark results</description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
             </item>
           </channel>
         </rss>
     """)
 
+    config = _make_config(sources=[make_source()], blocklist_keywords=["scam"])
+
     async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(old_rss.encode())
+        return make_http_response(blocked_rss.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    articles = result.get("Tech", [])
+    assert all("scam" not in a.description.lower() for a in articles)
+    assert any(a.title == "AI Research News" for a in articles)
+
+
+@pytest.mark.asyncio
+async def test_collect_empty_blocklist_passes_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty blocklist should not filter any articles."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    config = _make_config(sources=[make_source()], blocklist_keywords=[])
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(RSS_SAMPLE.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert len(result.get("Tech", [])) == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_blocklist_case_insensitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blocklist matching must be case-insensitive."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    mixed_case_rss = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel><title>Test</title>
+            <item>
+              <title>CRYPTO Market Update</title>
+              <link>https://example.com/crypto</link>
+              <description>Cryptocurrency prices surge</description>
+              <pubDate>{_rfc2822(hours_ago=2)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
+
+    config = _make_config(sources=[make_source()], blocklist_keywords=["crypto"])
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(mixed_case_rss.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
@@ -1077,7 +926,7 @@ async def test_fetch_feed_retries_503(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
     call_count = 0
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
@@ -1103,7 +952,7 @@ async def test_fetch_feed_retries_timeout(tmp_path: Path, monkeypatch: pytest.Mo
 
     import httpx as _httpx
 
-    config = make_config(sources=[make_source()])
+    config = _make_config(sources=[make_source()])
     call_count = 0
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
@@ -1128,7 +977,7 @@ async def test_fetch_feed_no_retry_404(tmp_path: Path, monkeypatch: pytest.Monke
 
     source_404 = make_source(name="Bad", url="https://example.com/bad")
     source_ok = make_source(name="Good", url="https://example.com/good", category="Tech")
-    config = make_config(sources=[source_404, source_ok])
+    config = _make_config(sources=[source_404, source_ok])
     calls: list[str] = []
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
@@ -1140,10 +989,8 @@ async def test_fetch_feed_no_retry_404(tmp_path: Path, monkeypatch: pytest.Monke
     with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
-    # 404 source should be attempted exactly once (no retry)
     bad_calls = [c for c in calls if "bad" in c]
     assert len(bad_calls) == 1
-    # Good source still returns articles
     assert "Tech" in result
 
 
@@ -1174,15 +1021,13 @@ async def test_fetch_feed_429_retry_after_honoured(
     (tmp_path / ".cache").mkdir()
 
     source = make_source(name="RateLimited", url="https://example.com/rl")
-    config = make_config(sources=[source])
+    config = _make_config(sources=[source])
     calls: list[str] = []
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
         calls.append(url)
         if len(calls) == 1:
-            # First attempt: 429 with Retry-After: 5
             return make_http_response_with_headers(b"", 429, {"Retry-After": "5"})
-        # Second attempt: success
         return make_http_response(make_rss_sample().encode())
 
     sleep_calls: list[float] = []
@@ -1195,11 +1040,8 @@ async def test_fetch_feed_429_retry_after_honoured(
     ):
         result, _ = await collect(config)
 
-    # Two GET attempts (initial + retry)
     assert len(calls) == 2
-    # Slept for the Retry-After value
     assert sleep_calls == [5.0]
-    # Articles returned after retry
     assert "Tech" in result
 
 
@@ -1212,7 +1054,7 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(
     (tmp_path / ".cache").mkdir()
 
     source = make_source(name="SlowServer", url="https://example.com/slow")
-    config = make_config(sources=[source])
+    config = _make_config(sources=[source])
     calls: list[str] = []
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
@@ -1227,13 +1069,10 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(
     with patch("asyncio.sleep", side_effect=fake_sleep), patch(
         "httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)
     ):
-        # Single source fails → AllFeedsFailedError
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
 
-    # Only one GET attempt — no retry when limit exceeded
     assert len(calls) == 1
-    # No sleep — skipped immediately
     assert sleep_calls == []
 
 
@@ -1246,22 +1085,19 @@ async def test_fetch_feed_ssrf_unsafe_url_skipped(
     (tmp_path / ".cache").mkdir()
 
     source = make_source(name="Internal", url="http://192.168.1.1/feed.rss")
-    config = make_config(sources=[source])
+    config = _make_config(sources=[source])
     calls: list[str] = []
 
-    # Override the autouse fixture: simulate validation failure for this URL
-    monkeypatch.setattr("src.collector._validate_url", lambda url: None)
+    monkeypatch.setattr("src.radar.collector._validate_url", lambda url: None)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:  # pragma: no cover
         calls.append(url)
         return make_http_response(make_rss_sample().encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        # All sources fail SSRF → AllFeedsFailedError
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
 
-    # The HTTP client must never have been called
     assert calls == []
 
 
@@ -1274,7 +1110,7 @@ async def test_fetch_feed_ssrf_valid_url_proceeds(
     (tmp_path / ".cache").mkdir()
 
     source = make_source(name="Good", url="https://example.com/feed.rss")
-    config = make_config(sources=[source])
+    config = _make_config(sources=[source])
     calls: list[str] = []
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
@@ -1288,156 +1124,81 @@ async def test_fetch_feed_ssrf_valid_url_proceeds(
 
 
 # ---------------------------------------------------------------------------
-# HTML source tests (_parse_html_page)
+# Recency window tests
 # ---------------------------------------------------------------------------
-
-from src.collector import _parse_html_page  # noqa: E402
-
-
-def make_html_source(
-    name: str = "HTML Source",
-    url: str = "https://example.com/newsroom",
-    selectors: dict[str, str] | None = None,
-) -> SourceConfig:
-    return SourceConfig(
-        name=name,
-        url=url,
-        category="Banking & Fintech",
-        enabled=True,
-        type="html",
-        selectors=selectors or {"article": ".news-item", "title": "h3"},
-    )
-
-
-HTML_NEWSROOM = b"""
-<html>
-<body>
-  <div class="news-list">
-    <div class="news-item">
-      <h3><a href="/news/1">Digital Banking Innovation</a></h3>
-      <p class="summary">Bank launches new AI-powered feature.</p>
-      <span class="date">2026-03-20</span>
-    </div>
-    <div class="news-item">
-      <h3><a href="https://example.com/news/2">Fintech Partnership</a></h3>
-      <p class="summary">Strategic alliance announced.</p>
-      <span class="date">2026-03-19</span>
-    </div>
-    <div class="news-item">
-      <h3>No link here</h3>
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-
-def test_parse_html_page_basic() -> None:
-    """Extracts articles from HTML page using CSS selectors."""
-    source = make_html_source(
-        selectors={
-            "article": ".news-item",
-            "title": "h3",
-            "link": "h3 a[href]",
-            "description": "p.summary",
-        }
-    )
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    assert len(articles) == 3
-    assert articles[0].title == "Digital Banking Innovation"
-    assert articles[0].link == "https://example.com/news/1"
-    assert articles[0].description == "Bank launches new AI-powered feature."
-    assert articles[0].source == "HTML Source"
-    assert articles[0].category == "Banking & Fintech"
-
-    assert articles[1].title == "Fintech Partnership"
-    assert articles[1].link == "https://example.com/news/2"
-
-    # Third item has no link — title still extracted
-    assert articles[2].title == "No link here"
-    assert articles[2].link == ""
-
-
-def test_parse_html_page_relative_links_resolved() -> None:
-    """Relative links are resolved to absolute URLs using source URL as base."""
-    source = make_html_source(
-        url="https://bankexample.com/newsroom",
-        selectors={"article": ".news-item", "title": "h3", "link": "a[href]"},
-    )
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    # First item has relative href "/news/1" → should become absolute
-    assert articles[0].link == "https://bankexample.com/news/1"
-    # Second item already has absolute URL — unchanged
-    assert articles[1].link == "https://example.com/news/2"
-
-
-def test_parse_html_page_no_matches_returns_empty() -> None:
-    """Returns empty list when 'article' selector matches nothing."""
-    source = make_html_source(selectors={"article": ".nonexistent", "title": "h3"})
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    assert articles == []
-
-
-def test_parse_html_page_title_selector_no_match_skips_item() -> None:
-    """Items where 'title' selector matches nothing are skipped."""
-    source = make_html_source(
-        selectors={"article": ".news-item", "title": "h2"}  # no h2 in items
-    )
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    assert articles == []
-
-
-def test_parse_html_page_date_parsed() -> None:
-    """ISO date in <span class='date'> is parsed into pub_date."""
-    source = make_html_source(
-        selectors={"article": ".news-item", "title": "h3", "date": "span.date"}
-    )
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    assert articles[0].pub_date is not None
-    assert articles[0].pub_date.year == 2026
-    assert articles[0].pub_date.month == 3
-    assert articles[0].pub_date.day == 20
-
-
-def test_parse_html_page_date_not_found_returns_none() -> None:
-    """Missing date selector leaves pub_date as None."""
-    source = make_html_source(
-        selectors={"article": ".news-item", "title": "h3"}
-    )
-    articles = _parse_html_page(HTML_NEWSROOM, source)
-    assert all(a.pub_date is None for a in articles)
 
 
 @pytest.mark.asyncio
-async def test_fetch_feed_html_type(tmp_path: Path) -> None:
-    """_fetch_feed dispatches to HTML parser when source.type == 'html'."""
-    from src.collector import collect
-
+async def test_collect_per_source_recency_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Source with recency_hours=168 should include 48h-old articles that default 24h window would reject."""
+    monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
+
     source = SourceConfig(
-        name="DBS Newsroom",
-        url="https://dbs.example.com/newsroom",
-        category="Banking & Fintech",
+        name="Weekly Blog",
+        url="https://weekly.example.com/feed",
+        category="Tech",
         enabled=True,
-        type="html",
-        selectors={"article": ".news-item", "title": "h3"},
+        priority=3,
+        recency_hours=168,
     )
-    config = make_config(sources=[source])
+    config = _make_config(sources=[source])
+
+    old_rss = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Weekly Blog</title>
+            <item>
+              <title>Week-Old Article</title>
+              <link>https://weekly.example.com/1</link>
+              <description>Published 48 hours ago</description>
+              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(HTML_NEWSROOM)
+        return make_http_response(old_rss.encode())
 
     with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        import os
-        orig = os.getcwd()
-        os.chdir(tmp_path)
-        try:
-            result, _ = await collect(config)
-        finally:
-            os.chdir(orig)
+        result, _ = await collect(config)
 
-    # collect() returns dict[category -> list[Article]]
-    all_articles = [a for articles in result.values() for a in articles]
-    assert len(all_articles) == 3
-    assert all_articles[0].source == "DBS Newsroom"
-    assert "Banking & Fintech" in result
+    assert len(result.get("Tech", [])) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_default_recency_rejects_48h_old(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default recency_hours=24 should reject articles older than 24h."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".cache").mkdir()
+
+    config = _make_config(sources=[make_source()])
+
+    old_rss = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Test Feed</title>
+            <item>
+              <title>Old Article</title>
+              <link>https://example.com/old</link>
+              <description>Published 48 hours ago</description>
+              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
+            </item>
+          </channel>
+        </rss>
+    """)
+
+    async def fake_get(url: str, timeout: float) -> MagicMock:
+        return make_http_response(old_rss.encode())
+
+    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+        result, _ = await collect(config)
+
+    assert result.get("Tech", []) == []
