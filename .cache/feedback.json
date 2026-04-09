@@ -39,16 +39,16 @@
   ],
   "last_update_id": 660808613,
   "last_digest_sources": [
-    "AWS Architecture Blog",
-    "Google Research Blog",
+    "CaixaBank Research",
     "Habr \u2014 Interesting",
     "Hacker News Best",
-    "Meta Engineering",
+    "Martin Fowler",
     "PYMNTS",
+    "ScyllaDB Blog",
     "Spot.uz",
     "TimescaleDB Blog"
   ],
-  "last_digest_time": "2026-04-09 04:32 UTC",
+  "last_digest_time": "2026-04-09 14:50 UTC",
   "source_decisions": {},
   "article_source_map": {
     "0d4d86f9": "Finextra",
@@ -662,6 +662,15 @@
     "e2db27e8": "TimescaleDB Blog",
     "ca045d9b": "PYMNTS",
     "30ddc2ab": "PYMNTS",
-    "13fcac4b": "PYMNTS"
+    "13fcac4b": "PYMNTS",
+    "c08594d9": "CaixaBank Research",
+    "d5865f39": "PYMNTS",
+    "b494975c": "PYMNTS",
+    "281dbcf9": "Hacker News Best",
+    "248163bd": "Habr \u2014 Interesting",
+    "3558c106": "Spot.uz",
+    "9c86246f": "Martin Fowler",
+    "7e5f62a5": "ScyllaDB Blog",
+    "25f11ec8": "TimescaleDB Blog"
   }
 }
