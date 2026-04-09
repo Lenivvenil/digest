@@ -161,7 +161,7 @@ async def generate_queries(
                 result,
             )
             continue
-        queries_by_narrative[narrative.claim] = result
+        queries_by_narrative[narrative.claim] = result  # type: ignore[assignment]
 
     total = sum(len(qs) for qs in queries_by_narrative.values())
     logger.info(
