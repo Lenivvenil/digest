@@ -1,506 +1,419 @@
-# Daily News Digest — Configuration
-# Edit this file to customize your digest
+# Daily News Digest v2 — Configuration
 
 llm:
-  # Provider chain: first entry is primary, rest are fallbacks.
-  # Supported providers: anthropic | gemini | groq | mistral | deepseek
-  # If a provider's API key is missing it is skipped (only the primary is required).
+  # Provider chain with role-based dispatch.
+  # role: list of roles this provider handles.
+  # Valid roles: summarize | extract_narratives | generate_queries | rank_signals | fallback
+  # Supported providers: gemini | groq | deepseek
   providers:
-    - name: "gemini"
-      model: "gemini-2.5-flash"
-    - name: "groq"
-      model: "llama-3.3-70b-versatile"
+    - name: groq
+      model: llama-3.3-70b-versatile
+      role: [summarize, extract_narratives]
+    - name: gemini
+      model: gemini-2.5-flash
+      role: [generate_queries, rank_signals]
+    - name: deepseek
+      model: deepseek-chat
+      role: [fallback]
 
-  # Per-category model routing (optional).
-  # Categories not listed here use the default providers chain above.
-  # If a routed provider's API key is missing, falls back to default chain.
-  routing:
-    - categories: ["AI & LLM", "AI Engineering"]
-      provider: "gemini"
-      model: "gemini-2.5-flash"
-    - categories: ["Banking & Fintech", "Payments & Fintech"]
-      provider: "groq"
-      model: "llama-3.3-70b-versatile"
-    - categories: ["Architecture & Distributed Systems"]
-      provider: "deepseek"
-      model: "deepseek-chat"
-
-delivery:
-  # Send digest via Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
-  telegram: true
-  # Commit generated markdown file back to the repo (useful with Obsidian git-sync)
-  markdown_to_repo: true
-  # Directory where markdown digest files are saved
-  markdown_dir: "digests"
-
-adaptive:
-  # Enable adaptive source management (dynamic priority recalculation,
-  # feedback collection, trial source lifecycle)
-  enabled: true
-  # Weight of user feedback (Telegram 👍/👎) in priority calculation (0.0–1.0)
-  feedback_weight: 0.3
-  # Weight of objective quality score in priority calculation (0.0–1.0)
-  score_weight: 0.5
-  # Weight of base (static) priority from config in priority calculation (0.0–1.0)
-  base_weight: 0.2
-  # Number of article slots reserved for trial sources (separate from main budget)
-  trial_slots: 4
-  # Effective priority range after recalculation
-  min_priority: 1
-  max_priority: 5
-
-digest:
+radar:
   # Language for digest content: "ru" (Russian) | "en" (English)
-  language: "ru"
-  # Maximum number of articles fetched per RSS source
-  max_articles_per_source: 5
-  # Maximum total articles across all sources
-  max_total_articles: 10
-  # Summary style:
-  #   "analytical" — with trend analysis and three perspectives for top topics (default)
-  #   "brief"      — one sentence per news item, no perspectives
-  #   "detailed"   — full context, three perspectives for all items
-  summary_style: "analytical"
-  # Enable three perspectives (🟢 Optimist / 🔴 Skeptic / ⚖️ Realist) for top articles.
-  # Applies to "analytical" and "detailed" styles only. Ignored in "brief" mode.
+  language: ru
+  # Maximum number of articles fetched per category
+  max_articles_per_category: 5
+  # Summary style: "analytical" | "brief" | "detailed"
+  summary_style: analytical
+  # Enable three perspectives (Optimist/Skeptic/Realist) for top items
   perspectives: false
+
+irritator:
+  # Maximum number of dominant narratives to extract from radar output
+  max_narratives: 5
+  # Search queries to generate per narrative
+  queries_per_narrative: 3
+  # Top counter-signals to surface per narrative
+  top_signals: 3
+  # Minimum signal relevance score (1-10) to include in output
+  min_signal_score: 7
+  # Sources to search for counter-signals
+  sources: [hackernews, reddit, arxiv, devto, lobsters]
+  # Subreddits to search when reddit is in sources
+  reddit_subreddits:
+    - programming
+    - ExperiencedDevs
+    - softwarearchitecture
+    - banking
+    - fintech
+
+filters:
+  # Articles containing any of these keywords (case-insensitive) are excluded
+  blocklist_keywords:
+    - election
+    - trump
+    - biden
+    - celebrity
+    - sports
+
+telegram:
+  # Send digest via Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+  enabled: true
+  # Send radar and counter-signals as separate messages
+  split_messages: true
+
+obsidian:
+  # Commit generated markdown file back to the repo (Obsidian git-sync)
+  enabled: true
+  output_dir: digests
 
 sources:
   # ============================================================
-  # Управление источниками
+  # Source management
   # ============================================================
-  # Каждый источник имеет следующие поля:
-  #
-  #   name     — отображаемое название (используется в дайджесте)
-  #   url      — прямая ссылка на RSS/Atom-ленту
-  #   category — тематика; статьи группируются по категориям в дайджесте.
-  #              Можно использовать любое название — новые категории
-  #              создаются автоматически.
-  #   enabled  — true/false; false отключает источник без удаления
-  #   priority — целое число от 1 до 5 (по умолчанию 3).
-  #              Определяет долю слотов из max_total_articles, которую
-  #              получает источник при сборке дайджеста.
-  #              5 — максимальный приоритет (фундаментальные/инженерные блоги),
-  #              1 — минимальный (широкие новостные фиды).
-  #
-  # Как добавить новый источник:
-  #   1. Найдите RSS-ленту сайта (обычно /feed, /rss, /feed.xml, /atom.xml)
-  #   2. Скопируйте любой блок ниже и заполните поля
-  #   3. Укажите нужную category (существующую или новую)
-  #
-  # Как добавить новую тематику:
-  #   Просто укажите новое название в поле category — оно появится
-  #   в дайджесте автоматически. Примеры: "Cybersecurity", "Crypto",
-  #   "RegTech", "Cloud & Infrastructure", "Central Asia"
-  #
-  # Как временно отключить источник:
-  #   Установите enabled: false
-  #
-  # ============================================================
+  # Fields:
+  #   name          — display name (used in digest)
+  #   url           — direct link to RSS/Atom feed
+  #   category      — topic group; articles are grouped by category
+  #   enabled       — true/false; false disables without deleting
+  #   priority      — integer 1-5 (default 3); higher = more article slots
+  #   recency_hours — only include articles published within this window (default 24)
 
   # Architecture & Distributed Systems
-  - name: "High Scalability"
-    url: "https://feeds.feedburner.com/HighScalability"
-    category: "Architecture & Distributed Systems"
+  - name: High Scalability
+    url: https://feeds.feedburner.com/HighScalability
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 5
     recency_hours: 168
 
-  - name: "Brendan Gregg's Blog"
-    url: "https://www.brendangregg.com/blog/rss.xml"
-    category: "Architecture & Distributed Systems"
+  - name: Brendan Gregg's Blog
+    url: https://www.brendangregg.com/blog/rss.xml
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 5
     recency_hours: 744
 
-  - name: "Increment Magazine"
-    url: "https://increment.com/feeds/all.rss"
-    category: "Architecture & Distributed Systems"
-    enabled: false  # 403, журнал заархивирован
-    priority: 5
-    recency_hours: 744
-
-  - name: "SRE Weekly"
-    url: "https://sreweekly.com/feed/"
-    category: "Architecture & Distributed Systems"
+  - name: SRE Weekly
+    url: https://sreweekly.com/feed/
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 4
     recency_hours: 168
 
-  - name: "Martin Fowler"
-    url: "https://martinfowler.com/feed.atom"
-    category: "Architecture & Distributed Systems"
+  - name: Martin Fowler
+    url: https://martinfowler.com/feed.atom
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 5
     recency_hours: 744
 
-  - name: "ACM Queue"
-    url: "https://queue.acm.org/rss/feeds/queuecontent.xml"
-    category: "Architecture & Distributed Systems"
+  - name: ACM Queue
+    url: https://queue.acm.org/rss/feeds/queuecontent.xml
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 5
     recency_hours: 168
 
-  - name: "ByteByteGo"
-    url: "https://blog.bytebytego.com/feed"
-    category: "Architecture & Distributed Systems"
+  - name: ByteByteGo
+    url: https://blog.bytebytego.com/feed
+    category: Architecture & Distributed Systems
     enabled: true
     priority: 3
     recency_hours: 168
 
   # Company Engineering Blogs
-  - name: "Stripe Engineering"
-    url: "https://stripe.com/blog/feed.rss"
-    category: "Company Engineering"
+  - name: Stripe Engineering
+    url: https://stripe.com/blog/feed.rss
+    category: Company Engineering
     enabled: true
     priority: 5
     recency_hours: 168
 
-  - name: "Netflix TechBlog"
-    url: "https://netflixtechblog.com/feed"
-    category: "Company Engineering"
-    enabled: false  # Medium-hosted, заблокирован с GitHub Actions IPs
-    priority: 5
-    recency_hours: 168
-
-  - name: "Uber Engineering"
-    url: "https://eng.uber.com/feed/"
-    category: "Company Engineering"
-    enabled: false  # 404, редиректы ведут в никуда
-    priority: 5
-    recency_hours: 168
-
-  - name: "Airbnb Tech Blog"
-    # blocked from GitHub Actions IPs (Medium-hosted)
-    url: "https://medium.com/airbnb-engineering/feed"
-    category: "Company Engineering"
-    enabled: false
-    priority: 4
-    recency_hours: 168
-
-  - name: "Cloudflare Blog"
-    url: "https://blog.cloudflare.com/rss/"
-    category: "Company Engineering"
+  - name: Cloudflare Blog
+    url: https://blog.cloudflare.com/rss/
+    category: Company Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
-  - name: "Grab Tech Blog"
-    url: "https://engineering.grab.com/feed.xml"
-    category: "Company Engineering"
+  - name: Grab Tech Blog
+    url: https://engineering.grab.com/feed.xml
+    category: Company Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
-  - name: "Shopify Engineering"
-    url: "https://shopify.engineering/blog.atom"
-    category: "Company Engineering"
+  - name: Shopify Engineering
+    url: https://shopify.engineering/blog.atom
+    category: Company Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
-  - name: "LinkedIn Engineering"
-    url: "https://engineering.linkedin.com/blog.rss"
-    category: "Company Engineering"
+  - name: LinkedIn Engineering
+    url: https://engineering.linkedin.com/blog.rss
+    category: Company Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
-  - name: "DoorDash Engineering"
-    url: "https://doordash.engineering/feed/"
-    category: "Company Engineering"
-    enabled: false  # 403, новый URL неподтверждён
-    priority: 3
-    recency_hours: 168
-
-  - name: "Spotify Engineering"
-    url: "https://engineering.atspotify.com/feed/"
-    category: "Company Engineering"
+  - name: Spotify Engineering
+    url: https://engineering.atspotify.com/feed/
+    category: Company Engineering
     enabled: true
     priority: 3
     recency_hours: 168
 
-  - name: "Slack Engineering"
-    url: "https://slack.engineering/feed/"
-    category: "Company Engineering"
+  - name: Slack Engineering
+    url: https://slack.engineering/feed/
+    category: Company Engineering
     enabled: true
     priority: 3
     recency_hours: 168
 
-  - name: "GitHub Engineering"
-    url: "https://github.blog/engineering.atom"
-    category: "Company Engineering"
+  - name: GitHub Engineering
+    url: https://github.blog/engineering.atom
+    category: Company Engineering
     enabled: true
     priority: 2
     recency_hours: 168
 
-  - name: "Discord Engineering"
-    url: "https://discord.com/blog/rss.xml"
-    category: "Company Engineering"
+  - name: Discord Engineering
+    url: https://discord.com/blog/rss.xml
+    category: Company Engineering
     enabled: true
     priority: 2
     recency_hours: 168
 
-  - name: "Meta Engineering"
-    url: "https://engineering.fb.com/feed/"
-    category: "Company Engineering"
+  - name: Meta Engineering
+    url: https://engineering.fb.com/feed/
+    category: Company Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
   # Cloud & Infrastructure
-  - name: "AWS Architecture Blog"
-    url: "https://aws.amazon.com/blogs/architecture/feed/"
-    category: "Cloud & Infrastructure"
+  - name: AWS Architecture Blog
+    url: https://aws.amazon.com/blogs/architecture/feed/
+    category: Cloud & Infrastructure
     enabled: true
     priority: 3
 
-  - name: "Kubernetes Blog"
-    url: "https://kubernetes.io/feed.xml"
-    category: "Cloud & Infrastructure"
+  - name: Kubernetes Blog
+    url: https://kubernetes.io/feed.xml
+    category: Cloud & Infrastructure
     enabled: true
     priority: 3
 
-  - name: "CNCF Blog"
-    url: "https://www.cncf.io/blog/feed"
-    category: "Cloud & Infrastructure"
+  - name: CNCF Blog
+    url: https://www.cncf.io/blog/feed
+    category: Cloud & Infrastructure
     enabled: true
     priority: 3
 
-  - name: "Istio Blog"
-    url: "https://istio.io/feed.xml"
-    category: "Cloud & Infrastructure"
+  - name: Istio Blog
+    url: https://istio.io/feed.xml
+    category: Cloud & Infrastructure
     enabled: true
     priority: 3
 
   # Data & Databases
-  - name: "Cockroach Labs Blog"
-    url: "https://www.cockroachlabs.com/blog/rss.xml"
-    category: "Data & Databases"
-    enabled: false  # 404, RSS не найден
-    priority: 4
-
-  - name: "ScyllaDB Blog"
-    url: "https://www.scylladb.com/feed/"
-    category: "Data & Databases"
+  - name: ScyllaDB Blog
+    url: https://www.scylladb.com/feed/
+    category: Data & Databases
     enabled: true
     priority: 4
 
-  - name: "Databricks Blog"
-    url: "https://databricks.com/feed"
-    category: "Data & Databases"
+  - name: Databricks Blog
+    url: https://databricks.com/feed
+    category: Data & Databases
     enabled: true
     priority: 3
 
-  - name: "Confluent Blog"
-    url: "https://www.confluent.io/blog/feed/"
-    category: "Data & Databases"
-    enabled: false  # 404, публичного RSS нет
-    priority: 4
-
-  - name: "TimescaleDB Blog"
-    url: "https://www.timescale.com/blog/rss/"
-    category: "Data & Databases"
+  - name: TimescaleDB Blog
+    url: https://www.timescale.com/blog/rss/
+    category: Data & Databases
     enabled: true
     priority: 4
 
   # Banking & Fintech
-  - name: "Finextra"
-    url: "https://www.finextra.com/rss/headlines.aspx"
-    category: "Banking & Fintech"
+  - name: Finextra
+    url: https://www.finextra.com/rss/headlines.aspx
+    category: Banking & Fintech
     enabled: true
     priority: 2
 
-  - name: "PYMNTS"
-    url: "https://www.pymnts.com/feed/"
-    category: "Banking & Fintech"
+  - name: PYMNTS
+    url: https://www.pymnts.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 2
 
-  - name: "Finovate"
-    url: "https://finovate.com/feed/"
-    category: "Banking & Fintech"
+  - name: Finovate
+    url: https://finovate.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 2
 
-  - name: "Monzo Tech Blog"
-    url: "https://monzo.com/feed.xml"
-    category: "Banking & Fintech"
+  - name: Monzo Tech Blog
+    url: https://monzo.com/feed.xml
+    category: Banking & Fintech
     enabled: true
     priority: 3
 
-  - name: "Adyen Tech Blog"
-    url: "https://adyen.medium.com/feed"
-    category: "Banking & Fintech"
+  - name: Adyen Tech Blog
+    url: https://adyen.medium.com/feed
+    category: Banking & Fintech
     enabled: true
     priority: 4
 
-  - name: "Plaid Blog"
-    url: "https://plaid.com/blog/rss.xml"
-    category: "Banking & Fintech"
+  - name: Plaid Blog
+    url: https://plaid.com/blog/rss.xml
+    category: Banking & Fintech
     enabled: true
     priority: 4
 
-  - name: "FinTech Futures"
-    url: "https://www.fintechfutures.com/feed/"
-    category: "Banking & Fintech"
+  - name: FinTech Futures
+    url: https://www.fintechfutures.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 3
 
-  - name: "The Financial Brand"
-    url: "https://thefinancialbrand.com/feed/"
-    category: "Banking & Fintech"
+  - name: The Financial Brand
+    url: https://thefinancialbrand.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 3
 
-  - name: "Bank Automation News"
-    url: "https://bankautomationnews.com/feed/"
-    category: "Banking & Fintech"
+  - name: Bank Automation News
+    url: https://bankautomationnews.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 3
 
-  - name: "Finextra AI"
-    url: "https://www.finextra.com/rss/channel.aspx?channel=ai"
-    category: "Banking & Fintech"
+  - name: Finextra AI
+    url: https://www.finextra.com/rss/channel.aspx?channel=ai
+    category: Banking & Fintech
     enabled: true
     priority: 2
 
-  - name: "Global Finance Magazine"
-    url: "https://gfmag.com/feed/"
-    category: "Banking & Fintech"
+  - name: Global Finance Magazine
+    url: https://gfmag.com/feed/
+    category: Banking & Fintech
     enabled: true
     priority: 2
 
-  - name: "JPMorgan Chase IR"
-    url: "https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml"
-    category: "Banking & Fintech"
+  - name: JPMorgan Chase IR
+    url: https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml
+    category: Banking & Fintech
     enabled: true
     priority: 3
-    trial: true
-    trial_days: 14
 
-    trial_started: 2026-03-27
-  - name: "Bank of America Newsroom"
-    url: "https://newsroom.bankofamerica.com/rss"
-    category: "Banking & Fintech"
+  - name: Bank of America Newsroom
+    url: https://newsroom.bankofamerica.com/rss
+    category: Banking & Fintech
     enabled: true
     priority: 3
-    trial: true
-    trial_days: 14
 
-    trial_started: 2026-03-27
-  - name: "CaixaBank Research"
-    url: "https://www.caixabankresearch.com/en/rss.xml"
-    category: "Banking & Fintech"
+  - name: CaixaBank Research
+    url: https://www.caixabankresearch.com/en/rss.xml
+    category: Banking & Fintech
     enabled: true
     priority: 3
-    trial: true
-    trial_days: 14
 
-    trial_started: 2026-03-27
-  - name: "Ally Financial IR"
-    url: "https://ally.gcs-web.com/rss/news-releases.xml"
-    category: "Banking & Fintech"
+  - name: Ally Financial IR
+    url: https://ally.gcs-web.com/rss/news-releases.xml
+    category: Banking & Fintech
     enabled: true
     priority: 2
-    trial: true
-    trial_days: 14
 
   # AI & LLM
-    trial_started: 2026-03-27
-  - name: "MIT Technology Review AI"
-    url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
-    category: "AI & LLM"
+  - name: MIT Technology Review AI
+    url: https://www.technologyreview.com/topic/artificial-intelligence/feed
+    category: AI & LLM
     enabled: true
     priority: 2
 
-  - name: "The Batch by Andrew Ng"
-    url: "https://www.deeplearning.ai/the-batch/feed/"
-    category: "AI & LLM"
+  - name: The Batch by Andrew Ng
+    url: https://www.deeplearning.ai/the-batch/feed/
+    category: AI & LLM
     enabled: true
     priority: 3
 
-  - name: "Hugging Face Blog"
-    url: "https://huggingface.co/blog/feed.xml"
-    category: "AI & LLM"
+  - name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    category: AI & LLM
     enabled: true
     priority: 3
 
-  - name: "OpenAI News"
-    url: "https://openai.com/news/rss.xml"
-    category: "AI & LLM"
+  - name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    category: AI & LLM
     enabled: true
     priority: 2
 
-  - name: "NVIDIA Developer Blog"
-    url: "https://developer.nvidia.com/blog/feed/"
-    category: "AI & LLM"
+  - name: NVIDIA Developer Blog
+    url: https://developer.nvidia.com/blog/feed/
+    category: AI & LLM
     enabled: true
     priority: 2
-
-  - name: "Ars Technica AI"
-    url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
-    category: "AI & LLM"
-    enabled: false
-    priority: 1
 
   # AI Engineering
-  - name: "Google Research Blog"
-    url: "https://research.google/blog/rss/"
-    category: "AI Engineering"
+  - name: Google Research Blog
+    url: https://research.google/blog/rss/
+    category: AI Engineering
     enabled: true
     priority: 4
     recency_hours: 168
 
   # Platform Engineering
-  - name: "Prometheus Blog"
-    url: "https://prometheus.io/blog/feed.xml"
-    category: "Platform Engineering"
+  - name: Prometheus Blog
+    url: https://prometheus.io/blog/feed.xml
+    category: Platform Engineering
     enabled: true
     priority: 4
 
-  - name: "OpenTelemetry Blog"
-    url: "https://opentelemetry.io/blog/feed.xml"
-    category: "Platform Engineering"
+  - name: OpenTelemetry Blog
+    url: https://opentelemetry.io/blog/feed.xml
+    category: Platform Engineering
     enabled: true
     priority: 4
 
   # Enterprise Architecture
-  - name: "InfoQ"
-    url: "https://feed.infoq.com/infoq/infoq"
-    category: "Enterprise Architecture"
+  - name: InfoQ
+    url: https://feed.infoq.com/infoq/infoq
+    category: Enterprise Architecture
     enabled: true
     priority: 4
 
-  - name: "ThoughtWorks Insights"
-    url: "https://www.thoughtworks.com/rss/insights.xml"
-    category: "Enterprise Architecture"
+  - name: ThoughtWorks Insights
+    url: https://www.thoughtworks.com/rss/insights.xml
+    category: Enterprise Architecture
     enabled: true
     priority: 3
     recency_hours: 168
 
-  - name: "Hacker News Best"
-    url: "https://hnrss.org/best"
-    category: "Enterprise Architecture"
+  - name: Hacker News Best
+    url: https://hnrss.org/best
+    category: Enterprise Architecture
     enabled: true
     priority: 1
 
   # Russian Tech
-  - name: "Habr — Interesting"
-    url: "https://habr.com/ru/rss/interesting/"
-    category: "Russian Tech"
+  - name: Habr — Interesting
+    url: https://habr.com/ru/rss/interesting/
+    category: Russian Tech
     enabled: true
     priority: 2
 
   # Geopolitics & CIS
-  - name: "Spot.uz"
-    url: "https://www.spot.uz/ru/rss/"
-    category: "Geopolitics & CIS"
+  - name: Spot.uz
+    url: https://www.spot.uz/ru/rss/
+    category: Geopolitics & CIS
     enabled: true
     priority: 2
 
-  - name: "Kun.uz EN"
-    url: "https://kun.uz/en/news.rss"
-    category: "Geopolitics & CIS"
+  - name: Kun.uz EN
+    url: https://kun.uz/en/news.rss
+    category: Geopolitics & CIS
     enabled: true
     priority: 2
