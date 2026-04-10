@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import httpx
 import pytest
@@ -10,12 +11,13 @@ import respx
 
 from src.delivery.telegram import (
     escape_markdownv2,
+    send_article_cards,
     send_counter_signals,
     send_radar,
     split_message,
     to_markdownv2,
 )
-
+from tests.factories import make_article, make_ranked_signal
 
 # ---------------------------------------------------------------------------
 # escape_markdownv2
@@ -109,7 +111,7 @@ class TestSplitMessage:
 # send_radar (async, mocked HTTP)
 # ---------------------------------------------------------------------------
 
-def _make_config(telegram_enabled: bool = True) -> object:
+def _make_config(telegram_enabled: bool = True) -> Any:
     class TelegramCfg:
         enabled = telegram_enabled
         split_messages = True
@@ -183,22 +185,11 @@ def _make_ranked_signal(
     score: int = 8,
     reasoning: str = "Good reasoning",
     narrative_claim: str = "AI replaces devs",
-) -> object:
-    class SignalObj:
-        pass
-    class RankedObj:
-        pass
-    s = SignalObj()
-    s.url = url
-    s.title = title
-    s.snippet = "snippet"
-    s.source_name = "hackernews"
-    r = RankedObj()
-    r.signal = s
-    r.score = score
-    r.reasoning = reasoning
-    r.narrative_claim = narrative_claim
-    return r
+) -> Any:
+    return make_ranked_signal(
+        url=url, title=title, score=score,
+        reasoning=reasoning, narrative_claim=narrative_claim,
+    )
 
 
 @pytest.mark.asyncio
@@ -226,3 +217,80 @@ class TestSendCounterSignals:
         monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
         result = await send_counter_signals([_make_ranked_signal()], _make_config())
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# send_article_cards (async, mocked HTTP)
+# ---------------------------------------------------------------------------
+
+def _make_article(
+    title: str = "Test Article",
+    link: str = "https://example.com/article",
+    description: str = "A short description of the article",
+    source: str = "hackernews",
+) -> Any:
+    return make_article(title=title, link=link, description=description, source=source)
+
+
+@pytest.mark.asyncio
+class TestSendArticleCards:
+    async def test_sends_cards_with_keyboard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        articles = {"tech": [_make_article(), _make_article(title="Second", link="https://b.com")]}
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result = await send_article_cards(articles, _make_config())
+
+        assert len(result) == 2
+        assert route.call_count == 2
+
+    async def test_returns_hash_source_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        articles = {"ai": [_make_article(source="reddit")]}
+
+        with respx.mock:
+            respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result = await send_article_cards(articles, _make_config())
+
+        assert len(result) == 1
+        source_name = list(result.values())[0]
+        assert source_name == "reddit"
+        hash_key = list(result.keys())[0]
+        assert len(hash_key) == 8
+
+    async def test_missing_token_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+        result = await send_article_cards({"tech": [_make_article()]}, _make_config())
+        assert result == {}
+
+    async def test_card_failure_continues(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        articles = {"tech": [_make_article(), _make_article(title="Good", link="https://good.com")]}
+
+        call_count = 0
+
+        def _side_effect(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("fail")
+            return httpx.Response(200, json={"ok": True})
+
+        with respx.mock:
+            respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=_side_effect)
+            result = await send_article_cards(articles, _make_config())
+
+        # Second card should still be in the map even if first failed
+        assert len(result) == 2

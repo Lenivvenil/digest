@@ -13,10 +13,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import feedparser  # type: ignore[import-untyped]
+import feedparser
 import httpx
 
-from src._dns_pinning import pin_dns as _pin_dns, validate_url as _validate_url
+from src._dns_pinning import pin_dns as _pin_dns
+from src._dns_pinning import validate_url as _validate_url
 from src._util import atomic_json_write
 from src.config import Config, SourceConfig
 from src.filters import is_blocked

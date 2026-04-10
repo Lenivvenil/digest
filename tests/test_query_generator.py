@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.irritator.narrative_extractor import Narrative
 from src.irritator.query_generator import (
     SearchQuery,
     _build_prompt,
     _parse_queries,
     generate_queries,
 )
-
+from tests.factories import make_narrative
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,16 +23,15 @@ from src.irritator.query_generator import (
 def _make_narrative(
     claim: str = "AI will replace all developers",
     category: str = "AI",
-) -> Narrative:
-    return Narrative(
+) -> Any:
+    return make_narrative(
         claim=claim,
         category=category,
         implicit_assumptions=["AI is infallible", "Developer skills are commoditized"],
-        why_worth_challenging="This ignores documented failures.",
     )
 
 
-def _valid_query_dicts(n: int = 3) -> list[dict]:
+def _valid_query_dicts(n: int = 3) -> list[dict[str, str]]:
     sources = ["hackernews", "reddit", "arxiv"]
     return [
         {
@@ -48,7 +47,7 @@ def _make_config(
     language: str = "ru",
     queries_per_narrative: int = 3,
     sources: list[str] | None = None,
-):
+) -> Any:
     class IrritatorCfg:
         pass
     class RadarCfg:
@@ -57,9 +56,9 @@ def _make_config(
         irritator = IrritatorCfg()
         radar = RadarCfg()
 
-    Cfg.radar.language = language
-    Cfg.irritator.queries_per_narrative = queries_per_narrative
-    Cfg.irritator.sources = sources or ["hackernews", "reddit", "arxiv"]
+    Cfg.radar.language = language  # type: ignore[attr-defined]
+    Cfg.irritator.queries_per_narrative = queries_per_narrative  # type: ignore[attr-defined]
+    Cfg.irritator.sources = sources or ["hackernews", "reddit", "arxiv"]  # type: ignore[attr-defined]
     return Cfg()
 
 

@@ -132,6 +132,7 @@ async def _send_chunk(
     chat_id: str,
     md2_text: str,
     disable_notification: bool = False,
+    reply_markup: dict[str, Any] | None = None,
 ) -> None:
     """Send a single MarkdownV2 chunk to Telegram with retry logic."""
     payload: dict[str, Any] = {
@@ -140,6 +141,8 @@ async def _send_chunk(
         "parse_mode": "MarkdownV2",
         "disable_notification": disable_notification,
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
 
     for attempt in range(_MAX_RETRIES):
         try:
@@ -186,6 +189,78 @@ async def send_radar(text: str, config: Any) -> bool:
 
     logger.info("Radar digest sent to Telegram (%d chunks)", len(chunks))
     return True
+
+
+async def send_article_cards(
+    articles_by_category: dict[str, list[Any]],
+    config: Any,
+) -> dict[str, str]:
+    """Send one Telegram card per article with voting buttons.
+
+    Returns mapping of 8-char article hash -> source name for feedback attribution.
+    """
+    from src.radar.collector import article_hash
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set, skipping cards")
+        return {}
+
+    api_url = _API_BASE.format(token=token)
+    article_source_map: dict[str, str] = {}
+
+    async with httpx.AsyncClient() as client:
+        for category, articles in articles_by_category.items():
+            for art in articles:
+                hash8 = article_hash(art.title, art.link)[:8]
+                article_source_map[hash8] = art.source
+
+                title_esc = escape_markdownv2(art.title)
+                url_esc = art.link.replace("\\", "\\\\").replace(")", "\\)")
+                source_esc = escape_markdownv2(art.source)
+                cat_esc = escape_markdownv2(category)
+
+                desc = art.description[:200]
+                if len(art.description) > 200:
+                    desc += "\u2026"
+                desc_esc = escape_markdownv2(desc)
+
+                text = (
+                    f"[{title_esc}]({url_esc})\n"
+                    f"*{source_esc}* \u00b7 _{cat_esc}_\n\n"
+                    f"{desc_esc}"
+                )
+
+                keyboard: dict[str, Any] = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "\U0001f44d", "callback_data": f"fb:a:g:{hash8}"},
+                            {"text": "\U0001f44e", "callback_data": f"fb:a:b:{hash8}"},
+                        ]
+                    ]
+                }
+
+                try:
+                    await _send_chunk(
+                        client,
+                        api_url,
+                        chat_id,
+                        text,
+                        disable_notification=True,
+                        reply_markup=keyboard,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to send card for '%s': %s", art.title[:50], exc
+                    )
+
+                await asyncio.sleep(0.5)
+
+    logger.info(
+        "Sent %d article cards to Telegram", len(article_source_map)
+    )
+    return article_source_map
 
 
 async def send_counter_signals(ranked_signals: list[Any], config: Any) -> bool:

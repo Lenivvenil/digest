@@ -14,7 +14,7 @@ from src.config import (
 )
 
 
-def _write_config(tmp_path: Path, content: str) -> Path:
+def _write_config(tmp_path: Path, content: str) -> str:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(textwrap.dedent(content), encoding="utf-8")
     return str(cfg)

@@ -2,27 +2,14 @@
 
 from __future__ import annotations
 
+import socket as _socket
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import socket as _socket
-
 import pytest
 
-from src.radar.collector import (
-    AllFeedsFailedError,
-    Article,
-    article_hash,
-    _is_recent,
-    _parse_pub_date,
-    _prune_cache,
-    _strip_html,
-    allocate_slots,
-    collect,
-    save_dedup_cache,
-)
 from src._dns_pinning import ValidatedURL as _ValidatedURL
 from src.config import (
     Config,
@@ -34,6 +21,18 @@ from src.config import (
     RadarConfig,
     SourceConfig,
     TelegramConfig,
+)
+from src.radar.collector import (
+    AllFeedsFailedError,
+    Article,
+    _is_recent,
+    _parse_pub_date,
+    _prune_cache,
+    _strip_html,
+    allocate_slots,
+    article_hash,
+    collect,
+    save_dedup_cache,
 )
 
 # ---------------------------------------------------------------------------
@@ -160,8 +159,8 @@ class _NullCtx:
     def __enter__(self) -> None:
         return None
 
-    def __exit__(self, *_: object) -> bool:
-        return False
+    def __exit__(self, *_: object) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------

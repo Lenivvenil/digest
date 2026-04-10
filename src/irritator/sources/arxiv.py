@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-import feedparser  # type: ignore[import-untyped]
+import feedparser
 import httpx
 
 from src.irritator.sources import Signal, _register

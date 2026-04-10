@@ -9,7 +9,6 @@ import pytest
 
 from src.main import _clean_summary, check_config, main, run
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -122,6 +121,43 @@ class TestCleanSummary:
 
     def test_strips_whitespace(self) -> None:
         assert _clean_summary("  hello  ") == "hello"
+
+    def test_removes_greeting_ru(self) -> None:
+        text = "Добрый день! Вот ваш дайджест\n\n## Tech\nNews here"
+        result = _clean_summary(text)
+        assert "Добрый день" not in result
+        assert "Tech" in result
+
+    def test_removes_daily_digest_ru(self) -> None:
+        text = "Ежедневный дайджест новостей для Technology Architect:\n\n## AI\nContent"
+        result = _clean_summary(text)
+        assert "Ежедневный дайджест" not in result
+        assert "Content" in result
+
+    def test_removes_daily_digest_en(self) -> None:
+        text = "Daily digest of news:\n\nContent"
+        result = _clean_summary(text)
+        assert "Daily digest" not in result
+
+    def test_removes_horizontal_rules(self) -> None:
+        text = "## Tech\nNews\n\n---\n\n## AI\nMore news"
+        result = _clean_summary(text)
+        assert "---" not in result
+        assert "Tech" in result
+        assert "AI" in result
+
+    def test_normalizes_category_header(self) -> None:
+        text = 'Категория «Финансы» содержит 5 статей'
+        result = _clean_summary(text)
+        assert result.startswith("## ")
+        assert "Финансы" in result
+        assert "содержит" not in result
+
+    def test_collapses_blank_lines(self) -> None:
+        text = "A\n\n\n\n\nB"
+        result = _clean_summary(text)
+        assert "\n\n\n" not in result
+        assert "A\n\nB" == result
 
 
 # ---------------------------------------------------------------------------

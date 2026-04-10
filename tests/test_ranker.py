@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,19 +16,14 @@ from src.irritator.ranker import (
     rank_signals,
 )
 from src.irritator.sources import Signal
-
+from tests.factories import make_narrative, make_signal
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _make_narrative(claim: str = "AI will replace developers") -> Narrative:
-    return Narrative(
-        claim=claim,
-        category="AI",
-        implicit_assumptions=["AI is infallible"],
-        why_worth_challenging="Ignores evidence.",
-    )
+    return make_narrative(claim=claim, why_worth_challenging="Ignores evidence.")
 
 
 def _make_signal(
@@ -35,13 +31,10 @@ def _make_signal(
     title: str = "Counter evidence",
     source: str = "hackernews",
 ) -> Signal:
-    return Signal(
-        url=url, title=title, snippet="Detailed counter argument",
-        source_name=source, published="2026-01-01", score=10.0,
-    )
+    return make_signal(url=url, title=title, source_name=source)
 
 
-def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict]:
+def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict[str, object]]:
     if scores is None:
         scores = [8, 6]
     return [
@@ -50,7 +43,7 @@ def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict]:
     ]
 
 
-def _make_config(language: str = "ru", min_score: int = 7, top_signals: int = 3):
+def _make_config(language: str = "ru", min_score: int = 7, top_signals: int = 3) -> Any:
     class IrritatorCfg:
         pass
     class RadarCfg:
@@ -58,9 +51,9 @@ def _make_config(language: str = "ru", min_score: int = 7, top_signals: int = 3)
     class Cfg:
         irritator = IrritatorCfg()
         radar = RadarCfg()
-    Cfg.radar.language = language
-    Cfg.irritator.min_signal_score = min_score
-    Cfg.irritator.top_signals = top_signals
+    Cfg.radar.language = language  # type: ignore[attr-defined]
+    Cfg.irritator.min_signal_score = min_score  # type: ignore[attr-defined]
+    Cfg.irritator.top_signals = top_signals  # type: ignore[attr-defined]
     return Cfg()
 
 

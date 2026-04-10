@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -9,7 +11,7 @@ import respx
 from src.irritator.sources.reddit import search_reddit
 
 
-def _make_config(subreddits: list[str] | None = None):
+def _make_config(subreddits: list[str] | None = None) -> Any:
     class IrritatorCfg:
         reddit_subreddits = subreddits or ["programming"]
     class Cfg:
@@ -17,7 +19,7 @@ def _make_config(subreddits: list[str] | None = None):
     return Cfg()
 
 
-def _reddit_response(posts: list[dict] | None = None) -> dict:
+def _reddit_response(posts: list[dict[str, object]] | None = None) -> dict[str, object]:
     if posts is None:
         posts = [
             {

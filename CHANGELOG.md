@@ -54,7 +54,7 @@
 
 ### Quality
 
-- 402 unit/integration тестов (pytest + pytest-asyncio + respx)
+- 260+ unit/integration тестов (pytest + pytest-asyncio + respx)
 - Покрытие: все модули src/
 - Lint: ruff (E, F, B rules)
 - Type checking: mypy (strict)

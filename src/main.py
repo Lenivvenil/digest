@@ -16,15 +16,45 @@ import logging
 import os
 import re
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.irritator.narrative_extractor import Narrative
+    from src.irritator.ranker import RankedSignal
 
 
 def _clean_summary(text: str) -> str:
-    """Remove redundant URL lines that duplicate links already in article titles."""
-    return re.sub(
+    """Remove LLM artifacts: greetings, redundant URLs, separators."""
+    # Remove redundant URL lines
+    text = re.sub(
         r"(?m)^\s*(Link|URL|Source|Read more|Ссылка|Источник|Читать далее)\s*:\s*https?://\S+\s*$",
         "",
         text,
-    ).strip()
+    )
+    # Remove LLM greetings and introductory phrases
+    text = re.sub(
+        r"(?m)^(Добрый день|Привет|Здравствуйте|Hello|Hi)!?\s*.*?(дайджест|digest).*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?m)^(Ежедневный дайджест|Daily digest|Today'?s digest|Вот ваш ежедневный).*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Remove standalone horizontal rules between categories
+    text = re.sub(r"(?m)^\s*---\s*$", "", text)
+    # Normalize "Категория «X» содержит N статей" → "## X"
+    text = re.sub(
+        r"(?m)^([\U0001f300-\U0001faff\u2600-\u27bf]?\s*)Категория\s*[«\"](.*?)[»\"]\s*(?:содержит.*)?$",
+        r"## \1\2",
+        text,
+    )
+    # Collapse 3+ consecutive blank lines to 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -118,8 +148,8 @@ async def run(
         validate_signals,
     )
 
-    narratives: list = []
-    all_ranked: list = []
+    narratives: list[Narrative] = []
+    all_ranked: list[RankedSignal] = []
     try:
         narratives = await extract_narratives(summaries, config)
         if narratives:
@@ -172,7 +202,7 @@ async def run(
                 print(f"   {r.reasoning}\n")
         return 0
 
-    from src.delivery import send_counter_signals, send_radar, write_digest
+    from src.delivery import send_article_cards, send_counter_signals, send_radar, write_digest
 
     total_articles = sum(len(arts) for arts in articles_by_category.values())
     total_sources = len(articles_by_category)
@@ -190,6 +220,13 @@ async def run(
 
     # Telegram
     if config.telegram.enabled:
+        article_source_map = await send_article_cards(
+            articles_by_category, config
+        )
+        if article_source_map:
+            logger.info(
+                "Sent %d article cards to Telegram", len(article_source_map)
+            )
         tg_ok = await send_radar(combined, config)
         if tg_ok:
             logger.info("Radar digest sent to Telegram")

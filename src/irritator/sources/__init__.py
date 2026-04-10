@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -32,9 +33,12 @@ class Signal:
 _ADAPTERS: dict[str, Any] = {}
 
 
-def _register(name: str):  # noqa: ANN202
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _register(name: str) -> Callable[[_F], _F]:
     """Decorator to register a source adapter."""
-    def decorator(func):  # noqa: ANN001, ANN202
+    def decorator(func: _F) -> _F:
         _ADAPTERS[name] = func
         return func
     return decorator
@@ -73,7 +77,8 @@ async def search_all_sources(
             return []
         async with semaphore:
             try:
-                return await adapter(query.query, config, client)
+                result: list[Signal] = await adapter(query.query, config, client)
+                return result
             except Exception as exc:
                 logger.warning(
                     "Source %s failed for query '%s': %s",

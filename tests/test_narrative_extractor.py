@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,7 +16,6 @@ from src.irritator.narrative_extractor import (
 )
 from src.radar.summarizer import CategorySummary
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ def _make_summary(category: str = "AI", text: str = "AI is changing everything."
     return CategorySummary(category=category, summary_text=text, article_count=count)
 
 
-def _valid_narrative_dicts(n: int = 2) -> list[dict]:
+def _valid_narrative_dicts(n: int = 2) -> list[dict[str, object]]:
     return [
         {
             "claim": f"Narrative claim {i}",
@@ -36,7 +36,7 @@ def _valid_narrative_dicts(n: int = 2) -> list[dict]:
     ]
 
 
-def _make_config(language: str = "ru", max_narratives: int = 5):
+def _make_config(language: str = "ru", max_narratives: int = 5) -> Any:
     """Minimal config stub for narrative extractor tests."""
     class IrritatorCfg:
         max_narratives = 5

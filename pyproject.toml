@@ -1,0 +1,42 @@
+[project]
+name = "daily-digest"
+version = "2.0.0"
+description = "Daily news digest generator with LLM summarization"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3",
+    "httpx>=0.28.1",
+    "feedparser>=6.0.12",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F811"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["feedparser.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=70"

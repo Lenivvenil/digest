@@ -2,19 +2,8 @@
 
 from __future__ import annotations
 
-from src.irritator.sources import Signal
 from src.irritator.validator import validate_signals
-
-
-def _make_signal(
-    url: str = "https://example.com/article",
-    title: str = "Test Signal",
-    snippet: str = "Some content",
-) -> Signal:
-    return Signal(
-        url=url, title=title, snippet=snippet,
-        source_name="hackernews", published="2026-01-01", score=10.0,
-    )
+from tests.factories import make_signal as _make_signal
 
 
 class TestValidateSignals:

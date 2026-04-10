@@ -2,37 +2,32 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
 from src.irritator.query_generator import SearchQuery
-from src.irritator.sources import Signal, search_all_sources
+from src.irritator.sources import search_all_sources
+from tests.factories import make_signal
 
 
 def _make_query(source: str = "hackernews", query: str = "test") -> SearchQuery:
     return SearchQuery(query=query, target_source=source, intent="find counter-signals")
 
 
-def _make_config(sources: list[str] | None = None):
+def _make_config(sources: list[str] | None = None) -> Any:
     class IrritatorCfg:
         pass
     class Cfg:
         irritator = IrritatorCfg()
-    Cfg.irritator.sources = sources or ["hackernews", "reddit"]
+    Cfg.irritator.sources = sources or ["hackernews", "reddit"]  # type: ignore[attr-defined]
     return Cfg()
 
 
-def _make_signal(source: str = "hackernews") -> Signal:
-    return Signal(
-        url="https://example.com",
-        title="Test",
-        snippet="snippet",
-        source_name=source,
-        published="2026-01-01",
-        score=10.0,
-    )
+def _make_signal(source: str = "hackernews") -> Any:
+    return make_signal(source_name=source, title="Test", snippet="snippet")
 
 
 @pytest.mark.asyncio

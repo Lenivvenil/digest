@@ -82,6 +82,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Используй ## для заголовков категорий. Используй эмодзи для категорий. Пропускай нерелевантные новости."
         ),
         "instructions_category_analytical": (
+            "НЕ добавляй приветствия, вводные фразы или заключения. "
+            "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
@@ -92,22 +94,28 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
             "Второстепенные новости получают обычный комментарий без перспектив. "
-            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+            "НЕ добавляй раздел трендов."
         ),
         "instructions_category_analytical_no_persp": (
+            "НЕ добавляй приветствия, вводные фразы или заключения. "
+            "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
-            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+            "НЕ добавляй раздел трендов."
         ),
         "instructions_category_brief": (
+            "НЕ добавляй приветствия, вводные фразы или заключения. "
+            "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Для каждой статьи дай одно предложение-комментарий. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат. "
             "НЕ добавляй отдельную строку Link:. "
             "Используй markdown-форматирование. Никаких перспектив. НЕ добавляй раздел трендов."
         ),
         "instructions_category_detailed": (
+            "НЕ добавляй приветствия, вводные фразы или заключения. "
+            "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
@@ -117,14 +125,16 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "🔴 **Скептик** — 1 предложение\n"
             "⚖️ **Реалист** — 1 предложение\n"
             "Перспективы должны представлять принципиально разные аргументы, а не просто разный тон. "
-            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+            "НЕ добавляй раздел трендов."
         ),
         "instructions_category_detailed_no_persp": (
+            "НЕ добавляй приветствия, вводные фразы или заключения. "
+            "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
-            "Используй эмодзи для заголовка категории. НЕ добавляй раздел трендов."
+            "НЕ добавляй раздел трендов."
         ),
         "instructions_trends": (
             "На основе саммари по категориям выдели 2-3 ключевых тренда дня. "
@@ -189,6 +199,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Use ## for category headers. Use emoji for categories. Skip irrelevant news."
         ),
         "instructions_category_analytical": (
+            "Do NOT add greetings, introductory phrases, or conclusions. "
+            "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a 1-2 sentence analytical comment. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
@@ -199,22 +211,28 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "⚖️ **Realist** — 1 sentence\n"
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
             "Minor news items get a regular comment without perspectives. "
-            "Use emoji for the category header. Do NOT add a trends section."
+            "Do NOT add a trends section."
         ),
         "instructions_category_analytical_no_persp": (
+            "Do NOT add greetings, introductory phrases, or conclusions. "
+            "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a 1-2 sentence analytical comment. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
-            "Use emoji for the category header. Do NOT add a trends section."
+            "Do NOT add a trends section."
         ),
         "instructions_category_brief": (
+            "Do NOT add greetings, introductory phrases, or conclusions. "
+            "Start directly with the category header in format ## Emoji Name.\n"
             "For each article write one sentence comment. "
             "Article titles already contain links in [Title](URL) format — preserve this format. "
             "Do NOT add a separate Link: line. "
             "Use markdown formatting. No perspectives. Do NOT add a trends section."
         ),
         "instructions_category_detailed": (
+            "Do NOT add greetings, introductory phrases, or conclusions. "
+            "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a detailed analytical comment with full context. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
@@ -224,14 +242,16 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "🔴 **Skeptic** — 1 sentence\n"
             "⚖️ **Realist** — 1 sentence\n"
             "Perspectives must represent genuinely different reasoning, not just tonal variation. "
-            "Use emoji for the category header. Do NOT add a trends section."
+            "Do NOT add a trends section."
         ),
         "instructions_category_detailed_no_persp": (
+            "Do NOT add greetings, introductory phrases, or conclusions. "
+            "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a detailed analytical comment with full context. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
-            "Use emoji for the category header. Do NOT add a trends section."
+            "Do NOT add a trends section."
         ),
         "instructions_trends": (
             "Based on the category summaries below, identify 2-3 key trends of the day. "

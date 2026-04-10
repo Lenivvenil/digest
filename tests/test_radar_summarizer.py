@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
+
+if TYPE_CHECKING:
+    from src.radar.collector import Article
 
 import pytest
 
@@ -18,12 +21,12 @@ from src.config import (
     SourceConfig,
     TelegramConfig,
 )
-from src.radar.collector import Article
 from src.radar.summarizer import (
     build_category_prompt,
     build_trends_prompt,
     summarize_all,
 )
+from tests.factories import make_article
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,14 +60,7 @@ def _make_article(
     source: str = "TestSource",
     category: str = "Tech",
 ) -> Article:
-    return Article(
-        title=title,
-        link=link,
-        description=description,
-        source=source,
-        category=category,
-        pub_date=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc),
-    )
+    return make_article(title=title, link=link, description=description, source=source, category=category)
 
 
 def _make_articles_by_category() -> dict[str, list[Article]]:
@@ -236,7 +232,7 @@ class TestSummarizeAll:
 
         call_count = 0
 
-        async def _side_effect(*args: object, **kwargs: object) -> tuple[str, dict]:
+        async def _side_effect(*args: object, **kwargs: object) -> tuple[str, dict[str, object]]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -284,7 +280,7 @@ class TestSummarizeAll:
 
         call_count = 0
 
-        async def _side_effect(*args: object, **kwargs: object) -> tuple[str, dict]:
+        async def _side_effect(*args: object, **kwargs: object) -> tuple[str, dict[str, object]]:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from src.delivery.markdown import (
     _build_counter_signals_section,
     _build_frontmatter,
     write_digest,
 )
-
+from tests.factories import make_ranked_signal
 
 # ---------------------------------------------------------------------------
 # _build_frontmatter
@@ -42,20 +43,11 @@ def _make_ranked_signal(
     score: int = 8,
     reasoning: str = "Compelling argument",
     narrative_claim: str = "AI is perfect" * 20,
-) -> object:
-    class SignalObj:
-        pass
-    class RankedObj:
-        pass
-    s = SignalObj()
-    s.title = title
-    s.url = url
-    r = RankedObj()
-    r.signal = s
-    r.score = score
-    r.reasoning = reasoning
-    r.narrative_claim = narrative_claim
-    return r
+) -> Any:
+    return make_ranked_signal(
+        url=url, title=title, score=score,
+        reasoning=reasoning, narrative_claim=narrative_claim,
+    )
 
 
 class TestBuildCounterSignalsSection:
@@ -90,13 +82,13 @@ class TestBuildCounterSignalsSection:
 # write_digest
 # ---------------------------------------------------------------------------
 
-def _make_config(enabled: bool = True, output_dir: str = "digests") -> object:
+def _make_config(enabled: bool = True, output_dir: str = "digests") -> Any:
     class ObsidianCfg:
         pass
     class Cfg:
         obsidian = ObsidianCfg()
-    Cfg.obsidian.enabled = enabled
-    Cfg.obsidian.output_dir = output_dir
+    Cfg.obsidian.enabled = enabled  # type: ignore[attr-defined]
+    Cfg.obsidian.output_dir = output_dir  # type: ignore[attr-defined]
     return Cfg()
 
 

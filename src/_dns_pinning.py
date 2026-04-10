@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def validate_url(url: str) -> ValidatedURL | None:
             )
         except (socket.gaierror, UnicodeError):
             return None
-        for family, type_, proto, canonname, sockaddr in addrinfos:  # type: ignore[misc]
+        for family, type_, proto, canonname, sockaddr in addrinfos:
             ip_str = str(sockaddr[0])
             try:
                 addr = ipaddress.ip_address(ip_str)
@@ -146,6 +146,6 @@ def pin_dns(
         try:
             yield
         finally:
-            _socket.getaddrinfo = original  # type: ignore[assignment]
+            _socket.getaddrinfo = original
 
     return _ctx()
