@@ -61,7 +61,12 @@ async def _openai_compat_call(
     )
     resp.raise_for_status()
     data = resp.json()
-    text: str = data["choices"][0]["message"]["content"]
+    choices = data.get("choices", [])
+    if not choices:
+        raise ValueError(f"OpenAI-compat returned no choices: {str(data)[:200]}")
+    text: str = choices[0].get("message", {}).get("content", "")
+    if not text:
+        raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
     usage: dict[str, Any] = data.get("usage", {})
     return text, usage
 
@@ -100,7 +105,13 @@ async def _gemini_call(
     )
     resp.raise_for_status()
     data = resp.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError(f"Gemini returned no candidates: {str(data)[:200]}")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    if not parts or not parts[0].get("text"):
+        raise ValueError(f"Gemini returned empty response: {str(data)[:200]}")
+    text: str = parts[0]["text"]
     usage_meta = data.get("usageMetadata", {})
     usage: dict[str, Any] = {
         "prompt_tokens": usage_meta.get("promptTokenCount", 0),
@@ -144,7 +155,10 @@ async def _anthropic_call(
     )
     resp.raise_for_status()
     data = resp.json()
-    text = data["content"][0]["text"]
+    content_blocks = data.get("content", [])
+    if not content_blocks or not content_blocks[0].get("text"):
+        raise ValueError(f"Anthropic returned empty response: {str(data)[:200]}")
+    text: str = content_blocks[0]["text"]
     usage: dict[str, Any] = {
         "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
         "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
