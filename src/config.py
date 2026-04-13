@@ -98,6 +98,7 @@ class FiltersConfig:
 class TelegramConfig:
     enabled: bool = True
     split_messages: bool = True
+    max_messages: int = 10
 
 
 @dataclass
@@ -472,7 +473,14 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
         raise ValueError("Config field 'telegram' must be a mapping.")
     enabled = bool(section.get("enabled", True))
     split_messages = bool(section.get("split_messages", True))
-    return TelegramConfig(enabled=enabled, split_messages=split_messages)
+    max_messages = _safe_int(
+        section.get("max_messages", 10), "max_messages", "telegram"
+    )
+    if max_messages < 1:
+        raise ValueError(f"telegram.max_messages must be >= 1, got {max_messages}.")
+    return TelegramConfig(
+        enabled=enabled, split_messages=split_messages, max_messages=max_messages
+    )
 
 
 def _load_obsidian(data: dict[str, Any]) -> ObsidianConfig:

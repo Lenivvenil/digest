@@ -72,6 +72,8 @@ telegram:
   enabled: true
   # Send radar and counter-signals as separate messages
   split_messages: true
+  # Maximum total Telegram messages per digest run (article cards + radar + signals)
+  max_messages: 10
 
 obsidian:
   # Commit generated markdown file back to the repo (Obsidian git-sync)

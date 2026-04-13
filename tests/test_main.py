@@ -61,6 +61,7 @@ class _FiltersCfg:
 class _TelegramCfg:
     enabled: bool = False
     split_messages: bool = True
+    max_messages: int = 10
 
 
 @dataclass
@@ -369,6 +370,8 @@ class TestRunFullPipeline:
             patch("src.delivery.write_digest", mock_write),
             patch("src.delivery.send_radar", mock_send_radar),
             patch("src.delivery.send_article_cards", mock_send_cards),
+            patch("src.delivery.telegram.to_markdownv2", return_value="x"),
+            patch("src.delivery.telegram.split_message", return_value=["x"]),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 

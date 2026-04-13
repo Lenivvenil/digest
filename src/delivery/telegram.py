@@ -194,10 +194,16 @@ async def send_radar(text: str, config: Any) -> bool:
 async def send_article_cards(
     articles_by_category: dict[str, list[Any]],
     config: Any,
+    *,
+    max_cards: int = 0,
 ) -> dict[str, str]:
-    """Send one Telegram card per article with voting buttons.
+    """Send Telegram cards for top articles with voting buttons.
 
-    Returns mapping of 8-char article hash -> source name for feedback attribution.
+    If *max_cards* > 0, at most that many cards are sent (highest-priority
+    articles first).  The full article_source_map is still returned so
+    feedback attribution works for articles covered by the digest text.
+
+    Returns mapping of 8-char article hash -> source name.
     """
     from src.radar.collector import article_hash
 
@@ -210,56 +216,66 @@ async def send_article_cards(
     api_url = _API_BASE.format(token=token)
     article_source_map: dict[str, str] = {}
 
+    # Build full map first (needed for feedback attribution even if we skip some cards)
+    all_articles: list[tuple[str, Any]] = []
+    for category, articles in articles_by_category.items():
+        for art in articles:
+            hash8 = article_hash(art.title, art.link)[:8]
+            article_source_map[hash8] = art.source
+            all_articles.append((category, art))
+
+    cards_to_send = all_articles
+    if max_cards > 0:
+        cards_to_send = all_articles[:max_cards]
+
+    sent_count = 0
     async with httpx.AsyncClient() as client:
-        for category, articles in articles_by_category.items():
-            for art in articles:
-                hash8 = article_hash(art.title, art.link)[:8]
-                article_source_map[hash8] = art.source
+        for category, art in cards_to_send:
+            hash8 = article_hash(art.title, art.link)[:8]
 
-                title_esc = escape_markdownv2(art.title)
-                url_esc = art.link.replace("\\", "\\\\").replace(")", "\\)")
-                source_esc = escape_markdownv2(art.source)
-                cat_esc = escape_markdownv2(category)
+            title_esc = escape_markdownv2(art.title)
+            url_esc = art.link.replace("\\", "\\\\").replace(")", "\\)")
+            source_esc = escape_markdownv2(art.source)
+            cat_esc = escape_markdownv2(category)
 
-                desc = art.description[:200]
-                if len(art.description) > 200:
-                    desc += "\u2026"
-                desc_esc = escape_markdownv2(desc)
+            desc = art.description[:200]
+            if len(art.description) > 200:
+                desc += "\u2026"
+            desc_esc = escape_markdownv2(desc)
 
-                text = (
-                    f"[{title_esc}]({url_esc})\n"
-                    f"*{source_esc}* \u00b7 _{cat_esc}_\n\n"
-                    f"{desc_esc}"
+            text = (
+                f"[{title_esc}]({url_esc})\n"
+                f"*{source_esc}* \u00b7 _{cat_esc}_\n\n"
+                f"{desc_esc}"
+            )
+
+            keyboard: dict[str, Any] = {
+                "inline_keyboard": [
+                    [
+                        {"text": "\U0001f44d", "callback_data": f"fb:a:g:{hash8}"},
+                        {"text": "\U0001f44e", "callback_data": f"fb:a:b:{hash8}"},
+                    ]
+                ]
+            }
+
+            try:
+                await _send_chunk(
+                    client,
+                    api_url,
+                    chat_id,
+                    text,
+                    disable_notification=True,
+                    reply_markup=keyboard,
+                )
+                sent_count += 1
+            except Exception as exc:
+                logger.warning(
+                    "Failed to send card for '%s': %s", art.title[:50], exc
                 )
 
-                keyboard: dict[str, Any] = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "\U0001f44d", "callback_data": f"fb:a:g:{hash8}"},
-                            {"text": "\U0001f44e", "callback_data": f"fb:a:b:{hash8}"},
-                        ]
-                    ]
-                }
+            await asyncio.sleep(0.5)
 
-                try:
-                    await _send_chunk(
-                        client,
-                        api_url,
-                        chat_id,
-                        text,
-                        disable_notification=True,
-                        reply_markup=keyboard,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to send card for '%s': %s", art.title[:50], exc
-                    )
-
-                await asyncio.sleep(0.5)
-
-    logger.info(
-        "Sent %d article cards to Telegram", len(article_source_map)
-    )
+    logger.info("Sent %d/%d article cards to Telegram", sent_count, len(all_articles))
     return article_source_map
 
 

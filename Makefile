@@ -1,4 +1,4 @@
-.PHONY: lint lint-fix typecheck test check
+.PHONY: lint lint-fix typecheck test check install install-dev
 
 lint:
 	ruff check src/ tests/
@@ -14,3 +14,9 @@ test:
 	pytest tests/ -v
 
 check: lint typecheck test
+
+install:
+	pip install --no-deps -r requirements.txt
+
+install-dev:
+	pip install --no-deps -r requirements-dev.txt

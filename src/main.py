@@ -593,7 +593,18 @@ async def run(
     telegram_sent = False
     telegram_partial = False
     if config.telegram.enabled:
-        article_source_map = await send_article_cards(articles_by_category, config)
+        # Budget messages: radar chunks + counter-signals first, rest for cards
+        from src.delivery.telegram import split_message, to_markdownv2
+
+        radar_md2 = to_markdownv2(delivery_text)
+        radar_chunks = len(split_message(radar_md2))
+        signal_chunks = 1 if all_ranked else 0
+        budget = config.telegram.max_messages
+        card_budget = max(0, budget - radar_chunks - signal_chunks)
+
+        article_source_map = await send_article_cards(
+            articles_by_category, config, max_cards=card_budget
+        )
         if article_source_map:
             feedback_store.article_source_map.update(article_source_map)
         try:
