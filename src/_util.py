@@ -31,6 +31,8 @@ def cleanup_stale_tmp(directory: Path, max_age_seconds: int = 300) -> None:
     """
     now = time.time()
     for tmp in directory.glob("*.tmp"):
+        if tmp.is_symlink() or not tmp.is_file():
+            continue
         try:
             age = now - tmp.stat().st_mtime
             if age > max_age_seconds:

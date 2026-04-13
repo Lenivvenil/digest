@@ -74,7 +74,7 @@ def _build_nano_status(
         if pc.name not in seen:
             provider_names.append(pc.name)
             seen.add(pc.name)
-    for route in config.llm.routing:
+    for route in getattr(config.llm, "routing", []):
         if route.provider not in seen:
             provider_names.append(route.provider)
             seen.add(route.provider)
@@ -180,7 +180,7 @@ async def check_config(config_path: str) -> int:
         "deepseek": "DEEPSEEK_API_KEY",
     }
     all_provider_names: set[str] = {pc.name for pc in config.llm.providers}
-    for route in config.llm.routing:
+    for route in getattr(config.llm, "routing", []):
         all_provider_names.add(route.provider)
 
     for provider_name in sorted(all_provider_names):
@@ -497,6 +497,7 @@ async def run(
     feedback_collected = 0
 
     saved_update_id = feedback_store.last_update_id
+    saved_ratings_count = len(feedback_store.ratings)
 
     if config.adaptive.enabled:
         if not dry_run:
@@ -597,29 +598,30 @@ async def run(
     telegram_sent = False
     telegram_partial = False
     if config.telegram.enabled:
-        # Budget messages: radar chunks + counter-signals first, rest for cards
-        from src.delivery.telegram import split_message, to_markdownv2
-
-        radar_md2 = to_markdownv2(delivery_text)
-        radar_chunks = len(split_message(radar_md2))
-        signal_chunks = 1 if all_ranked else 0
-        budget = config.telegram.max_messages
-        card_budget = max(0, budget - radar_chunks - signal_chunks)
-
-        article_source_map = await send_article_cards(
-            articles_by_category, config, max_cards=card_budget
-        )
-        if article_source_map:
-            feedback_store.article_source_map.update(article_source_map)
         try:
+            from src.delivery.telegram import split_message, to_markdownv2
+
+            radar_md2 = to_markdownv2(delivery_text)
+            radar_chunks = len(split_message(radar_md2))
+            signal_chunks = 1 if all_ranked else 0
+            budget = config.telegram.max_messages
+            card_budget = max(0, budget - radar_chunks - signal_chunks)
+
+            article_source_map = await send_article_cards(
+                articles_by_category, config, max_cards=card_budget
+            )
+            if article_source_map:
+                feedback_store.article_source_map.update(article_source_map)
             telegram_sent = await send_radar(delivery_text, config)
+            if telegram_sent:
+                feedback_store.last_digest_sources = contributing_sources
+                feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+            if all_ranked:
+                await send_counter_signals(all_ranked, config)
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
-        if telegram_sent:
-            feedback_store.last_digest_sources = contributing_sources
-            feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        if all_ranked:
-            await send_counter_signals(all_ranked, config)
 
     delivery_ok = telegram_sent or markdown_saved
     sources_promoted = 0
@@ -642,8 +644,9 @@ async def run(
                 sources_promoted = len(promote)
                 sources_demoted = len(demote)
     else:
-        # Roll back feedback offset — updates will be reprocessed on next run
+        # Roll back feedback state — updates will be reprocessed on next run
         feedback_store.last_update_id = saved_update_id
+        feedback_store.ratings = feedback_store.ratings[:saved_ratings_count]
 
     save_feedback(feedback_store, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
