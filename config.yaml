@@ -383,14 +383,12 @@ sources:
     category: Banking & Fintech
     enabled: true
     priority: 3
-    trial: true
-    trial_days: 14
-    trial_started: "2026-03-27"
+    trial: false
 
   - name: Bank of America Newsroom
     url: https://newsroom.bankofamerica.com/rss
     category: Banking & Fintech
-    enabled: true
+    enabled: false
     priority: 3
     trial: true
     trial_days: 14
@@ -401,14 +399,12 @@ sources:
     category: Banking & Fintech
     enabled: true
     priority: 3
-    trial: true
-    trial_days: 14
-    trial_started: "2026-03-27"
+    trial: false
 
   - name: Ally Financial IR
     url: https://ally.gcs-web.com/rss/news-releases.xml
     category: Banking & Fintech
-    enabled: true
+    enabled: false
     priority: 2
     trial: true
     trial_days: 14
