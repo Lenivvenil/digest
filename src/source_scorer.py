@@ -443,8 +443,8 @@ def apply_trial_decisions(
     try:
         shutil.copy2(path, bak_path)
     except OSError as exc:
-        logger.warning("Could not create config backup '%s': %s", bak_path, exc)
-        bak_path = None  # type: ignore[assignment]
+        logger.error("Cannot create config backup, aborting trial decisions: %s", exc)
+        return
 
     try:
         with tmp_path.open("w", encoding="utf-8") as fh:
