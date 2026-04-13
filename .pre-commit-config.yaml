@@ -6,3 +6,8 @@ repos:
         args: [--fix]
       - id: ruff-format
         args: [--check]
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args: [-r, src/, --skip, "B101"]
