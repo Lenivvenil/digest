@@ -34,6 +34,7 @@ class AllFeedsFailedError(RuntimeError):
 FEED_TIMEOUT = 15.0
 USER_AGENT = "DailyDigestBot/1.0 (https://github.com/lenivvenil/digest)"
 CACHE_MAX_AGE_DAYS = 7
+CACHE_MAX_ENTRIES = 5000
 DESCRIPTION_MAX_CHARS = 500
 
 
@@ -112,9 +113,14 @@ def _prune_cache(cache: dict[str, str]) -> dict[str, str]:
                 pruned[h] = ts
         except Exception as exc:
             logger.debug("Skipping cache entry %s with unparseable timestamp: %s", h, exc)
+    # Cap total entries to prevent unbounded growth
+    if len(pruned) > CACHE_MAX_ENTRIES:
+        sorted_keys = sorted(pruned, key=lambda k: pruned[k])
+        for k in sorted_keys[: len(pruned) - CACHE_MAX_ENTRIES]:
+            del pruned[k]
     removed = len(cache) - len(pruned)
     if removed:
-        logger.debug("Pruned %d stale entries from deduplication cache", removed)
+        logger.debug("Pruned %d entries from deduplication cache", removed)
     return pruned
 
 
