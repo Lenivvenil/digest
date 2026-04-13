@@ -20,6 +20,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -467,6 +468,7 @@ async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
+    from src._util import cleanup_stale_tmp
     from src.config import load_config
     from src.feedback import (
         collect_feedback,
@@ -488,6 +490,7 @@ async def run(
     logger = logging.getLogger(__name__)
     feeds_count = len(config.enabled_sources)
     cache_dir = ".cache"
+    cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
     feedback_store = load_feedback(cache_dir)
     effective_priorities: dict[str, int] | None = None
