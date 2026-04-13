@@ -261,6 +261,17 @@ def _load_llm(data: dict[str, Any]) -> LLMConfig:
                 )
             )
 
+    # Warn about routing entries that reference providers not in providers list
+    provider_names = {p.name for p in providers}
+    for route in routing:
+        if route.provider not in provider_names:
+            logger.warning(
+                "llm.routing references provider '%s' not in providers list — "
+                "categories %s will fall back to role-based dispatch",
+                route.provider,
+                route.categories,
+            )
+
     return LLMConfig(providers=providers, routing=routing)
 
 
