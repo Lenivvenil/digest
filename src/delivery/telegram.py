@@ -159,7 +159,7 @@ async def _send_chunk(
         except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
                 retry_after = int(exc.response.headers.get("Retry-After", 2))
-                await asyncio.sleep(min(retry_after, 30))
+                await asyncio.sleep(retry_after)
             elif attempt < _MAX_RETRIES - 1:
                 await asyncio.sleep(2 ** attempt)
             else:
