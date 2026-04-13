@@ -76,7 +76,7 @@ async def _gemini_call(
     """Call Google Gemini generateContent API."""
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model}:generateContent?key={api_key}"
+        f"{model}:generateContent"
     )
     system_parts: list[dict[str, Any]] = []
     contents: list[dict[str, Any]] = []
@@ -92,7 +92,12 @@ async def _gemini_call(
     }
     if system_parts:
         body["systemInstruction"] = {"parts": system_parts}
-    resp = await client.post(url, json=body, timeout=120.0)
+    resp = await client.post(
+        url,
+        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+        json=body,
+        timeout=120.0,
+    )
     resp.raise_for_status()
     data = resp.json()
     text = data["candidates"][0]["content"]["parts"][0]["text"]
