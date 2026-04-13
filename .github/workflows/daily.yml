@@ -86,7 +86,7 @@ jobs:
           python -m src --config config.yaml $EXTRA_ARGS
 
       - name: Commit digest and cache back to repo
-        if: success() || failure()
+        if: success()
         run: |
           git config user.name "digest-bot"
           git config user.email "digest-bot@users.noreply.github.com"

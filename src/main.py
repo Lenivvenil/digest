@@ -619,29 +619,31 @@ async def run(
             await send_counter_signals(all_ranked, config)
 
     delivery_ok = telegram_sent or markdown_saved
+    sources_promoted = 0
+    sources_demoted = 0
+
     if delivery_ok:
         save_dedup_cache(cache)
+
+        # Process pending approvals BEFORE save_stats so newly approved
+        # sources aren't pruned from stats as "unknown"
+        _process_pending_approvals(config_path, cache_dir, feedback_store)
+
+        if config.adaptive.enabled:
+            today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+            promote, demote, needs_start = evaluate_trial_sources(
+                config.enabled_sources, source_stats, today
+            )
+            if promote or demote or needs_start:
+                apply_trial_decisions(config_path, promote, demote, needs_start=needs_start)
+                sources_promoted = len(promote)
+                sources_demoted = len(demote)
     else:
         # Roll back feedback offset — updates will be reprocessed on next run
         feedback_store.last_update_id = saved_update_id
 
     save_feedback(feedback_store, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
-
-    # Evaluate trial sources after successful delivery
-    sources_promoted = 0
-    sources_demoted = 0
-    if config.adaptive.enabled and delivery_ok:
-        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-        promote, demote, needs_start = evaluate_trial_sources(
-            config.enabled_sources, source_stats, today
-        )
-        if promote or demote or needs_start:
-            apply_trial_decisions(config_path, promote, demote, needs_start=needs_start)
-            sources_promoted = len(promote)
-            sources_demoted = len(demote)
-
-    _process_pending_approvals(config_path, cache_dir, feedback_store)
 
     return RunStats(
         feeds_fetched=feeds_count, new_articles=total_articles,
