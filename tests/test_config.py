@@ -219,8 +219,8 @@ def test_invalid_provider_name(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, """
         llm:
           providers:
-            - name: anthropic
-              model: claude-opus
+            - name: invalidprovider
+              model: some-model
               role: [summarize]
         sources:
           - name: Feed
@@ -228,7 +228,7 @@ def test_invalid_provider_name(tmp_path: Path) -> None:
             category: Tech
             enabled: true
     """)
-    with pytest.raises(ValueError, match="anthropic"):
+    with pytest.raises(ValueError, match="invalidprovider"):
         load_config(cfg_path)
 
 

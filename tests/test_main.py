@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.main import _clean_summary, check_config, main, run
+from src.main import RunStats, _clean_summary, check_config, main, run
+
+
+@dataclass
+class _Article:
+    title: str = "Test Article"
+    link: str = "https://example.com/1"
+    description: str = "Description"
+    source: str = "test"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,6 +31,7 @@ class _ProviderCfg:
 @dataclass
 class _LLMCfg:
     providers: list[_ProviderCfg] = field(default_factory=lambda: [_ProviderCfg()])
+    routing: list[object] = field(default_factory=list)
 
 
 @dataclass
@@ -68,6 +77,20 @@ class _SourceCfg:
     enabled: bool = True
     priority: int = 3
     recency_hours: int = 24
+    trial: bool = False
+    trial_started: str | None = None
+    trial_days: int = 7
+
+
+@dataclass
+class _AdaptiveCfg:
+    enabled: bool = False
+    feedback_weight: float = 0.3
+    score_weight: float = 0.5
+    base_weight: float = 0.2
+    trial_slots: int = 2
+    min_priority: int = 1
+    max_priority: int = 5
 
 
 @dataclass
@@ -79,6 +102,7 @@ class _Config:
     filters: _FiltersCfg = field(default_factory=_FiltersCfg)
     telegram: _TelegramCfg = field(default_factory=_TelegramCfg)
     obsidian: _ObsidianCfg = field(default_factory=_ObsidianCfg)
+    adaptive: _AdaptiveCfg = field(default_factory=_AdaptiveCfg)
 
     @property
     def enabled_sources(self) -> list[_SourceCfg]:
@@ -166,8 +190,26 @@ class TestCleanSummary:
 
 @pytest.mark.asyncio
 class TestCheckConfig:
-    async def test_valid_config(self, tmp_path: pytest.TempPathFactory) -> None:
-        with patch("src.config.load_config", return_value=_mock_config()):
+    async def test_valid_config(self) -> None:
+        cfg = _mock_config()
+        # Patch feed probing to return OK for all sources
+        mock_client = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.text = "<rss><channel><item><title>A</title></item></channel></rss>"
+        mock_response.raise_for_status = lambda: None
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("src.config.load_config", return_value=cfg),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("src._dns_pinning.validate_url", return_value=type("V", (), {
+                "hostname": "example.com", "pinned_addrinfos": [],
+                "url": "https://example.com/feed",
+            })()),
+            patch("src._dns_pinning.pin_dns", MagicMock()),
+        ):
             result = await check_config("config.yaml")
         assert result == 0
 
@@ -183,9 +225,25 @@ class TestCheckConfig:
         cfg.telegram.enabled = True
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
         monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-        with patch("src.config.load_config", return_value=cfg):
+
+        mock_client = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.text = "<rss><channel></channel></rss>"
+        mock_response.raise_for_status = lambda: None
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch("src.config.load_config", return_value=cfg),
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("src._dns_pinning.validate_url", return_value=type("V", (), {
+                "hostname": "example.com", "pinned_addrinfos": [],
+                "url": "https://example.com/feed",
+            })()),
+            patch("src._dns_pinning.pin_dns", MagicMock()),
+        ):
             result = await check_config("config.yaml")
-        # Warns but does not fail
         assert result == 0
 
 
@@ -197,9 +255,9 @@ class TestCheckConfig:
 class TestRunRadarOnly:
     async def test_radar_only_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
         summary = _CategorySummary()
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
-        mock_save = AsyncMock()
+        mock_save = MagicMock()
 
         with (
             patch("src.config.load_config", return_value=_mock_config()),
@@ -209,7 +267,7 @@ class TestRunRadarOnly:
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
-        assert result == 0
+        assert isinstance(result, RunStats)
         captured = capsys.readouterr()
         assert "Tech" in captured.out
 
@@ -222,10 +280,11 @@ class TestRunRadarOnly:
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
-        assert result == 0
+        assert isinstance(result, RunStats)
+        assert result.new_articles == 0
 
-    async def test_failed_summarization_returns_one(self) -> None:
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+    async def test_failed_summarization_returns_empty(self) -> None:
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([], ""))
 
         with (
@@ -235,7 +294,8 @@ class TestRunRadarOnly:
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
-        assert result == 1
+        assert isinstance(result, RunStats)
+        assert result.digest_length == 0
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +306,9 @@ class TestRunRadarOnly:
 class TestRunDryRun:
     async def test_dry_run_does_not_save_cache(self) -> None:
         summary = _CategorySummary()
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
-        mock_save = AsyncMock()
+        mock_save = MagicMock()
         mock_extract = AsyncMock(return_value=[])
 
         with (
@@ -260,12 +320,12 @@ class TestRunDryRun:
         ):
             result = await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
 
-        assert result == 0
+        assert isinstance(result, RunStats)
         mock_save.assert_not_called()
 
     async def test_dry_run_prints_combined(self, capsys: pytest.CaptureFixture[str]) -> None:
         summary = _CategorySummary(summary_text="Test output")
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(return_value=[])
 
@@ -273,7 +333,7 @@ class TestRunDryRun:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.save_dedup_cache", AsyncMock()),
+            patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
         ):
             await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
@@ -290,11 +350,12 @@ class TestRunDryRun:
 class TestRunFullPipeline:
     async def test_delivery_called_when_not_dry_run(self) -> None:
         summary = _CategorySummary()
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(return_value=[])
         mock_write = AsyncMock(return_value=None)
         mock_send_radar = AsyncMock(return_value=True)
+        mock_send_cards = AsyncMock(return_value={})
 
         cfg = _mock_config()
         cfg.telegram.enabled = True
@@ -303,20 +364,21 @@ class TestRunFullPipeline:
             patch("src.config.load_config", return_value=cfg),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.save_dedup_cache", AsyncMock()),
+            patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
             patch("src.delivery.write_digest", mock_write),
             patch("src.delivery.send_radar", mock_send_radar),
+            patch("src.delivery.send_article_cards", mock_send_cards),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 
-        assert result == 0
+        assert isinstance(result, RunStats)
         mock_write.assert_called_once()
         mock_send_radar.assert_called_once()
 
     async def test_irritator_failure_does_not_crash(self) -> None:
         summary = _CategorySummary()
-        mock_collect = AsyncMock(return_value=({"tech": ["a1"]}, {}))
+        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(side_effect=RuntimeError("LLM exploded"))
         mock_write = AsyncMock(return_value=None)
@@ -325,14 +387,13 @@ class TestRunFullPipeline:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.save_dedup_cache", AsyncMock()),
+            patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
             patch("src.delivery.write_digest", mock_write),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 
-        # Pipeline continues despite irritator failure
-        assert result == 0
+        assert isinstance(result, RunStats)
 
 
 # ---------------------------------------------------------------------------
@@ -348,13 +409,23 @@ class TestMain:
         mock_check.assert_called_once_with("config.yaml")
 
     async def test_default_flags(self) -> None:
-        with patch("src.main.run", new_callable=AsyncMock, return_value=0) as mock_run:
+        mock_stats = RunStats(
+            feeds_fetched=1, new_articles=0, digest_length=0,
+            telegram_sent=False, telegram_partial=False,
+            markdown_saved=False, markdown_path="",
+        )
+        with patch("src.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main([])
         assert result == 0
         mock_run.assert_called_once_with("config.yaml", False, False, False)
 
     async def test_all_flags(self) -> None:
-        with patch("src.main.run", new_callable=AsyncMock, return_value=0) as mock_run:
+        mock_stats = RunStats(
+            feeds_fetched=1, new_articles=0, digest_length=0,
+            telegram_sent=False, telegram_partial=False,
+            markdown_saved=False, markdown_path="",
+        )
+        with patch("src.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml"])
         assert result == 0
         mock_run.assert_called_once_with("alt.yaml", True, True, True)

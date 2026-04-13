@@ -29,6 +29,10 @@ _OPENAI_COMPAT: dict[str, dict[str, str]] = {
         "base_url": "https://api.deepseek.com/v1",
         "api_key_env": "DEEPSEEK_API_KEY",
     },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
 }
 
 
@@ -100,6 +104,49 @@ async def _gemini_call(
     return text, usage
 
 
+async def _anthropic_call(
+    client: httpx.AsyncClient,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+) -> tuple[str, dict[str, Any]]:
+    """Call Anthropic Messages API."""
+    system_text = ""
+    api_messages: list[dict[str, str]] = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_text = msg["content"]
+        else:
+            api_messages.append({"role": msg["role"], "content": msg["content"]})
+    body: dict[str, Any] = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": api_messages,
+        "temperature": temperature,
+    }
+    if system_text:
+        body["system"] = system_text
+    resp = await client.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json=body,
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = data["content"][0]["text"]
+    usage: dict[str, Any] = {
+        "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
+        "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+    }
+    return text, usage
+
+
 def _providers_for_role(role: LLMRole, config: Any) -> list[Any]:
     """Return providers for *role* in priority order, with fallback providers appended."""
     role_str = role.value
@@ -115,19 +162,57 @@ def _providers_for_role(role: LLMRole, config: Any) -> list[Any]:
     return matching + deduped_fallback
 
 
+def _resolve_routed_providers(
+    role: LLMRole, category: str | None, config: Any
+) -> list[Any]:
+    """Resolve providers respecting per-category routing when available.
+
+    If a routing rule matches the category, the routed provider is tried first,
+    followed by the normal role-based fallback chain (deduped).
+    """
+    role_fallbacks = _providers_for_role(role, config)
+    if not category or not hasattr(config.llm, "routing") or not config.llm.routing:
+        return role_fallbacks
+
+    for route in config.llm.routing:
+        if category in route.categories:
+            # Build a synthetic provider config for the routed entry
+            from src.config import ProviderConfig
+
+            routed = ProviderConfig(
+                name=route.provider,
+                model=route.model,
+                role=[role.value],
+            )
+            # Prepend routed provider, then append role-based fallbacks (deduped)
+            seen = {routed.name}
+            result = [routed]
+            for p in role_fallbacks:
+                if p.name not in seen:
+                    result.append(p)
+                    seen.add(p.name)
+            return result
+
+    return role_fallbacks
+
+
 async def complete(
     role: LLMRole,
     messages: list[dict[str, str]],
     config: Any,
     *,
     temperature: float = 0.3,
+    category: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call LLM for *role*, trying providers in priority order with fallback.
+
+    If *category* is provided and a routing rule matches, the routed provider
+    is tried first before falling back to the normal role-based chain.
 
     Returns (response_text, usage_dict).
     Raises RuntimeError if all providers fail.
     """
-    providers = _providers_for_role(role, config)
+    providers = _resolve_routed_providers(role, category, config)
     if not providers:
         raise RuntimeError(
             f"No providers configured for role '{role.value}'. "
@@ -138,7 +223,15 @@ async def complete(
         for provider in providers:
             t0 = time.monotonic()
             try:
-                if provider.name == "gemini":
+                if provider.name == "anthropic":
+                    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                    if not api_key:
+                        logger.warning("ANTHROPIC_API_KEY not set, skipping anthropic")
+                        continue
+                    text, usage = await _anthropic_call(
+                        client, api_key, provider.model, messages, temperature
+                    )
+                elif provider.name == "gemini":
                     api_key = os.environ.get("GEMINI_API_KEY", "")
                     if not api_key:
                         logger.warning("GEMINI_API_KEY not set, skipping gemini")

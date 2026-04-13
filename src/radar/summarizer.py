@@ -334,7 +334,7 @@ async def summarize_all(
     async def _summarize_category(category: str, articles: list[Article]) -> CategorySummary | None:
         messages = build_category_prompt(category, articles, config)
         try:
-            text, _ = await complete(LLMRole.SUMMARIZE, messages, config)
+            text, _ = await complete(LLMRole.SUMMARIZE, messages, config, category=category)
             return CategorySummary(
                 category=category,
                 summary_text=text,

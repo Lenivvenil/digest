@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-VALID_PROVIDERS = {"gemini", "groq", "deepseek"}
+VALID_PROVIDERS = {"anthropic", "gemini", "groq", "mistral", "deepseek"}
 VALID_ROLES = {"summarize", "extract_narratives", "generate_queries", "rank_signals", "fallback"}
 VALID_SUMMARY_STYLES = {"analytical", "brief", "detailed"}
 VALID_LANGUAGES = {"ru", "en"}
@@ -27,8 +28,26 @@ class ProviderConfig:
 
 
 @dataclass
+class RouteConfig:
+    categories: list[str]
+    provider: str
+    model: str
+
+
+@dataclass
 class LLMConfig:
     providers: list[ProviderConfig]
+    routing: list[RouteConfig] = field(default_factory=list)
+
+    @property
+    def provider(self) -> str:
+        """Primary provider name (backward-compat)."""
+        return self.providers[0].name
+
+    @property
+    def model(self) -> str:
+        """Primary model name (backward-compat)."""
+        return self.providers[0].model
 
 
 @dataclass
@@ -64,6 +83,9 @@ class SourceConfig:
     category: str
     enabled: bool
     priority: int = 3
+    trial: bool = False
+    trial_started: str | None = None
+    trial_days: int = 7
     recency_hours: int = 24
 
 
@@ -85,6 +107,17 @@ class ObsidianConfig:
 
 
 @dataclass
+class AdaptiveConfig:
+    enabled: bool
+    feedback_weight: float = 0.3
+    score_weight: float = 0.5
+    base_weight: float = 0.2
+    trial_slots: int = 2
+    min_priority: int = 1
+    max_priority: int = 5
+
+
+@dataclass
 class Config:
     llm: LLMConfig
     radar: RadarConfig
@@ -93,6 +126,9 @@ class Config:
     filters: FiltersConfig
     telegram: TelegramConfig
     obsidian: ObsidianConfig
+    adaptive: AdaptiveConfig = field(
+        default_factory=lambda: AdaptiveConfig(enabled=False)
+    )
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -187,7 +223,44 @@ def _load_llm(data: dict[str, Any]) -> LLMConfig:
             "At least one provider must have role 'summarize' or 'fallback'. "
             "Check llm.providers[].role in config.yaml."
         )
-    return LLMConfig(providers=providers)
+
+    # Load routing (optional)
+    routing: list[RouteConfig] = []
+    if "routing" in section:
+        raw_routing = section["routing"]
+        if not isinstance(raw_routing, list):
+            raise ValueError("Config field 'routing' in section 'llm' must be a list.")
+        seen_categories: set[str] = set()
+        for i, item in enumerate(raw_routing):
+            if not isinstance(item, dict):
+                raise ValueError(f"routing[{i}] in section 'llm' must be a mapping.")
+            categories_raw = _require(item, "categories", f"llm.routing[{i}]")
+            if not isinstance(categories_raw, list):
+                raise ValueError(f"llm.routing[{i}].categories must be a list.")
+            categories = [str(c) for c in categories_raw]
+            for cat in categories:
+                if cat in seen_categories:
+                    raise ValueError(
+                        f"Duplicate category '{cat}' in llm.routing. "
+                        "Each category may appear in at most one route."
+                    )
+                seen_categories.add(cat)
+            route_provider = str(_require(item, "provider", f"llm.routing[{i}]"))
+            if route_provider not in VALID_PROVIDERS:
+                raise ValueError(
+                    f"Invalid provider '{route_provider}' in llm.routing[{i}]. "
+                    f"Must be one of: {', '.join(sorted(VALID_PROVIDERS))}."
+                )
+            route_model = str(_require(item, "model", f"llm.routing[{i}]"))
+            routing.append(
+                RouteConfig(
+                    categories=categories,
+                    provider=route_provider,
+                    model=route_model,
+                )
+            )
+
+    return LLMConfig(providers=providers, routing=routing)
 
 
 def _load_radar(data: dict[str, Any]) -> RadarConfig:
@@ -333,6 +406,26 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'recency_hours' in sources[{i}] must be >= 1, "
                 f"got {raw_recency}."
             )
+        raw_trial = item.get("trial", False)
+        if not isinstance(raw_trial, bool):
+            raise ValueError(
+                f"Config field 'trial' in sources[{i}] must be a boolean "
+                f"(true or false without quotes), got {type(raw_trial).__name__} {raw_trial!r}."
+            )
+        trial_started = item.get("trial_started", None)
+        if trial_started is not None:
+            trial_started = str(trial_started)
+        raw_trial_days = item.get("trial_days", 7)
+        if isinstance(raw_trial_days, bool) or not isinstance(raw_trial_days, int):
+            raise ValueError(
+                f"Config field 'trial_days' in sources[{i}] must be an integer, "
+                f"got {type(raw_trial_days).__name__} {raw_trial_days!r}."
+            )
+        if raw_trial_days < 1:
+            raise ValueError(
+                f"Config field 'trial_days' in sources[{i}] must be >= 1, "
+                f"got {raw_trial_days}."
+            )
         sources.append(
             SourceConfig(
                 name=name,
@@ -340,6 +433,9 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 category=category,
                 enabled=raw_enabled,
                 priority=raw_priority,
+                trial=raw_trial,
+                trial_started=trial_started,
+                trial_days=raw_trial_days,
                 recency_hours=raw_recency,
             )
         )
@@ -390,6 +486,73 @@ def _load_obsidian(data: dict[str, Any]) -> ObsidianConfig:
     return ObsidianConfig(enabled=enabled, output_dir=output_dir)
 
 
+def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
+    section = data.get("adaptive")
+    if section is None:
+        return AdaptiveConfig(enabled=False)
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'adaptive' must be a mapping.")
+    enabled = section.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            f"Config field 'enabled' in section 'adaptive' must be a boolean, "
+            f"got {type(enabled).__name__} {enabled!r}."
+        )
+    feedback_weight = _safe_float(section.get("feedback_weight", 0.3), "feedback_weight", "adaptive")
+    score_weight = _safe_float(section.get("score_weight", 0.5), "score_weight", "adaptive")
+    base_weight = _safe_float(section.get("base_weight", 0.2), "base_weight", "adaptive")
+    min_priority = _safe_int(section.get("min_priority", 1), "min_priority", "adaptive")
+    max_priority = _safe_int(section.get("max_priority", 5), "max_priority", "adaptive")
+
+    for wname, wval in [
+        ("feedback_weight", feedback_weight),
+        ("score_weight", score_weight),
+        ("base_weight", base_weight),
+    ]:
+        if not math.isfinite(wval) or wval < 0.0 or wval > 1.0:
+            raise ValueError(
+                f"adaptive.{wname} must be between 0.0 and 1.0, got {wval}."
+            )
+
+    if min_priority < 1:
+        raise ValueError(
+            f"adaptive.min_priority must be >= 1, got {min_priority}."
+        )
+    if max_priority < 1:
+        raise ValueError(
+            f"adaptive.max_priority must be >= 1, got {max_priority}."
+        )
+    if min_priority >= max_priority:
+        raise ValueError(
+            f"adaptive.min_priority ({min_priority}) must be less than "
+            f"adaptive.max_priority ({max_priority})."
+        )
+
+    weight_sum = feedback_weight + score_weight + base_weight
+    if abs(weight_sum - 1.0) > 0.01:
+        raise ValueError(
+            f"Adaptive weights must sum to 1.0 (got {weight_sum:.2f}): "
+            f"feedback_weight={feedback_weight}, score_weight={score_weight}, "
+            f"base_weight={base_weight}."
+        )
+
+    trial_slots = _safe_int(section.get("trial_slots", 2), "trial_slots", "adaptive")
+    if trial_slots < 0:
+        raise ValueError(
+            f"adaptive.trial_slots must be non-negative, got {trial_slots}."
+        )
+
+    return AdaptiveConfig(
+        enabled=enabled,
+        feedback_weight=feedback_weight,
+        score_weight=score_weight,
+        base_weight=base_weight,
+        trial_slots=trial_slots,
+        min_priority=min_priority,
+        max_priority=max_priority,
+    )
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -418,12 +581,14 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     filters = _load_filters(data)
     telegram = _load_telegram(data)
     obsidian = _load_obsidian(data)
+    adaptive = _load_adaptive(data)
 
     logger.info(
-        "Config loaded: providers=%s, sources=%d (%d enabled)",
+        "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
         [p.name for p in llm.providers],
         len(sources),
         sum(1 for s in sources if s.enabled),
+        adaptive.enabled,
     )
     return Config(
         llm=llm,
@@ -433,4 +598,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         filters=filters,
         telegram=telegram,
         obsidian=obsidian,
+        adaptive=adaptive,
     )

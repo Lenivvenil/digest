@@ -4,17 +4,30 @@ llm:
   # Provider chain with role-based dispatch.
   # role: list of roles this provider handles.
   # Valid roles: summarize | extract_narratives | generate_queries | rank_signals | fallback
-  # Supported providers: gemini | groq | deepseek
+  # Supported providers: anthropic | gemini | groq | mistral | deepseek
   providers:
+    - name: gemini
+      model: gemini-2.5-flash
+      role: [summarize, generate_queries, rank_signals]
     - name: groq
       model: llama-3.3-70b-versatile
       role: [summarize, extract_narratives]
-    - name: gemini
-      model: gemini-2.5-flash
-      role: [generate_queries, rank_signals]
     - name: deepseek
       model: deepseek-chat
       role: [fallback]
+
+  # Per-category model routing (optional).
+  # Categories not listed here use the default role-based dispatch above.
+  routing:
+    - categories: ["AI & LLM", "AI Engineering"]
+      provider: gemini
+      model: gemini-2.5-flash
+    - categories: ["Banking & Fintech"]
+      provider: groq
+      model: llama-3.3-70b-versatile
+    - categories: ["Architecture & Distributed Systems"]
+      provider: deepseek
+      model: deepseek-chat
 
 radar:
   # Language for digest content: "ru" (Russian) | "en" (English)
@@ -65,6 +78,22 @@ obsidian:
   enabled: true
   output_dir: digests
 
+adaptive:
+  # Enable adaptive source management (dynamic priority recalculation,
+  # feedback collection, trial source lifecycle)
+  enabled: true
+  # Weight of user feedback (Telegram 👍/👎) in priority calculation (0.0–1.0)
+  feedback_weight: 0.3
+  # Weight of objective quality score in priority calculation (0.0–1.0)
+  score_weight: 0.5
+  # Weight of base (static) priority from config in priority calculation (0.0–1.0)
+  base_weight: 0.2
+  # Number of article slots reserved for trial sources (separate from main budget)
+  trial_slots: 4
+  # Effective priority range after recalculation
+  min_priority: 1
+  max_priority: 5
+
 sources:
   # ============================================================
   # Source management
@@ -113,6 +142,13 @@ sources:
     priority: 5
     recency_hours: 168
 
+  - name: Increment Magazine
+    url: https://increment.com/feeds/all.rss
+    category: Architecture & Distributed Systems
+    enabled: false  # 403, archived
+    priority: 5
+    recency_hours: 744
+
   - name: ByteByteGo
     url: https://blog.bytebytego.com/feed
     category: Architecture & Distributed Systems
@@ -126,6 +162,27 @@ sources:
     category: Company Engineering
     enabled: true
     priority: 5
+    recency_hours: 168
+
+  - name: Netflix TechBlog
+    url: https://netflixtechblog.com/feed
+    category: Company Engineering
+    enabled: false  # Medium-hosted, blocked from GitHub Actions IPs
+    priority: 5
+    recency_hours: 168
+
+  - name: Uber Engineering
+    url: https://eng.uber.com/feed/
+    category: Company Engineering
+    enabled: false  # 404, redirects lead nowhere
+    priority: 5
+    recency_hours: 168
+
+  - name: Airbnb Tech Blog
+    url: https://medium.com/airbnb-engineering/feed
+    category: Company Engineering
+    enabled: false  # Medium-hosted, blocked from GitHub Actions IPs
+    priority: 4
     recency_hours: 168
 
   - name: Cloudflare Blog
@@ -154,6 +211,13 @@ sources:
     category: Company Engineering
     enabled: true
     priority: 4
+    recency_hours: 168
+
+  - name: DoorDash Engineering
+    url: https://doordash.engineering/feed/
+    category: Company Engineering
+    enabled: false  # 403
+    priority: 3
     recency_hours: 168
 
   - name: Spotify Engineering
@@ -217,6 +281,12 @@ sources:
     priority: 3
 
   # Data & Databases
+  - name: Cockroach Labs Blog
+    url: https://www.cockroachlabs.com/blog/rss.xml
+    category: Data & Databases
+    enabled: false  # 404
+    priority: 4
+
   - name: ScyllaDB Blog
     url: https://www.scylladb.com/feed/
     category: Data & Databases
@@ -228,6 +298,12 @@ sources:
     category: Data & Databases
     enabled: true
     priority: 3
+
+  - name: Confluent Blog
+    url: https://www.confluent.io/blog/feed/
+    category: Data & Databases
+    enabled: false  # 404
+    priority: 4
 
   - name: TimescaleDB Blog
     url: https://www.timescale.com/blog/rss/
@@ -307,24 +383,36 @@ sources:
     category: Banking & Fintech
     enabled: true
     priority: 3
+    trial: true
+    trial_days: 14
+    trial_started: "2026-03-27"
 
   - name: Bank of America Newsroom
     url: https://newsroom.bankofamerica.com/rss
     category: Banking & Fintech
     enabled: true
     priority: 3
+    trial: true
+    trial_days: 14
+    trial_started: "2026-03-27"
 
   - name: CaixaBank Research
     url: https://www.caixabankresearch.com/en/rss.xml
     category: Banking & Fintech
     enabled: true
     priority: 3
+    trial: true
+    trial_days: 14
+    trial_started: "2026-03-27"
 
   - name: Ally Financial IR
     url: https://ally.gcs-web.com/rss/news-releases.xml
     category: Banking & Fintech
     enabled: true
     priority: 2
+    trial: true
+    trial_days: 14
+    trial_started: "2026-03-27"
 
   # AI & LLM
   - name: MIT Technology Review AI
@@ -356,6 +444,12 @@ sources:
     category: AI & LLM
     enabled: true
     priority: 2
+
+  - name: Ars Technica AI
+    url: https://feeds.arstechnica.com/arstechnica/technology-lab
+    category: AI & LLM
+    enabled: false
+    priority: 1
 
   # AI Engineering
   - name: Google Research Blog
