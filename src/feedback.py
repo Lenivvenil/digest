@@ -71,6 +71,9 @@ def load_feedback(cache_dir: str) -> FeedbackStore:
             source_decisions=data.get("source_decisions", {}),
             article_source_map=data.get("article_source_map", {}),
         )
+    except json.JSONDecodeError as exc:
+        logger.warning("Corrupted feedback JSON in %s, starting fresh: %s", path, exc)
+        return FeedbackStore()
     except Exception as exc:
         logger.warning("Failed to load feedback: %s", exc)
         return FeedbackStore()

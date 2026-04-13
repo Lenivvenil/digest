@@ -87,6 +87,9 @@ def load_stats(cache_dir: str) -> dict[str, SourceStats]:
             except (KeyError, TypeError, AttributeError) as exc:
                 logger.warning("Skipping malformed source stats entry '%s': %s", name, exc)
         return result
+    except json.JSONDecodeError as exc:
+        logger.warning("Corrupted stats JSON in %s, starting fresh: %s", path, exc)
+        return {}
     except Exception as exc:
         logger.warning("Failed to load source stats: %s", exc)
         return {}

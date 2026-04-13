@@ -85,6 +85,9 @@ def _load_cache() -> dict[str, str]:
         if not isinstance(data, dict):
             return {}
         return data
+    except json.JSONDecodeError as exc:
+        logger.warning("Corrupted dedup cache JSON, starting fresh: %s", exc)
+        return {}
     except Exception as exc:
         logger.warning("Failed to load deduplication cache: %s", exc)
         return {}
