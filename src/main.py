@@ -493,6 +493,8 @@ async def run(
     effective_priorities: dict[str, int] | None = None
     feedback_collected = 0
 
+    saved_update_id = feedback_store.last_update_id
+
     if config.adaptive.enabled:
         if not dry_run:
             bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -502,7 +504,6 @@ async def run(
                 feedback_collected = len(feedback_store.ratings) - old_count
                 if feedback_collected:
                     logger.info("Collected %d new feedback ratings", feedback_collected)
-                save_feedback(feedback_store, cache_dir)
 
         feedback_scores: dict[str, float] = {}
         for source in config.enabled_sources:
@@ -617,8 +618,12 @@ async def run(
         if all_ranked:
             await send_counter_signals(all_ranked, config)
 
-    if telegram_sent or markdown_saved:
+    delivery_ok = telegram_sent or markdown_saved
+    if delivery_ok:
         save_dedup_cache(cache)
+    else:
+        # Roll back feedback offset — updates will be reprocessed on next run
+        feedback_store.last_update_id = saved_update_id
 
     save_feedback(feedback_store, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
@@ -626,7 +631,7 @@ async def run(
     # Evaluate trial sources after successful delivery
     sources_promoted = 0
     sources_demoted = 0
-    if config.adaptive.enabled and (telegram_sent or markdown_saved):
+    if config.adaptive.enabled and delivery_ok:
         today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
         promote, demote, needs_start = evaluate_trial_sources(
             config.enabled_sources, source_stats, today
