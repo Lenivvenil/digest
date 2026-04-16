@@ -264,6 +264,7 @@ class TestRunRadarOnly:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
+            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("src.radar.save_dedup_cache", mock_save),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
@@ -316,6 +317,7 @@ class TestRunDryRun:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
+            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("src.radar.save_dedup_cache", mock_save),
             patch("src.irritator.extract_narratives", mock_extract),
         ):
@@ -334,6 +336,7 @@ class TestRunDryRun:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
+            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
         ):
@@ -355,8 +358,7 @@ class TestRunFullPipeline:
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(return_value=[])
         mock_write = AsyncMock(return_value=None)
-        mock_send_radar = AsyncMock(return_value=True)
-        mock_send_cards = AsyncMock(return_value={})
+        mock_send_cards = AsyncMock(return_value={"abc12345": "TechCrunch"})
 
         cfg = _mock_config()
         cfg.telegram.enabled = True
@@ -365,19 +367,18 @@ class TestRunFullPipeline:
             patch("src.config.load_config", return_value=cfg),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
+            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
             patch("src.delivery.write_digest", mock_write),
-            patch("src.delivery.send_radar", mock_send_radar),
             patch("src.delivery.send_article_cards", mock_send_cards),
-            patch("src.delivery.telegram.to_markdownv2", return_value="x"),
-            patch("src.delivery.telegram.split_message", return_value=["x"]),
+            patch("src.delivery.send_counter_signals", AsyncMock(return_value=False)),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 
         assert isinstance(result, RunStats)
         mock_write.assert_called_once()
-        mock_send_radar.assert_called_once()
+        mock_send_cards.assert_called_once()
 
     async def test_irritator_failure_does_not_crash(self) -> None:
         summary = _CategorySummary()
@@ -390,6 +391,7 @@ class TestRunFullPipeline:
             patch("src.config.load_config", return_value=_mock_config()),
             patch("src.radar.collect", mock_collect),
             patch("src.radar.summarize_all", mock_summarize),
+            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("src.radar.save_dedup_cache", MagicMock()),
             patch("src.irritator.extract_narratives", mock_extract),
             patch("src.delivery.write_digest", mock_write),

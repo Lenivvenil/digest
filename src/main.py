@@ -379,8 +379,13 @@ async def discover_sources(config_path: str) -> int:
 
 async def _run_irritator(
     summaries: list[Any], config: Any, verbose: bool
-) -> tuple[list[Any], list[Any]]:
-    """Run irritator pipeline. Returns (narratives, ranked_signals)."""
+) -> tuple[list[Any], list[Any], str]:
+    """Run irritator pipeline.
+
+    Returns (narratives, ranked_signals, status_message).
+    *status_message* is always populated so the caller can relay pipeline
+    progress to the user even when no counter-signals survive ranking.
+    """
     from src.irritator import (
         extract_narratives,
         generate_queries,
@@ -392,22 +397,84 @@ async def _run_irritator(
     logger = logging.getLogger(__name__)
     narratives: list[Any] = []
     all_ranked: list[Any] = []
+    raw_signal_count = 0
+    valid_signal_count = 0
+
+    # Stage 1: Narrative extraction
     try:
         narratives = await extract_narratives(summaries, config)
-        if narratives:
-            queries_by_narrative = await generate_queries(narratives, config)
-            all_queries = [q for qs in queries_by_narrative.values() for q in qs]
-            if all_queries:
-                import httpx
-
-                async with httpx.AsyncClient() as client:
-                    raw_signals = await search_all_sources(all_queries, config, client)
-                signals = validate_signals(raw_signals, config.filters.blocklist_keywords)
-                for narrative in narratives:
-                    ranked = await rank_signals(narrative, signals, config)
-                    all_ranked.extend(ranked)
     except Exception as exc:
-        logger.error("Irritator pipeline failed: %s", exc)
+        logger.error("Irritator: narrative extraction failed: %s", exc)
+        return [], [], f"narrative extraction failed: {exc}"
+
+    if not narratives:
+        logger.warning("Irritator: no narratives extracted from %d summaries", len(summaries))
+        return [], [], f"0 narratives from {len(summaries)} summaries"
+
+    logger.info("Irritator: extracted %d narratives", len(narratives))
+
+    # Stage 2: Query generation
+    try:
+        queries_by_narrative = await generate_queries(narratives, config)
+        all_queries = [q for qs in queries_by_narrative.values() for q in qs]
+    except Exception as exc:
+        logger.error("Irritator: query generation failed: %s", exc)
+        return narratives, [], f"{len(narratives)} narratives, query generation failed: {exc}"
+
+    if not all_queries:
+        logger.warning("Irritator: no queries generated from %d narratives", len(narratives))
+        return narratives, [], f"{len(narratives)} narratives, 0 queries"
+
+    logger.info("Irritator: generated %d queries", len(all_queries))
+
+    # Stage 3: Signal search
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            raw_signals = await search_all_sources(all_queries, config, client)
+        raw_signal_count = len(raw_signals)
+    except Exception as exc:
+        logger.error("Irritator: signal search failed: %s", exc)
+        return narratives, [], (
+            f"{len(narratives)} narratives, {len(all_queries)} queries, search failed: {exc}"
+        )
+
+    if not raw_signals:
+        logger.warning("Irritator: no signals found from %d queries", len(all_queries))
+        return narratives, [], (
+            f"{len(narratives)} narratives, {len(all_queries)} queries, 0 signals"
+        )
+
+    # Stage 4: Validation
+    signals = validate_signals(raw_signals, config.filters.blocklist_keywords)
+    valid_signal_count = len(signals)
+    if not signals:
+        logger.warning(
+            "Irritator: all %d signals filtered by blocklist", raw_signal_count,
+        )
+        return narratives, [], (
+            f"{len(narratives)} narratives, {raw_signal_count} signals, all filtered"
+        )
+
+    logger.info("Irritator: %d/%d signals passed validation", valid_signal_count, raw_signal_count)
+
+    # Stage 5: Ranking
+    for narrative in narratives:
+        try:
+            ranked = await rank_signals(narrative, signals, config)
+            all_ranked.extend(ranked)
+        except Exception as exc:
+            logger.error(
+                "Irritator: ranking failed for '%s': %s",
+                narrative.claim[:60], exc,
+            )
+
+    status = (
+        f"{len(narratives)} narratives, {raw_signal_count} signals, "
+        f"{valid_signal_count} valid, {len(all_ranked)} passed ranking"
+    )
+    logger.info("Irritator: %s", status)
 
     if verbose and narratives:
         print("\n=== DOMINANT NARRATIVES ===\n")
@@ -426,7 +493,7 @@ async def _run_irritator(
             print(f"   Narrative: {r.narrative_claim[:60]}")
             print(f"   Reasoning: {r.reasoning}\n")
 
-    return narratives, all_ranked
+    return narratives, all_ranked, status
 
 
 def _process_pending_approvals(
@@ -476,7 +543,7 @@ async def run(
         load_feedback,
         save_feedback,
     )
-    from src.radar import collect, save_dedup_cache, summarize_all
+    from src.radar import collect, pick_top_articles, save_dedup_cache, summarize_all
     from src.source_scorer import (
         apply_trial_decisions,
         calculate_effective_priorities,
@@ -519,7 +586,7 @@ async def run(
         )
 
     # Radar pipeline
-    articles_by_category, cache = await collect(config)
+    articles_by_category, cache = await collect(config, effective_priorities=effective_priorities)
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     def _empty_stats(n_articles: int = 0) -> RunStats:
@@ -552,6 +619,9 @@ async def run(
         + (f"\n\n{trends}" if trends else "")
     )
 
+    # Pick top articles for per-article Telegram cards
+    top_articles = await pick_top_articles(articles_by_category, config, max_articles=7)
+
     if not dry_run:
         save_dedup_cache(cache)
 
@@ -565,11 +635,16 @@ async def run(
         )
 
     # Irritator pipeline
-    _, all_ranked = await _run_irritator(summaries, config, verbose)
+    _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
 
     # Dry-run output
     if dry_run:
         print(combined)
+        if top_articles:
+            print("\n=== TOP ARTICLES ===\n")
+            for a in top_articles:
+                print(f"[{a.category}] {a.title}")
+                print(f"  {a.summary}\n")
         for r in all_ranked:
             print(f"[{r.score}/10] {r.signal.title} — {r.signal.url}")
         return RunStats(
@@ -580,13 +655,7 @@ async def run(
         )
 
     # Delivery
-    from src.delivery import send_article_cards, send_counter_signals, send_radar, write_digest
-
-    nano_status = _build_nano_status(
-        feeds_count, total_articles, 0, 0,
-        source_stats, config, effective_priorities,
-    )
-    delivery_text = f"{combined}\n\n{nano_status}"
+    from src.delivery import send_article_cards, send_counter_signals, write_digest
 
     md_path = write_digest(
         combined, config, ranked_signals=all_ranked or None,
@@ -599,27 +668,38 @@ async def run(
     telegram_partial = False
     if config.telegram.enabled:
         try:
-            from src.delivery.telegram import split_message, to_markdownv2
-
-            radar_md2 = to_markdownv2(delivery_text)
-            radar_chunks = len(split_message(radar_md2))
-            signal_chunks = 1 if all_ranked else 0
-            budget = config.telegram.max_messages
-            card_budget = max(0, budget - radar_chunks - signal_chunks)
+            from src.delivery.telegram import _send_chunk, escape_markdownv2
 
             article_source_map = await send_article_cards(
-                articles_by_category, config, max_cards=card_budget
+                articles_by_category, config, top_articles=top_articles,
             )
             if article_source_map:
                 feedback_store.article_source_map.update(article_source_map)
-            telegram_sent = await send_radar(delivery_text, config)
+            telegram_sent = bool(article_source_map)
             if telegram_sent:
                 feedback_store.last_digest_sources = contributing_sources
                 feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
                     "%Y-%m-%d %H:%M UTC"
                 )
-            if all_ranked:
-                await send_counter_signals(all_ranked, config)
+            await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
+
+            # Send nano status footer
+            nano_status = _build_nano_status(
+                feeds_count, total_articles, 0, 0,
+                source_stats, config, effective_priorities,
+            )
+            token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+            if token and chat_id:
+                import httpx as _httpx
+
+                api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+                async with _httpx.AsyncClient() as _client:
+                    await _send_chunk(
+                        _client, api_url, chat_id,
+                        escape_markdownv2(nano_status),
+                        disable_notification=True,
+                    )
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 

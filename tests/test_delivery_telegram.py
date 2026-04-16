@@ -218,6 +218,21 @@ class TestSendCounterSignals:
         result = await send_counter_signals([_make_ranked_signal()], _make_config())
         assert result is False
 
+    async def test_empty_signals_sends_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result = await send_counter_signals(
+                [], _make_config(), irritator_status="3 narratives, 0 signals",
+            )
+
+        assert result is False  # still False (no actual signals)
+        assert route.called  # but status message was sent
+
 
 # ---------------------------------------------------------------------------
 # send_article_cards (async, mocked HTTP)
@@ -294,3 +309,29 @@ class TestSendArticleCards:
 
         # Second card should still be in the map even if first failed
         assert len(result) == 2
+
+    async def test_sends_top_articles_with_summaries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        from src.radar.summarizer import ArticleSummary
+
+        top = [
+            ArticleSummary(
+                title="Big News",
+                link="https://example.com/article",
+                source="TechCrunch",
+                category="AI",
+                summary="This is an important development in AI.",
+            ),
+        ]
+        articles = {"AI": [_make_article(title="Big News")]}
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result = await send_article_cards(articles, _make_config(), top_articles=top)
+
+        assert len(result) == 1
+        assert route.call_count == 1

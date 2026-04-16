@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 from src._sanitize import sanitize_article as _sanitize_article
 from src.config import Config
@@ -15,10 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ArticleSummary:
+    """Per-article LLM summary used for individual Telegram posts."""
+
+    title: str
+    link: str
+    source: str
+    category: str
+    summary: str
+
+
+@dataclass
 class CategorySummary:
     category: str
     summary_text: str
     article_count: int
+    article_summaries: list[ArticleSummary] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +276,104 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Per-article JSON prompt (used for Telegram card delivery)
+# ---------------------------------------------------------------------------
+
+_PER_ARTICLE_INSTRUCTIONS: dict[str, str] = {
+    "ru": (
+        "Из списка статей ниже выбери самые важные и интересные для "
+        "Technology Architect в крупном банке. "
+        "Для каждой выбранной статьи напиши саммари в 2-3 предложения. "
+        "Саммари должно объяснять почему это важно, а не просто пересказывать заголовок.\n"
+        "Ответь ТОЛЬКО валидным JSON-массивом (без markdown-обёртки), "
+        "где каждый элемент:\n"
+        '{{"title": "оригинальный заголовок", "link": "url", '
+        '"source": "название источника", "summary": "саммари 2-3 предложения"}}\n'
+        "Выбери не более {max_articles} самых важных статей из всех категорий."
+    ),
+    "en": (
+        "From the articles below, pick the most important and interesting ones "
+        "for a Technology Architect at a major bank. "
+        "For each picked article write a 2-3 sentence summary. "
+        "The summary should explain why it matters, not just restate the headline.\n"
+        "Reply with ONLY a valid JSON array (no markdown wrapping), "
+        "where each element is:\n"
+        '{{"title": "original title", "link": "url", '
+        '"source": "source name", "summary": "2-3 sentence summary"}}\n'
+        "Pick at most {max_articles} most important articles across all categories."
+    ),
+}
+
+
+def _parse_article_summaries(
+    text: str, category: str,
+) -> list[ArticleSummary]:
+    """Parse JSON array of article summaries from LLM response."""
+    # Strip markdown code fences if present
+    cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip())
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    try:
+        items = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try to find JSON array in the response
+        match = re.search(r"\[.*\]", cleaned, re.DOTALL)
+        if match:
+            items = json.loads(match.group())
+        else:
+            logger.error("Failed to parse article summaries JSON for '%s'", category)
+            return []
+
+    if not isinstance(items, list):
+        return []
+
+    result: list[ArticleSummary] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title", "")
+        link = item.get("link", "")
+        source = item.get("source", "")
+        summary = item.get("summary", "")
+        if title and link and summary:
+            result.append(ArticleSummary(
+                title=title, link=link, source=source,
+                category=category, summary=summary,
+            ))
+    return result
+
+
+def build_per_article_prompt(
+    all_articles: dict[str, list[Article]],
+    config: Config,
+    max_articles: int = 7,
+) -> list[dict[str, str]]:
+    """Build LLM prompt that selects and summarizes top articles as JSON."""
+    lang = config.radar.language
+    tmpl = PROMPT_TEMPLATES.get(lang, PROMPT_TEMPLATES["ru"])
+    role = tmpl["role"]
+    instructions = _PER_ARTICLE_INSTRUCTIONS.get(
+        lang, _PER_ARTICLE_INSTRUCTIONS["ru"],
+    ).format(max_articles=max_articles)
+
+    parts: list[str] = []
+    for category, articles in all_articles.items():
+        parts.append(f"\n## {category}\n")
+        for art in articles:
+            title, description, source = _sanitize_article(
+                art.title, art.description, art.source,
+            )
+            parts.append(
+                f"- [{title}]({art.link}) ({source})\n"
+                f"  {description}\n"
+            )
+
+    return [
+        {"role": "system", "content": role},
+        {"role": "user", "content": f"{instructions}\n{''.join(parts)}"},
+    ]
+
 
 def build_category_prompt(
     category: str, articles: list[Article], config: Config
@@ -364,3 +476,39 @@ async def summarize_all(
             logger.error("Failed to generate trends: %s", exc)
 
     return summaries, trends
+
+
+async def pick_top_articles(
+    articles_by_category: dict[str, list[Article]],
+    config: Config,
+    max_articles: int = 7,
+) -> list[ArticleSummary]:
+    """Ask LLM to pick and summarize top articles across all categories.
+
+    Returns a flat list of :class:`ArticleSummary` sorted by the order
+    the LLM chose (most important first).  Falls back to an empty list
+    on any LLM / parse failure.
+    """
+    messages = build_per_article_prompt(articles_by_category, config, max_articles)
+    try:
+        text, _ = await complete(LLMRole.SUMMARIZE, messages, config)
+    except Exception as exc:
+        logger.error("Failed to pick top articles: %s", exc)
+        return []
+
+    parsed = _parse_article_summaries(text, "all")
+    if not parsed:
+        logger.warning("LLM returned no parseable article summaries")
+    else:
+        logger.info("LLM picked %d top articles", len(parsed))
+
+    # Assign correct categories from the original articles
+    link_to_category: dict[str, str] = {}
+    for category, articles in articles_by_category.items():
+        for art in articles:
+            link_to_category[art.link] = category
+    for a in parsed:
+        if a.category == "all":
+            a.category = link_to_category.get(a.link, "")
+
+    return parsed[:max_articles]

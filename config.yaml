@@ -33,7 +33,7 @@ radar:
   # Language for digest content: "ru" (Russian) | "en" (English)
   language: ru
   # Maximum number of articles fetched per category
-  max_articles_per_category: 5
+  max_articles_per_category: 8
   # Summary style: "analytical" | "brief" | "detailed"
   summary_style: analytical
   # Enable three perspectives (Optimist/Skeptic/Realist) for top items
@@ -47,7 +47,7 @@ irritator:
   # Top counter-signals to surface per narrative
   top_signals: 3
   # Minimum signal relevance score (1-10) to include in output
-  min_signal_score: 7
+  min_signal_score: 5
   # Sources to search for counter-signals
   sources: [hackernews, reddit, arxiv, devto, lobsters]
   # Subreddits to search when reddit is in sources
@@ -120,7 +120,7 @@ sources:
     url: https://www.brendangregg.com/blog/rss.xml
     category: Architecture & Distributed Systems
     enabled: true
-    priority: 5
+    priority: 3
     recency_hours: 744
 
   - name: SRE Weekly
@@ -134,7 +134,7 @@ sources:
     url: https://martinfowler.com/feed.atom
     category: Architecture & Distributed Systems
     enabled: true
-    priority: 5
+    priority: 3
     recency_hours: 744
 
   - name: ACM Queue
@@ -156,6 +156,13 @@ sources:
     category: Architecture & Distributed Systems
     enabled: true
     priority: 3
+    recency_hours: 168
+
+  - name: The Pragmatic Engineer
+    url: https://newsletter.pragmaticengineer.com/feed
+    category: Architecture & Distributed Systems
+    enabled: true
+    priority: 4
     recency_hours: 168
 
   # Company Engineering Blogs
@@ -371,19 +378,19 @@ sources:
   - name: Finextra AI
     url: https://www.finextra.com/rss/channel.aspx?channel=ai
     category: Banking & Fintech
-    enabled: true
+    enabled: false  # duplicates Finextra
     priority: 2
 
   - name: Global Finance Magazine
     url: https://gfmag.com/feed/
     category: Banking & Fintech
-    enabled: true
+    enabled: false  # low relevance for tech architect
     priority: 2
 
   - name: JPMorgan Chase IR
     url: https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml
     category: Banking & Fintech
-    enabled: true
+    enabled: false  # IR press releases, not tech
     priority: 3
     trial: false
 
@@ -399,7 +406,7 @@ sources:
   - name: CaixaBank Research
     url: https://www.caixabankresearch.com/en/rss.xml
     category: Banking & Fintech
-    enabled: true
+    enabled: false  # IR, not tech
     priority: 3
     trial: false
 
@@ -417,25 +424,25 @@ sources:
     url: https://www.technologyreview.com/topic/artificial-intelligence/feed
     category: AI & LLM
     enabled: true
-    priority: 2
+    priority: 4
 
   - name: The Batch by Andrew Ng
     url: https://www.deeplearning.ai/the-batch/feed/
     category: AI & LLM
     enabled: true
-    priority: 3
+    priority: 4
 
   - name: Hugging Face Blog
     url: https://huggingface.co/blog/feed.xml
     category: AI & LLM
     enabled: true
-    priority: 3
+    priority: 4
 
   - name: OpenAI News
     url: https://openai.com/news/rss.xml
     category: AI & LLM
     enabled: true
-    priority: 2
+    priority: 4
 
   - name: NVIDIA Developer Blog
     url: https://developer.nvidia.com/blog/feed/
@@ -443,18 +450,33 @@ sources:
     enabled: true
     priority: 2
 
-  - name: Ars Technica AI
-    url: https://feeds.arstechnica.com/arstechnica/technology-lab
+  - name: Google DeepMind Blog
+    url: https://deepmind.google/blog/rss.xml
     category: AI & LLM
-    enabled: false
-    priority: 1
+    enabled: true
+    priority: 5
+    recency_hours: 168
+
+  - name: Meta AI Engineering
+    url: https://engineering.fb.com/category/ml-applications/feed/
+    category: AI & LLM
+    enabled: true
+    priority: 4
+    recency_hours: 168
+
+  - name: The Gradient
+    url: https://thegradient.pub/rss/
+    category: AI & LLM
+    enabled: true
+    priority: 3
+    recency_hours: 168
 
   # AI Engineering
   - name: Google Research Blog
     url: https://research.google/blog/rss/
     category: AI Engineering
     enabled: true
-    priority: 4
+    priority: 5
     recency_hours: 168
 
   # Platform Engineering
@@ -502,10 +524,32 @@ sources:
     url: https://www.spot.uz/ru/rss/
     category: Geopolitics & CIS
     enabled: true
-    priority: 2
+    priority: 1
 
   - name: Kun.uz EN
     url: https://kun.uz/en/news.rss
     category: Geopolitics & CIS
     enabled: true
-    priority: 2
+    priority: 1
+
+  # Breaking Tech News
+  - name: TechCrunch
+    url: https://techcrunch.com/feed/
+    category: Breaking Tech News
+    enabled: true
+    priority: 5
+    recency_hours: 24
+
+  - name: The Verge
+    url: https://www.theverge.com/rss/index.xml
+    category: Breaking Tech News
+    enabled: true
+    priority: 5
+    recency_hours: 24
+
+  - name: Ars Technica
+    url: https://feeds.arstechnica.com/arstechnica/technology-lab
+    category: Breaking Tech News
+    enabled: true
+    priority: 4
+    recency_hours: 24

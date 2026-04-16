@@ -644,6 +644,29 @@ class TestAllocateSlots:
         assert slots["A"] == 1
         assert slots["B"] == 1
 
+    def test_priority_overrides(self) -> None:
+        sources = [
+            make_source(name="High", priority=5),
+            make_source(name="Low", priority=1),
+        ]
+        # Without overrides: High dominates
+        normal = allocate_slots(sources, total_budget=6)
+        assert normal["High"] > normal["Low"]
+
+        # With overrides: reverse the weights
+        overridden = allocate_slots(sources, total_budget=6, priority_overrides={"High": 1, "Low": 5})
+        assert overridden["Low"] > overridden["High"]
+
+    def test_priority_overrides_partial(self) -> None:
+        """Sources missing from overrides fall back to static priority."""
+        sources = [
+            make_source(name="A", priority=3),
+            make_source(name="B", priority=3),
+        ]
+        slots = allocate_slots(sources, total_budget=6, priority_overrides={"A": 5})
+        # A gets boosted (5), B stays at 3
+        assert slots["A"] > slots["B"]
+
 
 @pytest.mark.asyncio
 async def test_collect_respects_priority(

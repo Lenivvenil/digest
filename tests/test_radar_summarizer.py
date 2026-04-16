@@ -22,8 +22,10 @@ from src.config import (
     TelegramConfig,
 )
 from src.radar.summarizer import (
+    _parse_article_summaries,
     build_category_prompt,
     build_trends_prompt,
+    pick_top_articles,
     summarize_all,
 )
 from tests.factories import make_article
@@ -310,3 +312,85 @@ class TestSummarizeAll:
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert "Tech Article" in messages[1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# _parse_article_summaries
+# ---------------------------------------------------------------------------
+
+
+class TestParseArticleSummaries:
+    def test_valid_json(self) -> None:
+        text = '[{"title": "A", "link": "https://a.com", "source": "S", "summary": "Good"}]'
+        result = _parse_article_summaries(text, "tech")
+        assert len(result) == 1
+        assert result[0].title == "A"
+        assert result[0].category == "tech"
+
+    def test_json_with_code_fences(self) -> None:
+        text = '```json\n[{"title": "A", "link": "https://a.com", "source": "S", "summary": "X"}]\n```'
+        result = _parse_article_summaries(text, "tech")
+        assert len(result) == 1
+
+    def test_invalid_json_returns_empty(self) -> None:
+        result = _parse_article_summaries("not json at all", "tech")
+        assert result == []
+
+    def test_missing_required_fields_skipped(self) -> None:
+        text = '[{"title": "A", "link": "", "source": "S", "summary": "X"}]'
+        result = _parse_article_summaries(text, "tech")
+        assert len(result) == 0  # empty link
+
+    def test_multiple_articles(self) -> None:
+        text = (
+            '[{"title": "A", "link": "https://a.com", "source": "S1", "summary": "X"},'
+            ' {"title": "B", "link": "https://b.com", "source": "S2", "summary": "Y"}]'
+        )
+        result = _parse_article_summaries(text, "cat")
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# pick_top_articles
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestPickTopArticles:
+    async def test_returns_parsed_summaries(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [_make_article(title="Article 1", category="Tech")]}
+        llm_response = (
+            '[{"title": "Article 1", "link": "https://example.com/1",'
+            ' "source": "TechCrunch", "summary": "Important news."}]'
+        )
+
+        with patch("src.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=5)
+
+        assert len(result) == 1
+        assert result[0].title == "Article 1"
+        assert result[0].category == "Tech"
+
+    async def test_llm_failure_returns_empty(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [_make_article()]}
+
+        with patch("src.radar.summarizer.complete", AsyncMock(side_effect=RuntimeError("fail"))):
+            result = await pick_top_articles(articles, config)
+
+        assert result == []
+
+    async def test_respects_max_articles(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [_make_article()]}
+        llm_response = (
+            '[{"title": "A", "link": "https://a.com", "source": "S", "summary": "X"},'
+            ' {"title": "B", "link": "https://b.com", "source": "S", "summary": "Y"},'
+            ' {"title": "C", "link": "https://c.com", "source": "S", "summary": "Z"}]'
+        )
+
+        with patch("src.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=2)
+
+        assert len(result) == 2

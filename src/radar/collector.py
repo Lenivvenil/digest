@@ -288,10 +288,18 @@ def _clamp_partition(result: dict[str, int], names: list[str], budget: int) -> N
         total -= 1
 
 
-def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, int]:
+def allocate_slots(
+    sources: list[SourceConfig],
+    total_budget: int,
+    priority_overrides: dict[str, int] | None = None,
+) -> dict[str, int]:
     """Return per-source article slot counts proportional to source priorities.
 
-    slot(source) = max(1, round(budget * source.priority / total_weight))
+    slot(source) = max(1, round(budget * priority / total_weight))
+
+    If *priority_overrides* is provided, its values are used instead of
+    ``source.priority`` for weighting.  Sources missing from the mapping
+    fall back to their static priority.
 
     If total_weight is zero (all sources have priority=0), every source gets 1 slot.
     """
@@ -300,13 +308,18 @@ def allocate_slots(sources: list[SourceConfig], total_budget: int) -> dict[str, 
     if not sources or total_budget <= 0:
         return {s.name: 0 for s in sources}
 
-    total_weight = sum(s.priority for s in sources)
+    def _prio(s: SourceConfig) -> int:
+        if priority_overrides is not None:
+            return priority_overrides.get(s.name, s.priority)
+        return s.priority
+
+    total_weight = sum(_prio(s) for s in sources)
     if total_weight == 0:
         for s in sources:
             result[s.name] = 1
     else:
         for s in sources:
-            result[s.name] = max(1, round(total_budget * s.priority / total_weight))
+            result[s.name] = max(1, round(total_budget * _prio(s) / total_weight))
 
     _clamp_partition(result, [s.name for s in sources], total_budget)
     return result
@@ -321,11 +334,17 @@ def save_dedup_cache(cache: dict[str, str]) -> None:
     _save_cache(cache)
 
 
-async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, str]]:
+async def collect(
+    config: Config,
+    effective_priorities: dict[str, int] | None = None,
+) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
     Applies blocklist filtering, per-source recency filtering, deduplication
     cache, and per-category slot limits.
+
+    If *effective_priorities* is provided (from adaptive scoring), those
+    values override static ``source.priority`` during slot allocation.
 
     Returns:
         A tuple of (articles_by_category, updated_cache). The caller is
@@ -364,7 +383,7 @@ async def collect(config: Config) -> tuple[dict[str, list[Article]], dict[str, s
     successful_sources = [
         s for s, r in zip(config.enabled_sources, results, strict=True) if r is not None
     ]
-    raw_slots = allocate_slots(successful_sources, total_budget)
+    raw_slots = allocate_slots(successful_sources, total_budget, priority_overrides=effective_priorities)
 
     grouped: dict[str, list[Article]] = {}
     total_collected = 0

@@ -195,13 +195,16 @@ async def send_article_cards(
     articles_by_category: dict[str, list[Any]],
     config: Any,
     *,
-    max_cards: int = 0,
+    top_articles: list[Any] | None = None,
 ) -> dict[str, str]:
-    """Send Telegram cards for top articles with voting buttons.
+    """Send per-article Telegram posts with LLM summaries and voting buttons.
 
-    If *max_cards* > 0, at most that many cards are sent (highest-priority
-    articles first).  The full article_source_map is still returned so
-    feedback attribution works for articles covered by the digest text.
+    If *top_articles* (list of ``ArticleSummary``) is provided, those are
+    sent as cards with their LLM-generated summaries.  Otherwise falls back
+    to raw articles with truncated descriptions.
+
+    The full ``article_source_map`` (hash → source) is always built from
+    *articles_by_category* so feedback attribution works for every article.
 
     Returns mapping of 8-char article hash -> source name.
     """
@@ -216,37 +219,41 @@ async def send_article_cards(
     api_url = _API_BASE.format(token=token)
     article_source_map: dict[str, str] = {}
 
-    # Build full map first (needed for feedback attribution even if we skip some cards)
-    all_articles: list[tuple[str, Any]] = []
-    for category, articles in articles_by_category.items():
+    # Build full attribution map from all articles
+    for articles in articles_by_category.values():
         for art in articles:
             hash8 = article_hash(art.title, art.link)[:8]
             article_source_map[hash8] = art.source
-            all_articles.append((category, art))
 
-    cards_to_send = all_articles
-    if max_cards > 0:
-        cards_to_send = all_articles[:max_cards]
+    # Determine what to send
+    cards: list[tuple[str, str, str, str, str]] = []  # (title, link, source, cat, desc)
+    if top_articles:
+        for a in top_articles:
+            cards.append((a.title, a.link, a.source, a.category, a.summary))
+    else:
+        # Fallback: raw articles with truncated descriptions
+        for category, articles in articles_by_category.items():
+            for art in articles:
+                desc = art.description[:200]
+                if len(art.description) > 200:
+                    desc += "\u2026"
+                cards.append((art.title, art.link, art.source, category, desc))
 
     sent_count = 0
     async with httpx.AsyncClient() as client:
-        for category, art in cards_to_send:
-            hash8 = article_hash(art.title, art.link)[:8]
+        for title, link, source, category, summary in cards:
+            hash8 = article_hash(title, link)[:8]
 
-            title_esc = escape_markdownv2(art.title)
-            url_esc = art.link.replace("\\", "\\\\").replace(")", "\\)")
-            source_esc = escape_markdownv2(art.source)
+            title_esc = escape_markdownv2(title)
+            url_esc = link.replace("\\", "\\\\").replace(")", "\\)")
+            source_esc = escape_markdownv2(source)
             cat_esc = escape_markdownv2(category)
-
-            desc = art.description[:200]
-            if len(art.description) > 200:
-                desc += "\u2026"
-            desc_esc = escape_markdownv2(desc)
+            summary_esc = escape_markdownv2(summary)
 
             text = (
-                f"[{title_esc}]({url_esc})\n"
-                f"*{source_esc}* \u00b7 _{cat_esc}_\n\n"
-                f"{desc_esc}"
+                f"[{title_esc}]({url_esc})\n\n"
+                f"{summary_esc}\n\n"
+                f"*{source_esc}* \u00b7 _{cat_esc}_"
             )
 
             keyboard: dict[str, Any] = {
@@ -264,53 +271,72 @@ async def send_article_cards(
                     api_url,
                     chat_id,
                     text,
-                    disable_notification=True,
                     reply_markup=keyboard,
                 )
                 sent_count += 1
             except Exception as exc:
                 logger.warning(
-                    "Failed to send card for '%s': %s", art.title[:50], exc
+                    "Failed to send card for '%s': %s", title[:50], exc,
                 )
 
             await asyncio.sleep(0.5)
 
-    logger.info("Sent %d/%d article cards to Telegram", sent_count, len(all_articles))
+    logger.info("Sent %d article cards to Telegram", sent_count)
     return article_source_map
 
 
-async def send_counter_signals(ranked_signals: list[Any], config: Any) -> bool:
-    """Send counter-signals as a separate Telegram message."""
-    if not ranked_signals:
-        return False
+async def send_counter_signals(
+    ranked_signals: list[Any],
+    config: Any,
+    irritator_status: str = "",
+) -> bool:
+    """Send counter-signals as a separate Telegram message.
 
+    If *ranked_signals* is empty but *irritator_status* is provided, a short
+    status message is sent so the user always sees that the pipeline ran.
+    """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return False
 
-    lines = ["## \u26a0\ufe0f Counter\\-Signals\n"]
+    api_url = _API_BASE.format(token=token)
+
+    if not ranked_signals:
+        if irritator_status:
+            msg = f"\U0001f4a2 \u0420\u0430\u0437\u0434\u0440\u0430\u0436\u0430\u0442\u043e\u0440: {irritator_status}"
+            status_text = escape_markdownv2(msg)
+            async with httpx.AsyncClient() as client:
+                await _send_chunk(client, api_url, chat_id, status_text, disable_notification=True)
+            logger.info("Irritator status sent to Telegram: %s", irritator_status)
+        return False
+
+    header = (
+        "\U0001f4a2\U0001f525 "
+        "*\u0420\u0410\u0417\u0414\u0420\u0410\u0416\u0410\u0422\u041e\u0420* "
+        "\U0001f525\U0001f4a2"
+    )
+    lines = [f"{header}\n"]
     for r in ranked_signals:
         title = escape_markdownv2(r.signal.title)
         url = r.signal.url.replace("\\", "\\\\").replace(")", "\\)")
         reasoning = escape_markdownv2(r.reasoning)
         narrative = escape_markdownv2(r.narrative_claim[:80])
         lines.append(
-            f"*\\[{r.score}/10\\]* [{title}]({url})\n"
+            f"\u26a1 *\\[{r.score}/10\\]* [{title}]({url})\n"
+            f"\u2192 \u041e\u0441\u043f\u0430\u0440\u0438\u0432\u0430\u0435\u0442: \u00ab{narrative}\u00bb\n"
             f"_{reasoning}_\n"
-            f"Narrative: {narrative}\n"
         )
 
     text = "\n".join(lines)
     md2 = to_markdownv2(text)
     chunks = split_message(md2)
 
-    api_url = _API_BASE.format(token=token)
     async with httpx.AsyncClient() as client:
         for chunk in chunks:
             if len(chunk) > _MAX_MESSAGE_LEN:
                 chunk = chunk[: _MAX_MESSAGE_LEN - 1] + "\u2026"
             await _send_chunk(client, api_url, chat_id, chunk)
 
-    logger.info("Counter-signals sent to Telegram")
+    logger.info("Counter-signals sent to Telegram (%d signals)", len(ranked_signals))
     return True
