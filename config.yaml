@@ -471,6 +471,16 @@ sources:
     priority: 3
     recency_hours: 168
 
+  - name: Ken Huang — Agentic AI
+    url: https://kenhuangus.substack.com/feed
+    category: AI & LLM
+    enabled: true
+    priority: 2
+    recency_hours: 168
+    trial: true
+    trial_days: 14
+    trial_started: "2026-04-17"
+
   # AI Engineering
   - name: Google Research Blog
     url: https://research.google/blog/rss/
