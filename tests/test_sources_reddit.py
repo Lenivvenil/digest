@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from src.irritator.sources.reddit import search_reddit
+from digest.irritator.sources.reddit import search_reddit
 
 
 def _make_config(subreddits: list[str] | None = None) -> Any:

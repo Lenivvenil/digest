@@ -25,3 +25,9 @@ env/
 
 # macOS
 .DS_Store
+
+# Instance files — live in digest-prod, not engine
+config.yaml
+.cache/
+digests/
+uv.lock

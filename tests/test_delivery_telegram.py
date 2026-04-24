@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from src.delivery.telegram import (
+from digest.delivery.telegram import (
     escape_markdownv2,
     send_article_cards,
     send_counter_signals,
@@ -314,7 +314,7 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
-        from src.radar.summarizer import ArticleSummary
+        from digest.radar.summarizer import ArticleSummary
 
         top = [
             ArticleSummary(

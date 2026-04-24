@@ -33,12 +33,19 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 - All strings that face the user (log messages, errors) in English. The digest content language is controlled by config
 - Never import symbols that are not used in the file. Never assign to variables that are not read.
 
+## Repository topology (ADR-0002)
+
+This is the **engine repo** — source code, tests, CI only. Production runtime lives in `Lenivvenil/digest-prod` (private).
+
+- `config.yaml`, `.cache/`, `digests/` are **not** in this repo — they live in `digest-prod`.
+- Entry point: `python -m digest` (installed via `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"`).
+
 ## Project Structure
 
 ```
-├── src/
+├── digest/
 │   ├── __init__.py          # __version__
-│   ├── __main__.py          # enables `python -m src`
+│   ├── __main__.py          # enables `python -m digest`
 │   ├── main.py              # 6-phase pipeline orchestrator, CLI flags
 │   ├── config.py            # config loading and validation
 │   ├── llm.py               # LLM provider abstraction (Groq, Gemini, DeepSeek)
@@ -71,17 +78,11 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 │   ├── test_sources_hackernews.py, test_sources_lobsters.py
 │   ├── test_sources_init.py, test_sources_reddit.py
 │   └── test_ruff_config.py
-├── digests/                  # generated markdown files (committed to repo)
-│   └── .gitkeep
-├── .cache/                   # deduplication cache (committed to repo)
-│   └── .gitkeep
 ├── .github/workflows/
-│   ├── digest.yml            # daily digest (02:00 + 13:00 UTC), includes test gate
-│   └── discover.yml          # weekly source discovery (Sundays 06:00 UTC), includes test gate
-├── config.yaml               # user-editable configuration
-├── pyproject.toml            # ruff, mypy, pytest config
+│   └── ci.yml               # lint + typecheck + test on push/PR
+├── pyproject.toml            # package name "digest", ruff, mypy, pytest config
 ├── Makefile                  # lint, typecheck, test, check targets
-├── .pre-commit-config.yaml   # ruff pre-commit hooks
+├── .pre-commit-config.yaml   # ruff + bandit pre-commit hooks
 ├── .env.example
 ├── requirements.txt
 ├── requirements-dev.txt
@@ -109,7 +110,7 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 
 ## Pre-commit Checklist
 
-Always run `ruff check src/ tests/` before committing. Fix all errors before creating a commit.
+Always run `ruff check digest/ tests/` before committing. Fix all errors before creating a commit.
 
 ## Digest Format: Three Perspectives
 

@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from src.irritator.sources.devto import search_devto
+from digest.irritator.sources.devto import search_devto
 
 
 @pytest.mark.asyncio

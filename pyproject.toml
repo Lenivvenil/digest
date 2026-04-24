@@ -1,5 +1,5 @@
 [project]
-name = "daily-digest"
+name = "digest"
 version = "2.0.0"
 description = "Daily news digest generator with LLM summarization"
 requires-python = ">=3.12"
@@ -23,7 +23,7 @@ max-complexity = 25
 "tests/**" = ["F811"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["digest"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -39,4 +39,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=70"
+addopts = "-v --tb=short --cov=digest --cov-report=term-missing --cov-fail-under=70"

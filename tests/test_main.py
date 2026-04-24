@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.main import RunStats, _clean_summary, check_config, main, run
+from digest.main import RunStats, _clean_summary, check_config, main, run
 
 
 @dataclass
@@ -203,19 +203,19 @@ class TestCheckConfig:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("src.config.load_config", return_value=cfg),
+            patch("digest.config.load_config", return_value=cfg),
             patch("httpx.AsyncClient", return_value=mock_client),
-            patch("src._dns_pinning.validate_url", return_value=type("V", (), {
+            patch("digest._dns_pinning.validate_url", return_value=type("V", (), {
                 "hostname": "example.com", "pinned_addrinfos": [],
                 "url": "https://example.com/feed",
             })()),
-            patch("src._dns_pinning.pin_dns", MagicMock()),
+            patch("digest._dns_pinning.pin_dns", MagicMock()),
         ):
             result = await check_config("config.yaml")
         assert result == 0
 
     async def test_invalid_config(self) -> None:
-        with patch("src.config.load_config", side_effect=FileNotFoundError("nope")):
+        with patch("digest.config.load_config", side_effect=FileNotFoundError("nope")):
             result = await check_config("missing.yaml")
         assert result == 1
 
@@ -236,13 +236,13 @@ class TestCheckConfig:
         mock_client.get = AsyncMock(return_value=mock_response)
 
         with (
-            patch("src.config.load_config", return_value=cfg),
+            patch("digest.config.load_config", return_value=cfg),
             patch("httpx.AsyncClient", return_value=mock_client),
-            patch("src._dns_pinning.validate_url", return_value=type("V", (), {
+            patch("digest._dns_pinning.validate_url", return_value=type("V", (), {
                 "hostname": "example.com", "pinned_addrinfos": [],
                 "url": "https://example.com/feed",
             })()),
-            patch("src._dns_pinning.pin_dns", MagicMock()),
+            patch("digest._dns_pinning.pin_dns", MagicMock()),
         ):
             result = await check_config("config.yaml")
         assert result == 0
@@ -261,11 +261,11 @@ class TestRunRadarOnly:
         mock_save = MagicMock()
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("src.radar.save_dedup_cache", mock_save),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", mock_save),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
@@ -277,8 +277,8 @@ class TestRunRadarOnly:
         mock_collect = AsyncMock(return_value=({}, {}))
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
@@ -290,9 +290,9 @@ class TestRunRadarOnly:
         mock_summarize = AsyncMock(return_value=([], ""))
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=True, verbose=False)
 
@@ -314,12 +314,12 @@ class TestRunDryRun:
         mock_extract = AsyncMock(return_value=[])
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("src.radar.save_dedup_cache", mock_save),
-            patch("src.irritator.extract_narratives", mock_extract),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", mock_save),
+            patch("digest.irritator.extract_narratives", mock_extract),
         ):
             result = await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
 
@@ -333,12 +333,12 @@ class TestRunDryRun:
         mock_extract = AsyncMock(return_value=[])
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("src.radar.save_dedup_cache", MagicMock()),
-            patch("src.irritator.extract_narratives", mock_extract),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", MagicMock()),
+            patch("digest.irritator.extract_narratives", mock_extract),
         ):
             await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
 
@@ -364,15 +364,15 @@ class TestRunFullPipeline:
         cfg.telegram.enabled = True
 
         with (
-            patch("src.config.load_config", return_value=cfg),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("src.radar.save_dedup_cache", MagicMock()),
-            patch("src.irritator.extract_narratives", mock_extract),
-            patch("src.delivery.write_digest", mock_write),
-            patch("src.delivery.send_article_cards", mock_send_cards),
-            patch("src.delivery.send_counter_signals", AsyncMock(return_value=False)),
+            patch("digest.config.load_config", return_value=cfg),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", MagicMock()),
+            patch("digest.irritator.extract_narratives", mock_extract),
+            patch("digest.delivery.write_digest", mock_write),
+            patch("digest.delivery.send_article_cards", mock_send_cards),
+            patch("digest.delivery.send_counter_signals", AsyncMock(return_value=False)),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 
@@ -388,13 +388,13 @@ class TestRunFullPipeline:
         mock_write = AsyncMock(return_value=None)
 
         with (
-            patch("src.config.load_config", return_value=_mock_config()),
-            patch("src.radar.collect", mock_collect),
-            patch("src.radar.summarize_all", mock_summarize),
-            patch("src.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("src.radar.save_dedup_cache", MagicMock()),
-            patch("src.irritator.extract_narratives", mock_extract),
-            patch("src.delivery.write_digest", mock_write),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", mock_collect),
+            patch("digest.radar.summarize_all", mock_summarize),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", MagicMock()),
+            patch("digest.irritator.extract_narratives", mock_extract),
+            patch("digest.delivery.write_digest", mock_write),
         ):
             result = await run("config.yaml", dry_run=False, radar_only=False, verbose=False)
 
@@ -408,7 +408,7 @@ class TestRunFullPipeline:
 @pytest.mark.asyncio
 class TestMain:
     async def test_check_flag(self) -> None:
-        with patch("src.main.check_config", new_callable=AsyncMock, return_value=0) as mock_check:
+        with patch("digest.main.check_config", new_callable=AsyncMock, return_value=0) as mock_check:
             result = await main(["--check"])
         assert result == 0
         mock_check.assert_called_once_with("config.yaml")
@@ -419,7 +419,7 @@ class TestMain:
             telegram_sent=False, telegram_partial=False,
             markdown_saved=False, markdown_path="",
         )
-        with patch("src.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
+        with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main([])
         assert result == 0
         mock_run.assert_called_once_with("config.yaml", False, False, False)
@@ -430,7 +430,7 @@ class TestMain:
             telegram_sent=False, telegram_partial=False,
             markdown_saved=False, markdown_path="",
         )
-        with patch("src.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
+        with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml"])
         assert result == 0
         mock_run.assert_called_once_with("alt.yaml", True, True, True)

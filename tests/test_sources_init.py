@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from src.irritator.query_generator import SearchQuery
-from src.irritator.sources import search_all_sources
+from digest.irritator.query_generator import SearchQuery
+from digest.irritator.sources import search_all_sources
 from tests.factories import make_signal
 
 
@@ -36,7 +36,7 @@ class TestSearchAllSources:
         mock_adapter = AsyncMock(return_value=[_make_signal()])
         queries = [_make_query("hackernews")]
 
-        with patch.dict("src.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
+        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
             async with httpx.AsyncClient() as client:
                 signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
 
@@ -47,7 +47,7 @@ class TestSearchAllSources:
         mock_adapter = AsyncMock(return_value=[_make_signal()])
         queries = [_make_query("arxiv")]
 
-        with patch.dict("src.irritator.sources._ADAPTERS", {"arxiv": mock_adapter}):
+        with patch.dict("digest.irritator.sources._ADAPTERS", {"arxiv": mock_adapter}):
             async with httpx.AsyncClient() as client:
                 # config only has hackernews, not arxiv
                 signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
@@ -60,7 +60,7 @@ class TestSearchAllSources:
         mock_bad = AsyncMock(side_effect=RuntimeError("API down"))
         queries = [_make_query("hackernews"), _make_query("reddit")]
 
-        with patch.dict("src.irritator.sources._ADAPTERS", {"hackernews": mock_good, "reddit": mock_bad}):
+        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_good, "reddit": mock_bad}):
             async with httpx.AsyncClient() as client:
                 signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
 
@@ -76,7 +76,7 @@ class TestSearchAllSources:
         mock_adapter = AsyncMock(return_value=[_make_signal()])
         queries = [_make_query("hackernews", "q1"), _make_query("hackernews", "q2")]
 
-        with patch.dict("src.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
+        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
             async with httpx.AsyncClient() as client:
                 signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
 

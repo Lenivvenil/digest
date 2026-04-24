@@ -149,7 +149,7 @@ digest:
 ## CLI Reference
 
 ```bash
-python -m src [OPTIONS]
+python -m digest [OPTIONS]
 ```
 
 | Флаг | Описание |
@@ -172,19 +172,19 @@ cp .env.example .env
 # отредактировать .env с вашими ключами
 
 # Проверить конфиг и API-ключи
-python -m src --check
+python -m digest --check
 
 # Запустить дайджест
-python -m src
+python -m digest
 
 # Dry-run: собрать и суммировать, но не отправлять и не сохранять
-python -m src --dry-run --verbose
+python -m digest --dry-run --verbose
 
 # Использовать другой конфиг-файл
-python -m src --config my-config.yaml
+python -m digest --config my-config.yaml
 
 # Найти новые RSS-источники через LLM
-python -m src --discover
+python -m digest --discover
 ```
 
 ## Добавление и удаление источников
@@ -308,7 +308,7 @@ tags:
 ## Автоматическое обнаружение источников
 
 ```bash
-python -m src --discover
+python -m digest --discover
 ```
 
 Команда использует LLM для предложения новых RSS-источников в категории, где источников мало. Алгоритм:
@@ -350,9 +350,9 @@ pre-commit install
 Используйте `Makefile` для стандартных задач:
 
 ```bash
-make lint       # ruff check src/ tests/
+make lint       # ruff check digest/ tests/
 make lint-fix   # ruff check --fix + ruff format
-make typecheck  # mypy src/
+make typecheck  # mypy digest/
 make test       # pytest tests/ -v
 make check      # lint + typecheck + test
 ```
@@ -364,10 +364,10 @@ make check      # lint + typecheck + test
 python -m pytest tests/ -v
 
 # Проверка типов
-python -m mypy src/ --ignore-missing-imports
+python -m mypy digest/ --ignore-missing-imports
 
 # Линтинг
-python -m ruff check src/
+python -m ruff check digest/
 ```
 
 ## Переменные окружения

@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from src.irritator.sources.arxiv import search_arxiv
+from digest.irritator.sources.arxiv import search_arxiv
 
 _ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">

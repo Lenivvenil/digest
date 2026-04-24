@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.irritator.query_generator import (
+from digest.irritator.query_generator import (
     SearchQuery,
     _build_prompt,
     _parse_queries,
@@ -132,7 +132,7 @@ class TestGenerateQueries:
         dicts = _valid_query_dicts(3)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config())
 
         assert len(result) == 1
@@ -151,7 +151,7 @@ class TestGenerateQueries:
         n1 = _make_narrative("Claim A")
         n2 = _make_narrative("Claim B")
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([n1, n2], _make_config())
 
         assert len(result) == 2
@@ -171,19 +171,19 @@ class TestGenerateQueries:
         n1 = _make_narrative("Good claim")
         n2 = _make_narrative("Bad claim")
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([n1, n2], _make_config())
 
         assert len(result) == 1
         assert "Good claim" in result
 
     async def test_uses_correct_role(self) -> None:
-        from src.llm import LLMRole
+        from digest.llm import LLMRole
 
         dicts = _valid_query_dicts(1)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             await generate_queries([_make_narrative()], _make_config())
 
         assert mock_complete.call_args[0][0] == LLMRole.GENERATE_QUERIES
@@ -191,7 +191,7 @@ class TestGenerateQueries:
     async def test_all_fail_returns_empty(self) -> None:
         mock_complete = AsyncMock(side_effect=RuntimeError("All failed"))
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config())
 
         assert result == {}
@@ -201,7 +201,7 @@ class TestGenerateQueries:
         fenced = f"```json\n{json.dumps(dicts)}\n```"
         mock_complete = AsyncMock(return_value=(fenced, {}))
 
-        with patch("src.irritator.query_generator.complete", mock_complete):
+        with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config())
 
         assert len(list(result.values())[0]) == 2

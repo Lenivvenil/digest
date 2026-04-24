@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src._dns_pinning import ValidatedURL as _ValidatedURL
-from src.config import (
+from digest._dns_pinning import ValidatedURL as _ValidatedURL
+from digest.config import (
     Config,
     FiltersConfig,
     IrritatorConfig,
@@ -22,7 +22,7 @@ from src.config import (
     SourceConfig,
     TelegramConfig,
 )
-from src.radar.collector import (
+from digest.radar.collector import (
     AllFeedsFailedError,
     Article,
     _is_recent,
@@ -144,11 +144,11 @@ def _make_fake_validated(url: str) -> _ValidatedURL:
 def _mock_validate_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch _validate_url in collector to avoid real DNS lookups in tests."""
     monkeypatch.setattr(
-        "src.radar.collector._validate_url",
+        "digest.radar.collector._validate_url",
         lambda url: _make_fake_validated(url),
     )
     monkeypatch.setattr(
-        "src.radar.collector._pin_dns",
+        "digest.radar.collector._pin_dns",
         lambda hostname, addrinfos: _NullCtx(),
     )
 
@@ -910,7 +910,7 @@ def test_atomic_json_write_round_trip(tmp_path: Path) -> None:
     """atomic_json_write writes correct JSON and leaves no .tmp file."""
     import json
 
-    from src._util import atomic_json_write
+    from digest._util import atomic_json_write
 
     target = tmp_path / "data.json"
     data = {"key": "value", "num": 42}
@@ -926,7 +926,7 @@ def test_atomic_json_write_overwrites_existing(tmp_path: Path) -> None:
     """atomic_json_write replaces an existing file atomically."""
     import json
 
-    from src._util import atomic_json_write
+    from digest._util import atomic_json_write
 
     target = tmp_path / "data.json"
     atomic_json_write(target, {"v": 1})
@@ -1110,7 +1110,7 @@ async def test_fetch_feed_ssrf_unsafe_url_skipped(
     config = _make_config(sources=[source])
     calls: list[str] = []
 
-    monkeypatch.setattr("src.radar.collector._validate_url", lambda url: None)
+    monkeypatch.setattr("digest.radar.collector._validate_url", lambda url: None)
 
     async def fake_get(url: str, timeout: float) -> MagicMock:  # pragma: no cover
         calls.append(url)
