@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.filters import is_blocked
+from digest.filters import is_blocked
 
 
 def test_blocked_when_keyword_present() -> None:

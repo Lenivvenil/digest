@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.irritator.narrative_extractor import Narrative
-from src.irritator.ranker import (
+from digest.irritator.narrative_extractor import Narrative
+from digest.irritator.ranker import (
     RankedSignal,
     _build_prompt,
     _parse_rankings,
     rank_signals,
 )
-from src.irritator.sources import Signal
+from digest.irritator.sources import Signal
 from tests.factories import make_narrative, make_signal
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestRankSignals:
         raw = _valid_rankings(2, [9, 8])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
-        with patch("src.irritator.ranker.complete", mock_complete):
+        with patch("digest.irritator.ranker.complete", mock_complete):
             result = await rank_signals(_make_narrative(), signals, _make_config())
 
         assert len(result) == 2
@@ -139,7 +139,7 @@ class TestRankSignals:
         raw = [{"index": i, "score": 10, "reasoning": "great"} for i in range(5)]
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
-        with patch("src.irritator.ranker.complete", mock_complete):
+        with patch("digest.irritator.ranker.complete", mock_complete):
             result = await rank_signals(_make_narrative(), signals, _make_config(top_signals=2))
 
         assert len(result) == 2
@@ -149,7 +149,7 @@ class TestRankSignals:
         raw = _valid_rankings(2, [9, 4])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
-        with patch("src.irritator.ranker.complete", mock_complete):
+        with patch("digest.irritator.ranker.complete", mock_complete):
             result = await rank_signals(_make_narrative(), signals, _make_config(min_score=7))
 
         assert len(result) == 1
@@ -157,17 +157,17 @@ class TestRankSignals:
     async def test_llm_failure_propagates(self) -> None:
         mock_complete = AsyncMock(side_effect=RuntimeError("fail"))
 
-        with patch("src.irritator.ranker.complete", mock_complete):
+        with patch("digest.irritator.ranker.complete", mock_complete):
             with pytest.raises(RuntimeError):
                 await rank_signals(_make_narrative(), [_make_signal()], _make_config())
 
     async def test_uses_correct_role(self) -> None:
-        from src.llm import LLMRole
+        from digest.llm import LLMRole
 
         raw = _valid_rankings(1, [8])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
-        with patch("src.irritator.ranker.complete", mock_complete):
+        with patch("digest.irritator.ranker.complete", mock_complete):
             await rank_signals(_make_narrative(), [_make_signal()], _make_config())
 
         assert mock_complete.call_args[0][0] == LLMRole.RANK_SIGNALS

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.delivery.markdown import (
+from digest.delivery.markdown import (
     _build_counter_signals_section,
     _build_frontmatter,
     write_digest,

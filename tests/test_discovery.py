@@ -10,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from src.discovery import (
+from digest.discovery import (
     PendingSource,
     add_source_to_config,
     load_pending,

@@ -1,10 +1,10 @@
-"""Test that ruff check passes on src/ and tests/ with the project ruff.toml config."""
+"""Test that ruff check passes on digest/ and tests/ with the project ruff.toml config."""
 import subprocess
 
 
 def test_ruff_check_passes() -> None:
     result = subprocess.run(
-        ["ruff", "check", "src/", "tests/"],
+        ["ruff", "check", "digest/", "tests/"],
         capture_output=True,
         text=True,
     )
