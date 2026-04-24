@@ -74,17 +74,18 @@ def test_load_feedback_missing_file(tmp_path: Path) -> None:
 
 
 def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
+    now = datetime.now(tz=timezone.utc)
     fb1 = ArticleFeedback(
         article_hash="h1",
         source_name="Source A",
         rating=1,
-        timestamp="2026-03-18T10:00:00+00:00",
+        timestamp=(now - timedelta(hours=2)).isoformat(),
     )
     fb2 = ArticleFeedback(
         article_hash="h2",
         source_name="Source B",
         rating=-1,
-        timestamp="2026-03-18T11:00:00+00:00",
+        timestamp=(now - timedelta(hours=1)).isoformat(),
     )
     original = FeedbackStore(ratings=[fb1, fb2], last_update_id=100)
     save_feedback(original, str(tmp_path))
