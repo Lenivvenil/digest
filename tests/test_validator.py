@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.irritator.validator import validate_signals
+from digest.irritator.validator import validate_signals
 from tests.factories import make_signal as _make_signal
 
 

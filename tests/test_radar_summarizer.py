@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 if TYPE_CHECKING:
-    from src.radar.collector import Article
+    from digest.radar.collector import Article
 
 import pytest
 
-from src.config import (
+from digest.config import (
     Config,
     FiltersConfig,
     IrritatorConfig,
@@ -21,7 +21,7 @@ from src.config import (
     SourceConfig,
     TelegramConfig,
 )
-from src.radar.summarizer import (
+from digest.radar.summarizer import (
     _parse_article_summaries,
     build_category_prompt,
     build_trends_prompt,
@@ -199,7 +199,7 @@ class TestSummarizeAll:
                 ("Trends text", {}),
             ]
         )
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, trends = await summarize_all(articles_by_cat, config)
 
         assert len(summaries) == 2
@@ -220,7 +220,7 @@ class TestSummarizeAll:
                 ("Trends text", {}),
             ]
         )
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, _ = await summarize_all(articles_by_cat, config)
 
         counts = {s.category: s.article_count for s in summaries}
@@ -242,7 +242,7 @@ class TestSummarizeAll:
             return ("Summary", {})
 
         mock_complete = AsyncMock(side_effect=_side_effect)
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, trends = await summarize_all(articles_by_cat, config)
 
         # Only one category succeeded, so trends should be None (len(summaries) <= 1)
@@ -255,7 +255,7 @@ class TestSummarizeAll:
         articles_by_cat = _make_articles_by_category()
 
         mock_complete = AsyncMock(side_effect=RuntimeError("LLM error"))
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, trends = await summarize_all(articles_by_cat, config)
 
         assert summaries == []
@@ -267,7 +267,7 @@ class TestSummarizeAll:
         articles_by_cat = {"AI": [_make_article(category="AI")]}
 
         mock_complete = AsyncMock(return_value=("Summary for AI", {}))
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, trends = await summarize_all(articles_by_cat, config)
 
         assert len(summaries) == 1
@@ -290,7 +290,7 @@ class TestSummarizeAll:
             raise RuntimeError("trends LLM error")
 
         mock_complete = AsyncMock(side_effect=_side_effect)
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             summaries, trends = await summarize_all(articles_by_cat, config)
 
         assert len(summaries) == 2
@@ -302,7 +302,7 @@ class TestSummarizeAll:
         articles_by_cat = {"Tech": [_make_article(title="Tech Article", category="Tech")]}
 
         mock_complete = AsyncMock(return_value=("Summary", {}))
-        with patch("src.radar.summarizer.complete", mock_complete):
+        with patch("digest.radar.summarizer.complete", mock_complete):
             await summarize_all(articles_by_cat, config)
 
         assert mock_complete.call_count == 1
@@ -365,7 +365,7 @@ class TestPickTopArticles:
             ' "source": "TechCrunch", "summary": "Important news."}]'
         )
 
-        with patch("src.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
             result = await pick_top_articles(articles, config, max_articles=5)
 
         assert len(result) == 1
@@ -376,7 +376,7 @@ class TestPickTopArticles:
         config = _make_config()
         articles = {"Tech": [_make_article()]}
 
-        with patch("src.radar.summarizer.complete", AsyncMock(side_effect=RuntimeError("fail"))):
+        with patch("digest.radar.summarizer.complete", AsyncMock(side_effect=RuntimeError("fail"))):
             result = await pick_top_articles(articles, config)
 
         assert result == []
@@ -390,7 +390,7 @@ class TestPickTopArticles:
             ' {"title": "C", "link": "https://c.com", "source": "S", "summary": "Z"}]'
         )
 
-        with patch("src.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
             result = await pick_top_articles(articles, config, max_articles=2)
 
         assert len(result) == 2

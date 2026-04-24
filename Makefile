@@ -1,14 +1,14 @@
 .PHONY: lint lint-fix typecheck test check install install-dev
 
 lint:
-	ruff check src/ tests/
+	ruff check digest/ tests/
 
 lint-fix:
-	ruff check --fix src/ tests/
-	ruff format src/ tests/
+	ruff check --fix digest/ tests/
+	ruff format digest/ tests/
 
 typecheck:
-	mypy src/
+	mypy digest/
 
 test:
 	pytest tests/ -v

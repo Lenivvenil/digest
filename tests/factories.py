@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from src.irritator.narrative_extractor import Narrative
-from src.irritator.ranker import RankedSignal
-from src.irritator.sources import Signal
-from src.radar.collector import Article
+from digest.irritator.narrative_extractor import Narrative
+from digest.irritator.ranker import RankedSignal
+from digest.irritator.sources import Signal
+from digest.radar.collector import Article
 
 # ---------------------------------------------------------------------------
 # Factory helpers (not pytest fixtures — call directly in tests)

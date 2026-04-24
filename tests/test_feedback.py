@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from src.feedback import (
+from digest.feedback import (
     ArticleFeedback,
     FeedbackStore,
     collect_feedback,

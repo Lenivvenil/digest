@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
+from digest.config import (
     Config,
     LLMConfig,
     load_config,

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from src.config import AdaptiveConfig, SourceConfig
-from src.source_scorer import (
+from digest.config import AdaptiveConfig, SourceConfig
+from digest.source_scorer import (
     DailySnapshot,
     SourceStats,
     apply_trial_decisions,
@@ -638,7 +638,7 @@ def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
 
 def test_find_source_block_first_key_name() -> None:
     """Find source block when name is the first key."""
-    from src.source_scorer import _find_source_block
+    from digest.source_scorer import _find_source_block
 
     lines = [
         "sources:",
@@ -655,7 +655,7 @@ def test_find_source_block_first_key_name() -> None:
 
 def test_find_source_block_name_later_key() -> None:
     """Find source block when name appears after other keys (alphabetical order)."""
-    from src.source_scorer import _find_source_block
+    from digest.source_scorer import _find_source_block
 
     lines = [
         "sources:",
@@ -672,7 +672,7 @@ def test_find_source_block_name_later_key() -> None:
 
 def test_find_source_block_nonexistent() -> None:
     """Find source block returns None when source not found."""
-    from src.source_scorer import _find_source_block
+    from digest.source_scorer import _find_source_block
 
     lines = [
         "sources:",
@@ -685,7 +685,7 @@ def test_find_source_block_nonexistent() -> None:
 
 def test_set_field_in_block_replaces_existing() -> None:
     """Set field should replace existing value."""
-    from src.source_scorer import _set_field_in_block
+    from digest.source_scorer import _set_field_in_block
 
     lines = [
         "  - name: Feed1",
@@ -698,7 +698,7 @@ def test_set_field_in_block_replaces_existing() -> None:
 
 def test_set_field_in_block_adds_new() -> None:
     """Set field should add new field when not present."""
-    from src.source_scorer import _set_field_in_block
+    from digest.source_scorer import _set_field_in_block
 
     lines = [
         "  - name: Feed1",
@@ -710,7 +710,7 @@ def test_set_field_in_block_adds_new() -> None:
 
 def test_remove_field_in_block() -> None:
     """Remove field should delete field line."""
-    from src.source_scorer import _remove_field_in_block
+    from digest.source_scorer import _remove_field_in_block
 
     lines = [
         "  - name: Feed1",
@@ -724,7 +724,7 @@ def test_remove_field_in_block() -> None:
 
 def test_remove_field_in_block_nonexistent() -> None:
     """Remove field should not crash if field not present."""
-    from src.source_scorer import _remove_field_in_block
+    from digest.source_scorer import _remove_field_in_block
 
     lines = [
         "  - name: Feed1",
@@ -952,7 +952,7 @@ def test_update_stats_deduplicates_same_day() -> None:
 
 def test_save_stats_atomic_write(tmp_path: Path) -> None:
     """save_stats writes via tmp file and leaves no .tmp artifact."""
-    from src.source_scorer import SourceStats, save_stats
+    from digest.source_scorer import SourceStats, save_stats
 
     stats: dict[str, SourceStats] = {"Feed": SourceStats(name="Feed")}
     save_stats(stats, str(tmp_path))
@@ -965,7 +965,7 @@ def test_save_stats_atomic_write(tmp_path: Path) -> None:
 
 def test_save_stats_round_trip(tmp_path: Path) -> None:
     """save_stats then load_stats returns the same data."""
-    from src.source_scorer import SourceStats, load_stats, save_stats
+    from digest.source_scorer import SourceStats, load_stats, save_stats
 
     stats: dict[str, SourceStats] = {"FeedA": SourceStats(name="FeedA")}
     stats["FeedA"].total_fetches = 5

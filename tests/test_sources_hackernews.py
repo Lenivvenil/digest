@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from src.irritator.sources.hackernews import search_hackernews
+from digest.irritator.sources.hackernews import search_hackernews
 
 
 def _hn_response(hits: list[dict[str, object]] | None = None) -> dict[str, object]:

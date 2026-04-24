@@ -9,12 +9,12 @@ import httpx
 import pytest
 import respx
 
-from src.llm import LLMRole, _extract_json, _providers_for_role, complete
+from digest.llm import LLMRole, _extract_json, _providers_for_role, complete
 
 
 def _make_config(providers: list[dict[str, Any]]) -> Any:
     """Build a minimal config-like object with the given providers."""
-    from src.config import LLMConfig, ProviderConfig
+    from digest.config import LLMConfig, ProviderConfig
 
     provider_objs = [
         ProviderConfig(name=p["name"], model=p["model"], role=p.get("role", []))

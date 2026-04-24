@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from src.irritator.sources.lobsters import search_lobsters
+from digest.irritator.sources.lobsters import search_lobsters
 
 
 @pytest.mark.asyncio
