@@ -14,7 +14,6 @@ from digest.delivery.telegram import (
     escape_markdownv2,
     send_article_cards,
     send_counter_signals,
-    send_radar,
     split_message,
     to_markdownv2,
 )
@@ -109,10 +108,6 @@ class TestSplitMessage:
         assert len(result) >= 2
 
 
-# ---------------------------------------------------------------------------
-# send_radar (async, mocked HTTP)
-# ---------------------------------------------------------------------------
-
 def _make_config(telegram_enabled: bool = True) -> Any:
     class TelegramCfg:
         enabled = telegram_enabled
@@ -120,61 +115,6 @@ def _make_config(telegram_enabled: bool = True) -> Any:
     class Cfg:
         telegram = TelegramCfg()
     return Cfg()
-
-
-@pytest.mark.asyncio
-class TestSendRadar:
-    async def test_sends_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        with respx.mock:
-            respx.post(re.compile(r"api\.telegram\.org")).mock(
-                return_value=httpx.Response(200, json={"ok": True})
-            )
-            result = await send_radar("Hello digest", _make_config())
-
-        assert result is True
-
-    async def test_missing_token_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-        monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-        result = await send_radar("Hello", _make_config())
-        assert result is False
-
-    async def test_sends_multiple_chunks(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        long_text = ("paragraph " * 500 + "\n\n") * 5
-
-        with respx.mock:
-            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
-                return_value=httpx.Response(200, json={"ok": True})
-            )
-            result = await send_radar(long_text, _make_config())
-
-        assert result is True
-        assert route.call_count >= 2
-
-    async def test_fallback_on_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        call_count = 0
-
-        def _side_effect(request: httpx.Request) -> httpx.Response:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(400, json={"ok": False})
-            return httpx.Response(200, json={"ok": True})
-
-        with respx.mock:
-            respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=_side_effect)
-            result = await send_radar("test", _make_config())
-
-        assert result is True
 
 
 # ---------------------------------------------------------------------------

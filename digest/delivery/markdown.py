@@ -27,6 +27,21 @@ def _build_frontmatter(
     )
 
 
+def _build_top_articles_section(top_articles: list[Any]) -> str:
+    """Build Obsidian callout block for per-article LLM summaries."""
+    if not top_articles:
+        return ""
+
+    lines = ["\n\n## Top Articles\n"]
+    for a in top_articles:
+        lines.append(
+            f"> [!note] [{a.title}]({a.link})\n"
+            f"> {a.summary}\n"
+            f"> *{a.source} · {a.category}*\n"
+        )
+    return "\n".join(lines)
+
+
 def _build_counter_signals_section(ranked_signals: list[Any]) -> str:
     """Build Obsidian callout block for counter-signals."""
     if not ranked_signals:
@@ -47,6 +62,7 @@ def write_digest(
     summary: str,
     config: Any,
     *,
+    top_articles: list[Any] | None = None,
     ranked_signals: list[Any] | None = None,
     date: datetime | None = None,
     sources_count: int = 0,
@@ -66,6 +82,9 @@ def write_digest(
 
     frontmatter = _build_frontmatter(date_str, sources_count, articles_count)
     content = f"{frontmatter}\n{summary}\n"
+
+    if top_articles:
+        content += _build_top_articles_section(top_articles)
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)

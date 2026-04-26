@@ -75,6 +75,7 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 1. **Source dual-storage**: `config.yaml` мутируется двумя независимыми runtime-путями: (a) `apply_trial_decisions()` в `source_scorer.py` пишет trial/enabled-флаги, (b) `add_source_to_config()` в `discovery.py` добавляет новые trial-блоки. ADR-0003 перенёс часть состояния в `.cache/source_state.json`, но оба write-пути в config.yaml остались. Нет единого владельца. → Issue #37.
 2. **Article без явного lifecycle**: нет состояний raw → scored → delivered → archived. Дедупликация через hash в кеше — ad-hoc решение. → Issue #39.
 3. **Feedback decay owner**: логика затухания размазана между Delivery (запись feedback) и Radar (применение при следующем запуске). Политика задекларирована, но исполнитель распределён. → Issue #40.
+4. **Radar→Delivery contract drift**: CategorySummary расширяется набором ArticleSummary для рендера индивидуальных постов в Telegram. Delivery начинает зависеть от структурированного списка статей с per-article саммари в дополнение к агрегированному тексту категории. Без явного внутрифазового контракта изменения в Radar могут молча ломать Delivery. → Issue #29.
 
 ---
 
@@ -112,6 +113,9 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 | **Digest** | Результат одного pipeline-запуска: набор Narratives с Articles, доставленный через один или несколько каналов (Telegram + Obsidian) в конкретный момент времени. Не является архивом — это event. | Report, Summary, Run |
 | **CounterSignal** | Статья или дискуссия из внешней платформы (HN, Reddit, arXiv, …), найденная Irritator-ом как альтернативная точка зрения на Narrative. Не является частью основного Source-набора. | Alternative, Counterpoint |
 | **PendingSource** | Кандидат в Sources, обнаруженный Discovery-фазой и ожидающий одобрения оператором через Telegram. Существует только до момента Approve/Reject — не становится Source напрямую, а инициирует TrialStarted. | Candidate, Suggestion |
+| **CategorySummary** | Сгруппированный результат фазы Radar для одной таксономической категории источников (например, «AI & LLM», «Security» — классификация Sources, а не тематика Narratives): объединяет аналитический текст по категории и набор ArticleSummary для индивидуальной подачи. Является контрактом передачи данных от Radar к Delivery внутри одного pipeline-запуска. | Section, Bucket |
+| **ArticleSummary** | Сгенерированное LLM саммари одной конкретной статьи в 2-3 предложения, объясняющее почему статья важна для Technology Architect, а не просто пересказывающее заголовок. Часть CategorySummary; используется Delivery для рендера индивидуальных постов (отдельных Telegram-сообщений с кнопками голосования). | Article comment, Blurb |
+| **Perspectives** | Три аналитические точки зрения на наиболее значимые события в категории — Оптимист (🟢), Скептик (🔴), Реалист (⚖️). Должны представлять принципиально разные цепочки рассуждений, а не разный тон. Часть аналитического текста CategorySummary, не отдельная сущность. Применяются только в развёрнутых стилях дайджеста, не в кратком. | Viewpoints, Stances, Voices |
 
 ---
 

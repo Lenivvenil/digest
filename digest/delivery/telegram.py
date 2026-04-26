@@ -169,31 +169,6 @@ async def _send_chunk(
                 raise
 
 
-async def send_radar(text: str, config: Any) -> bool:
-    """Send radar digest to Telegram."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set, skipping")
-        return False
-
-    api_url = _API_BASE.format(token=token)
-    md2 = to_markdownv2(text)
-    chunks = split_message(md2)
-
-    async with httpx.AsyncClient() as client:
-        for i, chunk in enumerate(chunks):
-            if len(chunk) > _MAX_MESSAGE_LEN:
-                chunk = chunk[: _MAX_MESSAGE_LEN - 1] + "\u2026"
-                logger.warning("Chunk %d truncated to %d chars", i, _MAX_MESSAGE_LEN)
-            await _send_chunk(client, api_url, chat_id, chunk)
-            if i < len(chunks) - 1:
-                await asyncio.sleep(1)
-
-    logger.info("Radar digest sent to Telegram (%d chunks)", len(chunks))
-    return True
-
-
 async def send_article_cards(
     articles_by_category: dict[str, list[Any]],
     config: Any,
