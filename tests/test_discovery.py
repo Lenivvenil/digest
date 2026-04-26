@@ -77,7 +77,7 @@ def test_save_and_load_pending_round_trip(tmp_path: Path) -> None:
         name="The New Stack",
         url="https://thenewstack.io/feed/",
         category="Cloud & Infrastructure",
-        discovered_at="2026-03-27T10:00:00+00:00",
+        discovered_at=datetime.now(tz=timezone.utc).isoformat(),
     )
     save_pending([ps], str(tmp_path))
     loaded = load_pending(str(tmp_path))
