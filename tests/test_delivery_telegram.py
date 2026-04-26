@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -17,6 +18,7 @@ from digest.delivery.telegram import (
     split_message,
     to_markdownv2,
 )
+from digest.irritator import IrritatorStatus
 from tests.factories import make_article, make_ranked_signal
 
 # ---------------------------------------------------------------------------
@@ -218,7 +220,12 @@ class TestSendCounterSignals:
         result = await send_counter_signals([_make_ranked_signal()], _make_config())
         assert result is False
 
-    async def test_empty_signals_sends_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_empty_signals_no_status_no_send(self) -> None:
+        result = await send_counter_signals([], _make_config(), irritator_status=None)
+        assert result is False
+
+    async def test_empty_signals_sends_status_silent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Empty-level status (no signals, no error) is sent with disable_notification=True."""
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
@@ -227,11 +234,33 @@ class TestSendCounterSignals:
                 return_value=httpx.Response(200, json={"ok": True})
             )
             result = await send_counter_signals(
-                [], _make_config(), irritator_status="3 narratives, 0 signals",
+                [], _make_config(),
+                irritator_status=IrritatorStatus("3 narratives, 0 signals", "empty"),
             )
 
-        assert result is False  # still False (no actual signals)
-        assert route.called  # but status message was sent
+        assert result is False
+        assert route.called
+        payload = json.loads(route.calls[0].request.content)
+        assert payload.get("disable_notification") is True
+
+    async def test_empty_signals_error_sends_loud(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Error-level status is sent as a loud notification (no disable_notification)."""
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result = await send_counter_signals(
+                [], _make_config(),
+                irritator_status=IrritatorStatus("query generation failed: timeout", "error"),
+            )
+
+        assert result is False
+        assert route.called
+        payload = json.loads(route.calls[0].request.content)
+        assert not payload.get("disable_notification", False)
 
 
 # ---------------------------------------------------------------------------
