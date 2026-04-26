@@ -33,7 +33,10 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 | SourcePriorityUpdated | Source | Radar.collector (next run) |
 | TrialStarted | Source | Radar.collector |
 | TrialGraduated | Source | Radar.collector |
-| TrialDropped | Source | Radar.collector |
+| TrialDemoted | Source | Radar.collector |
+| SourceDiscovered | PendingSource | Discovery |
+| SourceApproved | PendingSource | Discovery |
+| SourceRejected | PendingSource | Discovery |
 
 **Blue — команды (с целевым агрегатом):**
 
@@ -47,24 +50,29 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 | DeliverDigest | — | Delivery |
 | UpdateSourcePriority | Source | Radar.collector |
 | EvaluateTrialSource | Source | Radar.collector |
+| DiscoverSources | PendingSource (creates) | Discovery |
+| ApproveSource | PendingSource → Source | Discovery |
+| RejectSource | PendingSource | Discovery |
 
 **Lilac — политики (с модулем-исполнителем):**
 - Когда FeedbackReceived → UpdateSourcePriority (с 14-дневным затуханием). Исполнитель: Radar.collector при следующем pipeline-запуске. ¹ Ownership размазан: Delivery записывает, Radar применяет — hot spot #3.
-- Когда Trial активен 7+ дней → EvaluateTrialSource (graduated/dropped). Исполнитель: Radar.collector.
+- Когда Trial активен 7+ дней → EvaluateTrialSource (graduated/demoted). Исполнитель: Radar.collector.
 - Когда Article старше 48 часов → ArticleFiltered. Исполнитель: Radar.collector.
+- Когда SourceApproved → AddSourceToConfig (добавляет trial-блок в config.yaml) → TrialStarted. Исполнитель: Discovery. ² Config.yaml мутируется runtime-ом — hot spot #1.
 
 **Yellow — агрегаты:**
-- **Source** — владеет: user_priority, system_priority, trial_state (value object на Source, не отдельный aggregate), enabled. Эмитирует: TrialStarted, TrialGraduated, TrialDropped, SourcePriorityUpdated. Команды: EvaluateTrialSource, UpdateSourcePriority.
+- **Source** — владеет: user_priority, enabled. Runtime-состояние (trial_started, graduated, demoted) хранится в `SourceStateStore` (`.cache/source_state.json`) — не на агрегате. ADR-0003. Эмитирует: TrialStarted, TrialGraduated, TrialDemoted, SourcePriorityUpdated. Команды: EvaluateTrialSource, UpdateSourcePriority.
 - **Article** — владеет: hash (identity), relevance_score, age, source_ref, delivered_flag. Эмитирует: ArticleIngested, ArticleFiltered. Команды: FetchFeeds.
+- **PendingSource** — владеет: name, url, category, discovered_at, source_hash. Lifecycle: discovered → approved/rejected. Утверждение через Telegram-кнопки. Одобрение мутирует `config.yaml` (добавляет trial-блок) и запускает TrialStarted. Команды: ApproveSource, RejectSource.
 
-> **Trial как value object на Source:** Trial не является отдельным aggregate — у него нет независимого lifecycle. Его состояния (pending → active → graduated/dropped) принадлежат Source. Это решение принято явно; если появится потребность отслеживать Trial независимо от Source, пересмотреть.
+> **Trial state вне Source (ADR-0003):** trial_started, graduated, demoted хранятся в SourceStateStore, а не в Source aggregate. Это позволяет config.yaml оставаться декларативным. Если появится потребность transact trial state вместе с другими полями Source — пересмотреть.
 
 **Green — read models:**
 - SourceLeaderboard (для UI настройки приоритетов — будущее)
 - DigestHistory (для Obsidian — формат .md подчинён ожиданиям Obsidian, см. Context Map)
 
 **Red — горячие точки:**
-1. **Source dual-storage**: `config.yaml` (декларация, human-edited) мутируется рантаймом — `apply_trial_decisions()` в `source_scorer.py:389–465` пишет `trial_started`, `trial: false`, `enabled: false` regex'ом прямо в YAML. Нет единого владельца — invariant не защищён. Фрейминг уточнён в ADR-0003 (поля `dynamic_sources.json`/`system_priority` в коде не существуют). → Issue #37.
+1. **Source dual-storage**: `config.yaml` мутируется двумя независимыми runtime-путями: (a) `apply_trial_decisions()` в `source_scorer.py` пишет trial/enabled-флаги, (b) `add_source_to_config()` в `discovery.py` добавляет новые trial-блоки. ADR-0003 перенёс часть состояния в `.cache/source_state.json`, но оба write-пути в config.yaml остались. Нет единого владельца. → Issue #37.
 2. **Article без явного lifecycle**: нет состояний raw → scored → delivered → archived. Дедупликация через hash в кеше — ad-hoc решение. → Issue #39.
 3. **Feedback decay owner**: логика затухания размазана между Delivery (запись feedback) и Radar (применение при следующем запуске). Политика задекларирована, но исполнитель распределён. → Issue #40.
 
@@ -79,6 +87,7 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 - Генерация нарративов и поиск контрсигналов (Irritator)
 - Доставка через Telegram и запись в Obsidian (Delivery)
 - Адаптивная система приоритетов источников (trial + feedback)
+- Обнаружение и одобрение новых источников (Discovery)
 
 **Намеренно вне scope:**
 - Полнотекстовое хранилище сырых статей (RSS-провайдеры ответственны за контент; BC хранит только hash для дедупликации)
@@ -95,13 +104,14 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 
 | Term | Business definition | Aliases to avoid |
 |------|---------------------|------------------|
-| **Source** | Информационный канал (RSS URL), за которым система наблюдает; имеет user_priority (задан вручную) и system_priority (вычислен из feedback). Содержит trial_state как value object. | Feed, Channel |
+| **Source** | Информационный канал (RSS URL), за которым система наблюдает; имеет user_priority (задан вручную). Runtime-приоритет вычисляется из Feedback при каждом запуске — не хранится на Source. ADR-0003. | Feed, Channel |
 | **Article** | Единица контента, прошедшая границу BC: имеет relevance_score, возраст и принадлежность к Source. До ingestion — это XML-запись, не Article. | Item, Post, Entry |
-| **Trial** | Value object на Source, описывающий испытательный период нового источника (pending → active → graduated/dropped). Не существует независимо от Source. | Probation, Test |
+| **Trial** | Испытательный период нового источника (pending → active → graduated/demoted). Runtime-состояние хранится в SourceStateStore, не в Source aggregate (ADR-0003). | Probation, Test |
 | **Narrative** | Доминирующая тема, выявленная из группы Articles одного pipeline-запуска. Не персистируется — существует только в памяти во время запуска. | Topic, Theme, Category |
-| **Feedback** | Явный сигнал пользователя (👍/👎) об Article в Telegram; влияет на system_priority Source с экспоненциальным затуханием за 14 дней. Feedback без decay — устаревший сигнал. | Vote, Rating, Reaction |
+| **Feedback** | Явный сигнал пользователя (👍/👎) об Article в Telegram; влияет на эффективный приоритет Source с экспоненциальным затуханием за 14 дней. Feedback без decay — устаревший сигнал. | Vote, Rating, Reaction |
 | **Digest** | Результат одного pipeline-запуска: набор Narratives с Articles, доставленный через один или несколько каналов (Telegram + Obsidian) в конкретный момент времени. Не является архивом — это event. | Report, Summary, Run |
 | **CounterSignal** | Статья или дискуссия из внешней платформы (HN, Reddit, arXiv, …), найденная Irritator-ом как альтернативная точка зрения на Narrative. Не является частью основного Source-набора. | Alternative, Counterpoint |
+| **PendingSource** | Кандидат в Sources, обнаруженный Discovery-фазой и ожидающий одобрения оператором через Telegram. Существует только до момента Approve/Reject — не становится Source напрямую, а инициирует TrialStarted. | Candidate, Suggestion |
 
 ---
 
@@ -128,4 +138,4 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 
 ## Recommended Next Action
 
-**Issue #37** — консолидировать Source state (устранить dual-storage split). Acceptance criteria в теле issue.
+**Issue #39** — Article lifecycle (act when replay/trend analysis is needed). **Issue #40** — Feedback decay owner consolidation (act when decay formula changes). Both are correctly deferred with explicit trigger conditions.
