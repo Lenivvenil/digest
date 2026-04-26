@@ -6,7 +6,10 @@ import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from digest.source_scorer import SourceStateStore
 from urllib.parse import urlparse
 
 import yaml
@@ -84,7 +87,6 @@ class SourceConfig:
     enabled: bool
     priority: int = 3
     trial: bool = False
-    trial_started: str | None = None
     trial_days: int = 7
     recency_hours: int = 24
 
@@ -134,6 +136,10 @@ class Config:
     @property
     def enabled_sources(self) -> list[SourceConfig]:
         return [s for s in self.sources if s.enabled]
+
+    def effective_sources(self, source_state: "SourceStateStore") -> list[SourceConfig]:
+        """Return enabled sources excluding those demoted by runtime cache (ADR-0003)."""
+        return [s for s in self.sources if s.enabled and not source_state.is_demoted(s.name)]
 
 
 def _safe_int(value: Any, field_name: str, section: str) -> int:
@@ -424,9 +430,6 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 f"Config field 'trial' in sources[{i}] must be a boolean "
                 f"(true or false without quotes), got {type(raw_trial).__name__} {raw_trial!r}."
             )
-        trial_started = item.get("trial_started", None)
-        if trial_started is not None:
-            trial_started = str(trial_started)
         raw_trial_days = item.get("trial_days", 7)
         if isinstance(raw_trial_days, bool) or not isinstance(raw_trial_days, int):
             raise ValueError(
@@ -446,7 +449,6 @@ def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
                 enabled=raw_enabled,
                 priority=raw_priority,
                 trial=raw_trial,
-                trial_started=trial_started,
                 trial_days=raw_trial_days,
                 recency_hours=raw_recency,
             )

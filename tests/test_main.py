@@ -80,7 +80,6 @@ class _SourceCfg:
     priority: int = 3
     recency_hours: int = 24
     trial: bool = False
-    trial_started: str | None = None
     trial_days: int = 7
 
 

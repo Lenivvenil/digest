@@ -5,18 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-import yaml
-
 from digest.config import AdaptiveConfig, SourceConfig
 from digest.source_scorer import (
     DailySnapshot,
+    SourceStateStore,
     SourceStats,
-    apply_trial_decisions,
+    apply_trial_decisions_to_cache,
     calculate_effective_priorities,
     calculate_score,
     detect_trending_sources,
     evaluate_trial_sources,
+    load_source_state,
     load_stats,
+    save_source_state,
     save_stats,
     update_stats,
 )
@@ -442,19 +443,23 @@ def test_effective_priorities_trend_bonus_capped_at_min() -> None:
 # --- evaluate_trial_sources ---
 
 
-def _make_trial_source(
-    name: str, trial_started: str, trial_days: int = 7
-) -> SourceConfig:
+def _make_trial_source(name: str, trial_days: int = 7) -> SourceConfig:
     return SourceConfig(
         name=name, url="https://x.com", category="Tech",
-        enabled=True, priority=3, trial=True,
-        trial_started=trial_started, trial_days=trial_days,
+        enabled=True, priority=3, trial=True, trial_days=trial_days,
     )
+
+
+def _state_with_started(name: str, trial_started: str) -> SourceStateStore:
+    store = SourceStateStore()
+    store.set_trial_started(name, trial_started)
+    return store
 
 
 def test_evaluate_trial_not_expired() -> None:
     """Trial source not yet past trial_days should not be promoted or demoted."""
-    sources = [_make_trial_source("New", trial_started="2026-03-15", trial_days=7)]
+    sources = [_make_trial_source("New", trial_days=7)]
+    state = _state_with_started("New", "2026-03-15")
     today = "2026-03-18"  # only 3 days elapsed
     stats = {
         "New": SourceStats(
@@ -463,7 +468,7 @@ def test_evaluate_trial_not_expired() -> None:
             avg_description_length=200.0, last_seen="2026-03-18",
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert promote == []
     assert demote == []
     assert needs_start == []
@@ -471,7 +476,8 @@ def test_evaluate_trial_not_expired() -> None:
 
 def test_evaluate_trial_promote_high_score() -> None:
     """Expired trial with high score (>0.6) should be promoted."""
-    sources = [_make_trial_source("Good", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("Good", trial_days=7)]
+    state = _state_with_started("Good", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "Good": SourceStats(
@@ -480,7 +486,7 @@ def test_evaluate_trial_promote_high_score() -> None:
             avg_description_length=200.0, last_seen=today,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert "Good" in promote
     assert demote == []
     assert needs_start == []
@@ -488,7 +494,8 @@ def test_evaluate_trial_promote_high_score() -> None:
 
 def test_evaluate_trial_demote_low_score() -> None:
     """Expired trial with low score (<0.3) should be demoted."""
-    sources = [_make_trial_source("Bad", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("Bad", trial_days=7)]
+    state = _state_with_started("Bad", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "Bad": SourceStats(
@@ -497,7 +504,7 @@ def test_evaluate_trial_demote_low_score() -> None:
             avg_description_length=10.0, last_seen=None,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert promote == []
     assert "Bad" in demote
     assert needs_start == []
@@ -505,7 +512,8 @@ def test_evaluate_trial_demote_low_score() -> None:
 
 def test_evaluate_trial_middling_score_no_action() -> None:
     """Expired trial with score between 0.3 and 0.6 stays in trial."""
-    sources = [_make_trial_source("Mid", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("Mid", trial_days=7)]
+    state = _state_with_started("Mid", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "Mid": SourceStats(
@@ -514,7 +522,7 @@ def test_evaluate_trial_middling_score_no_action() -> None:
             avg_description_length=80.0, last_seen=today,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert promote == []
     assert demote == []
     assert needs_start == []
@@ -530,8 +538,9 @@ def test_evaluate_trial_non_trial_ignored() -> None:
 
 
 def test_evaluate_trial_invalid_date_format() -> None:
-    """Trial source with invalid trial_started date should be skipped with warning."""
-    sources = [_make_trial_source("BadDate", trial_started="2026/03/01", trial_days=7)]
+    """Trial source with invalid trial_started date in state should be skipped."""
+    sources = [_make_trial_source("BadDate", trial_days=7)]
+    state = _state_with_started("BadDate", "2026/03/01")  # invalid format in cache
     today = "2026-03-18"
     stats = {
         "BadDate": SourceStats(
@@ -540,8 +549,7 @@ def test_evaluate_trial_invalid_date_format() -> None:
             avg_description_length=200.0, last_seen=today,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # Source with invalid date should be skipped entirely
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert promote == []
     assert demote == []
     assert needs_start == []
@@ -549,16 +557,9 @@ def test_evaluate_trial_invalid_date_format() -> None:
 
 def test_evaluate_trial_boundary_just_below_0_6_not_promoted() -> None:
     """Trial source with score just below 0.6 should NOT be promoted (threshold is > 0.6)."""
-    sources = [_make_trial_source("NotQuite", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("NotQuite", trial_days=7)]
+    state = _state_with_started("NotQuite", "2026-03-01")
     today = "2026-03-18"
-    # Create stats that give a score just below 0.6
-    # score = reliability*0.3 + productivity*0.3 + desc*0.2 + recency*0.2
-    # For score = 0.59: 0.5*0.3 + 0.5*0.3 + 0.5*0.2 + 0.5*0.2 = 0.5
-    # Need higher: 1.0*0.3 + 0.5*0.3 + 0.6*0.2 + 1.0*0.2 = 0.3+0.15+0.12+0.2 = 0.77
-    # Need to find values that equal ~0.59
-    # 1.0*0.3 + 0.3*0.3 + 0.96*0.2 + 1.0*0.2 = 0.3+0.09+0.192+0.2 = 0.782
-    # Try: 0.8*0.3 + 0.375*0.3 + 0.75*0.2 + 1.0*0.2 = 0.24+0.1125+0.15+0.2 = 0.7025
-    # Try: 0.5*0.3 + 0.3*0.3 + 0.5*0.2 + 1.0*0.2 = 0.15+0.09+0.1+0.2 = 0.54 (good, below 0.6)
     stats = {
         "NotQuite": SourceStats(
             name="NotQuite",
@@ -566,18 +567,18 @@ def test_evaluate_trial_boundary_just_below_0_6_not_promoted() -> None:
             successful_fetches=5,  # reliability = 0.5
             total_articles_found=10,
             articles_included_in_digest=3,  # productivity = 0.3
-            avg_description_length=60.0,  # desc = (60-20)/(200-20) = 0.5
+            avg_description_length=60.0,
             last_seen=today,  # recency = 1.0
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # Score should be ~0.54, which is < 0.6, so NOT promoted
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert "NotQuite" not in promote
 
 
 def test_evaluate_trial_boundary_just_above_0_6_promoted() -> None:
     """Trial source with score just above 0.6 should be promoted."""
-    sources = [_make_trial_source("JustGood", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("JustGood", trial_days=7)]
+    state = _state_with_started("JustGood", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "JustGood": SourceStats(
@@ -586,14 +587,14 @@ def test_evaluate_trial_boundary_just_above_0_6_promoted() -> None:
             avg_description_length=150.0, last_seen=today,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # This should have score > 0.6
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert "JustGood" in promote
 
 
 def test_evaluate_trial_boundary_just_above_0_3_not_demoted() -> None:
     """Trial source with score just above 0.3 should NOT be demoted (threshold is < 0.3)."""
-    sources = [_make_trial_source("Middling", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("Middling", trial_days=7)]
+    state = _state_with_started("Middling", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "Middling": SourceStats(
@@ -604,22 +605,20 @@ def test_evaluate_trial_boundary_just_above_0_3_not_demoted() -> None:
             articles_included_in_digest=5,
             avg_description_length=20.0,
             last_seen=None,  # recency = 0.0
-            # 7 snaps with 50% inclusion → productivity = 0.5
             history=[
                 DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2, articles_included=1, fetch_ok=True)
                 for i in range(1, 8)
             ],
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # score = 0.5*0.3 + 0.5*0.3 + 0.2*0.2 + 0.0*0.2 = 0.34
-    # Above 0.3, should NOT be demoted (threshold is < 0.3)
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert "Middling" not in demote
 
 
 def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
     """Trial source with score just below 0.3 should be demoted."""
-    sources = [_make_trial_source("JustBad", trial_started="2026-03-01", trial_days=7)]
+    sources = [_make_trial_source("JustBad", trial_days=7)]
+    state = _state_with_started("JustBad", "2026-03-01")
     today = "2026-03-18"
     stats = {
         "JustBad": SourceStats(
@@ -628,311 +627,124 @@ def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
             avg_description_length=10.0, last_seen=None,
         )
     }
-    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today)
-    # This should have score < 0.3
+    promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
     assert "JustBad" in demote
 
 
-# --- YAML manipulation helpers (_find_source_block, _set_field_in_block, _remove_field_in_block) ---
+# --- SourceStateStore and apply_trial_decisions_to_cache ---
 
 
-def test_find_source_block_first_key_name() -> None:
-    """Find source block when name is the first key."""
-    from digest.source_scorer import _find_source_block
-
-    lines = [
-        "sources:",
-        "  - name: Feed1",
-        "    url: https://example.com",
-        "    category: Tech",
-        "  - name: Feed2",
-        "    url: https://other.com",
-    ]
-    start, end = _find_source_block(lines, "Feed1")
-    assert start == 1
-    assert end == 4  # Up to the next list item
+def test_load_source_state_missing_file(tmp_path: Path) -> None:
+    """load_source_state returns empty store when file does not exist."""
+    store = load_source_state(str(tmp_path))
+    assert isinstance(store, SourceStateStore)
+    assert store.sources == {}
 
 
-def test_find_source_block_name_later_key() -> None:
-    """Find source block when name appears after other keys (alphabetical order)."""
-    from digest.source_scorer import _find_source_block
-
-    lines = [
-        "sources:",
-        "  - category: Tech",
-        "    name: Feed1",
-        "    url: https://example.com",
-        "  - category: News",
-        "    name: Feed2",
-    ]
-    start, end = _find_source_block(lines, "Feed1")
-    assert start == 1
-    assert end == 4
+def test_load_source_state_corrupted_json(tmp_path: Path) -> None:
+    """load_source_state returns empty store on corrupt JSON."""
+    (tmp_path / "source_state.json").write_text("not valid json", encoding="utf-8")
+    store = load_source_state(str(tmp_path))
+    assert store.sources == {}
 
 
-def test_find_source_block_nonexistent() -> None:
-    """Find source block returns None when source not found."""
-    from digest.source_scorer import _find_source_block
-
-    lines = [
-        "sources:",
-        "  - name: Feed1",
-        "    url: https://example.com",
-    ]
-    result = _find_source_block(lines, "NonExistent")
-    assert result is None
+def test_load_source_state_unknown_schema_version(tmp_path: Path) -> None:
+    """load_source_state returns empty store when schema_version is unknown."""
+    (tmp_path / "source_state.json").write_text('{"schema_version": 99, "sources": {}}', encoding="utf-8")
+    store = load_source_state(str(tmp_path))
+    assert store.sources == {}
 
 
-def test_set_field_in_block_replaces_existing() -> None:
-    """Set field should replace existing value."""
-    from digest.source_scorer import _set_field_in_block
-
-    lines = [
-        "  - name: Feed1",
-        "    trial: true",
-        "    url: https://example.com",
-    ]
-    result = _set_field_in_block(lines, 0, 3, "trial", "false")
-    assert any("trial: false" in line for line in result)
-
-
-def test_set_field_in_block_adds_new() -> None:
-    """Set field should add new field when not present."""
-    from digest.source_scorer import _set_field_in_block
-
-    lines = [
-        "  - name: Feed1",
-        "    url: https://example.com",
-    ]
-    result = _set_field_in_block(lines, 0, 2, "trial", "true")
-    assert any("trial: true" in line for line in result)
-
-
-def test_remove_field_in_block() -> None:
-    """Remove field should delete field line."""
-    from digest.source_scorer import _remove_field_in_block
-
-    lines = [
-        "  - name: Feed1",
-        "    trial_started: 2026-03-01",
-        "    url: https://example.com",
-    ]
-    result, new_end = _remove_field_in_block(lines, 0, 3, "trial_started")
-    assert new_end == 2
-    assert not any("trial_started" in line for line in result)
-
-
-def test_remove_field_in_block_nonexistent() -> None:
-    """Remove field should not crash if field not present."""
-    from digest.source_scorer import _remove_field_in_block
-
-    lines = [
-        "  - name: Feed1",
-        "    url: https://example.com",
-    ]
-    result, new_end = _remove_field_in_block(lines, 0, 2, "nonexistent")
-    assert new_end == 2  # No change
-    assert len(result) == 2  # No lines removed
-
-
-# --- apply_trial_decisions ---
-
-
-def test_apply_trial_decisions_promote(tmp_path: Path) -> None:
-    """Promoted source should have trial set to false."""
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "GoodFeed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
-            {"name": "OtherFeed", "url": "https://y.com", "category": "Tech",
-             "enabled": True, "trial": False},
-        ],
+def test_load_source_state_non_dict_entry_skipped(tmp_path: Path) -> None:
+    """A non-dict source entry (e.g. bare string) is skipped; valid entries still load."""
+    import json
+    data = {
+        "schema_version": 1,
+        "sources": {
+            "GoodFeed": {"trial_started": "2026-03-01", "graduated": False, "demoted": False},
+            "BadFeed": "not-a-dict",
+        },
     }
-    config_path = tmp_path / "config.yaml"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
-
-    apply_trial_decisions(str(config_path), promote=["GoodFeed"], demote=[])
-
-    with config_path.open("r") as f:
-        result = yaml.safe_load(f)
-
-    good = next(s for s in result["sources"] if s["name"] == "GoodFeed")
-    assert good["trial"] is False
-    # Other source should be untouched
-    other = next(s for s in result["sources"] if s["name"] == "OtherFeed")
-    assert other["enabled"] is True
+    (tmp_path / "source_state.json").write_text(json.dumps(data), encoding="utf-8")
+    store = load_source_state(str(tmp_path))
+    assert store.get_trial_started("GoodFeed") == "2026-03-01"
+    assert "BadFeed" not in store.sources
 
 
-def test_apply_trial_decisions_demote(tmp_path: Path) -> None:
-    """Demoted source should have enabled set to false."""
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "BadFeed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
+def test_source_state_store_roundtrip(tmp_path: Path) -> None:
+    """save/load round-trip preserves all fields."""
+    store = SourceStateStore()
+    store.set_trial_started("Feed1", "2026-03-01")
+    store.mark_graduated("Feed2")
+    store.mark_demoted("Feed3")
+    save_source_state(store, str(tmp_path))
 
-    apply_trial_decisions(str(config_path), promote=[], demote=["BadFeed"])
-
-    with config_path.open("r") as f:
-        result = yaml.safe_load(f)
-
-    bad = next(s for s in result["sources"] if s["name"] == "BadFeed")
-    assert bad["enabled"] is False
+    loaded = load_source_state(str(tmp_path))
+    assert loaded.get_trial_started("Feed1") == "2026-03-01"
+    assert loaded.is_graduated("Feed2")
+    assert loaded.is_demoted("Feed3")
+    assert not loaded.is_graduated("Feed1")
+    assert not loaded.is_demoted("Feed1")
 
 
-def test_apply_trial_decisions_noop(tmp_path: Path) -> None:
-    """Empty promote/demote lists should not modify the file."""
-    config_data = {
-        "sources": [
-            {"name": "Feed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
+def test_apply_trial_decisions_to_cache_promote() -> None:
+    """Promoted source gets graduated=True, trial_started cleared."""
+    store = SourceStateStore()
+    store.set_trial_started("Good", "2026-03-01")
+    result = apply_trial_decisions_to_cache(store, promote=["Good"], demote=[], today="2026-03-18")
+    assert result.is_graduated("Good")
+    assert result.get_trial_started("Good") is None
+    assert not result.is_demoted("Good")
 
-    original = config_path.read_text()
-    apply_trial_decisions(str(config_path), promote=[], demote=[])
-    assert config_path.read_text() == original
+
+def test_apply_trial_decisions_to_cache_demote() -> None:
+    """Demoted source gets demoted=True."""
+    store = SourceStateStore()
+    store.set_trial_started("Bad", "2026-03-01")
+    result = apply_trial_decisions_to_cache(store, promote=[], demote=["Bad"], today="2026-03-18")
+    assert result.is_demoted("Bad")
+    assert not result.is_graduated("Bad")
+
+
+def test_apply_trial_decisions_to_cache_needs_start() -> None:
+    """needs_start sources get trial_started set to today."""
+    store = SourceStateStore()
+    result = apply_trial_decisions_to_cache(store, promote=[], demote=[], today="2026-04-26", needs_start=["NewFeed"])
+    assert result.get_trial_started("NewFeed") == "2026-04-26"
 
 
 def test_evaluate_trial_needs_start_for_none_trial_started() -> None:
-    """Trial source with trial_started=None should appear in needs_start."""
-    sources = [
-        SourceConfig(
-            name="NewTrial", url="https://x.com", category="Tech",
-            enabled=True, priority=3, trial=True, trial_started=None,
-        )
-    ]
-    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18")
+    """Trial source with no trial_started in cache should appear in needs_start."""
+    sources = [_make_trial_source("NewTrial")]
+    store = SourceStateStore()  # empty — no trial_started
+    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18", store)
     assert promote == []
     assert demote == []
     assert "NewTrial" in needs_start
 
 
-def test_apply_trial_decisions_initializes_trial_started(tmp_path: Path) -> None:
-    """needs_start sources should get trial_started set in config."""
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "NewTrial", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
-
-    apply_trial_decisions(str(config_path), promote=[], demote=[], needs_start=["NewTrial"])
-
-    with config_path.open("r") as f:
-        result = yaml.safe_load(f)
-
-    source = result["sources"][0]
-    assert source["trial_started"] is not None
+def test_evaluate_trial_skips_graduated() -> None:
+    """Graduated source (config trial=True, cache graduated=True) is not re-evaluated."""
+    sources = [_make_trial_source("GraduatedFeed")]
+    store = SourceStateStore()
+    store.set_trial_started("GraduatedFeed", "2026-01-01")
+    store.mark_graduated("GraduatedFeed")
+    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18", store)
+    assert "GraduatedFeed" not in promote
+    assert "GraduatedFeed" not in demote
+    assert "GraduatedFeed" not in needs_start
 
 
-def test_apply_trial_decisions_clears_trial_started_on_promote(tmp_path: Path) -> None:
-    """Promoted source should have trial_started removed."""
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "GoodFeed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
+def test_evaluate_trial_skips_demoted() -> None:
+    """Already-demoted source is not re-evaluated."""
+    sources = [_make_trial_source("DemotedFeed")]
+    store = SourceStateStore()
+    store.mark_demoted("DemotedFeed")
+    promote, demote, needs_start = evaluate_trial_sources(sources, {}, "2026-03-18", store)
+    assert "DemotedFeed" not in promote
+    assert "DemotedFeed" not in demote
+    assert "DemotedFeed" not in needs_start
 
-    apply_trial_decisions(str(config_path), promote=["GoodFeed"], demote=[])
-
-    with config_path.open("r") as f:
-        result = yaml.safe_load(f)
-
-    source = result["sources"][0]
-    assert source["trial"] is False
-    assert "trial_started" not in source
-
-
-def test_apply_trial_decisions_creates_and_removes_backup(tmp_path: Path) -> None:
-    """apply_trial_decisions creates a .yaml.bak before writing and removes it on success."""
-    import yaml
-
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "Feed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    bak_path = tmp_path / "config.yaml.bak"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
-
-    apply_trial_decisions(str(config_path), promote=["Feed"], demote=[])
-
-    # Backup must be cleaned up after a successful write
-    assert not bak_path.exists(), "Backup file should be removed after successful write"
-    # Config should still be valid
-    assert config_path.exists()
-
-
-def test_apply_trial_decisions_preserves_backup_on_write_failure(tmp_path: Path) -> None:
-    """apply_trial_decisions preserves .yaml.bak when the tmp write fails."""
-    from unittest.mock import patch
-
-    import yaml
-
-    config_data = {
-        "llm": {"provider": "anthropic", "model": "test"},
-        "delivery": {"telegram": False, "markdown_to_repo": False},
-        "digest": {"language": "ru"},
-        "sources": [
-            {"name": "Feed", "url": "https://x.com", "category": "Tech",
-             "enabled": True, "trial": True, "trial_started": "2026-03-01"},
-        ],
-    }
-    config_path = tmp_path / "config.yaml"
-    bak_path = tmp_path / "config.yaml.bak"
-    with config_path.open("w") as f:
-        yaml.dump(config_data, f)
-
-    # Patch Path.open to raise on the .yaml.tmp file only
-    real_open = open
-
-    def fail_on_tmp(self: "Path", mode: str = "r", **kwargs: object) -> object:
-        if str(self).endswith(".yaml.tmp"):
-            raise OSError("Disk full")
-        return real_open(str(self), mode, **kwargs)
-
-    import pytest as _pytest
-
-    with patch("pathlib.Path.open", fail_on_tmp):
-        with _pytest.raises(OSError, match="Disk full"):
-            apply_trial_decisions(str(config_path), promote=["Feed"], demote=[])
-
-    # Backup must survive the failed write for manual recovery
-    assert bak_path.exists(), "Backup file should remain when write fails"
 
 
 def test_update_stats_deduplicates_same_day() -> None:
