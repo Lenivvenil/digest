@@ -65,8 +65,8 @@ _Discovered: 2026-04-26. Domain discovery session with domain-researcher._
 
 **Red — горячие точки:**
 1. **Source dual-storage**: `config.yaml` (декларация, human-edited) мутируется рантаймом — `apply_trial_decisions()` в `source_scorer.py:389–465` пишет `trial_started`, `trial: false`, `enabled: false` regex'ом прямо в YAML. Нет единого владельца — invariant не защищён. Фрейминг уточнён в ADR-0003 (поля `dynamic_sources.json`/`system_priority` в коде не существуют). → Issue #37.
-2. **Article без явного lifecycle**: нет состояний raw → scored → delivered → archived. Дедупликация через hash в кеше — ad-hoc решение.
-3. **Feedback decay owner**: логика затухания размазана между Delivery (запись feedback) и Radar (применение при следующем запуске). Политика задекларирована, но исполнитель распределён.
+2. **Article без явного lifecycle**: нет состояний raw → scored → delivered → archived. Дедупликация через hash в кеше — ad-hoc решение. → Issue #39.
+3. **Feedback decay owner**: логика затухания размазана между Delivery (запись feedback) и Radar (применение при следующем запуске). Политика задекларирована, но исполнитель распределён. → Issue #40.
 
 ---
 
