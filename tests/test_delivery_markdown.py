@@ -9,6 +9,7 @@ from typing import Any
 from digest.delivery.markdown import (
     _build_counter_signals_section,
     _build_frontmatter,
+    _build_top_articles_section,
     write_digest,
 )
 from tests.factories import make_ranked_signal
@@ -148,3 +149,85 @@ class TestWriteDigest:
             "text", config, date=datetime(2026, 1, 1, tzinfo=timezone.utc)
         )
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _build_top_articles_section
+# ---------------------------------------------------------------------------
+
+def _make_article_summary(
+    title: str = "Big AI News",
+    link: str = "https://example.com/ai",
+    source: str = "TechCrunch",
+    category: str = "AI & LLM",
+    summary: str = "This is a critical development for architects.",
+) -> Any:
+    from digest.radar.summarizer import ArticleSummary
+    return ArticleSummary(title=title, link=link, source=source, category=category, summary=summary)
+
+
+class TestBuildTopArticlesSection:
+    def test_empty_returns_empty_string(self) -> None:
+        assert _build_top_articles_section([]) == ""
+
+    def test_single_article(self) -> None:
+        result = _build_top_articles_section([_make_article_summary()])
+        assert "## Top Articles" in result
+        assert "Big AI News" in result
+        assert "https://example.com/ai" in result
+        assert "TechCrunch" in result
+        assert "AI & LLM" in result
+        assert "critical development" in result
+
+    def test_multiple_articles(self) -> None:
+        articles = [
+            _make_article_summary(title="First", source="HN"),
+            _make_article_summary(title="Second", source="Reddit"),
+        ]
+        result = _build_top_articles_section(articles)
+        assert "First" in result
+        assert "Second" in result
+        assert "HN" in result
+        assert "Reddit" in result
+
+
+class TestWriteDigestWithTopArticles:
+    def test_with_top_articles_adds_section(self, tmp_path: Path) -> None:
+        config = _make_config(output_dir=str(tmp_path))
+        articles = [
+            _make_article_summary(title="Key Story", summary="Why architects care."),
+        ]
+        result = write_digest(
+            "# Overview",
+            config,
+            top_articles=articles,
+            date=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        )
+        assert result is not None
+        text = result.read_text(encoding="utf-8")
+        assert "## Top Articles" in text
+        assert "Key Story" in text
+        assert "Why architects care." in text
+
+    def test_without_top_articles_no_section(self, tmp_path: Path) -> None:
+        config = _make_config(output_dir=str(tmp_path))
+        result = write_digest(
+            "# Overview",
+            config,
+            date=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        )
+        assert result is not None
+        text = result.read_text(encoding="utf-8")
+        assert "Top Articles" not in text
+
+    def test_empty_top_articles_no_section(self, tmp_path: Path) -> None:
+        config = _make_config(output_dir=str(tmp_path))
+        result = write_digest(
+            "# Overview",
+            config,
+            top_articles=[],
+            date=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        )
+        assert result is not None
+        text = result.read_text(encoding="utf-8")
+        assert "Top Articles" not in text

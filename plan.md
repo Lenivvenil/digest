@@ -1,113 +1,108 @@
-# Plan: Issue #28 — Irritator visibility and status
+# Plan: Issue #29 — Per-article LLM summaries in Telegram cards + per-article markdown
 
 ## 1. Problem restatement
 
-The Irritator pipeline runs silently: when no counter-signals survive ranking, the user receives nothing and cannot tell whether the pipeline ran at all, failed partway through, or simply found nothing relevant. The issue identified three root causes, but a code audit reveals that two of them are **already fixed in the current codebase**: `_run_irritator()` already has per-stage granular error handling (stages 1-5 each have individual try/except and detailed status strings), and `send_counter_signals()` already renders the "💢🔥 РАЗДРАЖАТОР 🔥💢" header with the desired per-signal format. What remains is a small delta:
+The Telegram delivery currently sends two overlapping things: long monolithic category-summary texts (via `send_radar()`, which is now dead code) plus per-article cards with voting buttons. The cards use raw article descriptions (≤200 chars) as the preview text rather than LLM-generated summaries. The result is duplication, walls of text, and no feedback mechanism on the narrative analysis. The fix is to send only the per-article cards — each with a 2-3 sentence LLM summary — and update the Obsidian markdown file to match the same per-article structure.
 
-1. The dry-run path (`main.py:648-662`) does not print `irritator_status` when `all_ranked` is empty — so `--verbose --dry-run` gives no Irritator feedback.
-2. The empty-state status message in `send_counter_signals()` is always sent with `disable_notification=True` — invisible unless Telegram is open.
-3. Stage 4 (`validate_signals` at `main.py:451`) has no try/except, unlike stages 1, 2, 3, 5.
+**Key code-audit finding:** The majority of the issue's solution is already implemented in the current codebase:
+- `ArticleSummary` and `CategorySummary` dataclasses exist in `digest/radar/summarizer.py`
+- `pick_top_articles()` already calls LLM to select and summarize top articles as structured JSON
+- `send_article_cards()` already accepts `top_articles: list[ArticleSummary]` and sends per-article posts with LLM summaries and voting buttons
+- `main.py` already calls both and wires them together
+- `send_radar()` is already removed from the active pipeline — it remains as dead code in `telegram.py`
 
-**Out of scope:** Lowering `min_signal_score` — the default of 7 is engine-level in `config.py`; the correct place to change it is `digest-prod/config.yaml`. This PR notes the recommendation in the PR body but does not change code.
+The actual delta is small: (a) remove the dead `send_radar()` function, (b) update `write_digest()` in `markdown.py` to include a per-article section when `top_articles` are present, (c) wire `top_articles` into the `write_digest()` call in `main.py`.
 
 ## 2. Affected bounded contexts and files
 
 **Bounded Context: Digest** (single BC; `docs/domain/digest/overview.md`)
 
-Aggregates touched:
-- **Narrative / CounterSignal** (Irritator BC-internal) — no invariant change, only observability
-- **Delivery** aggregate — `send_counter_signals()` notification loudness
+Aggregates / concepts touched:
+- **CategorySummary / ArticleSummary** — Radar→Delivery contract (already in place)
+- **Delivery** — `markdown.py` output format, `send_radar()` dead-code removal
 
 | File | Change |
 |------|--------|
-| `digest/main.py` | (a) Print irritator status in dry-run path unconditionally (always shown, even with signals — cleaner UX); (b) add try/except around stage 4 `validate_signals` |
-| `digest/delivery/telegram.py` | Replace `disable_notification=True` blanket flag with level-driven logic |
-| `digest/source_scorer.py` | No change |
-| `tests/test_delivery_telegram.py` | Assert notification loudness per level |
-| `tests/test_main.py` | Assert dry-run stdout contains irritator status |
+| `digest/delivery/telegram.py` | Remove `send_radar()` function (dead code — not called from pipeline) |
+| `digest/delivery/markdown.py` | Add per-article section to `write_digest()` when `top_articles` provided |
+| `digest/main.py` | Pass `top_articles` to `write_digest()` |
+| `digest/delivery/__init__.py` | Remove `send_radar` from exported symbols if present |
+| `tests/test_delivery_telegram.py` | Remove `send_radar` tests; verify they exist and what to do |
+| `tests/test_delivery_markdown.py` | Add test for per-article markdown section |
+
+**Not changed:**
+- `digest/radar/summarizer.py` — `ArticleSummary`, `pick_top_articles()` already done
+- `config.yaml` (digest-prod) — perspectives removal is `config.radar.perspectives: false`, out of scope per ADR-0002
 
 ## 3. Considered approaches
 
-### Approach A — String heuristic for notification loudness
+### Approach A — Remove `send_radar()` + add per-article to `write_digest()`
 
-Emit `disable_notification = "failed" not in irritator_status`. Simple, zero new types.
-
-**Trade-offs:**
-- ✓ Minimal diff
-- ✗ Fragile: "all signals filtered by blocklist" (main.py:458) does not contain "failed" but is arguably error-adjacent. Any future status copy-edit silently flips notification loudness. Not mitigation; wishful thinking.
-
-### Approach B — Structured `IrritatorStatus` return (chosen)
-
-Change `_run_irritator` return type from `tuple[list, list, str]` to `tuple[list, list, IrritatorStatus]` where:
-
-```python
-@dataclass
-class IrritatorStatus:
-    text: str
-    level: Literal["ok", "empty", "error"]
-```
-
-- `level="error"` — pipeline stage failed with exception
-- `level="empty"` — pipeline ran fully, nothing survived filters/ranking
-- `level="ok"` — ranked signals exist (status sent alongside them)
-
-`send_counter_signals` uses `status.level` to set `disable_notification`: loud on `"error"`, silent on `"empty"`, not needed on `"ok"`.
+Add an optional `top_articles: list[ArticleSummary] | None` parameter to `write_digest()`. When present, append a `## Top Articles` section with per-article summaries in Obsidian callout format. Keep the existing `combined` (category summaries) as the primary body — Irritator still uses it for narrative extraction, and the long format is useful for Obsidian search/indexing.
 
 **Trade-offs:**
-- ✓ Correct: loudness is explicit, not inferred from string content
-- ✓ Two callsites change (`_run_irritator` and `send_counter_signals`); manageable
-- ✓ `IrritatorStatus` is a natural domain concept — Delivery shouldn't parse Irritator's error strings
-- ✗ One new type; mypy must see it in both modules (put in `digest/main.py`, import in telegram.py via `TYPE_CHECKING` or inline)
+- ✓ Minimal: only two code changes needed
+- ✓ Keeps `combined` for Irritator (which extracts narratives from category summaries)
+- ✓ Obsidian file becomes richer — both overview and per-article detail
+- ✗ Obsidian file contains both category text and per-article section — some redundancy in the file itself
+
+### Approach B — Replace `combined` with per-article-only markdown
+
+Generate the Obsidian file solely from `top_articles`, dropping `combined` from the file. `summarize_all()` output is still needed for Irritator but not written to disk.
+
+**Trade-offs:**
+- ✓ No redundancy in the markdown file
+- ✗ Loses the category-level analytical overview in Obsidian (useful for trend analysis)
+- ✗ Breaks downstream consumers that read the markdown format (e.g., any personal notes referencing category headers)
+- ✗ Larger diff — need to change `main.py` to pass per-article list to `write_digest()` instead of `combined`
 
 ## 4. Chosen approach and why
 
-**Approach B.** String heuristics that cross module boundaries are an anti-pattern: Delivery should not need to parse Irritator's error prose to decide notification loudness. The domain already has `CounterSignal` and `Narrative` as explicit types; `IrritatorStatus.level` is the same principle applied to observability.
+**Approach A.** The category summaries from `summarize_all()` serve dual purpose: Irritator needs them for narrative extraction, and they provide context that per-article summaries alone cannot. Adding a per-article section to the Obsidian file is additive and backwards-compatible. Removing `send_radar()` is pure cleanup with no behavioral change.
 
-No ADR triggered. Checking `docs/principles.md` criteria:
+No ADR triggered. `docs/principles.md` ADR criteria:
 - No new cross-cutting dependency
-- No BC boundary change
-- No new storage or infrastructure component
+- No BC boundary change — same BC, same data flow, same contract (already in place)
+- No new storage or infrastructure
 - No public API change
 - No hard-to-reverse constraint
 
-Story-level fix.
-
-**Stage 4 try/except:** Add a guarded call around `validate_signals` for consistency with stages 1-3; return `level="error"` if it raises. `validate_signals` does simple keyword filtering and is unlikely to raise, but unprotected I/O-adjacent code is a latent risk.
-
-**`min_signal_score` default:** Not changed in this PR. Recommend in PR body that `digest-prod/config.yaml` adds `min_signal_score: 5`.
+**Perspectives removal:** Already supported via `config.radar.perspectives: false`. Operator should set this in `digest-prod/config.yaml`. No engine code change.
 
 ## 5. Test strategy
 
 ### Unit — `tests/test_delivery_telegram.py`
 
-Extend `TestSendCounterSignals`:
-- `test_empty_signals_sends_status_silent` — `IrritatorStatus("2 narratives, 0 signals", "empty")` → sent with `disable_notification=True`
-- `test_empty_signals_error_sends_loud` — `IrritatorStatus("query generation failed: timeout", "error")` → sent WITHOUT `disable_notification` (assert key absent in POST body)
+- Find and handle existing `send_radar` tests: if they exist, remove them (the function is being deleted).
+- No new telegram tests needed — `send_article_cards` with `top_articles` is already covered.
 
-Implementation detail: inspect `json.loads(route.calls[0].request.content)` for `disable_notification` field.
+### Unit — `tests/test_delivery_markdown.py`
 
-### Unit — `tests/test_main.py`
-
-Add a test that patches `_run_irritator` to return `([], [], IrritatorStatus("2 narratives, 0 signals", "empty"))` and calls `run(dry_run=True)`; assert `capsys.readouterr().out` contains the status text.
+- Add `test_write_digest_with_top_articles` — verifies that when `top_articles` is a non-empty list of `ArticleSummary`, the output markdown contains a `## Top Articles` section with each article's title, summary, and source.
+- Add `test_write_digest_without_top_articles` — existing behavior unchanged when `top_articles` is None or empty.
 
 ### No integration or e2e
 
-All external calls are mocked. E2e not needed.
+Both changes are pure output-format changes; all dependencies are mockable. E2e not needed.
 
 ### Coverage target
 
-≥ 70% floor (current: 79%). New tests cover the telegram.py empty-state branch (notification flag) and main.py dry-run irritator path.
+≥ 70% floor (currently 79%). New tests add coverage to the `top_articles` branch in `write_digest()`.
 
 ## 6. Risks and unknowns
 
-1. **`IrritatorStatus` import path** — `send_counter_signals` in `telegram.py` needs the type. Options: (a) put `IrritatorStatus` in `digest/_util.py` or a new `digest/irritator_types.py`; (b) use `TYPE_CHECKING` guard + string annotation; (c) inline `Any` and trust the `level` attribute. Option (a) is cleanest — one import, no forward reference. Verify no circular import before committing.
+1. **`send_radar` test impact** — there may be existing tests for `send_radar` in `test_delivery_telegram.py`. Deleting the function without removing the tests will break CI. Must check before deleting.
 
-2. **Dry-run print ordering** — `_run_irritator` already prints verbose narrative/signal detail inside itself when `verbose=True`. The new dry-run status print should not duplicate verbose detail. Mitigation: the status print is always shown; verbose detail remains inside `_run_irritator`.
+2. **`send_radar` in `__init__.py` exports** — if `send_radar` is re-exported from `digest/delivery/__init__.py`, the deletion needs to propagate there too. Grep required before commit.
 
-3. **Stage 4 try/except adds another error return path** — callers expect `(narratives, [], IrritatorStatus)` on error. All returns already follow this pattern; just add one more.
+3. **Markdown section duplication** — if `top_articles` contains the same articles that appear in `combined`, the Obsidian file will have redundant content. This is acceptable (the formats differ: combined is analytical narrative, per-article is standalone summaries), but worth documenting.
 
-4. **`min_signal_score` recommendation** — digestprod operator may not notice the PR body note. Mitigation: add a `logger.warning` when `config.irritator.min_signal_score > 5` suggesting the operator consider lowering it. Non-blocking, one line.
+4. **`pick_top_articles()` failure** — if the LLM call fails, `top_articles` is `[]`. In this case `write_digest()` should gracefully omit the per-article section (no empty heading). The implementation must handle `top_articles = []` silently.
+
+5. **Perspectives in prompts** — `summarize_all()` currently respects `config.radar.perspectives`. Setting it to `false` in `digest-prod/config.yaml` is the correct mechanism. No code change needed, but the PR description must document this as the action for the operator.
+
+6. **`write_digest()` call in `main.py`** — wiring `top_articles` through to `write_digest()` is required; without it, the new parameter is dead code.
 
 ---
 
-*Closes #28*
+*Closes #29*

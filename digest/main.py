@@ -685,7 +685,9 @@ async def run(
     from digest.delivery import send_article_cards, send_counter_signals, write_digest
 
     md_path = write_digest(
-        combined, config, ranked_signals=all_ranked or None,
+        combined, config,
+        top_articles=top_articles or None,
+        ranked_signals=all_ranked or None,
         sources_count=len(articles_by_category), articles_count=total_articles,
     )
     markdown_saved = md_path is not None
