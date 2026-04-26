@@ -1,125 +1,152 @@
-# Plan: Engine-instance split (Issue #31)
+# Plan: Issue #37 — Consolidate Source state (eliminate dual-storage split)
 
 ## 1. Problem restatement
 
-The `digest` repository currently acts as three things at once: a Python codebase with tests and CI, a private configuration store with personal RSS sources and LLM weights, and a production runtime that commits generated digests and cache state back to `main` via GitHub Actions. These roles have incompatible hygiene requirements — code wants a clean PR-only history, config wants to be private, and runtime state wants to be committed every two hours. The goal is to split the repo into `digest` (public engine — code only) and `digest-prod` (private instance — config, state, workflows), as decided in ADR-0002.
+`digest/source_scorer.py:389–465` содержит функцию `apply_trial_decisions()`, которая мутирует `config.yaml` во время рантайма через regex-манипуляцию строк YAML (`_find_source_block`, `_set_field_in_block`, `_remove_field_in_block`). Это делает `config.yaml` одновременно human-edited декларацией намерения и хранилищем мутируемого рантайм-состояния. Нарушение инварианта имеет три проявления: (1) любой ручной git diff в `digest-prod` может конфликтовать с автоматической записью на следующем cron; (2) движок требует `config_path` writable, что нарушает ADR-0002 контракт; (3) round-trip property тест (acceptance criterion) невозможен, пока state и config — один файл.
 
 ## 2. Affected bounded contexts and files
 
-No domain docs exist; bounded contexts are inferred from module structure.
+**Bounded Context: Digest** (единственный BC; domain overview `docs/domain/digest/overview.md`)
 
-**Engine (digest) — changes required:**
+Затронутые агрегаты по domain overview:
+- **Source** (Yellow aggregate) — владеет `trial_state` как value object; сейчас персистирует его через regex в config.yaml; после изменения — через `SourceStateStore` в `.cache/source_state.json`
 
-| File / path | Change |
-|---|---|
-| `src/` (entire directory) | Rename to `digest/` |
-| All `from src.X` imports (112 occurrences across 40 files) | → `from digest.X` |
-| `src/__main__.py` docstring and import | `from src.main` → `from digest.main` |
-| `pyproject.toml` | **`[project] name = "daily-digest"` → `"digest"`** (distribution name — must match `pip install "digest @ git+..."`); package discovery `src` → `digest`; **drop `[project.scripts]`** (workflows use `python -m digest`, no script entry point needed); `known-first-party = ["digest"]`; `--cov=digest` |
-| `Makefile` | `ruff check src/` → `ruff check digest/`; `mypy src/` → `mypy digest/` |
-| `.pre-commit-config.yaml` | `args: [-r, src/` → `args: [-r, digest/` |
-| `.github/workflows/ci.yml` | `python -m src` → `python -m digest`; remove config-validate step (config.yaml no longer in engine repo) |
-| `.github/workflows/daily.yml` | Remove entirely (moves to digest-prod) |
-| `.github/workflows/discover.yml` | Remove entirely (moves to digest-prod) |
-| `config.yaml` | Remove from engine repo (moves to digest-prod) |
-| `.cache/` | Remove from engine repo (moves to digest-prod) |
-| `digests/` | Remove from engine repo (moves to digest-prod) |
-| `README.md` | Update architecture section, installation instructions |
-| `CLAUDE.md` | Update project structure, entry point |
-| `.gitignore` | Add `config.yaml`, `.cache/`, `digests/` (protect against accidental re-add) |
-| `pyproject.toml` `[tool.mypy]` | `python_version` stays 3.12 |
+Файлы:
 
-**Instance (digest-prod) — new repo:**
-
-| File / path | Action |
-|---|---|
-| `config.yaml` | Copy from engine (current) |
-| `.cache/` | Copy from engine (current) |
-| `digests/` | Copy from engine (current) |
-| `.github/workflows/daily.yml` | Adapt: replace `pip install -r requirements.txt` with `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"`; remove `test` job |
-| `.github/workflows/discover.yml` | Same adaptation |
-| `requirements.txt` | `digest @ git+https://github.com/Lenivvenil/digest@main` |
-| GitHub Secrets | Re-create all 7 secrets in digest-prod |
-| `.gitignore` | Standard Python |
+| Файл | Тип изменения |
+|------|--------------|
+| `digest/source_scorer.py` | Крупная переработка: новые `SourceStateEntry`, `SourceStateStore`, `load_source_state()`, `save_source_state()`, `apply_trial_decisions_to_cache()`; удаление `apply_trial_decisions()`, `_find_source_block()`, `_set_field_in_block()`, `_remove_field_in_block()` |
+| `digest/source_scorer.py:evaluate_trial_sources()` | Смена сигнатуры: принимает `SourceStateStore` вместо читки `source.trial_started` из `SourceConfig` |
+| `digest/config.py` | `SourceConfig`: удалить поле `trial_started`; добавить метод `Config.effective_sources(source_state)` |
+| `digest/main.py` | Загрузка/сохранение `SourceStateStore`; замена `apply_trial_decisions()` на `apply_trial_decisions_to_cache()`; замена `config.enabled_sources` на `config.effective_sources(source_state)` в adaptive-ветке |
+| `tests/test_source_scorer.py` | Удалить тесты YAML-хелперов и `apply_trial_decisions`; добавить тесты SourceStateStore CRUD, round-trip, `apply_trial_decisions_to_cache` |
+| `tests/test_source_state_roundtrip.py` | Новый файл — property round-trip тест (acceptance criterion) |
+| `tests/test_config.py` | Убрать `trial_started` из fixture-данных источников |
+| `tests/test_main.py` | Обновить mocking: вместо патча `apply_trial_decisions` — патч cache-операций |
 
 ## 3. Considered approaches
 
-### Approach A — Rename-then-split (chosen)
+### Approach A — Merge at load time
 
-Rename `src/` → `digest/` in the engine repo first, run tests to confirm, then create `digest-prod` and configure it to `pip install` from engine. The config.yaml mutation problem (trial dates, `enabled: false`) is **not refactored** — config.yaml moves wholesale to `digest-prod` where it can still be mutated freely by `apply_trial_decisions()` and `add_trial_source()`. The dual-nature concern from the issue body only matters if config.yaml needs to live in *both* repos; with it living only in `digest-prod`, mutation is isolated and fine.
-
-**Trade-offs:**
-- Pro: minimal scope — no data model changes, no new cache files, no changes to how `apply_trial_decisions` works
-- Pro: tests continue to pass without mocking config writes (tests use `tmp_path` fixtures already)
-- Con: config.yaml in `digest-prod` is still a mix of static preferences and runtime state — acknowledged but not worse than today
-- Con: `pip install git+...@main` means engine's `main` is always the prod version — no pinning; a bad commit can break prod on the next cron run
-
-### Approach B — Extract dynamic state before split
-
-Before splitting, refactor `apply_trial_decisions()` and `add_trial_source()` to write trial metadata and `enabled` flags to `.cache/dynamic_sources.json` instead of `config.yaml`. `config.yaml` becomes truly static.
+`load_config()` принимает опциональный `source_state: SourceStateStore | None` и при загрузке применяет overrides к `SourceConfig.enabled` на основе `demoted` флага.
 
 **Trade-offs:**
-- Pro: clean separation — `config.yaml` is pure user intent, `.cache/` is pure runtime state
-- Pro: makes it possible to later version-control config.yaml separately without worrying about runtime mutations
-- Con: scope creep — changes `source_scorer.py`, `discovery.py`, `config.py` and all their tests before the split even starts; doubles implementation risk
-- Con: not required by ADR-0002; the ADR decision is about repo topology, not data model
+- ✓ Единое место merge — весь downstream код видит уже "правильные" источники через `config.enabled_sources`
+- ✗ `config.py` получает зависимость от cache-типов из `source_scorer.py` → circular import риск (source_scorer уже импортирует `SourceConfig` из config.py)
+- ✗ Нарушает принцип разделения ответственностей: config-loader не должен знать о runtime overrides
 
-**Verdict:** Approach A now, Approach B as a separate issue later if the dual-nature of config.yaml becomes a real operational problem.
+### Approach B — Метод `Config.effective_sources(source_state)` (ADR-0003)
 
-### Approach C — Pin engine to a git tag (variant of A)
-
-Same as A but `requirements.txt` in `digest-prod` pins to a released tag (`digest @ git+...@v2.0.0`) instead of `@main`.
+`config.py` остаётся чистым loader'ом без знания о cache. Добавляется метод `Config.effective_sources(source_state: SourceStateStore) -> list[SourceConfig]`, который фильтрует demoted источники. Runtime-код в `main.py` использует этот метод вместо `config.enabled_sources` в adaptive-ветке.
 
 **Trade-offs:**
-- Pro: prod stability — a bad commit in engine doesn't break prod until explicitly bumped
-- Con: requires a release discipline (tag before prod can get new code); solo developer overhead
-- Con: ADR-0002 Re-visit Trigger #2 already covers the case where release-contract fails; for now `@main` is simpler
-
-**Verdict:** Start with `@main`, upgrade to tag-pinning when/if Re-visit Trigger #2 fires.
+- ✓ Нет circular import — `Config` не знает о `SourceStateStore`
+- ✓ `config.enabled_sources` остаётся работающим для non-adaptive flow и тестов без state
+- ✓ Merge-семантика явна: `demoted` из cache + `enabled` из config → effective list
+- ✗ Два метода (`enabled_sources` и `effective_sources`) — вызывающий должен знать, какой использовать; документировать в docstring
 
 ## 4. Chosen approach and why
 
-**Approach A** (rename-then-split, `@main` pin).
+**Approach B**, per ADR-0003 (Option B — Full state split), `docs/decisions/0003-source-state-split.md`.
 
-ADR-0002 chose the two-repo split to solve repo topology, not data model. Approach A implements exactly that decision without adding scope. The 112 import rewrites are mechanical and fully covered by `ruff check` + `mypy` + existing test suite. The config.yaml mutation concern is a latent issue regardless of approach — it's better addressed as a focused follow-up than as a prerequisite that blocks the split.
+ADR зафиксировал: только Option B (и A') полностью закрывают инвариант config.yaml read-only. Между ними B выбран из-за наличия `schema_version` (защита от schema drift) и паттерна FeedbackStore (консистентность с существующим cache-механизмом).
 
-Relevant ADRs: ADR-0002 (engine-instance split), ADR-0001 (governance — commit-msg hook will run on the rename PR).
+**Conflict resolution** (из ADR-0003 Bootstrap section): config wins для declarations; cache wins для outcomes. При конфликте (`enabled: true` в config + `demoted: true` в cache) — cache outcome применяется.
+
+**Конкретные изменения:**
+
+```
+SourceConfig:
+  - trial_started  ← удалить
+
+SourceStateEntry (новый dataclass):
+  + trial_started: str | None = None
+  + graduated: bool = False
+  + demoted: bool = False
+
+SourceStateStore (новый dataclass):
+  + schema_version: int = 1
+  + sources: dict[str, SourceStateEntry] = field(default_factory=dict)
+  + методы: is_demoted(name), is_graduated(name), get_trial_started(name), set_trial_started(name, date), mark_graduated(name), mark_demoted(name)
+
+Config (обновить):
+  + effective_sources(source_state: SourceStateStore) -> list[SourceConfig]
+    — возвращает источники, где enabled=True И NOT source_state.is_demoted(name)
+
+source_scorer.py изменения:
+  apply_trial_decisions()         → удалить (вместе с YAML-хелперами)
+  _find_source_block()            → удалить
+  _set_field_in_block()           → удалить
+  _remove_field_in_block()        → удалить
+  evaluate_trial_sources()        → принимает source_state: SourceStateStore
+                                     источник считается "в испытании" только если:
+                                     source.trial==True AND NOT is_graduated(name) AND NOT is_demoted(name)
+  apply_trial_decisions_to_cache() → новая функция, мутирует SourceStateStore
+  load_source_state(cache_dir)    → новая функция
+  save_source_state(store, cache_dir) → новая функция, atomic_json_write
+
+main.py изменения:
+  + source_state = load_source_state(cache_dir)
+  evaluate_trial_sources(...) ← добавить source_state аргумент
+  apply_trial_decisions(...) → apply_trial_decisions_to_cache(source_state, promote, demote, needs_start, today)
+  + save_source_state(source_state, cache_dir)
+  config.enabled_sources → config.effective_sources(source_state) в adaptive-ветке evaluate
+```
 
 ## 5. Test strategy
 
-**Unit (existing, unchanged):** All 83 tests in `tests/` cover the production code. After renaming `src/` → `digest/`, every `from src.X import Y` becomes `from digest.X import Y`. If any import is missed, pytest will fail with `ModuleNotFoundError` — full coverage of the rename.
+### Unit tests (обновление `tests/test_source_scorer.py`)
 
-**Assertions that matter:**
-- `pytest tests/ -v` passes 83/83 after rename
-- `ruff check digest/ tests/` clean (catches missed `src` references in imports)
-- `mypy digest/` clean
-- `python -m digest --help` exits 0 (verifies entry point wiring)
-- `python -c "from digest.config import load_config"` exits 0
+Удалить:
+- `test_find_source_block_*` (3 теста) — функция удаляется
+- `test_set_field_in_block_*` (2 теста) — функция удаляется
+- `test_remove_field_in_block*` (2 теста) — функция удаляется
+- все `test_apply_trial_decisions_*` — функция удаляется
 
-**Integration (manual, async):** After `digest-prod` is configured:
-- Trigger `daily.yml` via `workflow_dispatch` in `digest-prod`
-- Observe successful `digest: YYYY-MM-DD` commit in `digest-prod/main`
+Добавить:
+- `test_load_source_state_missing_file` — возвращает пустой SourceStateStore
+- `test_load_source_state_corrupted_json` — graceful degradation
+- `test_load_source_state_unknown_schema_version` — warning + start fresh
+- `test_source_state_store_roundtrip` — save → load → equality
+- `test_apply_trial_decisions_to_cache_promote` — graduated=True, trial_started=None
+- `test_apply_trial_decisions_to_cache_demote` — demoted=True
+- `test_apply_trial_decisions_to_cache_needs_start` — инициализирует trial_started в store
+- `test_evaluate_trial_sources_reads_from_state` — trial_started из SourceStateStore, не SourceConfig
+- `test_evaluate_trial_sources_skips_graduated` — config trial=True + cache graduated=True → source не в needs_start, не в promote, не в demote (без этого graduated source зацикливается обратно в trial)
 
-**No new tests needed** — the rename is structural, not behavioral.
+### Round-trip property test (новый файл `tests/test_source_state_roundtrip.py`)
+
+Acceptance criterion #37: загрузить config + пустой cache → выставить `trial_started` в SourceStateStore → сохранить cache → перезагрузить → значение совпадает. Тест работает на `tmp_path`, без реального `config.yaml`.
+
+### Обновление `tests/test_config.py`
+
+- Убрать `trial_started` из всех fixture-dict источников
+- Добавить `test_config_effective_sources_filters_demoted`
+
+### Обновление `tests/test_main.py`
+
+- Заменить `patch("digest.source_scorer.apply_trial_decisions")` → `patch("digest.source_scorer.apply_trial_decisions_to_cache")`
+- Добавить патчи для `load_source_state` / `save_source_state`
+
+### Coverage target
+
+≥ 70% (текущий floor в `pyproject.toml`). Удаляемые тесты заменяются по объёму.
 
 ## 6. Risks and unknowns
 
-- **pip install from GitHub in CI:** `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"` requires the engine repo to be public OR a deploy key/PAT to be configured in `digest-prod`. If engine stays private during transition, the `git+https` install will fail with 401. **Mitigation:** make engine repo public before configuring `digest-prod` workflows, or add a PAT secret.
+1. **`enabled_sources` vs `effective_sources` call sites** — в non-adaptive flow `enabled_sources` корректен. Риск: в adaptive flow пропустить место и demoted source попадёт в пайплайн. **Mitigation:** grep `enabled_sources` перед commit.
 
-- **`pyproject.toml` package discovery:** currently there is no explicit `[tool.setuptools.packages.find]` — pip/setuptools auto-discovers packages. After renaming `src/` → `digest/`, auto-discovery should find `digest/` as a top-level package. But if `pyproject.toml` has any implicit `src` references in build config, the install will silently produce an empty package. **Mitigation:** test `pip install -e .` locally before creating `digest-prod`.
+2. **`evaluate_trial_sources` signature change** — читает `source.trial_started` из `SourceConfig` сейчас. Все callers — только `main.py:719`. mypy strict поймает несовместимость.
 
-- **`.cache/` and `digests/` migration:** current `.cache/` contains live state (seen articles, feedback, source stats, pending sources). Copying to `digest-prod` preserves continuity — no articles will be re-sent. However, if the copy is stale (committed state is from last cron run, not current), the first run in `digest-prod` will miss any feedback collected in the gap. Acceptable.
+3. **`_process_pending_approvals` в `main.py:715`** — ✅ Проверено. Вызывает `add_source_to_config()` из `discovery.py:135` — добавляет новый одобренный пользователем источник. Это прокси для ручного действия, не trial state mutation. **Вне scope #37.** После этого PR config.yaml всё ещё пишется discovery-флоу. Отразить как known limitation в PR description.
 
-- **GitHub Secrets migration:** 7 secrets must be re-created manually in `digest-prod`. There is no automated way to copy secrets between repos. Risk of typo or missed secret = first prod run silently fails. **Mitigation:** run `workflow_dispatch` and check logs immediately after setup.
+4. **`trial_started` migration в `digest-prod`** — вне scope. Существующие источники с `trial_started` в `config.yaml` при первом запуске увидят `None` в cache — trial clock сбросится. Предупреждение в CHANGELOG.
 
-- **Commit-msg governance hook (ADR-0001):** the hook runs on `git commit` in the engine repo. The rename commit will be a large mechanical change — governance hook checks commit type prefix (`feat/fix/chore/adr/...`). Use `chore:` prefix. No conflict.
+5. **mypy strict** — все новые dataclass-методы требуют полных annotations; `field(default_factory=dict)` для dict-поля.
 
-- **`digests/` git history:** after removing `digests/` from engine repo, the history of digest files remains in `git log`. This is expected and acceptable — the history is not deleted, just not tracked going forward.
+6. **Четвёртый cache-файл** — graceful degradation обязателен. Копировать паттерн дословно из `feedback.py:42–79`.
 
-- **`python-version` drift:** `.mise.toml` pins Python 3.13 locally; CI uses 3.12. The rename is compatible with both. No change needed in this plan; tracking it as a known latent issue.
+---
 
-## Execution order
-
-1. **PR 1 (engine):** rename `src/` → `digest/`, update all imports and infra files (`pyproject.toml`, `Makefile`, `.pre-commit-config.yaml`, `ci.yml`), strip `daily.yml`/`discover.yml`/`config.yaml`/`.cache/`/`digests/`, update README + CLAUDE.md. Tests pass. Merge.
-2. **Make `digest` repo public** — required before step 3 so `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"` works without a PAT. This is the simplest option; engine has no secrets or private data after step 1.
-3. **Create `Lenivvenil/digest-prod`** (private), copy files, configure secrets, adapt workflows, trigger `workflow_dispatch` to verify pipeline.
+*Closes #37*
+*Implements docs/decisions/0003-source-state-split.md*

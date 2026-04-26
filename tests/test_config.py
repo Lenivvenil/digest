@@ -460,3 +460,44 @@ def test_non_mapping_yaml(tmp_path: Path) -> None:
     cfg_path.write_text("- item1\n- item2\n", encoding="utf-8")
     with pytest.raises(ValueError, match="mapping"):
         load_config(str(cfg_path))
+
+
+def test_effective_sources_filters_demoted(tmp_path: Path) -> None:
+    """Config.effective_sources excludes sources marked demoted in cache."""
+    from digest.source_scorer import SourceStateStore
+
+    cfg_path = _write_config(tmp_path, """
+        llm:
+          providers:
+            - name: groq
+              model: llama-3.3-70b-versatile
+              role: [summarize]
+        sources:
+          - name: GoodFeed
+            url: https://example.com/feed
+            category: Test
+            enabled: true
+          - name: DemotedFeed
+            url: https://example.com/other
+            category: Test
+            enabled: true
+    """)
+    config = load_config(cfg_path)
+
+    store = SourceStateStore()
+    store.mark_demoted("DemotedFeed")
+
+    effective = config.effective_sources(store)
+    assert len(effective) == 1
+    assert effective[0].name == "GoodFeed"
+
+
+def test_effective_sources_empty_state_same_as_enabled(tmp_path: Path) -> None:
+    """With empty cache, effective_sources equals enabled_sources."""
+    from digest.source_scorer import SourceStateStore
+
+    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
+    config = load_config(cfg_path)
+
+    store = SourceStateStore()
+    assert config.effective_sources(store) == config.enabled_sources

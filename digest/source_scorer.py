@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +17,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATS_FILE = "source_stats.json"
+SOURCE_STATE_FILE = "source_state.json"
+SOURCE_STATE_SCHEMA_VERSION = 1
 HISTORY_MAX_DAYS = 30
 
 
@@ -40,6 +40,99 @@ class SourceStats:
     avg_description_length: float = 0.0
     last_seen: str | None = None
     history: list[DailySnapshot] = field(default_factory=list)
+
+
+@dataclass
+class SourceStateEntry:
+    trial_started: str | None = None
+    graduated: bool = False
+    demoted: bool = False
+
+
+@dataclass
+class SourceStateStore:
+    schema_version: int = SOURCE_STATE_SCHEMA_VERSION
+    sources: dict[str, SourceStateEntry] = field(default_factory=dict)
+
+    def _entry(self, name: str) -> SourceStateEntry:
+        if name not in self.sources:
+            self.sources[name] = SourceStateEntry()
+        return self.sources[name]
+
+    def is_demoted(self, name: str) -> bool:
+        return self.sources.get(name, SourceStateEntry()).demoted
+
+    def is_graduated(self, name: str) -> bool:
+        return self.sources.get(name, SourceStateEntry()).graduated
+
+    def get_trial_started(self, name: str) -> str | None:
+        return self.sources.get(name, SourceStateEntry()).trial_started
+
+    def set_trial_started(self, name: str, date: str) -> None:
+        self._entry(name).trial_started = date
+
+    def mark_graduated(self, name: str) -> None:
+        entry = self._entry(name)
+        entry.graduated = True
+        entry.trial_started = None
+
+    def mark_demoted(self, name: str) -> None:
+        self._entry(name).demoted = True
+
+
+def load_source_state(cache_dir: str) -> SourceStateStore:
+    """Load source runtime state from JSON cache. Return empty store if missing or corrupt."""
+    path = Path(cache_dir) / SOURCE_STATE_FILE
+    if not path.exists():
+        return SourceStateStore()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            logger.warning("Invalid source_state.json format, expected dict — starting fresh")
+            return SourceStateStore()
+        version = data.get("schema_version", 0)
+        if version != SOURCE_STATE_SCHEMA_VERSION:
+            logger.warning(
+                "source_state.json schema_version=%s unsupported (expected %s) — starting fresh",
+                version,
+                SOURCE_STATE_SCHEMA_VERSION,
+            )
+            return SourceStateStore()
+        sources: dict[str, SourceStateEntry] = {}
+        for name, raw in data.get("sources", {}).items():
+            try:
+                sources[name] = SourceStateEntry(
+                    trial_started=raw.get("trial_started"),
+                    graduated=bool(raw.get("graduated", False)),
+                    demoted=bool(raw.get("demoted", False)),
+                )
+            except (KeyError, TypeError, AttributeError) as exc:
+                logger.warning("Skipping malformed source_state entry '%s': %s", name, exc)
+        return SourceStateStore(schema_version=version, sources=sources)
+    except json.JSONDecodeError as exc:
+        logger.warning("Corrupted source_state.json — starting fresh: %s", exc)
+        return SourceStateStore()
+    except Exception as exc:
+        logger.warning("Failed to load source_state.json: %s", exc)
+        return SourceStateStore()
+
+
+def save_source_state(store: SourceStateStore, cache_dir: str) -> None:
+    """Persist source runtime state to JSON cache atomically."""
+    path = Path(cache_dir) / SOURCE_STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "schema_version": store.schema_version,
+        "sources": {
+            name: asdict(entry)
+            for name, entry in store.sources.items()
+        },
+    }
+    try:
+        atomic_json_write(path, data)
+    except Exception as exc:
+        logger.warning("Failed to save source_state.json: %s", exc)
 
 
 def load_stats(cache_dir: str) -> dict[str, SourceStats]:
@@ -269,11 +362,16 @@ def evaluate_trial_sources(
     sources: list[SourceConfig],
     stats: dict[str, SourceStats],
     today: str,
+    source_state: SourceStateStore | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """Evaluate trial sources and decide which to promote or demote.
 
     Returns (promote_names, demote_names, needs_start_names).
+    trial_started is read from source_state; sources already graduated or demoted are skipped.
     """
+    if source_state is None:
+        source_state = SourceStateStore()
+
     promote: list[str] = []
     demote: list[str] = []
 
@@ -288,7 +386,10 @@ def evaluate_trial_sources(
     for source in sources:
         if not source.trial:
             continue
-        if source.trial_started is None:
+        if source_state.is_graduated(source.name) or source_state.is_demoted(source.name):
+            continue
+        trial_started = source_state.get_trial_started(source.name)
+        if trial_started is None:
             logger.info(
                 "Trial source '%s' has no trial_started date; will initialize to %s",
                 source.name,
@@ -297,14 +398,14 @@ def evaluate_trial_sources(
             needs_start.append(source.name)
             continue
         try:
-            started_dt = datetime.strptime(source.trial_started, "%Y-%m-%d").replace(
+            started_dt = datetime.strptime(trial_started, "%Y-%m-%d").replace(
                 tzinfo=timezone.utc
             )
         except ValueError:
             logger.warning(
                 "Invalid trial_started date for source '%s': %s",
                 source.name,
-                source.trial_started,
+                trial_started,
             )
             continue
 
@@ -321,145 +422,28 @@ def evaluate_trial_sources(
     return promote, demote, needs_start
 
 
-def _find_source_block(lines: list[str], source_name: str) -> tuple[int, int] | None:
-    """Find the line range [start, end) of a source entry with the given name."""
-    i = 0
-    while i < len(lines):
-        match = re.match(r"^(\s*)-\s+\w+\s*:", lines[i])
-        if match:
-            indent = len(match.group(1))
-            start = i
-            end = i + 1
-            while end < len(lines):
-                stripped = lines[end]
-                if stripped.strip() == "" or stripped.lstrip().startswith("#"):
-                    end += 1
-                    continue
-                next_match = re.match(r"^(\s*)-\s+\S", stripped)
-                if next_match and len(next_match.group(1)) <= indent:
-                    break
-                key_match = re.match(r"^(\s*)\S", stripped)
-                if key_match and len(key_match.group(1)) <= indent:
-                    break
-                end += 1
-
-            for k in range(start, end):
-                name_match = re.match(r"^\s*-?\s*name:\s*(.+?)\s*$", lines[k])
-                if name_match and name_match.group(1).strip("\"'") == source_name:
-                    return start, end
-
-            i = end
-        else:
-            i += 1
-    return None
-
-
-def _set_field_in_block(
-    lines: list[str], start: int, end: int, field_name: str, value: str
-) -> list[str]:
-    """Set or add a YAML field within a source block (lines[start:end])."""
-    field_indent = "    "
-    for k in range(start + 1, end):
-        m = re.match(r"^(\s+)\w", lines[k])
-        if m:
-            field_indent = m.group(1)
-            break
-
-    for k in range(start, end):
-        pattern = rf"^(\s+){re.escape(field_name)}\s*:.*$"
-        if re.match(pattern, lines[k]):
-            lines[k] = f"{field_indent}{field_name}: {value}"
-            return lines
-
-    lines.insert(end, f"{field_indent}{field_name}: {value}")
-    return lines
-
-
-def _remove_field_in_block(
-    lines: list[str], start: int, end: int, field_name: str
-) -> tuple[list[str], int]:
-    """Remove a YAML field line from a source block. Returns updated lines and new end."""
-    for k in range(start, end):
-        if re.match(rf"^\s+{re.escape(field_name)}\s*:.*$", lines[k]):
-            lines.pop(k)
-            return lines, end - 1
-    return lines, end
-
-
-def apply_trial_decisions(
-    config_path: str,
+def apply_trial_decisions_to_cache(
+    store: SourceStateStore,
     promote: list[str],
     demote: list[str],
+    today: str,
     needs_start: list[str] | None = None,
-) -> None:
-    """Update config.yaml: set trial=false for promoted, enabled=false for demoted,
-    and initialize trial_started for new trial sources.
+) -> SourceStateStore:
+    """Apply trial promotion/demotion decisions to the source state cache.
+
+    Graduated sources: mark_graduated (trial_started cleared).
+    Demoted sources: mark_demoted.
+    needs_start sources: initialize trial_started to today.
     """
     if needs_start is None:
         needs_start = []
-    if not promote and not demote and not needs_start:
-        return
-
-    path = Path(config_path)
-    with path.open("r", encoding="utf-8") as fh:
-        lines = fh.read().splitlines()
-
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-
     for name in promote:
-        block = _find_source_block(lines, name)
-        if block is None:
-            logger.warning("Cannot find source '%s' in config for promotion", name)
-            continue
-        start, end = block
-        lines = _set_field_in_block(lines, start, end, "trial", "false")
-        block = _find_source_block(lines, name)
-        if block:
-            start, end = block
-            lines, end = _remove_field_in_block(lines, start, end, "trial_started")
-            lines, end = _remove_field_in_block(lines, start, end, "trial_days")
-        logger.info("Promoted trial source '%s' to permanent", name)
-
+        store.mark_graduated(name)
+        logger.info("Graduated trial source '%s' to permanent", name)
     for name in demote:
-        block = _find_source_block(lines, name)
-        if block is None:
-            logger.warning("Cannot find source '%s' in config for demotion", name)
-            continue
-        start, end = block
-        lines = _set_field_in_block(lines, start, end, "enabled", "false")
-        logger.info("Demoted trial source '%s' (disabled)", name)
-
+        store.mark_demoted(name)
+        logger.info("Demoted trial source '%s'", name)
     for name in needs_start:
-        block = _find_source_block(lines, name)
-        if block is None:
-            logger.warning("Cannot find source '%s' in config to set trial_started", name)
-            continue
-        start, end = block
-        lines = _set_field_in_block(lines, start, end, "trial_started", today)
+        store.set_trial_started(name, today)
         logger.info("Initialized trial_started for '%s' to %s", name, today)
-
-    bak_path = path.with_suffix(".yaml.bak")
-    tmp_path = path.with_suffix(".yaml.tmp")
-    try:
-        shutil.copy2(path, bak_path)
-    except OSError as exc:
-        logger.error("Cannot create config backup, aborting trial decisions: %s", exc)
-        return
-
-    try:
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
-            if lines:
-                fh.write("\n")
-        tmp_path.replace(path)
-        if bak_path is not None and bak_path.exists():
-            bak_path.unlink(missing_ok=True)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-        if bak_path is not None and bak_path.exists():
-            logger.error(
-                "config.yaml write failed — backup preserved at '%s' for manual recovery.",
-                bak_path,
-            )
-        raise
+    return store

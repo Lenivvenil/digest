@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import logging
 import os
 import re
@@ -545,18 +546,21 @@ async def run(
     )
     from digest.radar import collect, pick_top_articles, save_dedup_cache, summarize_all
     from digest.source_scorer import (
-        apply_trial_decisions,
+        apply_trial_decisions_to_cache,
         calculate_effective_priorities,
         evaluate_trial_sources,
+        load_source_state,
         load_stats,
+        save_source_state,
         save_stats,
     )
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
     logger = logging.getLogger(__name__)
-    feeds_count = len(config.enabled_sources)
     cache_dir = ".cache"
+    source_state = load_source_state(cache_dir)
+    feeds_count = len(config.enabled_sources)
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
     feedback_store = load_feedback(cache_dir)
@@ -582,11 +586,14 @@ async def run(
             if score is not None:
                 feedback_scores[source.name] = score
         effective_priorities = calculate_effective_priorities(
-            config.enabled_sources, source_stats, feedback_scores, config.adaptive
+            config.effective_sources(source_state), source_stats, feedback_scores, config.adaptive
         )
 
-    # Radar pipeline
-    articles_by_category, cache = await collect(config, effective_priorities=effective_priorities)
+    run_config = dataclasses.replace(
+        config,
+        sources=[s for s in config.sources if s.enabled and not source_state.is_demoted(s.name)],
+    )
+    articles_by_category, cache = await collect(run_config, effective_priorities=effective_priorities)
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     def _empty_stats(n_articles: int = 0) -> RunStats:
@@ -717,10 +724,10 @@ async def run(
         if config.adaptive.enabled:
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
             promote, demote, needs_start = evaluate_trial_sources(
-                config.enabled_sources, source_stats, today
+                config.enabled_sources, source_stats, today, source_state
             )
             if promote or demote or needs_start:
-                apply_trial_decisions(config_path, promote, demote, needs_start=needs_start)
+                apply_trial_decisions_to_cache(source_state, promote, demote, today, needs_start)
                 sources_promoted = len(promote)
                 sources_demoted = len(demote)
     else:
@@ -729,6 +736,7 @@ async def run(
         feedback_store.ratings = feedback_store.ratings[:saved_ratings_count]
 
     save_feedback(feedback_store, cache_dir)
+    save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
 
     return RunStats(
