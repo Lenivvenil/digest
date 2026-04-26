@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from digest.irritator import IrritatorStatus
 from digest.main import RunStats, _clean_summary, check_config, main, run
 
 
@@ -344,6 +345,26 @@ class TestRunDryRun:
 
         captured = capsys.readouterr()
         assert "Test output" in captured.out
+
+    async def test_dry_run_prints_irritator_status(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Dry-run always prints irritator status — visible even when no signals survive."""
+        summary = _CategorySummary(summary_text="News")
+        mock_status = IrritatorStatus("2 narratives, 0 signals", "empty")
+
+        with (
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.radar.collect", AsyncMock(return_value=({"tech": [_Article()]}, {}))),
+            patch("digest.radar.summarize_all", AsyncMock(return_value=([summary], ""))),
+            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+            patch("digest.radar.save_dedup_cache", MagicMock()),
+            patch("digest.main._run_irritator", AsyncMock(return_value=([], [], mock_status))),
+        ):
+            await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
+
+        captured = capsys.readouterr()
+        assert "2 narratives, 0 signals" in captured.out
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,10 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from digest.irritator import IrritatorStatus
 
 import httpx
 
@@ -288,12 +291,12 @@ async def send_article_cards(
 async def send_counter_signals(
     ranked_signals: list[Any],
     config: Any,
-    irritator_status: str = "",
+    irritator_status: "IrritatorStatus | None" = None,
 ) -> bool:
     """Send counter-signals as a separate Telegram message.
 
     If *ranked_signals* is empty but *irritator_status* is provided, a short
-    status message is sent so the user always sees that the pipeline ran.
+    status message is sent. Notification is loud on error, silent on empty.
     """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -303,12 +306,16 @@ async def send_counter_signals(
     api_url = _API_BASE.format(token=token)
 
     if not ranked_signals:
-        if irritator_status:
-            msg = f"\U0001f4a2 \u0420\u0430\u0437\u0434\u0440\u0430\u0436\u0430\u0442\u043e\u0440: {irritator_status}"
-            status_text = escape_markdownv2(msg)
+        if irritator_status is not None:
+            prefix = "\U0001f4a2 \u0420\u0430\u0437\u0434\u0440\u0430\u0436\u0430\u0442\u043e\u0440: "
+            status_text = escape_markdownv2(prefix + irritator_status.text)
+            disable_notification = irritator_status.level != "error"
             async with httpx.AsyncClient() as client:
-                await _send_chunk(client, api_url, chat_id, status_text, disable_notification=True)
-            logger.info("Irritator status sent to Telegram: %s", irritator_status)
+                await _send_chunk(
+                    client, api_url, chat_id, status_text,
+                    disable_notification=disable_notification,
+                )
+            logger.info("Irritator status sent to Telegram: %s", irritator_status.text)
         return False
 
     header = (
