@@ -234,6 +234,11 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                         rating = 1 if parts[2] == "g" else -1
                         art_hash = parts[3]
                         source = store.article_source_map.get(art_hash, "")
+                        if not source:
+                            logger.warning(
+                                "article_source_map miss for hash %s - rating recorded with empty source_name",
+                                art_hash,
+                            )
                         store.ratings.append(
                             ArticleFeedback(
                                 article_hash=art_hash,

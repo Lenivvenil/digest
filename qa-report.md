@@ -1,17 +1,15 @@
 ## QA
 
-**Tests:** all changed paths covered.
+**Tests:** All changed paths covered.
 
-| File | Test file | Changed symbols covered? |
-|------|-----------|--------------------------|
-| `digest/irritator/__init__.py` | `tests/test_delivery_telegram.py`, `tests/test_main.py` | `IrritatorStatus` — instantiated in 5 new tests ✓ |
-| `digest/main.py` | `tests/test_main.py` | `_run_irritator` dry-run path — `test_dry_run_prints_irritator_status` ✓ |
-| `digest/delivery/telegram.py` | `tests/test_delivery_telegram.py` | `send_counter_signals` empty/error branches — `test_empty_signals_sends_status_silent`, `test_empty_signals_error_sends_loud` ✓ |
+- `digest/feedback.py` — changed function `collect_feedback()`. Test file `tests/test_feedback.py` covers the new branch:
+  - `test_collect_feedback_per_article_unknown_hash_records_empty_source` (modified) — asserts `WARNING` fires and contains `"article_source_map miss"` and hash `"deadbeef"` when map lookup misses. ✓
+  - `test_collect_feedback_per_article_good` (modified) — negative assertion: `"article_source_map miss"` must NOT appear in caplog when source is found. ✓
+  - 37/37 tests pass.
 
-Coverage: 76% total (floor: 70% ✓). `irritator/__init__.py`: 100%, `telegram.py`: 93%, `main.py`: 54% (orchestrator — expected, unchanged from baseline).
+**Docs:** All contracts current.
 
-**Docs:** all contracts current.
-
-- `CLAUDE.md` lists `digest/irritator/` and `digest/delivery/` — descriptions unchanged (no new public CLI flags, no new files visible to users).
-- `docs/backlog/grooming-2026-04-24.md` references `_run_irritator` and `send_counter_signals` — the grooming doc noted these as partially done; this PR completes them. The doc is historical/read-only, no update needed.
-- No runbooks in `docs/runbooks/` exist for these modules.
+- No CLI flags changed.
+- No `docs/runbooks/` directory exists in the repo.
+- `CLAUDE.md` does not reference `feedback.py` or `collect_feedback` — no update needed.
+- `docs/domain/digest/overview.md` describes `FeedbackReceived` and hot spot #3 correctly; the new `logger.warning()` is an internal implementation detail, not a domain contract change.

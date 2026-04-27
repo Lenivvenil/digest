@@ -1,108 +1,108 @@
-# Plan: Issue #29 — Per-article LLM summaries in Telegram cards + per-article markdown
+# Plan: Issue #48 — Verify feedback voting buttons persist ratings
 
 ## 1. Problem restatement
 
-The Telegram delivery currently sends two overlapping things: long monolithic category-summary texts (via `send_radar()`, which is now dead code) plus per-article cards with voting buttons. The cards use raw article descriptions (≤200 chars) as the preview text rather than LLM-generated summaries. The result is duplication, walls of text, and no feedback mechanism on the narrative analysis. The fix is to send only the per-article cards — each with a 2-3 sentence LLM summary — and update the Obsidian markdown file to match the same per-article structure.
-
-**Key code-audit finding:** The majority of the issue's solution is already implemented in the current codebase:
-- `ArticleSummary` and `CategorySummary` dataclasses exist in `digest/radar/summarizer.py`
-- `pick_top_articles()` already calls LLM to select and summarize top articles as structured JSON
-- `send_article_cards()` already accepts `top_articles: list[ArticleSummary]` and sends per-article posts with LLM summaries and voting buttons
-- `main.py` already calls both and wires them together
-- `send_radar()` is already removed from the active pipeline — it remains as dead code in `telegram.py`
-
-The actual delta is small: (a) remove the dead `send_radar()` function, (b) update `write_digest()` in `markdown.py` to include a per-article section when `top_articles` are present, (c) wire `top_articles` into the `write_digest()` call in `main.py`.
+Telegram article cards are sent with 👍/👎 inline buttons, but no one has
+confirmed that button taps actually reach `feedback.json` in `.cache/` and
+that `get_source_feedback_score()` can read them back on the next pipeline
+run. Code inspection shows the full path EXISTS — `collect_feedback()` polls
+`getUpdates`, parses `fb:a:{g|b}:HASH` callbacks, looks up the source from
+`article_source_map`, appends an `ArticleFeedback` rating, and `save_feedback()`
+persists it. Tests cover this path. The problem is a silent failure mode that
+makes the feedback loop useless without any log evidence: if the article hash
+is not found in `article_source_map`, `source_name=""` is stored, and
+`get_source_feedback_score()` will never match any real source name — the
+rating is permanently orphaned. Nothing in the current code warns about this.
 
 ## 2. Affected bounded contexts and files
 
-**Bounded Context: Digest** (single BC; `docs/domain/digest/overview.md`)
+**Bounded context: Digest** — `FeedbackReceived` event path, hot spot #3
+(feedback decay owner).
 
-Aggregates / concepts touched:
-- **CategorySummary / ArticleSummary** — Radar→Delivery contract (already in place)
-- **Delivery** — `markdown.py` output format, `send_radar()` dead-code removal
-
-| File | Change |
-|------|--------|
-| `digest/delivery/telegram.py` | Remove `send_radar()` function (dead code — not called from pipeline) |
-| `digest/delivery/markdown.py` | Add per-article section to `write_digest()` when `top_articles` provided |
-| `digest/main.py` | Pass `top_articles` to `write_digest()` |
-| `digest/delivery/__init__.py` | Remove `send_radar` from exported symbols if present |
-| `tests/test_delivery_telegram.py` | Remove `send_radar` tests; verify they exist and what to do |
-| `tests/test_delivery_markdown.py` | Add test for per-article markdown section |
-
-**Not changed:**
-- `digest/radar/summarizer.py` — `ArticleSummary`, `pick_top_articles()` already done
-- `config.yaml` (digest-prod) — perspectives removal is `config.radar.perspectives: false`, out of scope per ADR-0002
+| File | Role |
+|------|------|
+| `digest/feedback.py` | `collect_feedback()` — hash lookup + rating append; `get_source_feedback_score()` — reads ratings |
+| `digest/main.py` | Lines 585–610, 702–712, 756–760 — orchestrates load → collect → deliver → save |
+| `digest/delivery/telegram.py` | Lines 237–244 — button creation with `callback_data: fb:a:{g|b}:HASH` |
+| `tests/test_feedback.py` | Existing test suite — comprehensive but missing a warning-log assertion for the empty-source case |
 
 ## 3. Considered approaches
 
-### Approach A — Remove `send_radar()` + add per-article to `write_digest()`
+### A. Add warning log for empty-attribution + update test (preferred)
 
-Add an optional `top_articles: list[ArticleSummary] | None` parameter to `write_digest()`. When present, append a `## Top Articles` section with per-article summaries in Obsidian callout format. Keep the existing `combined` (category summaries) as the primary body — Irritator still uses it for narrative extraction, and the long format is useful for Obsidian search/indexing.
+When `store.article_source_map.get(art_hash, "")` returns `""`, emit a
+`logger.warning()` before appending the rating. This makes the silent failure
+visible in GitHub Actions logs without changing any behaviour or data model.
+Update `test_collect_feedback_per_article_unknown_hash_records_empty_source`
+to assert the warning was emitted (using `caplog`).
 
-**Trade-offs:**
-- ✓ Minimal: only two code changes needed
-- ✓ Keeps `combined` for Irritator (which extracts narratives from category summaries)
-- ✓ Obsidian file becomes richer — both overview and per-article detail
-- ✗ Obsidian file contains both category text and per-article section — some redundancy in the file itself
+**Trade-off:** Minimal, zero-risk change. Does not fix the root cause (missing
+map entry), but makes it diagnosable. Production logs on the next run will
+show whether the map is populated or stale.
 
-### Approach B — Replace `combined` with per-article-only markdown
+### B. Drop ratings with empty source_name
 
-Generate the Obsidian file solely from `top_articles`, dropping `combined` from the file. `summarize_all()` output is still needed for Irritator but not written to disk.
+Skip `store.ratings.append(...)` when `source_name == ""`. Ratings that
+cannot be attributed to a source are useless for scoring, so storing them just
+adds noise.
 
-**Trade-offs:**
-- ✓ No redundancy in the markdown file
-- ✗ Loses the category-level analytical overview in Obsidian (useful for trend analysis)
-- ✗ Breaks downstream consumers that read the markdown format (e.g., any personal notes referencing category headers)
-- ✗ Larger diff — need to change `main.py` to pass per-article list to `write_digest()` instead of `combined`
+**Trade-off:** Cleaner store, but loses the `article_hash` record which could
+be useful for future debugging. Also, the correct fix for an empty map entry
+is to ensure the map is populated — not to silently discard feedback. If the
+map is genuinely empty (first run ever, or cache wiped), every tap is dropped
+with no log evidence. Rejected.
+
+**Note:** Only one approach is viable here. The map lookup is correct; the gap
+is purely observability. Approach A is the right move.
 
 ## 4. Chosen approach and why
 
-**Approach A.** The category summaries from `summarize_all()` serve dual purpose: Irritator needs them for narrative extraction, and they provide context that per-article summaries alone cannot. Adding a per-article section to the Obsidian file is additive and backwards-compatible. Removing `send_radar()` is pure cleanup with no behavioral change.
-
-No ADR triggered. `docs/principles.md` ADR criteria:
-- No new cross-cutting dependency
-- No BC boundary change — same BC, same data flow, same contract (already in place)
-- No new storage or infrastructure
-- No public API change
-- No hard-to-reverse constraint
-
-**Perspectives removal:** Already supported via `config.radar.perspectives: false`. Operator should set this in `digest-prod/config.yaml`. No engine code change.
+**Approach A.** One-line `logger.warning()` in `collect_feedback()` at the
+hash lookup miss in `feedback.py` (around line 236) when `source_name == ""`.
+Update the corresponding test to assert the warning. No architectural change;
+no ADR required (no new dependency, no BC boundary shift, no data model change
+— see `docs/principles.md §"Что значит «архитектурно-значимо»"`).
 
 ## 5. Test strategy
 
-### Unit — `tests/test_delivery_telegram.py`
+**Unit (existing, no changes needed):**
+- `test_collect_feedback_per_article_good` — happy path attribution ✓
+- `test_collect_feedback_per_article_bad` — bad rating ✓
+- `test_article_source_map_round_trip` — persistence ✓
+- `test_get_source_feedback_score_*` — scoring ✓
 
-- Find and handle existing `send_radar` tests: if they exist, remove them (the function is being deleted).
-- No new telegram tests needed — `send_article_cards` with `top_articles` is already covered.
+**Unit (modified):**
+- `test_collect_feedback_per_article_unknown_hash_records_empty_source`:
+  add `caplog` fixture, assert `WARNING` level log containing the unknown
+  hash is emitted when `article_source_map` is empty.
 
-### Unit — `tests/test_delivery_markdown.py`
+**Key assertion:** after `collect_feedback()` processes one `fb:a:g:HASH`
+event where HASH is not in the map, `caplog.text` must contain `"HASH"` at
+WARNING level. This proves the diagnostic is wired up correctly.
 
-- Add `test_write_digest_with_top_articles` — verifies that when `top_articles` is a non-empty list of `ArticleSummary`, the output markdown contains a `## Top Articles` section with each article's title, summary, and source.
-- Add `test_write_digest_without_top_articles` — existing behavior unchanged when `top_articles` is None or empty.
-
-### No integration or e2e
-
-Both changes are pure output-format changes; all dependencies are mockable. E2e not needed.
-
-### Coverage target
-
-≥ 70% floor (currently 79%). New tests add coverage to the `top_articles` branch in `write_digest()`.
+**No e2e test needed** — the full production path (GH Actions → digest-prod
+`.cache/feedback.json`) is out of scope for the engine repo. The warning log
+itself is the observable signal: if the next real pipeline run logs zero
+attribution warnings, the map is populated and the loop works.
 
 ## 6. Risks and unknowns
 
-1. **`send_radar` test impact** — there may be existing tests for `send_radar` in `test_delivery_telegram.py`. Deleting the function without removing the tests will break CI. Must check before deleting.
+1. **`adaptive.enabled` in digest-prod** — if `False`, `collect_feedback()`
+   is never called regardless of this fix. Must be verified manually in
+   `digest-prod/config.yaml`. Not addressable from this repo.
 
-2. **`send_radar` in `__init__.py` exports** — if `send_radar` is re-exported from `digest/delivery/__init__.py`, the deletion needs to propagate there too. Grep required before commit.
+2. **`.cache/feedback.json` commit-back** — the digest-prod GitHub Actions
+   workflow must commit `.cache/` back to the repo after each run, or the
+   `article_source_map` from run N will not be available to run N+1. If
+   `feedback.json` is absent on load, `article_source_map` starts empty and
+   every tap in the first post-wipe run will hit the "unknown hash" warning.
 
-3. **Markdown section duplication** — if `top_articles` contains the same articles that appear in `combined`, the Obsidian file will have redundant content. This is acceptable (the formats differ: combined is analytical narrative, per-article is standalone summaries), but worth documenting.
+3. **Webhook vs. polling conflict** — `collect_feedback()` calls
+   `deleteWebhook` to ensure polling mode, but if the Telegram bot has an
+   externally configured webhook, the delete may fail or take effect after a
+   delay. Existing warning log covers this; no code change needed.
 
-4. **`pick_top_articles()` failure** — if the LLM call fails, `top_articles` is `[]`. In this case `write_digest()` should gracefully omit the per-article section (no empty heading). The implementation must handle `top_articles = []` silently.
-
-5. **Perspectives in prompts** — `summarize_all()` currently respects `config.radar.perspectives`. Setting it to `false` in `digest-prod/config.yaml` is the correct mechanism. No code change needed, but the PR description must document this as the action for the operator.
-
-6. **`write_digest()` call in `main.py`** — wiring `top_articles` through to `write_digest()` is required; without it, the new parameter is dead code.
-
----
-
-*Closes #29*
+4. **First-ever-run attribution gap** — on the very first pipeline run,
+   `article_source_map` is empty (nothing was ever saved before). All feedback
+   tapped before the SECOND run will be stored with `source_name=""`. This is
+   expected and unavoidable; the warning log makes it identifiable.
