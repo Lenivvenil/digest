@@ -19,10 +19,10 @@ async def search_devto(
     config: Any,
     client: httpx.AsyncClient,
 ) -> list[Signal]:
-    """Search DEV.to via the public API."""
+    """Search DEV.to via the public API using full-text search."""
     resp = await client.get(
         _BASE_URL,
-        params={"tag": query.split()[0].lower() if query else "", "per_page": _MAX_RESULTS},
+        params={"q": query, "per_page": _MAX_RESULTS},
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()

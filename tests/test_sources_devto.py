@@ -26,12 +26,38 @@ class TestSearchDevto:
                 return_value=httpx.Response(200, json=articles)
             )
             async with httpx.AsyncClient() as client:
-                signals = await search_devto("AI hype", None, client)
+                signals = await search_devto("AI hype failure criticism", None, client)
 
         assert len(signals) == 1
         assert signals[0].title == "Why AI hype is overblown"
         assert signals[0].source_name == "devto"
         assert signals[0].score == 55.0
+
+    async def test_uses_q_parameter_not_tag(self) -> None:
+        with respx.mock:
+            route = respx.get("https://dev.to/api/articles").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            async with httpx.AsyncClient() as client:
+                await search_devto("AI failure criticism", None, client)
+
+        request = route.calls.last.request
+        params = dict(httpx.URL(str(request.url)).params)
+        assert "q" in params, "Expected ?q= text search parameter"
+        assert "tag" not in params, "Must not use ?tag= listing"
+        assert params["q"] == "AI failure criticism"
+
+    async def test_full_query_string_passed_not_first_word(self) -> None:
+        with respx.mock:
+            route = respx.get("https://dev.to/api/articles").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            async with httpx.AsyncClient() as client:
+                await search_devto("why kubernetes fails at scale", None, client)
+
+        request = route.calls.last.request
+        params = dict(httpx.URL(str(request.url)).params)
+        assert params["q"] == "why kubernetes fails at scale"
 
     async def test_empty_results(self) -> None:
         with respx.mock:
