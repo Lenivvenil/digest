@@ -32,12 +32,10 @@ def _make_narrative(
 
 
 def _valid_query_dicts(n: int = 3) -> list[dict[str, str]]:
-    sources = ["hackernews", "reddit", "arxiv"]
     return [
         {
-            "query": f"search query {i}",
-            "target_source": sources[i % len(sources)],
-            "intent": f"Find evidence about {i}",
+            "query": f"failure of AI replacing developers {i}",
+            "intent": f"Find evidence against AI replacement claim {i}",
         }
         for i in range(n)
     ]
@@ -63,23 +61,34 @@ def _make_config(
 
 
 # ---------------------------------------------------------------------------
+# SearchQuery dataclass
+# ---------------------------------------------------------------------------
+
+class TestSearchQueryDataclass:
+    def test_no_target_source_field(self) -> None:
+        q = SearchQuery(query="test failure", intent="find problems")
+        assert not hasattr(q, "target_source")
+        assert q.query == "test failure"
+        assert q.intent == "find problems"
+
+
+# ---------------------------------------------------------------------------
 # _build_prompt tests
 # ---------------------------------------------------------------------------
 
 class TestBuildPrompt:
     def test_russian_prompt(self) -> None:
         n = _make_narrative()
-        messages = _build_prompt(n, "ru", 3, ["hackernews", "reddit"])
+        messages = _build_prompt(n, "ru", 3)
 
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert "поисковый аналитик" in messages[0]["content"]
         assert n.claim in messages[1]["content"]
-        assert "hackernews, reddit" in messages[1]["content"]
 
     def test_english_prompt(self) -> None:
         n = _make_narrative()
-        messages = _build_prompt(n, "en", 5, ["arxiv"])
+        messages = _build_prompt(n, "en", 5)
 
         assert "search analyst" in messages[0]["content"]
         assert n.claim in messages[1]["content"]
@@ -87,13 +96,34 @@ class TestBuildPrompt:
 
     def test_includes_assumptions(self) -> None:
         n = _make_narrative()
-        messages = _build_prompt(n, "en", 3, ["hackernews"])
+        messages = _build_prompt(n, "en", 3)
         assert "AI is infallible" in messages[1]["content"]
         assert "Developer skills are commoditized" in messages[1]["content"]
 
     def test_unknown_language_falls_back_to_ru(self) -> None:
-        messages = _build_prompt(_make_narrative(), "fr", 3, ["hackernews"])
+        messages = _build_prompt(_make_narrative(), "fr", 3)
         assert "поисковый аналитик" in messages[0]["content"]
+
+    def test_adversarial_instruction_in_english_prompt(self) -> None:
+        messages = _build_prompt(_make_narrative(), "en", 3)
+        user_content = messages[1]["content"]
+        adversarial_markers = ["failure", "didn't work", "criticism", "wrong", "limitations"]
+        assert any(m in user_content for m in adversarial_markers), (
+            f"Expected adversarial instruction in prompt, got: {user_content[:300]}"
+        )
+
+    def test_adversarial_instruction_in_russian_prompt(self) -> None:
+        messages = _build_prompt(_make_narrative(), "ru", 3)
+        user_content = messages[1]["content"]
+        adversarial_markers = ["failure", "criticism", "wrong", "провал", "критик"]
+        assert any(m in user_content for m in adversarial_markers), (
+            f"Expected adversarial instruction in prompt, got: {user_content[:300]}"
+        )
+
+    def test_no_target_source_in_prompt(self) -> None:
+        messages = _build_prompt(_make_narrative(), "en", 3)
+        user_content = messages[1]["content"]
+        assert "target_source" not in user_content
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +136,7 @@ class TestParseQueries:
         result = _parse_queries(raw)
         assert len(result) == 3
         assert isinstance(result[0], SearchQuery)
-        assert result[0].query == "search query 0"
+        assert result[0].query == "failure of AI replacing developers 0"
 
     def test_not_a_list(self) -> None:
         with pytest.raises(ValueError, match="Expected JSON array"):
@@ -116,10 +146,21 @@ class TestParseQueries:
         with pytest.raises(ValueError, match="Query #0 is not a JSON object"):
             _parse_queries(["not a dict"])
 
-    def test_missing_field(self) -> None:
-        raw = [{"query": "x", "target_source": "hackernews"}]
+    def test_missing_intent_field(self) -> None:
+        raw = [{"query": "x"}]
         with pytest.raises(ValueError, match="missing field"):
             _parse_queries(raw)
+
+    def test_missing_query_field(self) -> None:
+        raw = [{"intent": "find something"}]
+        with pytest.raises(ValueError, match="missing field"):
+            _parse_queries(raw)
+
+    def test_no_target_source_required(self) -> None:
+        raw = [{"query": "AI failure", "intent": "find failures"}]
+        result = _parse_queries(raw)
+        assert len(result) == 1
+        assert not hasattr(result[0], "target_source")
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +246,16 @@ class TestGenerateQueries:
             result = await generate_queries([_make_narrative()], _make_config())
 
         assert len(list(result.values())[0]) == 2
+
+    async def test_prompt_sent_to_llm_contains_adversarial_instruction(self) -> None:
+        dicts = _valid_query_dicts(1)
+        mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
+
+        with patch("digest.irritator.query_generator.complete", mock_complete):
+            await generate_queries([_make_narrative()], _make_config(language="en"))
+
+        call_args = mock_complete.call_args
+        messages = call_args[0][1]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        adversarial_markers = ["failure", "criticism", "wrong", "didn't work", "limitations"]
+        assert any(m in user_content for m in adversarial_markers)
