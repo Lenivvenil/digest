@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
@@ -382,138 +382,13 @@ async def discover_sources(config_path: str) -> int:
 async def _run_irritator(
     summaries: list[Any], config: Any, verbose: bool
 ) -> tuple[list[Any], list[Any], IrritatorStatus]:
-    """Run irritator pipeline.
+    """Thin wrapper: creates an AsyncClient and delegates to the public run_irritator()."""
+    import httpx
 
-    Returns (narratives, ranked_signals, IrritatorStatus).
-    status is always populated so the caller can relay pipeline
-    progress to the user even when no counter-signals survive ranking.
-    """
-    from digest.irritator import (
-        IrritatorStatus,
-        extract_narratives,
-        generate_queries,
-        rank_signals,
-        search_all_sources,
-        validate_signals,
-    )
+    from digest.irritator import run_irritator
 
-    logger = logging.getLogger(__name__)
-    narratives: list[Any] = []
-    all_ranked: list[Any] = []
-    raw_signal_count = 0
-    valid_signal_count = 0
-
-    # Stage 1: Narrative extraction
-    try:
-        narratives = await extract_narratives(summaries, config)
-    except Exception as exc:
-        logger.error("Irritator: narrative extraction failed: %s", exc)
-        return [], [], IrritatorStatus(f"narrative extraction failed: {exc}", "error")
-
-    if not narratives:
-        logger.warning("Irritator: no narratives extracted from %d summaries", len(summaries))
-        return [], [], IrritatorStatus(f"0 narratives from {len(summaries)} summaries", "empty")
-
-    logger.info("Irritator: extracted %d narratives", len(narratives))
-
-    # Stage 2: Query generation
-    try:
-        queries_by_narrative = await generate_queries(narratives, config)
-        all_queries = [q for qs in queries_by_narrative.values() for q in qs]
-    except Exception as exc:
-        logger.error("Irritator: query generation failed: %s", exc)
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, query generation failed: {exc}", "error"
-        )
-
-    if not all_queries:
-        logger.warning("Irritator: no queries generated from %d narratives", len(narratives))
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, 0 queries", "empty"
-        )
-
-    logger.info("Irritator: generated %d queries", len(all_queries))
-
-    # Stage 3: Signal search
-    try:
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            raw_signals = await search_all_sources(all_queries, config, client)
-        raw_signal_count = len(raw_signals)
-    except Exception as exc:
-        logger.error("Irritator: signal search failed: %s", exc)
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, {len(all_queries)} queries, search failed: {exc}",
-            "error",
-        )
-
-    if not raw_signals:
-        logger.warning("Irritator: no signals found from %d queries", len(all_queries))
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, {len(all_queries)} queries, 0 signals", "empty"
-        )
-
-    # Stage 4: Validation
-    try:
-        signals = validate_signals(raw_signals, config.filters.blocklist_keywords)
-    except Exception as exc:
-        logger.error("Irritator: signal validation failed: %s", exc)
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, {raw_signal_count} signals, validation failed: {exc}",
-            "error",
-        )
-    valid_signal_count = len(signals)
-    if not signals:
-        logger.warning(
-            "Irritator: all %d signals filtered by blocklist", raw_signal_count,
-        )
-        return narratives, [], IrritatorStatus(
-            f"{len(narratives)} narratives, {raw_signal_count} signals, all filtered",
-            "empty",
-        )
-
-    logger.info("Irritator: %d/%d signals passed validation", valid_signal_count, raw_signal_count)
-
-    # Stage 5: Ranking
-    for narrative in narratives:
-        try:
-            ranked = await rank_signals(narrative, signals, config)
-            all_ranked.extend(ranked)
-        except Exception as exc:
-            logger.error(
-                "Irritator: ranking failed for '%s': %s",
-                narrative.claim[:60], exc,
-            )
-
-    status_text = (
-        f"{len(narratives)} narratives, {raw_signal_count} signals, "
-        f"{valid_signal_count} valid, {len(all_ranked)} passed ranking"
-    )
-    logger.info("Irritator: %s", status_text)
-
-    if verbose and narratives:
-        print("\n=== DOMINANT NARRATIVES ===\n")
-        for i, n in enumerate(narratives, 1):
-            print(f"{i}. {n.claim}")
-            print(f"   Category: {n.category}")
-            for a in n.implicit_assumptions:
-                print(f"     - {a}")
-            print(f"   Why challenge: {n.why_worth_challenging}\n")
-
-    if verbose and all_ranked:
-        print("\n=== COUNTER-SIGNALS ===\n")
-        for r in all_ranked:
-            print(f"[{r.score}/10] {r.signal.title}")
-            print(f"   {r.signal.url}")
-            print(f"   Narrative: {r.narrative_claim[:60]}")
-            print(f"   Reasoning: {r.reasoning}\n")
-
-    # Stage-5 ranking failures are per-narrative and logged individually above.
-    # If ranking raised for every narrative, all_ranked stays empty → "empty" not "error".
-    # This is intentional: partial ranking is not a pipeline failure.
-    level: Literal["ok", "empty"] = "ok" if all_ranked else "empty"
-    return narratives, all_ranked, IrritatorStatus(status_text, level)
+    async with httpx.AsyncClient() as client:
+        return await run_irritator(summaries, config, client, verbose=verbose)
 
 
 def _process_pending_approvals(

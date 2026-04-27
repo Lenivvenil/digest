@@ -1,108 +1,109 @@
-# Plan: Issue #29 — Per-article LLM summaries in Telegram cards + per-article markdown
+# Plan: Issue #6 — Phase 5: Validator + Ranker
 
-## 1. Problem restatement
+## 1. Problem Restatement
 
-The Telegram delivery currently sends two overlapping things: long monolithic category-summary texts (via `send_radar()`, which is now dead code) plus per-article cards with voting buttons. The cards use raw article descriptions (≤200 chars) as the preview text rather than LLM-generated summaries. The result is duplication, walls of text, and no feedback mechanism on the narrative analysis. The fix is to send only the per-article cards — each with a 2-3 sentence LLM summary — and update the Obsidian markdown file to match the same per-article structure.
+Most of the Irritator Phase 5 work has already landed in prior commits: `validator.py` deduplicates and blocklist-filters signals, `ranker.py` wraps LLM scoring into a typed `RankedSignal` dataclass, and unit tests for both exist. Two acceptance criteria remain open:
 
-**Key code-audit finding:** The majority of the issue's solution is already implemented in the current codebase:
-- `ArticleSummary` and `CategorySummary` dataclasses exist in `digest/radar/summarizer.py`
-- `pick_top_articles()` already calls LLM to select and summarize top articles as structured JSON
-- `send_article_cards()` already accepts `top_articles: list[ArticleSummary]` and sends per-article posts with LLM summaries and voting buttons
-- `main.py` already calls both and wires them together
-- `send_radar()` is already removed from the active pipeline — it remains as dead code in `telegram.py`
+1. **Optional HEAD-based URL liveness check** — `validator.py` validates URL syntax but never hits the network to confirm a URL is live. The issue spec calls for this as an optional step.
+2. **Public `run_irritator()` orchestrator** — the five-stage pipeline (extract → generate → search → validate → rank) currently lives in `main.py` as a private `_run_irritator()` function, making it untestable and architecturally misplaced relative to the module boundary the issue specifies.
 
-The actual delta is small: (a) remove the dead `send_radar()` function, (b) update `write_digest()` in `markdown.py` to include a per-article section when `top_articles` are present, (c) wire `top_articles` into the `write_digest()` call in `main.py`.
-
-## 2. Affected bounded contexts and files
-
-**Bounded Context: Digest** (single BC; `docs/domain/digest/overview.md`)
-
-Aggregates / concepts touched:
-- **CategorySummary / ArticleSummary** — Radar→Delivery contract (already in place)
-- **Delivery** — `markdown.py` output format, `send_radar()` dead-code removal
-
-| File | Change |
-|------|--------|
-| `digest/delivery/telegram.py` | Remove `send_radar()` function (dead code — not called from pipeline) |
-| `digest/delivery/markdown.py` | Add per-article section to `write_digest()` when `top_articles` provided |
-| `digest/main.py` | Pass `top_articles` to `write_digest()` |
-| `digest/delivery/__init__.py` | Remove `send_radar` from exported symbols if present |
-| `tests/test_delivery_telegram.py` | Remove `send_radar` tests; verify they exist and what to do |
-| `tests/test_delivery_markdown.py` | Add test for per-article markdown section |
-
-**Not changed:**
-- `digest/radar/summarizer.py` — `ArticleSummary`, `pick_top_articles()` already done
-- `config.yaml` (digest-prod) — perspectives removal is `config.radar.perspectives: false`, out of scope per ADR-0002
-
-## 3. Considered approaches
-
-### Approach A — Remove `send_radar()` + add per-article to `write_digest()`
-
-Add an optional `top_articles: list[ArticleSummary] | None` parameter to `write_digest()`. When present, append a `## Top Articles` section with per-article summaries in Obsidian callout format. Keep the existing `combined` (category summaries) as the primary body — Irritator still uses it for narrative extraction, and the long format is useful for Obsidian search/indexing.
-
-**Trade-offs:**
-- ✓ Minimal: only two code changes needed
-- ✓ Keeps `combined` for Irritator (which extracts narratives from category summaries)
-- ✓ Obsidian file becomes richer — both overview and per-article detail
-- ✗ Obsidian file contains both category text and per-article section — some redundancy in the file itself
-
-### Approach B — Replace `combined` with per-article-only markdown
-
-Generate the Obsidian file solely from `top_articles`, dropping `combined` from the file. `summarize_all()` output is still needed for Irritator but not written to disk.
-
-**Trade-offs:**
-- ✓ No redundancy in the markdown file
-- ✗ Loses the category-level analytical overview in Obsidian (useful for trend analysis)
-- ✗ Breaks downstream consumers that read the markdown format (e.g., any personal notes referencing category headers)
-- ✗ Larger diff — need to change `main.py` to pass per-article list to `write_digest()` instead of `combined`
-
-## 4. Chosen approach and why
-
-**Approach A.** The category summaries from `summarize_all()` serve dual purpose: Irritator needs them for narrative extraction, and they provide context that per-article summaries alone cannot. Adding a per-article section to the Obsidian file is additive and backwards-compatible. Removing `send_radar()` is pure cleanup with no behavioral change.
-
-No ADR triggered. `docs/principles.md` ADR criteria:
-- No new cross-cutting dependency
-- No BC boundary change — same BC, same data flow, same contract (already in place)
-- No new storage or infrastructure
-- No public API change
-- No hard-to-reverse constraint
-
-**Perspectives removal:** Already supported via `config.radar.perspectives: false`. Operator should set this in `digest-prod/config.yaml`. No engine code change.
-
-## 5. Test strategy
-
-### Unit — `tests/test_delivery_telegram.py`
-
-- Find and handle existing `send_radar` tests: if they exist, remove them (the function is being deleted).
-- No new telegram tests needed — `send_article_cards` with `top_articles` is already covered.
-
-### Unit — `tests/test_delivery_markdown.py`
-
-- Add `test_write_digest_with_top_articles` — verifies that when `top_articles` is a non-empty list of `ArticleSummary`, the output markdown contains a `## Top Articles` section with each article's title, summary, and source.
-- Add `test_write_digest_without_top_articles` — existing behavior unchanged when `top_articles` is None or empty.
-
-### No integration or e2e
-
-Both changes are pure output-format changes; all dependencies are mockable. E2e not needed.
-
-### Coverage target
-
-≥ 70% floor (currently 79%). New tests add coverage to the `top_articles` branch in `write_digest()`.
-
-## 6. Risks and unknowns
-
-1. **`send_radar` test impact** — there may be existing tests for `send_radar` in `test_delivery_telegram.py`. Deleting the function without removing the tests will break CI. Must check before deleting.
-
-2. **`send_radar` in `__init__.py` exports** — if `send_radar` is re-exported from `digest/delivery/__init__.py`, the deletion needs to propagate there too. Grep required before commit.
-
-3. **Markdown section duplication** — if `top_articles` contains the same articles that appear in `combined`, the Obsidian file will have redundant content. This is acceptable (the formats differ: combined is analytical narrative, per-article is standalone summaries), but worth documenting.
-
-4. **`pick_top_articles()` failure** — if the LLM call fails, `top_articles` is `[]`. In this case `write_digest()` should gracefully omit the per-article section (no empty heading). The implementation must handle `top_articles = []` silently.
-
-5. **Perspectives in prompts** — `summarize_all()` currently respects `config.radar.perspectives`. Setting it to `false` in `digest-prod/config.yaml` is the correct mechanism. No code change needed, but the PR description must document this as the action for the operator.
-
-6. **`write_digest()` call in `main.py`** — wiring `top_articles` through to `write_digest()` is required; without it, the new parameter is dead code.
+A third minor gap: the `config` schema has no `check_liveness` flag, so liveness checking cannot be toggled from `config.yaml` today.
 
 ---
 
-*Closes #29*
+## 2. Affected Bounded Contexts and Files
+
+**BC: Digest / Irritator** (counter-signal subdomain — all changes stay within this BC)
+
+| File | Change |
+|------|--------|
+| `digest/irritator/validator.py` | Add `async def validate_signals_async(signals, blocklist, client, check_liveness=False) -> list[Signal]` |
+| `digest/irritator/__init__.py` | Add `async def run_irritator(summaries, config, client, *, verbose=False) -> tuple[list[Narrative], list[RankedSignal], IrritatorStatus]`; `client: AsyncClient` is caller-managed |
+| `digest/main.py` | Replace `_run_irritator()` body with a call to the new public `run_irritator()`; `httpx.AsyncClient` context wraps the full call |
+| `digest/config.py` | Add `check_liveness: bool = False` to `IrritatorConfig` dataclass AND to `_load_irritator()` parser |
+| `tests/test_validator.py` | Add async HEAD-path cases: 200 keeps, 404/503/timeout drops, 405 keeps, `check_liveness=False` never calls client |
+| `tests/test_irritator_orchestrator.py` (new) | Smoke-test `run_irritator()` with all stages mocked; assert IrritatorStatus level per branch |
+
+---
+
+## 3. Considered Approaches
+
+### Approach A — Async liveness wrapper; orchestrator extracted to `__init__.py` (chosen)
+
+Add `validate_signals_async()` that calls the existing sync `validate_signals()` first, then optionally fires HEAD requests via an injected `httpx.AsyncClient`. `run_irritator()` goes into `__init__.py` and replaces the inline body in `main.py` (which becomes a thin wrapper).
+
+**Pros:** sync path untouched and its tests remain non-async; async path testable via mock client; clean I/O separation; orchestrator is now publicly importable.
+**Cons:** two validate functions to maintain; callers must choose which to call.
+
+### Approach B — Augment sync `validate_signals()` with async flag
+
+Make the existing function async and add `client: httpx.AsyncClient | None = None` and `check_liveness: bool = False` params.
+
+**Cons:** forces every caller to `await` a function that may do no I/O. Breaks all existing sync tests without `pytest-asyncio`. Violates single-responsibility. **Wrong path.**
+
+### Approach C — Skip HEAD check (config-gated no-op)
+
+Ship a `check_liveness` flag always set to `False` in config, documenting it as future work.
+
+**Cons:** Ships dead code, violates the issue's explicit checklist. Not acceptable.
+
+**Verdict: Approach A.**
+
+---
+
+## 4. Chosen Approach and Why
+
+**Approach A**, consistent with the project style (`async/await` for all I/O, dependency injection for HTTP client) and ADR-0002 (engine repo — code correctness over runtime convenience).
+
+Implementation specifics:
+
+- `validate_signals_async(signals, blocklist, client, check_liveness=False)`: always-wrapper design — calls `validate_signals()` first (sync dedup + blocklist), then when `check_liveness=True` fires HEAD requests in parallel via `asyncio.gather(*[_head_check(sem, client, s) for s in valid])`. `asyncio.Semaphore(10)` bounds concurrency. Per-signal: drops on status ≥ 400 or `httpx.TransportError`/`httpx.TimeoutException`; keeps on 405 (HEAD-rejected ≠ dead URL). Parallel execution means 50 signals × 5 s timeout stays bounded to ~5 s wall time.
+- `run_irritator(summaries, config, client, *, verbose=False)` in `__init__.py`: `client: httpx.AsyncClient` is injected by the caller (makes orchestrator testable without network fakes). Calls `validate_signals_async(..., client, check_liveness=config.irritator.check_liveness)`. Logger at module level. `narrative.claim[:60]` preserved in ranking error log.
+- `main._run_irritator()` becomes a thin wrapper: creates `async with httpx.AsyncClient() as client` wrapping the full `run_irritator()` call (not just the search stage as before, since liveness checks also need the client).
+- `IrritatorConfig` gets `check_liveness: bool = False`; `_load_irritator()` adds isinstance-guarded parse matching the `_load_adaptive.enabled` pattern.
+- **`narrative_title` vs `narrative_claim`:** issue spec says `narrative_title` but the existing `RankedSignal` field is `narrative_claim` (matches `Narrative.claim`). Spec wording is stale; `narrative_claim` is correct and stays. No rename.
+
+No ADR required: no new dependencies (httpx already cross-cutting per ADR-0002 context), no BC boundary changes, no storage, no security model change.
+
+---
+
+## 5. Test Strategy
+
+**Unit (no network):**
+
+`tests/test_validator.py` — new async cases (use `AsyncMock` for `client.head`):
+- `check_liveness=True`, mock HEAD → 200: signal kept
+- `check_liveness=True`, mock HEAD → 404: signal dropped
+- `check_liveness=True`, mock HEAD → 503: signal dropped
+- `check_liveness=True`, mock HEAD raises `httpx.TimeoutException`: signal dropped
+- `check_liveness=True`, mock HEAD → 405: signal kept (HEAD-rejected ≠ dead)
+- `check_liveness=False`: `client.head()` never called
+
+`tests/test_irritator_orchestrator.py` (new file):
+- Mock all five sub-functions; assert `run_irritator()` returns `(list[Narrative], list[RankedSignal], IrritatorStatus)`
+- Narrative extraction failure → `IrritatorStatus(level="error")`
+- Empty narratives → `IrritatorStatus(level="empty")`
+- All signals filtered → `IrritatorStatus(level="empty")`
+- Ranking produces results → `IrritatorStatus(level="ok")`
+
+**Assertions that matter:**
+- `level == "ok"` only when `len(all_ranked) > 0`
+- `level == "error"` only when a stage raised
+- Per-narrative ranking failure does not set `level = "error"`
+- HEAD 405 is not treated as a dead URL
+
+**Integration (manual gate):**
+```bash
+python -m digest --dry-run
+```
+
+---
+
+## 6. Risks and Unknowns
+
+1. **HEAD rejection masking dead URLs** — 405 means server rejects HEAD method; keep-on-405 heuristic cannot distinguish live-HEAD-rejecting from dead. Accept; GET fallback is future work.
+2. **`asyncio.Semaphore` tuning** — default 10 is conservative; can tune in follow-up.
+3. **`_load_irritator()` must parse `check_liveness`** — easy to miss; must add to both dataclass and parser return call.
+4. **`test_config.py` update** — `check_liveness` boolean parsing needs a test case.
+
+Closes #6

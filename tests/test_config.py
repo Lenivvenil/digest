@@ -117,6 +117,45 @@ def test_irritator_custom_config(tmp_path: Path) -> None:
     assert config.irritator.min_signal_score == 8
     assert config.irritator.sources == ["hackernews", "arxiv"]
     assert config.irritator.reddit_subreddits == ["python", "rust"]
+    assert config.irritator.check_liveness is False
+
+
+def test_irritator_check_liveness_true(tmp_path: Path) -> None:
+    cfg_path = _write_config(tmp_path, """
+        llm:
+          providers:
+            - name: groq
+              model: llama
+              role: [fallback]
+        irritator:
+          check_liveness: true
+        sources:
+          - name: Feed
+            url: https://example.com/feed
+            category: Tech
+            enabled: true
+    """)
+    config = load_config(cfg_path)
+    assert config.irritator.check_liveness is True
+
+
+def test_irritator_check_liveness_invalid(tmp_path: Path) -> None:
+    cfg_path = _write_config(tmp_path, """
+        llm:
+          providers:
+            - name: groq
+              model: llama
+              role: [fallback]
+        irritator:
+          check_liveness: "yes"
+        sources:
+          - name: Feed
+            url: https://example.com/feed
+            category: Tech
+            enabled: true
+    """)
+    with pytest.raises(ValueError, match="check_liveness"):
+        load_config(cfg_path)
 
 
 def test_filters_and_delivery(tmp_path: Path) -> None:

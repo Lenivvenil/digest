@@ -67,6 +67,7 @@ class IrritatorConfig:
     queries_per_narrative: int = 3
     top_signals: int = 3
     min_signal_score: int = 7
+    check_liveness: bool = False
     sources: list[str] = field(default_factory=lambda: list(VALID_SOURCES))
     reddit_subreddits: list[str] = field(
         default_factory=lambda: [
@@ -368,11 +369,19 @@ def _load_irritator(data: dict[str, Any]) -> IrritatorConfig:
     if not isinstance(raw_subreddits, list):
         raise ValueError("irritator.reddit_subreddits must be a list.")
     reddit_subreddits = [str(s) for s in raw_subreddits]
+    check_liveness = section.get("check_liveness", False)
+    if not isinstance(check_liveness, bool):
+        raise ValueError(
+            f"Config field 'check_liveness' in section 'irritator' must be a boolean "
+            f"(true or false without quotes), got {type(check_liveness).__name__} {check_liveness!r}. "
+            f"Remove quotes around the value in your YAML."
+        )
     return IrritatorConfig(
         max_narratives=max_narratives,
         queries_per_narrative=queries_per_narrative,
         top_signals=top_signals,
         min_signal_score=min_signal_score,
+        check_liveness=check_liveness,
         sources=sources,
         reddit_subreddits=reddit_subreddits,
     )
