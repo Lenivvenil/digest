@@ -30,14 +30,12 @@ class RankedSignal:
 
 _SYSTEM_PROMPTS: dict[str, str] = {
     "ru": (
-        "Ты — аналитик контр-сигналов. Оцени каждый сигнал по шкале 1-10 "
-        "по критериям: содержательность, противоречие нарративу, "
-        "достоверность источника, неожиданность."
+        "Ты — аналитик контр-сигналов. Оцени каждый сигнал по одному критерию: "
+        "насколько он ПРОТИВОРЕЧИТ или УСЛОЖНЯЕТ нарратив."
     ),
     "en": (
-        "You are a counter-signal analyst. Score each signal on a 1-10 scale "
-        "based on: substance, contradiction to the narrative, "
-        "source credibility, and surprise factor."
+        "You are a counter-signal analyst. Score each signal on a single criterion: "
+        "how strongly it CONTRADICTS or COMPLICATES the narrative."
     ),
 }
 
@@ -45,6 +43,11 @@ _USER_PROMPTS: dict[str, str] = {
     "ru": (
         "Нарратив: {claim}\n\n"
         "Сигналы для оценки:\n{signals_text}\n\n"
+        "Оцени каждый сигнал по шкале 1-10, где:\n"
+        "9-10 = прямые доказательства того, что нарратив неверен или преувеличен\n"
+        "7-8 = существенное осложнение или важная оговорка, которую нарратив игнорирует\n"
+        "5-6 = мягкая альтернативная перспектива\n"
+        "1-4 = согласуется с нарративом или повторяет его\n\n"
         "Для каждого сигнала верни JSON-объект с полями:\n"
         '- "index" — порядковый номер сигнала (начиная с 0)\n'
         '- "score" — оценка от 1 до 10\n'
@@ -54,6 +57,11 @@ _USER_PROMPTS: dict[str, str] = {
     "en": (
         "Narrative: {claim}\n\n"
         "Signals to evaluate:\n{signals_text}\n\n"
+        "Score each signal on a 1-10 scale where:\n"
+        "9-10 = direct evidence the narrative is wrong or overstated\n"
+        "7-8 = significant complication or important caveat the narrative ignores\n"
+        "5-6 = mildly relevant alternative perspective\n"
+        "1-4 = agrees with or restates the narrative\n\n"
         "For each signal return a JSON object with fields:\n"
         '- "index" — signal index (starting from 0)\n'
         '- "score" — score from 1 to 10\n'
