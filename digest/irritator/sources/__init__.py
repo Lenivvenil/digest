@@ -60,19 +60,21 @@ async def search_all_sources(
 ) -> list[Signal]:
     """Search all configured sources for counter-signals.
 
-    Runs searches concurrently with a semaphore limit.
-    Failures are logged and skipped (graceful degradation).
+    Each query fans out to every configured source adapter. Runs concurrently
+    with a semaphore limit. Failures per (query, source) pair are logged and
+    skipped (graceful degradation).
     """
     _import_adapters()
 
-    configured = set(config.irritator.sources)
+    configured = sorted(config.irritator.sources)
     semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
 
-    async def _run(query: SearchQuery) -> list[Signal]:
-        adapter = _ADAPTERS.get(query.target_source)
-        if adapter is None or query.target_source not in configured:
-            logger.debug(
-                "Skipping query for unconfigured source '%s'", query.target_source
+    async def _run(query: SearchQuery, source_name: str) -> list[Signal]:
+        adapter = _ADAPTERS.get(source_name)
+        if adapter is None:
+            logger.warning(
+                "No adapter registered for configured source '%s' — check irritator.sources config",
+                source_name,
             )
             return []
         async with semaphore:
@@ -82,17 +84,23 @@ async def search_all_sources(
             except Exception as exc:
                 logger.warning(
                     "Source %s failed for query '%s': %s",
-                    query.target_source,
+                    source_name,
                     query.query[:80],
                     exc,
                 )
                 return []
 
-    results = await asyncio.gather(*[_run(q) for q in queries])
+    tasks = [
+        _run(query, source_name)
+        for query in queries
+        for source_name in configured
+    ]
+    results = await asyncio.gather(*tasks)
     signals = [s for batch in results for s in batch]
     logger.info(
-        "Fetched %d signals from %d queries across configured sources",
+        "Fetched %d signals from %d queries × %d sources",
         len(signals),
         len(queries),
+        len(configured),
     )
     return signals
