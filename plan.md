@@ -1,108 +1,109 @@
-# Plan: Issue #48 — Verify feedback voting buttons persist ratings
+# Plan: Issue #6 — Phase 5: Validator + Ranker
 
-## 1. Problem restatement
+## 1. Problem Restatement
 
-Telegram article cards are sent with 👍/👎 inline buttons, but no one has
-confirmed that button taps actually reach `feedback.json` in `.cache/` and
-that `get_source_feedback_score()` can read them back on the next pipeline
-run. Code inspection shows the full path EXISTS — `collect_feedback()` polls
-`getUpdates`, parses `fb:a:{g|b}:HASH` callbacks, looks up the source from
-`article_source_map`, appends an `ArticleFeedback` rating, and `save_feedback()`
-persists it. Tests cover this path. The problem is a silent failure mode that
-makes the feedback loop useless without any log evidence: if the article hash
-is not found in `article_source_map`, `source_name=""` is stored, and
-`get_source_feedback_score()` will never match any real source name — the
-rating is permanently orphaned. Nothing in the current code warns about this.
+Most of the Irritator Phase 5 work has already landed in prior commits: `validator.py` deduplicates and blocklist-filters signals, `ranker.py` wraps LLM scoring into a typed `RankedSignal` dataclass, and unit tests for both exist. Two acceptance criteria remain open:
 
-## 2. Affected bounded contexts and files
+1. **Optional HEAD-based URL liveness check** — `validator.py` validates URL syntax but never hits the network to confirm a URL is live. The issue spec calls for this as an optional step.
+2. **Public `run_irritator()` orchestrator** — the five-stage pipeline (extract → generate → search → validate → rank) currently lives in `main.py` as a private `_run_irritator()` function, making it untestable and architecturally misplaced relative to the module boundary the issue specifies.
 
-**Bounded context: Digest** — `FeedbackReceived` event path, hot spot #3
-(feedback decay owner).
+A third minor gap: the `config` schema has no `check_liveness` flag, so liveness checking cannot be toggled from `config.yaml` today.
 
-| File | Role |
-|------|------|
-| `digest/feedback.py` | `collect_feedback()` — hash lookup + rating append; `get_source_feedback_score()` — reads ratings |
-| `digest/main.py` | Lines 585–610, 702–712, 756–760 — orchestrates load → collect → deliver → save |
-| `digest/delivery/telegram.py` | Lines 237–244 — button creation with `callback_data: fb:a:{g|b}:HASH` |
-| `tests/test_feedback.py` | Existing test suite — comprehensive but missing a warning-log assertion for the empty-source case |
+---
 
-## 3. Considered approaches
+## 2. Affected Bounded Contexts and Files
 
-### A. Add warning log for empty-attribution + update test (preferred)
+**BC: Digest / Irritator** (counter-signal subdomain — all changes stay within this BC)
 
-When `store.article_source_map.get(art_hash, "")` returns `""`, emit a
-`logger.warning()` before appending the rating. This makes the silent failure
-visible in GitHub Actions logs without changing any behaviour or data model.
-Update `test_collect_feedback_per_article_unknown_hash_records_empty_source`
-to assert the warning was emitted (using `caplog`).
+| File | Change |
+|------|--------|
+| `digest/irritator/validator.py` | Add `async def validate_signals_async(signals, blocklist, client, check_liveness=False) -> list[Signal]` |
+| `digest/irritator/__init__.py` | Add `async def run_irritator(summaries, config, client, *, verbose=False) -> tuple[list[Narrative], list[RankedSignal], IrritatorStatus]`; `client: AsyncClient` is caller-managed |
+| `digest/main.py` | Replace `_run_irritator()` body with a call to the new public `run_irritator()`; `httpx.AsyncClient` context wraps the full call |
+| `digest/config.py` | Add `check_liveness: bool = False` to `IrritatorConfig` dataclass AND to `_load_irritator()` parser |
+| `tests/test_validator.py` | Add async HEAD-path cases: 200 keeps, 404/503/timeout drops, 405 keeps, `check_liveness=False` never calls client |
+| `tests/test_irritator_orchestrator.py` (new) | Smoke-test `run_irritator()` with all stages mocked; assert IrritatorStatus level per branch |
 
-**Trade-off:** Minimal, zero-risk change. Does not fix the root cause (missing
-map entry), but makes it diagnosable. Production logs on the next run will
-show whether the map is populated or stale.
+---
 
-### B. Drop ratings with empty source_name
+## 3. Considered Approaches
 
-Skip `store.ratings.append(...)` when `source_name == ""`. Ratings that
-cannot be attributed to a source are useless for scoring, so storing them just
-adds noise.
+### Approach A — Async liveness wrapper; orchestrator extracted to `__init__.py` (chosen)
 
-**Trade-off:** Cleaner store, but loses the `article_hash` record which could
-be useful for future debugging. Also, the correct fix for an empty map entry
-is to ensure the map is populated — not to silently discard feedback. If the
-map is genuinely empty (first run ever, or cache wiped), every tap is dropped
-with no log evidence. Rejected.
+Add `validate_signals_async()` that calls the existing sync `validate_signals()` first, then optionally fires HEAD requests via an injected `httpx.AsyncClient`. `run_irritator()` goes into `__init__.py` and replaces the inline body in `main.py` (which becomes a thin wrapper).
 
-**Note:** Only one approach is viable here. The map lookup is correct; the gap
-is purely observability. Approach A is the right move.
+**Pros:** sync path untouched and its tests remain non-async; async path testable via mock client; clean I/O separation; orchestrator is now publicly importable.
+**Cons:** two validate functions to maintain; callers must choose which to call.
 
-## 4. Chosen approach and why
+### Approach B — Augment sync `validate_signals()` with async flag
 
-**Approach A.** One-line `logger.warning()` in `collect_feedback()` at the
-hash lookup miss in `feedback.py` (around line 236) when `source_name == ""`.
-Update the corresponding test to assert the warning. No architectural change;
-no ADR required (no new dependency, no BC boundary shift, no data model change
-— see `docs/principles.md §"Что значит «архитектурно-значимо»"`).
+Make the existing function async and add `client: httpx.AsyncClient | None = None` and `check_liveness: bool = False` params.
 
-## 5. Test strategy
+**Cons:** forces every caller to `await` a function that may do no I/O. Breaks all existing sync tests without `pytest-asyncio`. Violates single-responsibility. **Wrong path.**
 
-**Unit (existing, no changes needed):**
-- `test_collect_feedback_per_article_good` — happy path attribution ✓
-- `test_collect_feedback_per_article_bad` — bad rating ✓
-- `test_article_source_map_round_trip` — persistence ✓
-- `test_get_source_feedback_score_*` — scoring ✓
+### Approach C — Skip HEAD check (config-gated no-op)
 
-**Unit (modified):**
-- `test_collect_feedback_per_article_unknown_hash_records_empty_source`:
-  add `caplog` fixture, assert `WARNING` level log containing the unknown
-  hash is emitted when `article_source_map` is empty.
+Ship a `check_liveness` flag always set to `False` in config, documenting it as future work.
 
-**Key assertion:** after `collect_feedback()` processes one `fb:a:g:HASH`
-event where HASH is not in the map, `caplog.text` must contain `"HASH"` at
-WARNING level. This proves the diagnostic is wired up correctly.
+**Cons:** Ships dead code, violates the issue's explicit checklist. Not acceptable.
 
-**No e2e test needed** — the full production path (GH Actions → digest-prod
-`.cache/feedback.json`) is out of scope for the engine repo. The warning log
-itself is the observable signal: if the next real pipeline run logs zero
-attribution warnings, the map is populated and the loop works.
+**Verdict: Approach A.**
 
-## 6. Risks and unknowns
+---
 
-1. **`adaptive.enabled` in digest-prod** — if `False`, `collect_feedback()`
-   is never called regardless of this fix. Must be verified manually in
-   `digest-prod/config.yaml`. Not addressable from this repo.
+## 4. Chosen Approach and Why
 
-2. **`.cache/feedback.json` commit-back** — the digest-prod GitHub Actions
-   workflow must commit `.cache/` back to the repo after each run, or the
-   `article_source_map` from run N will not be available to run N+1. If
-   `feedback.json` is absent on load, `article_source_map` starts empty and
-   every tap in the first post-wipe run will hit the "unknown hash" warning.
+**Approach A**, consistent with the project style (`async/await` for all I/O, dependency injection for HTTP client) and ADR-0002 (engine repo — code correctness over runtime convenience).
 
-3. **Webhook vs. polling conflict** — `collect_feedback()` calls
-   `deleteWebhook` to ensure polling mode, but if the Telegram bot has an
-   externally configured webhook, the delete may fail or take effect after a
-   delay. Existing warning log covers this; no code change needed.
+Implementation specifics:
 
-4. **First-ever-run attribution gap** — on the very first pipeline run,
-   `article_source_map` is empty (nothing was ever saved before). All feedback
-   tapped before the SECOND run will be stored with `source_name=""`. This is
-   expected and unavoidable; the warning log makes it identifiable.
+- `validate_signals_async(signals, blocklist, client, check_liveness=False)`: always-wrapper design — calls `validate_signals()` first (sync dedup + blocklist), then when `check_liveness=True` fires HEAD requests in parallel via `asyncio.gather(*[_head_check(sem, client, s) for s in valid])`. `asyncio.Semaphore(10)` bounds concurrency. Per-signal: drops on status ≥ 400 or `httpx.TransportError`/`httpx.TimeoutException`; keeps on 405 (HEAD-rejected ≠ dead URL). Parallel execution means 50 signals × 5 s timeout stays bounded to ~5 s wall time.
+- `run_irritator(summaries, config, client, *, verbose=False)` in `__init__.py`: `client: httpx.AsyncClient` is injected by the caller (makes orchestrator testable without network fakes). Calls `validate_signals_async(..., client, check_liveness=config.irritator.check_liveness)`. Logger at module level. `narrative.claim[:60]` preserved in ranking error log.
+- `main._run_irritator()` becomes a thin wrapper: creates `async with httpx.AsyncClient() as client` wrapping the full `run_irritator()` call (not just the search stage as before, since liveness checks also need the client).
+- `IrritatorConfig` gets `check_liveness: bool = False`; `_load_irritator()` adds isinstance-guarded parse matching the `_load_adaptive.enabled` pattern.
+- **`narrative_title` vs `narrative_claim`:** issue spec says `narrative_title` but the existing `RankedSignal` field is `narrative_claim` (matches `Narrative.claim`). Spec wording is stale; `narrative_claim` is correct and stays. No rename.
+
+No ADR required: no new dependencies (httpx already cross-cutting per ADR-0002 context), no BC boundary changes, no storage, no security model change.
+
+---
+
+## 5. Test Strategy
+
+**Unit (no network):**
+
+`tests/test_validator.py` — new async cases (use `AsyncMock` for `client.head`):
+- `check_liveness=True`, mock HEAD → 200: signal kept
+- `check_liveness=True`, mock HEAD → 404: signal dropped
+- `check_liveness=True`, mock HEAD → 503: signal dropped
+- `check_liveness=True`, mock HEAD raises `httpx.TimeoutException`: signal dropped
+- `check_liveness=True`, mock HEAD → 405: signal kept (HEAD-rejected ≠ dead)
+- `check_liveness=False`: `client.head()` never called
+
+`tests/test_irritator_orchestrator.py` (new file):
+- Mock all five sub-functions; assert `run_irritator()` returns `(list[Narrative], list[RankedSignal], IrritatorStatus)`
+- Narrative extraction failure → `IrritatorStatus(level="error")`
+- Empty narratives → `IrritatorStatus(level="empty")`
+- All signals filtered → `IrritatorStatus(level="empty")`
+- Ranking produces results → `IrritatorStatus(level="ok")`
+
+**Assertions that matter:**
+- `level == "ok"` only when `len(all_ranked) > 0`
+- `level == "error"` only when a stage raised
+- Per-narrative ranking failure does not set `level = "error"`
+- HEAD 405 is not treated as a dead URL
+
+**Integration (manual gate):**
+```bash
+python -m digest --dry-run
+```
+
+---
+
+## 6. Risks and Unknowns
+
+1. **HEAD rejection masking dead URLs** — 405 means server rejects HEAD method; keep-on-405 heuristic cannot distinguish live-HEAD-rejecting from dead. Accept; GET fallback is future work.
+2. **`asyncio.Semaphore` tuning** — default 10 is conservative; can tune in follow-up.
+3. **`_load_irritator()` must parse `check_liveness`** — easy to miss; must add to both dataclass and parser return call.
+4. **`test_config.py` update** — `check_liveness` boolean parsing needs a test case.
+
+Closes #6

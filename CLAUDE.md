@@ -59,7 +59,7 @@ This is the **engine repo** — source code, tests, CI only. Production runtime 
 │   ├── irritator/           # Phases 2-5: Counter-signal analysis
 │   │   ├── narrative_extractor.py  # extract dominant narratives from summaries
 │   │   ├── query_generator.py      # generate search queries per narrative
-│   │   ├── validator.py            # filter out blocklisted content
+│   │   ├── validator.py            # dedup, blocklist filter, optional URL liveness check
 │   │   ├── ranker.py               # score counter-signals for relevance
 │   │   └── sources/                # multi-platform search adapters
 │   │       ├── arxiv.py, devto.py, hackernews.py, lobsters.py, reddit.py
@@ -74,6 +74,7 @@ This is the **engine repo** — source code, tests, CI only. Production runtime 
 │   ├── test_delivery_markdown.py, test_delivery_telegram.py
 │   ├── test_narrative_extractor.py, test_query_generator.py
 │   ├── test_ranker.py, test_validator.py
+│   ├── test_irritator_orchestrator.py
 │   ├── test_sources_arxiv.py, test_sources_devto.py
 │   ├── test_sources_hackernews.py, test_sources_lobsters.py
 │   ├── test_sources_init.py, test_sources_reddit.py
