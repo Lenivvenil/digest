@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -176,7 +177,7 @@ def test_save_feedback_preserves_existing_on_write(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_per_article_good() -> None:
+async def test_collect_feedback_per_article_good(caplog: pytest.LogCaptureFixture) -> None:
     """fb:a:g:HASH callback records a good rating for the article's source."""
     token = "testtoken"
     store = FeedbackStore(article_source_map={"abcd1234": "My Source"})
@@ -206,12 +207,14 @@ async def test_collect_feedback_per_article_good() -> None:
         return_value=httpx.Response(200, json={"ok": True})
     )
 
-    result = await collect_feedback(token, store)
+    with caplog.at_level(logging.WARNING, logger="digest.feedback"):
+        result = await collect_feedback(token, store)
     assert result.last_update_id == 1001
     assert len(result.ratings) == 1
     assert result.ratings[0].rating == 1
     assert result.ratings[0].article_hash == "abcd1234"
     assert result.ratings[0].source_name == "My Source"
+    assert "article_source_map miss" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -308,8 +311,10 @@ async def test_collect_feedback_empty_updates() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_per_article_unknown_hash_records_empty_source() -> None:
-    """Per-article callback with unknown hash records rating with empty source_name."""
+async def test_collect_feedback_per_article_unknown_hash_records_empty_source(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Per-article callback with unknown hash records rating with empty source_name and warns."""
     token = "testtoken"
     store = FeedbackStore()  # empty article_source_map
 
@@ -338,11 +343,14 @@ async def test_collect_feedback_per_article_unknown_hash_records_empty_source() 
         return_value=httpx.Response(200, json={"ok": True})
     )
 
-    result = await collect_feedback(token, store)
+    with caplog.at_level(logging.WARNING, logger="digest.feedback"):
+        result = await collect_feedback(token, store)
     assert result.last_update_id == 4001
     assert len(result.ratings) == 1
     assert result.ratings[0].source_name == ""
     assert result.ratings[0].rating == 1
+    assert "article_source_map miss" in caplog.text
+    assert "deadbeef" in caplog.text
 
 
 @pytest.mark.asyncio
