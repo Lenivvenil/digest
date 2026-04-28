@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ from digest._util import atomic_json_write
 
 if TYPE_CHECKING:
     from digest.config import AdaptiveConfig, SourceConfig
+    from digest.feedback import FeedbackStore
 
 logger = logging.getLogger(__name__)
 
@@ -447,3 +449,92 @@ def apply_trial_decisions_to_cache(
         store.set_trial_started(name, today)
         logger.info("Initialized trial_started for '%s' to %s", name, today)
     return store
+
+
+def _diversity_score(source_stats: dict[str, SourceStats]) -> tuple[float, str]:
+    """Shannon entropy over 7-day article inclusion per source → (score 0–100, label)."""
+    recent: dict[str, int] = {}
+    for name, s in source_stats.items():
+        count = sum(snap.articles_included for snap in s.history[-7:])
+        if count > 0:
+            recent[name] = count
+    total = sum(recent.values())
+    n = len(recent)
+    if total == 0:
+        return 0.0, "No data"
+    if n == 1:
+        return 0.0, "Single source"
+    entropy = -sum((c / total) * math.log2(c / total) for c in recent.values())
+    score = entropy / math.log2(n) * 100
+    if score >= 70:
+        label = "Diverse"
+    elif score >= 40:
+        label = "Moderate"
+    else:
+        label = "Concentrated"
+    return score, label
+
+
+def compute_bubble_report(
+    feedback_store: FeedbackStore,
+    source_stats: dict[str, SourceStats],
+    source_state: SourceStateStore,
+) -> str:
+    """Build a single-screen filter bubble snapshot from cached data. No I/O."""
+    now = datetime.now(tz=timezone.utc)
+    lines: list[str] = ["=== Filter Bubble Report ==="]
+    lines.append(f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append("")
+
+    if feedback_store.last_digest_time:
+        try:
+            last_dt = datetime.strptime(
+                feedback_store.last_digest_time, "%Y-%m-%d %H:%M UTC"
+            ).replace(tzinfo=timezone.utc)
+            age_h = int((now - last_dt).total_seconds() // 3600)
+            lines.append(f"Last digest: {feedback_store.last_digest_time} ({age_h}h ago)")
+        except ValueError:
+            lines.append(f"Last digest: {feedback_store.last_digest_time}")
+    else:
+        lines.append("Last digest: never")
+
+    score, label = _diversity_score(source_stats)
+    lines.append(f"Diversity: {label} ({score:.0f}/100)")
+    lines.append("")
+
+    recent_sources: dict[str, int] = {
+        name: sum(snap.articles_included for snap in s.history[-7:])
+        for name, s in source_stats.items()
+        if sum(snap.articles_included for snap in s.history[-7:]) > 0
+    }
+    if recent_sources:
+        lines.append("Top sources (7d):")
+        for name, count in sorted(recent_sources.items(), key=lambda x: x[1], reverse=True)[:5]:
+            lines.append(f"  {name}: {count} art")
+        lines.append("")
+
+    cutoff = now - timedelta(days=14)
+    recent_ratings = []
+    for r in feedback_store.ratings:
+        try:
+            ts = datetime.fromisoformat(r.timestamp)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                recent_ratings.append(r)
+        except ValueError:
+            pass
+    pos = sum(1 for r in recent_ratings if r.rating > 0)
+    neg = sum(1 for r in recent_ratings if r.rating < 0)
+    lines.append(f"Feedback (14d): {pos + neg} votes — +{pos} / -{neg}")
+
+    graduated = sum(1 for e in source_state.sources.values() if e.graduated)
+    demoted = sum(1 for e in source_state.sources.values() if e.demoted)
+    trial = sum(
+        1 for e in source_state.sources.values()
+        if e.trial_started and not e.graduated and not e.demoted
+    )
+    if graduated or demoted or trial:
+        lines.append(f"Sources: {graduated} graduated | {trial} trial | {demoted} demoted")
+
+    return "\n".join(lines)
