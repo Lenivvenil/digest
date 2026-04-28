@@ -114,7 +114,9 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         logger.warning("Failed to save feedback: %s", exc)
 
 
-async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStore:
+async def collect_feedback(
+    bot_token: str, store: FeedbackStore, *, cache_dir: str = ".cache"
+) -> FeedbackStore:
     """Poll Telegram getUpdates for new feedback callback queries.
 
     Parses callback_data matching 'fb:a:g:N' or 'fb:a:b:N', answers each
@@ -203,6 +205,25 @@ async def collect_feedback(bot_token: str, store: FeedbackStore) -> FeedbackStor
                                     )
                                 except Exception as exc:
                                     logger.warning("Failed to send /status reply: %s", exc)
+                        elif text == "/bubble":
+                            chat_id = str(message.get("chat", {}).get("id", ""))
+                            if chat_id:
+                                from digest.source_scorer import (
+                                    compute_bubble_report,
+                                    load_source_state,
+                                    load_stats,
+                                )
+                                stats = load_stats(cache_dir)
+                                state = load_source_state(cache_dir)
+                                report = compute_bubble_report(store, stats, state)
+                                try:
+                                    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                                    await client.post(
+                                        send_url,
+                                        json={"chat_id": chat_id, "text": report},
+                                    )
+                                except Exception as exc:
+                                    logger.warning("Failed to send /bubble reply: %s", exc)
                         continue
 
                     callback_query = update.get("callback_query")

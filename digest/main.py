@@ -469,7 +469,7 @@ async def run(
             bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
             if bot_token:
                 old_count = len(feedback_store.ratings)
-                feedback_store = await collect_feedback(bot_token, feedback_store)
+                feedback_store = await collect_feedback(bot_token, feedback_store, cache_dir=cache_dir)
                 feedback_collected = len(feedback_store.ratings) - old_count
                 if feedback_collected:
                     logger.info("Collected %d new feedback ratings", feedback_collected)
