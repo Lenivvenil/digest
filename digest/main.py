@@ -464,6 +464,7 @@ async def run(
 
     saved_update_id = feedback_store.last_update_id
     saved_ratings_count = len(feedback_store.ratings)
+    saved_article_source_map = dict(feedback_store.article_source_map)
 
     if config.adaptive.enabled:
         if not dry_run:
@@ -629,9 +630,19 @@ async def run(
                 sources_promoted = len(promote)
                 sources_demoted = len(demote)
     else:
-        # Roll back feedback state — updates will be reprocessed on next run
+        # Roll back feedback state — updates will be reprocessed on next run.
+        # article_source_map is also rewound to prevent FIFO eviction of mappings
+        # for cards that were never delivered.
+        logger.info(
+            "Delivery failed — rolling back feedback: last_update_id %d→%d, ratings %d→%d",
+            feedback_store.last_update_id,
+            saved_update_id,
+            len(feedback_store.ratings),
+            saved_ratings_count,
+        )
         feedback_store.last_update_id = saved_update_id
         feedback_store.ratings = feedback_store.ratings[:saved_ratings_count]
+        feedback_store.article_source_map = saved_article_source_map
 
     save_feedback(feedback_store, cache_dir)
     save_source_state(source_state, cache_dir)

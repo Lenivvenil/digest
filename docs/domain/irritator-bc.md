@@ -1,4 +1,10 @@
-# Bounded Context: Irritator
+# Bounded Context: Irritator — ARCHIVED DIAGNOSTIC
+
+> **Superseded.** This document is a historical diagnostic report written in April 2026.
+> The canonical BC overview is at **[docs/domain/irritator/overview.md](irritator/overview.md)**.
+> Keep this file for its failure-mode analysis (§§ marked [UPDATED — issue #53]); do not update it.
+
+---
 
 **Purpose:** Given the day's news summaries, surface external content that meaningfully challenges, contradicts, or complicates the dominant narratives the operator is being fed — i.e. break the bubble.
 

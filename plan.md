@@ -1,4 +1,12 @@
-# Plan — Issue #55: Verbose and repetitive article summaries
+# Plan — Issues #55, #71, #72 (bundled PR)
+
+> **Scope note (2026-04-28):** This branch bundles three issues:
+> - **#55** — terse article summaries (Radar BC, `summarizer.py`)
+> - **#71** — `/bubble` filter bubble analytics command (Delivery BC, `feedback.py`, `source_scorer.py`)
+> - **#72** — fix `/bubble` to show topic categories instead of source names (same files)
+>
+> Issues #71 and #72 are fully implemented and tested on this branch. The original plan below
+> covers #55 only; #71/#72 have no separate plan artifact (they were smaller stories).
 
 ## 1. Problem restatement
 
