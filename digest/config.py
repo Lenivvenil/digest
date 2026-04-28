@@ -66,7 +66,7 @@ class IrritatorConfig:
     max_narratives: int = 5
     queries_per_narrative: int = 3
     top_signals: int = 3
-    min_signal_score: int = 7
+    min_signal_score: int = 5
     check_liveness: bool = False
     sources: list[str] = field(default_factory=lambda: list(VALID_SOURCES))
     reddit_subreddits: list[str] = field(

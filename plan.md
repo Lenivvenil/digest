@@ -1,109 +1,180 @@
-# Plan: Issue #6 — Phase 5: Validator + Ranker
+# Plan: Fix irritator counter-signal pipeline (Issue #53)
 
-## 1. Problem Restatement
+## 1. Problem restatement
 
-Most of the Irritator Phase 5 work has already landed in prior commits: `validator.py` deduplicates and blocklist-filters signals, `ranker.py` wraps LLM scoring into a typed `RankedSignal` dataclass, and unit tests for both exist. Two acceptance criteria remain open:
+The irritator subsystem runs every day and consistently produces zero passing counter-signals. The
+failure is not a crash or a config error — the pipeline runs cleanly to completion and reports
+`"N narratives, M signals, M valid, 0 passed ranking"`. The root cause is a stack of three coupled
+problems: (1) the query-generation prompt generates topical queries that mirror the narrative's own
+vocabulary, so keyword-matching APIs (HN Algolia, Reddit search) return more consensus content
+rather than contradictions; (2) each query is dispatched to only one source — chosen by the LLM —
+meaning 3 queries for 5 sources leaves some sources never probed for a given narrative; (3) the
+ranker prompt scores four criteria conjunctively (substance AND contradiction AND credibility AND
+surprise), which collapses divergent signals to mid-range scores (5–7) that fall just below the
+`min_signal_score=7` hard cutoff. Additionally, `devto.py` does a tag-based listing call — not text
+search — so it structurally cannot return counter-signals regardless of the query.
 
-1. **Optional HEAD-based URL liveness check** — `validator.py` validates URL syntax but never hits the network to confirm a URL is live. The issue spec calls for this as an optional step.
-2. **Public `run_irritator()` orchestrator** — the five-stage pipeline (extract → generate → search → validate → rank) currently lives in `main.py` as a private `_run_irritator()` function, making it untestable and architecturally misplaced relative to the module boundary the issue specifies.
+## 2. Affected bounded contexts and files
 
-A third minor gap: the `config` schema has no `check_liveness` flag, so liveness checking cannot be toggled from `config.yaml` today.
+**Bounded context: Irritator** (`digest/irritator/`)
 
----
+| File | Change needed |
+|---|---|
+| `digest/irritator/query_generator.py` | Rewrite LLM prompt to enumerate adversarial query patterns; remove `target_source` from `SearchQuery` dataclass and prompt |
+| `digest/irritator/sources/__init__.py` | Change `search_all_sources()` dispatch: fan each query to **all** configured sources instead of the single `target_source` |
+| `digest/irritator/sources/devto.py` | Fix search to use `?q=` text search rather than `?tag=` listing |
+| `digest/irritator/ranker.py` | Rewrite prompt: single primary criterion (contradiction score) with calibration anchors; lower `min_signal_score` default from 7 to 5 |
+| `digest/config.py` | Lower `IrritatorConfig.min_signal_score` default from 7 to 5 |
+| `tests/test_query_generator.py` | Update tests: no `target_source` field in assertions |
+| `tests/test_sources_devto.py` | Update mock to match `?q=` parameter |
+| `tests/test_sources_init.py` | Update fan-out behaviour: each query hits all sources |
+| `tests/test_ranker.py` | Update prompt assertions; add threshold behaviour tests |
 
-## 2. Affected Bounded Contexts and Files
+No cross-BC contract changes. The irritator's outbound interface to Delivery
+(`list[Narrative], list[RankedSignal], IrritatorStatus`) is unchanged.
 
-**BC: Digest / Irritator** (counter-signal subdomain — all changes stay within this BC)
+## 3. Considered approaches
 
-| File | Change |
-|------|--------|
-| `digest/irritator/validator.py` | Add `async def validate_signals_async(signals, blocklist, client, check_liveness=False) -> list[Signal]` |
-| `digest/irritator/__init__.py` | Add `async def run_irritator(summaries, config, client, *, verbose=False) -> tuple[list[Narrative], list[RankedSignal], IrritatorStatus]`; `client: AsyncClient` is caller-managed |
-| `digest/main.py` | Replace `_run_irritator()` body with a call to the new public `run_irritator()`; `httpx.AsyncClient` context wraps the full call |
-| `digest/config.py` | Add `check_liveness: bool = False` to `IrritatorConfig` dataclass AND to `_load_irritator()` parser |
-| `tests/test_validator.py` | Add async HEAD-path cases: 200 keeps, 404/503/timeout drops, 405 keeps, `check_liveness=False` never calls client |
-| `tests/test_irritator_orchestrator.py` (new) | Smoke-test `run_irritator()` with all stages mocked; assert IrritatorStatus level per branch |
+### Option A — Prompt-only + threshold tweak (no structural change)
 
----
+Rewrite the query-generator prompt with adversarial tokens; lower `min_signal_score` to 5–6; add
+calibration anchors to the ranker prompt. Keep `target_source` routing as-is.
 
-## 3. Considered Approaches
+**Pros:** smallest diff; zero risk of breaking query-dispatch logic; ships in under 2 hours.
 
-### Approach A — Async liveness wrapper; orchestrator extracted to `__init__.py` (chosen)
+**Cons:** does not fix the sparse-coverage problem — with `queries_per_narrative=3` and 5 sources,
+some sources are still never hit for a given narrative. Also does not fix dev.to.
+**Red flag:** a/B testing would show improvement from threshold alone, not from actually finding
+contradictions. This is a cosmetic fix for the wrong problem.
 
-Add `validate_signals_async()` that calls the existing sync `validate_signals()` first, then optionally fires HEAD requests via an injected `httpx.AsyncClient`. `run_irritator()` goes into `__init__.py` and replaces the inline body in `main.py` (which becomes a thin wrapper).
+### Option B — Prompt rewrite + remove target_source fan-out + fix dev.to (chosen)
 
-**Pros:** sync path untouched and its tests remain non-async; async path testable via mock client; clean I/O separation; orchestrator is now publicly importable.
-**Cons:** two validate functions to maintain; callers must choose which to call.
+On top of A: remove `target_source` from `SearchQuery`; change `search_all_sources()` so each
+query fans out to all configured sources; fix dev.to to use text search. Result:
+`queries_per_narrative=3` queries × N sources = 3N fetches per narrative — all sources covered.
 
-### Approach B — Augment sync `validate_signals()` with async flag
+**Pros:** addresses all three coupled root causes; intra-BC only (no cross-context contract
+change); outbound HTTP increases ~5×, but still within free-tier GitHub Actions limits
+(5 narratives × 3 queries × 5 sources = 75 requests/run vs current ~15).
 
-Make the existing function async and add `client: httpx.AsyncClient | None = None` and `check_liveness: bool = False` params.
+**Cons:** slightly more HTTP load; removes per-source query phrasing (arXiv vs Reddit might
+benefit from different vocabulary). That concern is valid but secondary — uniform coverage beats
+non-coverage. Revisitable in Option C.
 
-**Cons:** forces every caller to `await` a function that may do no I/O. Breaks all existing sync tests without `pytest-asyncio`. Violates single-responsibility. **Wrong path.**
+### Option C — Two-pass pipeline: discovery + adversarial critique (deferred)
 
-### Approach C — Skip HEAD check (config-gated no-op)
+After raw signals are fetched, add a second LLM stage that generates adversarial follow-up queries
+targeting failure/criticism vocabulary, runs those, then merges and ranks the combined pool.
 
-Ship a `check_liveness` flag always set to `False` in config, documenting it as future work.
+**Pros:** most powerful; properly decouples topical discovery from adversarial probing.
 
-**Cons:** Ships dead code, violates the issue's explicit checklist. Not acceptable.
+**Cons:** adds a pipeline stage and an extra LLM call per narrative — would require an ADR (new
+pipeline stage). Too heavy as a first fix. Revisit if B proves insufficient after one week of runs.
 
-**Verdict: Approach A.**
+## 4. Chosen approach and why
 
----
+**Option B.** The three coupled root causes (adversarial prompt, sparse fan-out, dev.to broken)
+all live in one bounded context and can be fixed without touching the cross-BC interface or adding
+dependencies. The change is reversible: if fan-out increases latency unacceptably, per-source
+routing can be reintroduced as an optional config filter.
 
-## 4. Chosen Approach and Why
+No ADR required: `SearchQuery` is internal to the Irritator BC; removing one field from it does
+not change a cross-BC contract. Per `docs/principles.md` §"Что значит «архитектурно-значимо»",
+none of the six triggers fire (no new cross-cutting dependency, no BC boundary change, no storage,
+no public API, no security model change).
 
-**Approach A**, consistent with the project style (`async/await` for all I/O, dependency injection for HTTP client) and ADR-0002 (engine repo — code correctness over runtime convenience).
+**Specific changes:**
 
-Implementation specifics:
+1. **`query_generator.py` prompt** — add explicit adversarial instruction:
+   > "Do NOT generate queries that describe or expand the narrative. Generate queries designed to
+   > find EVIDENCE AGAINST it. Use adversarial patterns: 'failure of X', 'X didn't work',
+   > 'criticism of X', 'post-mortem X', 'X considered harmful', 'why X is wrong', 'X limitations',
+   > 'X hype'. Each query MUST contain at least one negation, failure, or doubt keyword."
+   Remove `target_source` field from `SearchQuery` dataclass and prompt.
 
-- `validate_signals_async(signals, blocklist, client, check_liveness=False)`: always-wrapper design — calls `validate_signals()` first (sync dedup + blocklist), then when `check_liveness=True` fires HEAD requests in parallel via `asyncio.gather(*[_head_check(sem, client, s) for s in valid])`. `asyncio.Semaphore(10)` bounds concurrency. Per-signal: drops on status ≥ 400 or `httpx.TransportError`/`httpx.TimeoutException`; keeps on 405 (HEAD-rejected ≠ dead URL). Parallel execution means 50 signals × 5 s timeout stays bounded to ~5 s wall time.
-- `run_irritator(summaries, config, client, *, verbose=False)` in `__init__.py`: `client: httpx.AsyncClient` is injected by the caller (makes orchestrator testable without network fakes). Calls `validate_signals_async(..., client, check_liveness=config.irritator.check_liveness)`. Logger at module level. `narrative.claim[:60]` preserved in ranking error log.
-- `main._run_irritator()` becomes a thin wrapper: creates `async with httpx.AsyncClient() as client` wrapping the full `run_irritator()` call (not just the search stage as before, since liveness checks also need the client).
-- `IrritatorConfig` gets `check_liveness: bool = False`; `_load_irritator()` adds isinstance-guarded parse matching the `_load_adaptive.enabled` pattern.
-- **`narrative_title` vs `narrative_claim`:** issue spec says `narrative_title` but the existing `RankedSignal` field is `narrative_claim` (matches `Narrative.claim`). Spec wording is stale; `narrative_claim` is correct and stays. No rename.
+2. **`sources/__init__.py:search_all_sources()`** — remove single-source dispatch; call all
+   registered adapters for each query. URL dedup is handled downstream by `validate_signals()`.
 
-No ADR required: no new dependencies (httpx already cross-cutting per ADR-0002 context), no BC boundary changes, no storage, no security model change.
+3. **`devto.py`** — replace `?tag=first_word` with `?q=full_query_string`
+   (dev.to API supports text search via `?q=`; no `sort` param — default relevance ranking is preferable to recency for counter-signal discovery).
 
----
+4. **`ranker.py` prompt** — replace four-criteria scoring with a single calibrated question:
+   > "Does this content CONTRADICT or COMPLICATE the narrative? Score 1-10 where:
+   > 9-10 = direct evidence the narrative is wrong or overstated
+   > 7-8 = significant complication or important caveat the narrative ignores
+   > 5-6 = mildly relevant alternative perspective
+   > 1-4 = agrees with or restates the narrative"
 
-## 5. Test Strategy
+5. **`config.py`** — `IrritatorConfig.min_signal_score` default: 7 → 5. (Note: `digest-prod/config.yaml`
+   already overrides to 5, confirming the threshold is NOT the binding constraint in production —
+   the funnel empties before the ranker. This code change is for consistency and new deployments.)
 
-**Unit (no network):**
+## 5. Test strategy
 
-`tests/test_validator.py` — new async cases (use `AsyncMock` for `client.head`):
-- `check_liveness=True`, mock HEAD → 200: signal kept
-- `check_liveness=True`, mock HEAD → 404: signal dropped
-- `check_liveness=True`, mock HEAD → 503: signal dropped
-- `check_liveness=True`, mock HEAD raises `httpx.TimeoutException`: signal dropped
-- `check_liveness=True`, mock HEAD → 405: signal kept (HEAD-rejected ≠ dead)
-- `check_liveness=False`: `client.head()` never called
+**Unit tests (existing files, update assertions):**
 
-`tests/test_irritator_orchestrator.py` (new file):
-- Mock all five sub-functions; assert `run_irritator()` returns `(list[Narrative], list[RankedSignal], IrritatorStatus)`
-- Narrative extraction failure → `IrritatorStatus(level="error")`
-- Empty narratives → `IrritatorStatus(level="empty")`
-- All signals filtered → `IrritatorStatus(level="empty")`
-- Ranking produces results → `IrritatorStatus(level="ok")`
+- `tests/test_query_generator.py`:
+  - Assert `SearchQuery` dataclass has no `target_source` field.
+  - Assert the prompt string sent to LLM includes at least one adversarial marker
+    (e.g. "failure", "criticism", "wrong", "didn't work"). Check via mock `complete()`.
+  - Existing JSON-parse / field-validation tests stay unchanged (minus `target_source`).
 
-**Assertions that matter:**
-- `level == "ok"` only when `len(all_ranked) > 0`
-- `level == "error"` only when a stage raised
-- Per-narrative ranking failure does not set `level = "error"`
-- HEAD 405 is not treated as a dead URL
+- `tests/test_ranker.py`:
+  - Assert prompt includes calibration band text ("9-10" or "direct evidence").
+  - Assert default `min_signal_score=5` in `IrritatorConfig` (not 7).
+  - Existing score-threshold and top-signals-limit tests: update threshold expectations from 7 → 5.
 
-**Integration (manual gate):**
-```bash
-python -m digest --dry-run
-```
+- `tests/test_sources_devto.py`:
+  - Assert HTTP request contains `?q=` parameter (not `?tag=`).
+  - Assert full query string is passed, not just `query.split()[0]`.
 
----
+- `tests/test_sources_init.py`:
+  - With 1 query and 2 registered adapter mocks, assert both adapters are called (fan-out).
+  - With N queries × M sources, assert M×N total adapter calls.
+  - Note: URL dedup is handled downstream by `validate_signals()`, not by `search_all_sources()`.
 
-## 6. Risks and Unknowns
+**Integration (existing `tests/test_irritator_orchestrator.py`):**
+- Run `run_irritator()` with mocked LLM + mocked sources returning ≥1 signal per narrative.
+- Assert `IrritatorStatus.level == "ok"` when ≥1 signal scores ≥ 5.
+- Assert each adapter mock called once per query (fan-out count).
 
-1. **HEAD rejection masking dead URLs** — 405 means server rejects HEAD method; keep-on-405 heuristic cannot distinguish live-HEAD-rejecting from dead. Accept; GET fallback is future work.
-2. **`asyncio.Semaphore` tuning** — default 10 is conservative; can tune in follow-up.
-3. **`_load_irritator()` must parse `check_liveness`** — easy to miss; must add to both dataclass and parser return call.
-4. **`test_config.py` update** — `check_liveness` boolean parsing needs a test case.
+**What assertions matter most:**
+- Adversarial token present in query prompt — this is the root fix; assert its presence.
+- Fan-out count: `len(adapters) × len(queries)` calls — confirms coverage fix.
+- dev.to `?q=` parameter — confirms structural fix.
+- Default threshold = 5 in config — confirms threshold change.
 
-Closes #6
+**No e2e tests.** Real network calls are never made per `CLAUDE.md` constraints.
+
+## 6. Risks and unknowns
+
+1. **Funnel diagnosis from production data.** `digest-prod/config.yaml` already sets
+   `min_signal_score: 5` (not 7), yet the 2026-04-24 digest has no Counter-Signals section —
+   confirming the funnel empties before the ranker. The failure is at the search stage.
+   This makes the adversarial-prompt + fan-out changes the load-bearing fixes; the threshold
+   change in `config.py` default is now cosmetic for production but correct for consistency.
+
+2. **Adversarial prompt may not hold under small LLMs.** Groq/DeepSeek free-tier models may
+   still produce topical queries despite the instruction. The fix is behaviorally testable by
+   running `python -m digest --verbose` and inspecting generated queries, but cannot be verified
+   via unit tests without a live LLM call.
+
+3. **Fan-out increases HTTP load ~5×.** From ~15 to ~75 adapter calls per run. GitHub Actions
+   timeout is 6 hours — not a concern. `_SEMAPHORE_LIMIT=10` in `sources/__init__.py` throttles
+   concurrency. Low risk.
+
+4. **dev.to `?q=` API behaviour is unverified.** The text-search endpoint exists but result
+   quality and rate limits are undocumented. May need a fallback if it returns empty or errors.
+   Low-risk to ship: if dev.to returns nothing, that's the same as the current state.
+
+5. **Lowering `min_signal_score` to 5 may admit mediocre signals.** Score 5–6 is "mildly
+   relevant alternative perspective" — not the provocative counter the product promises. Acceptable
+   as first step: better to show something and tune up than show nothing. Threshold is config, not
+   code — easy to raise without a deploy.
+
+6. **Removing `target_source` removes per-source query phrasing.** arXiv benefits from academic
+   vocabulary; Reddit from colloquial phrasing. A single query string going to all sources may
+   underperform source-specific queries. Known trade-off for this iteration; Option C addresses it
+   if needed.
+
+Closes #53

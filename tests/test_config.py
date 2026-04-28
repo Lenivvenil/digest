@@ -57,7 +57,7 @@ def test_defaults_applied(tmp_path: Path) -> None:
     assert config.radar.summary_style == "analytical"
     assert config.radar.perspectives is False
     assert config.irritator.max_narratives == 5
-    assert config.irritator.min_signal_score == 7
+    assert config.irritator.min_signal_score == 5
     assert config.telegram.enabled is True
     assert config.telegram.split_messages is True
     assert config.obsidian.enabled is True
@@ -540,3 +540,11 @@ def test_effective_sources_empty_state_same_as_enabled(tmp_path: Path) -> None:
 
     store = SourceStateStore()
     assert config.effective_sources(store) == config.enabled_sources
+
+
+def test_irritator_config_default_min_signal_score() -> None:
+    """IrritatorConfig() default min_signal_score must be 5, not the old 7."""
+    from digest.config import IrritatorConfig
+
+    cfg = IrritatorConfig()
+    assert cfg.min_signal_score == 5

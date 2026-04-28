@@ -9,12 +9,17 @@ import httpx
 import pytest
 
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.sources import search_all_sources
+from digest.irritator.sources import _import_adapters, search_all_sources
 from tests.factories import make_signal
 
+# Pre-import all adapter modules so their @_register decorators fire before any
+# patch.dict call. Without this, _import_adapters() inside search_all_sources()
+# runs during patch.dict context and overwrites mocks with real functions.
+_import_adapters()
 
-def _make_query(source: str = "hackernews", query: str = "test") -> SearchQuery:
-    return SearchQuery(query=query, target_source=source, intent="find counter-signals")
+
+def _make_query(query: str = "test failure") -> SearchQuery:
+    return SearchQuery(query=query, intent="find counter-signals")
 
 
 def _make_config(sources: list[str] | None = None) -> Any:
@@ -32,35 +37,66 @@ def _make_signal(source: str = "hackernews") -> Any:
 
 @pytest.mark.asyncio
 class TestSearchAllSources:
-    async def test_dispatches_to_adapter(self) -> None:
-        mock_adapter = AsyncMock(return_value=[_make_signal()])
-        queries = [_make_query("hackernews")]
+    async def test_fans_out_to_all_configured_sources(self) -> None:
+        mock_hn = AsyncMock(return_value=[_make_signal("hackernews")])
+        mock_reddit = AsyncMock(return_value=[_make_signal("reddit")])
+        queries = [_make_query()]
 
-        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
+        with patch.dict(
+            "digest.irritator.sources._ADAPTERS",
+            {"hackernews": mock_hn, "reddit": mock_reddit},
+            clear=True,
+        ):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
+                signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
 
-        assert len(signals) == 1
-        mock_adapter.assert_called_once()
+        assert len(signals) == 2
+        mock_hn.assert_called_once()
+        mock_reddit.assert_called_once()
 
-    async def test_skips_unconfigured_source(self) -> None:
-        mock_adapter = AsyncMock(return_value=[_make_signal()])
-        queries = [_make_query("arxiv")]
+    async def test_multiple_queries_fan_to_all_sources(self) -> None:
+        mock_hn = AsyncMock(return_value=[_make_signal("hackernews")])
+        mock_reddit = AsyncMock(return_value=[_make_signal("reddit")])
+        queries = [_make_query("q1"), _make_query("q2")]
 
-        with patch.dict("digest.irritator.sources._ADAPTERS", {"arxiv": mock_adapter}):
+        with patch.dict(
+            "digest.irritator.sources._ADAPTERS",
+            {"hackernews": mock_hn, "reddit": mock_reddit},
+            clear=True,
+        ):
             async with httpx.AsyncClient() as client:
-                # config only has hackernews, not arxiv
+                signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
+
+        assert len(signals) == 4
+        assert mock_hn.call_count == 2
+        assert mock_reddit.call_count == 2
+
+    async def test_unconfigured_source_adapter_not_called(self) -> None:
+        mock_arxiv = AsyncMock(return_value=[_make_signal("arxiv")])
+        queries = [_make_query()]
+
+        with patch.dict(
+            "digest.irritator.sources._ADAPTERS",
+            {"arxiv": mock_arxiv},
+            clear=True,
+        ):
+            async with httpx.AsyncClient() as client:
+                # config only has hackernews — arxiv is registered but not configured
                 signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
 
         assert signals == []
-        mock_adapter.assert_not_called()
+        mock_arxiv.assert_not_called()
 
     async def test_graceful_degradation_on_failure(self) -> None:
         mock_good = AsyncMock(return_value=[_make_signal("hackernews")])
         mock_bad = AsyncMock(side_effect=RuntimeError("API down"))
-        queries = [_make_query("hackernews"), _make_query("reddit")]
+        queries = [_make_query()]
 
-        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_good, "reddit": mock_bad}):
+        with patch.dict(
+            "digest.irritator.sources._ADAPTERS",
+            {"hackernews": mock_good, "reddit": mock_bad},
+            clear=True,
+        ):
             async with httpx.AsyncClient() as client:
                 signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
 
@@ -72,13 +108,17 @@ class TestSearchAllSources:
             signals = await search_all_sources([], _make_config(), client)
         assert signals == []
 
-    async def test_multiple_queries_same_source(self) -> None:
-        mock_adapter = AsyncMock(return_value=[_make_signal()])
-        queries = [_make_query("hackernews", "q1"), _make_query("hackernews", "q2")]
+    async def test_query_string_passed_to_adapter(self) -> None:
+        mock_adapter = AsyncMock(return_value=[])
+        queries = [_make_query("AI failure criticism")]
 
-        with patch.dict("digest.irritator.sources._ADAPTERS", {"hackernews": mock_adapter}):
+        with patch.dict(
+            "digest.irritator.sources._ADAPTERS",
+            {"hackernews": mock_adapter},
+            clear=True,
+        ):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
+                await search_all_sources(queries, _make_config(["hackernews"]), client)
 
-        assert len(signals) == 2
-        assert mock_adapter.call_count == 2
+        called_query = mock_adapter.call_args[0][0]
+        assert called_query == "AI failure criticism"

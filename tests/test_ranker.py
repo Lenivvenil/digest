@@ -43,7 +43,7 @@ def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict[st
     ]
 
 
-def _make_config(language: str = "ru", min_score: int = 7, top_signals: int = 3) -> Any:
+def _make_config(language: str = "ru", min_score: int = 5, top_signals: int = 3) -> Any:
     class IrritatorCfg:
         pass
     class RadarCfg:
@@ -76,6 +76,23 @@ class TestBuildPrompt:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
         assert "counter-signal" in messages[0]["content"]
 
+    def test_english_prompt_has_calibration_anchors(self) -> None:
+        messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
+        user_content = messages[1]["content"]
+        assert "9-10" in user_content
+        assert "direct evidence" in user_content
+
+    def test_russian_prompt_has_calibration_anchors(self) -> None:
+        messages = _build_prompt(_make_narrative(), [_make_signal()], "ru")
+        user_content = messages[1]["content"]
+        assert "9-10" in user_content
+
+    def test_single_criterion_not_conjunction(self) -> None:
+        messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
+        system_content = messages[0]["content"]
+        assert "substance" not in system_content
+        assert "credibility" not in system_content
+
 
 # ---------------------------------------------------------------------------
 # _parse_rankings tests
@@ -85,7 +102,7 @@ class TestParseRankings:
     def test_valid_rankings(self) -> None:
         signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
         raw = _valid_rankings(2, [8, 9])
-        result = _parse_rankings(raw, signals, "claim", 7)
+        result = _parse_rankings(raw, signals, "claim", 5)
         assert len(result) == 2
         assert result[0].score == 9  # sorted desc
         assert result[1].score == 8
@@ -93,9 +110,16 @@ class TestParseRankings:
     def test_filters_below_min_score(self) -> None:
         signals = [_make_signal(), _make_signal("https://b.com")]
         raw = _valid_rankings(2, [8, 3])
-        result = _parse_rankings(raw, signals, "claim", 7)
+        result = _parse_rankings(raw, signals, "claim", 5)
         assert len(result) == 1
         assert result[0].score == 8
+
+    def test_threshold_5_lets_through_score_5(self) -> None:
+        signals = [_make_signal()]
+        raw = [{"index": 0, "score": 5, "reasoning": "mild alternative"}]
+        result = _parse_rankings(raw, signals, "claim", 5)
+        assert len(result) == 1
+        assert result[0].score == 5
 
     def test_invalid_index_skipped(self) -> None:
         signals = [_make_signal()]
@@ -150,9 +174,20 @@ class TestRankSignals:
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=7))
+            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5))
 
         assert len(result) == 1
+
+    async def test_score_5_passes_default_threshold(self) -> None:
+        signals = [_make_signal("https://a.com")]
+        raw = [{"index": 0, "score": 5, "reasoning": "mild alternative"}]
+        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
+
+        with patch("digest.irritator.ranker.complete", mock_complete):
+            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5))
+
+        assert len(result) == 1
+        assert result[0].score == 5
 
     async def test_llm_failure_propagates(self) -> None:
         mock_complete = AsyncMock(side_effect=RuntimeError("fail"))

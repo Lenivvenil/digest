@@ -1,4 +1,4 @@
-"""Generate search queries for counter-signal sources from narratives."""
+"""Generate adversarial search queries for counter-signal discovery from narratives."""
 
 from __future__ import annotations
 
@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SearchQuery:
-    """A search query targeting a specific counter-signal source."""
+    """A search query for finding counter-signals across all configured sources."""
 
     query: str
-    target_source: str
     intent: str
 
 
@@ -29,12 +28,12 @@ class SearchQuery:
 
 _SYSTEM_PROMPTS: dict[str, str] = {
     "ru": (
-        "Ты — поисковый аналитик. Твоя задача — составить поисковые запросы, "
-        "которые помогут найти контр-сигналы к доминирующему нарративу."
+        "Ты — поисковый аналитик-критик. Твоя задача — составить поисковые запросы, "
+        "которые найдут доказательства ПРОТИВ доминирующего нарратива."
     ),
     "en": (
-        "You are a search analyst. Your task is to craft search queries "
-        "that will help find counter-signals to a dominant narrative."
+        "You are a critical search analyst. Your task is to craft search queries "
+        "that will find EVIDENCE AGAINST a dominant narrative."
     ),
 }
 
@@ -44,12 +43,13 @@ _USER_PROMPTS: dict[str, str] = {
         "Категория: {category}\n"
         "Неявные предположения:\n{assumptions}\n"
         "Почему стоит оспорить: {why_worth_challenging}\n\n"
-        "Составь {queries_per_narrative} поисковых запросов для поиска "
-        "контр-сигналов к этому нарративу. Запросы будут использованы "
-        "в следующих источниках: {sources}.\n\n"
+        "Составь {queries_per_narrative} поисковых запросов, которые найдут доказательства ПРОТИВ "
+        "этого нарратива. НЕ описывай нарратив. Ищи опровержения, провалы, критику, пост-мортемы.\n"
+        "Используй шаблоны: «failure of X», «X didn't work», «criticism of X», «post-mortem X», "
+        "«X considered harmful», «why X is wrong», «X limitations», «X hype».\n"
+        "Каждый запрос ДОЛЖЕН содержать хотя бы одно слово отрицания, провала или сомнения.\n\n"
         "Для каждого запроса верни JSON-объект с полями:\n"
-        '- "query" — поисковый запрос (на английском, т.к. источники англоязычные)\n'
-        '- "target_source" — один из: {sources}\n'
+        '- "query" — поисковый запрос (на английском)\n'
         '- "intent" — что именно ищем (1 предложение)\n\n'
         "Верни JSON-массив объектов. Ничего больше не добавляй."
     ),
@@ -58,28 +58,28 @@ _USER_PROMPTS: dict[str, str] = {
         "Category: {category}\n"
         "Implicit assumptions:\n{assumptions}\n"
         "Why worth challenging: {why_worth_challenging}\n\n"
-        "Craft {queries_per_narrative} search queries to find counter-signals "
-        "to this narrative. Queries will be used in: {sources}.\n\n"
+        "Craft {queries_per_narrative} search queries that will find EVIDENCE AGAINST this narrative.\n"
+        "Do NOT describe the narrative. Hunt for refutations, failures, criticism, post-mortems.\n"
+        "Use adversarial patterns: 'failure of X', 'X didn't work', 'criticism of X', 'post-mortem X', "
+        "'X considered harmful', 'why X is wrong', 'X limitations', 'X hype'.\n"
+        "Each query MUST contain at least one negation, failure, or doubt keyword.\n\n"
         "For each query return a JSON object with fields:\n"
         '- "query" — the search query\n'
-        '- "target_source" — one of: {sources}\n'
         '- "intent" — what we are looking for (1 sentence)\n\n'
         "Return a JSON array of objects. Return nothing else."
     ),
 }
 
-_REQUIRED_FIELDS = {"query", "target_source", "intent"}
+_REQUIRED_FIELDS = {"query", "intent"}
 
 
 def _build_prompt(
     narrative: Narrative,
     language: str,
     queries_per_narrative: int,
-    sources: list[str],
 ) -> list[dict[str, str]]:
-    """Build LLM messages for query generation."""
+    """Build LLM messages for adversarial query generation."""
     assumptions = "\n".join(f"- {a}" for a in narrative.implicit_assumptions)
-    sources_str = ", ".join(sources)
     system = _SYSTEM_PROMPTS.get(language, _SYSTEM_PROMPTS["ru"])
     user_tmpl = _USER_PROMPTS.get(language, _USER_PROMPTS["ru"])
     user = user_tmpl.format(
@@ -88,7 +88,6 @@ def _build_prompt(
         assumptions=assumptions,
         why_worth_challenging=narrative.why_worth_challenging,
         queries_per_narrative=queries_per_narrative,
-        sources=sources_str,
     )
     return [
         {"role": "system", "content": system},
@@ -112,7 +111,6 @@ def _parse_queries(raw: Any) -> list[SearchQuery]:
         queries.append(
             SearchQuery(
                 query=str(item["query"]),
-                target_source=str(item["target_source"]),
                 intent=str(item["intent"]),
             )
         )
@@ -123,12 +121,11 @@ async def _generate_for_narrative(
     narrative: Narrative,
     config: Config,
 ) -> list[SearchQuery]:
-    """Generate queries for a single narrative."""
+    """Generate adversarial queries for a single narrative."""
     messages = _build_prompt(
         narrative,
         config.radar.language,
         config.irritator.queries_per_narrative,
-        config.irritator.sources,
     )
     text, _usage = await complete(
         LLMRole.GENERATE_QUERIES, messages, config, temperature=0.5
@@ -141,7 +138,7 @@ async def generate_queries(
     narratives: list[Narrative],
     config: Config,
 ) -> dict[str, list[SearchQuery]]:
-    """Generate search queries for all narratives in parallel.
+    """Generate adversarial search queries for all narratives in parallel.
 
     Returns dict mapping narrative claim to its search queries.
     Raises ValueError on invalid LLM response, RuntimeError if all providers fail.
