@@ -397,3 +397,44 @@ async def test_collect_feedback_bubble_send_failure_does_not_propagate(
 
     result = await collect_feedback(token, store, cache_dir=str(tmp_path))
     assert result.last_update_id == 5001  # update was still processed
+
+
+def _status_update(chat_id: int = 999) -> dict[str, object]:
+    return {
+        "update_id": 6001,
+        "message": {
+            "message_id": 2,
+            "from": {"id": chat_id},
+            "chat": {"id": chat_id, "type": "private"},
+            "text": "/status",
+        },
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_status_unknown_chat_id_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A /status from an unknown chat_id must be silently dropped — no sendMessage."""
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1111")
+    token = "tok_status_auth"
+    store = FeedbackStore()
+
+    respx.get(f"https://api.telegram.org/bot{token}/getWebhookInfo").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"url": "", "pending_update_count": 0}})
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/deleteWebhook").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post(f"https://api.telegram.org/bot{token}/getUpdates").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": [_status_update(chat_id=999)]})
+    )
+    send_mock = respx.post(f"https://api.telegram.org/bot{token}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+    )
+
+    result = await collect_feedback(token, store, cache_dir=str(tmp_path))
+
+    assert not send_mock.called
+    assert result.last_update_id == 6001

@@ -16,6 +16,7 @@ from digest._util import atomic_json_write
 logger = logging.getLogger(__name__)
 
 FEEDBACK_FILE = "feedback.json"
+TELEGRAM_TEXT_LIMIT = 4096
 
 
 @dataclass
@@ -115,6 +116,59 @@ def save_feedback(store: FeedbackStore, cache_dir: str) -> None:
         logger.warning("Failed to save feedback: %s", exc)
 
 
+async def _handle_bot_command(
+    text: str,
+    chat_id: str,
+    owner_chat_id: str,
+    bot_token: str,
+    store: "FeedbackStore",
+    cache_dir: str,
+    client: httpx.AsyncClient,
+) -> None:
+    """Dispatch /status and /bubble commands; silently drop unknown chat_ids."""
+    if not chat_id or chat_id != owner_chat_id:
+        return
+    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    if text == "/status":
+        reply = (
+            f"Last digest: {store.last_digest_time or 'unknown'}\n"
+            f"Sources: {len(store.last_digest_sources)}"
+        )
+        try:
+            await client.post(send_url, json={"chat_id": chat_id, "text": reply})
+        except Exception as exc:
+            logger.warning(
+                "Failed to send /status reply (chat_id=%s): %s",
+                chat_id,
+                exc.__class__.__name__,
+            )
+    elif text == "/bubble":
+        from digest.source_scorer import (
+            compute_bubble_report,
+            load_source_category_map,
+            load_source_state,
+            load_stats,
+        )
+        report = compute_bubble_report(
+            store,
+            load_stats(cache_dir),
+            load_source_state(cache_dir),
+            category_map=load_source_category_map(cache_dir) or None,
+        )
+        try:
+            await client.post(
+                send_url,
+                json={"chat_id": chat_id, "text": report[:TELEGRAM_TEXT_LIMIT]},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to send /bubble reply (chat_id=%s, len=%d): %s",
+                chat_id,
+                len(report),
+                exc.__class__.__name__,
+            )
+
+
 async def collect_feedback(
     bot_token: str, store: FeedbackStore, *, cache_dir: str = ".cache"
 ) -> FeedbackStore:
@@ -125,7 +179,11 @@ async def collect_feedback(
     """
     offset = store.last_update_id + 1 if store.last_update_id > 0 else None
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-    owner_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    owner_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not owner_chat_id:
+        logger.warning(
+            "TELEGRAM_CHAT_ID is not set — /status and /bubble commands will be silently ignored"
+        )
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -190,50 +248,12 @@ async def collect_feedback(
                     message = update.get("message")
                     if message:
                         text = message.get("text", "").strip()
-                        if text == "/status":
-                            chat_id = str(message.get("chat", {}).get("id", ""))
-                            if chat_id and chat_id == owner_chat_id:
-                                last_time = store.last_digest_time or "unknown"
-                                source_count = len(store.last_digest_sources)
-                                status_text = (
-                                    f"Last digest: {last_time}\n"
-                                    f"Sources: {source_count}"
-                                )
-                                try:
-                                    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                                    await client.post(
-                                        send_url,
-                                        json={"chat_id": chat_id, "text": status_text},
-                                    )
-                                except Exception as exc:
-                                    logger.warning("Failed to send /status reply: %s", exc)
-                        elif text == "/bubble":
-                            chat_id = str(message.get("chat", {}).get("id", ""))
-                            if chat_id and chat_id == owner_chat_id:
-                                from digest.source_scorer import (
-                                    compute_bubble_report,
-                                    load_source_category_map,
-                                    load_source_state,
-                                    load_stats,
-                                )
-                                stats = load_stats(cache_dir)
-                                state = load_source_state(cache_dir)
-                                category_map = load_source_category_map(cache_dir)
-                                report = compute_bubble_report(
-                                    store, stats, state, category_map=category_map or None
-                                )
-                                try:
-                                    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                                    await client.post(
-                                        send_url,
-                                        json={"chat_id": chat_id, "text": report[:4096]},
-                                    )
-                                except Exception:
-                                    logger.warning(
-                                        "Failed to send /bubble reply (chat_id=%s, len=%d)",
-                                        chat_id,
-                                        len(report),
-                                    )
+                        if text in ("/status", "/bubble"):
+                            chat_id = str(message.get("chat", {}).get("id") or "")
+                            await _handle_bot_command(
+                                text, chat_id, owner_chat_id,
+                                bot_token, store, cache_dir, client,
+                            )
                         continue
 
                     callback_query = update.get("callback_query")

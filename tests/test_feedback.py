@@ -746,8 +746,9 @@ async def test_collect_feedback_src_no_callback() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_status_command() -> None:
+async def test_collect_feedback_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
     """/status message triggers a sendMessage reply with digest info."""
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "99999")
     token = "testtoken"
     chat_id = "99999"
     store = FeedbackStore(
