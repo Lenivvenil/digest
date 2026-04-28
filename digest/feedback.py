@@ -210,12 +210,16 @@ async def collect_feedback(
                             if chat_id:
                                 from digest.source_scorer import (
                                     compute_bubble_report,
+                                    load_source_category_map,
                                     load_source_state,
                                     load_stats,
                                 )
                                 stats = load_stats(cache_dir)
                                 state = load_source_state(cache_dir)
-                                report = compute_bubble_report(store, stats, state)
+                                category_map = load_source_category_map(cache_dir)
+                                report = compute_bubble_report(
+                                    store, stats, state, category_map=category_map or None
+                                )
                                 try:
                                     send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                                     await client.post(

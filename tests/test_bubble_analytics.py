@@ -17,6 +17,8 @@ from digest.source_scorer import (
     SourceStats,
     _diversity_score,
     compute_bubble_report,
+    load_source_category_map,
+    save_source_category_map,
 )
 
 # ---------------------------------------------------------------------------
@@ -199,6 +201,61 @@ def test_compute_bubble_report_top_sources_capped_at_5() -> None:
     stats = {f"S{i}": _make_stats(f"S{i}", [i + 1] * 7) for i in range(10)}
     report = compute_bubble_report(FeedbackStore(), stats, SourceStateStore())
     assert report.count("  S") <= 5
+
+
+def test_compute_bubble_report_with_category_map_shows_topics() -> None:
+    """When category_map provided, report shows 'Your bubble' by topic, not source names."""
+    stats = {
+        "TechFeed": _make_stats("TechFeed", [10] * 7),
+        "FinFeed": _make_stats("FinFeed", [5] * 7),
+        "SecFeed": _make_stats("SecFeed", [5] * 7),
+    }
+    category_map = {"TechFeed": "AI & LLM", "FinFeed": "FinTech", "SecFeed": "FinTech"}
+    report = compute_bubble_report(FeedbackStore(), stats, SourceStateStore(), category_map=category_map)
+    assert "Your bubble" in report
+    assert "AI & LLM" in report
+    assert "FinTech" in report
+    assert "Top sources" not in report
+
+
+def test_compute_bubble_report_category_percentages_sum_to_100() -> None:
+    stats = {
+        "A": _make_stats("A", [3] * 7),
+        "B": _make_stats("B", [1] * 7),
+    }
+    category_map = {"A": "Tech", "B": "Finance"}
+    report = compute_bubble_report(FeedbackStore(), stats, SourceStateStore(), category_map=category_map)
+    assert "75%" in report  # A: 3/(3+1) = 75%
+    assert "25%" in report  # B: 1/(3+1) = 25%
+
+
+def test_compute_bubble_report_empty_category_map_falls_back_to_sources() -> None:
+    """Empty category_map (no data yet) falls back to top-sources display."""
+    stats = {"Feed": _make_stats("Feed", [5] * 7)}
+    report = compute_bubble_report(FeedbackStore(), stats, SourceStateStore(), category_map={})
+    assert "Top sources" in report
+    assert "Your bubble" not in report
+
+
+# ---------------------------------------------------------------------------
+# save_source_category_map / load_source_category_map
+# ---------------------------------------------------------------------------
+
+
+def test_save_load_source_category_map_round_trip(tmp_path: Path) -> None:
+    from digest.config import SourceConfig
+    sources = [
+        SourceConfig(name="HN", url="https://hn.com", category="Tech", enabled=True),
+        SourceConfig(name="PYMNTS", url="https://pymnts.com", category="FinTech", enabled=True),
+    ]
+    save_source_category_map(sources, str(tmp_path))
+    loaded = load_source_category_map(str(tmp_path))
+    assert loaded == {"HN": "Tech", "PYMNTS": "FinTech"}
+
+
+def test_load_source_category_map_missing_file(tmp_path: Path) -> None:
+    result = load_source_category_map(str(tmp_path))
+    assert result == {}
 
 
 # ---------------------------------------------------------------------------
