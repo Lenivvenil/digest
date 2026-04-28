@@ -11,6 +11,7 @@ import pytest
 import respx
 
 from digest.delivery.telegram import (
+    _ASYNC_FEEDBACK_NOTE,
     escape_markdownv2,
     send_article_cards,
     send_counter_signals,
@@ -304,3 +305,21 @@ class TestSendArticleCards:
 
         assert len(result) == 1
         assert route.call_count == 1
+
+    async def test_card_includes_async_feedback_note(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each card must carry the italicised async-feedback note."""
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        articles = {"tech": [_make_article()]}
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            await send_article_cards(articles, _make_config())
+
+        assert route.call_count == 1
+        payload = json.loads(route.calls[0].request.content)
+        text: str = payload["text"]
+        assert f"_{escape_markdownv2(_ASYNC_FEEDBACK_NOTE)}_" in text

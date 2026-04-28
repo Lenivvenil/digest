@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
 # Buttons are answered async (next pipeline run) — shown to user as a hint.
-_ASYNC_FEEDBACK_NOTE = "Реакции учитываются при след. запуске"  # noqa: E501
+_ASYNC_FEEDBACK_NOTE = "Реакции учитываются при след. запуске"
 _SPLIT_LIMIT = 3800
 _MAX_MESSAGE_LEN = 4096
 _MAX_RETRIES = 3
