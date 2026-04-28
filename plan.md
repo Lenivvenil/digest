@@ -1,69 +1,70 @@
-# Plan — Issue #66: fix(telegram): loading... при нажатии кнопки реакции
+# Plan: Issue #64 — Domain-reviewer pass on irritator-bc.md
 
 ## 1. Problem restatement
 
-Telegram requires `answerCallbackQuery` to be called within 10 seconds of a button press. Because the digest pipeline runs only twice daily via GitHub Actions, any button press between runs goes unanswered. The user sees a "loading..." spinner for ~30 seconds, then nothing — even though the feedback is actually recorded on the next pipeline run. The root problem is a mismatch between user expectations (synchronous confirmation) and the pipeline's batch execution model.
+`docs/domain/irritator-bc.md` was authored by the domain-researcher agent as part of the issue #53 fix (commit `8d36567`), with `[UPDATED — issue #53]` and `[REMOVED — issue #53]` markers applied inline to schema and config facts. However, the "Where the BC breaks" section (lines 96–114) lists 8 pipeline failure modes as if all are current — it received no markers. In reality, 4 of the 8 were addressed directly in the same commit (adversarial query phrasing, ranker AND-logic → single criterion with calibration anchors, score threshold 7→5, dev.to text-search fix). A reader today cannot tell which failures are historical and which remain open, making the section misleading for anyone debugging or extending the irritator.
 
 ## 2. Affected bounded contexts and files
 
-**Delivery BC** (`digest/delivery/`)
-- `digest/delivery/telegram.py` — `send_article_cards()`: where article cards with voting buttons are assembled and sent
-
-No other BCs are touched. The Irritator BC (feedback collection) is unchanged — it already records votes correctly on the next run.
+- **Irritator BC** — `docs/domain/irritator-bc.md` (the only file being changed)
+- No code files are touched; no BC boundary or inter-context contract changes.
 
 ## 3. Considered approaches
 
-**Option A — Serverless webhook (Cloudflare Worker / Vercel)**
-Deploy a lightweight handler that answers `callback_query` within 10 seconds and shows a toast "✓ Учтено". Eliminates the spinner entirely.
-- Pros: proper UX, matches Telegram's intended flow
-- Cons: requires infrastructure outside GitHub Actions (deploy, secrets, monitoring). Out of scope for a zero-infra pipeline. Deferred to a future issue.
+### A. In-place fix-status markers
+Add `[FIXED — issue #53]` labels to the four resolved failure points, leave the remaining four untouched.
 
-**Option B — Increase pipeline run frequency**
-Schedule the pipeline every 5–10 minutes so there is always a run within the 10-second window.
-- Pros: no code change
-- Cons: wasteful (LLM API calls, rate limits), still non-deterministic, and misses the window entirely if the user presses a button between runs. Red flag: this is a workaround for the wrong problem.
+**Pro:** Minimal diff, consistent with the `[UPDATED]`/`[REMOVED]` pattern already in the file. Preserves full diagnostic history in place.  
+**Con:** Each failure point is a multi-paragraph structural analysis, not a one-line schema fact. A `[FIXED]` tag on a bold heading does not tell the reader whether the point is a completed historical lesson or a live open issue — they still must read the entire paragraph and infer. Option A works for one-line annotations; it does not carry the framing well for paragraph-length diagnostics.
 
-**Option C — Italics caption under each card (chosen)**
-Append `_Реакции учитываются при след. запуске_` beneath each article card to set expectations before the user taps.
-- Pros: zero infrastructure, one-line change, corrects user mental model permanently
-- Cons: slightly more verbose cards; does not remove the spinner (just explains it)
+### B. Split into two subsections (chosen)
+Restructure "Where the BC breaks" into two explicit subsections: **"Fixed by issue #53 (historical record)"** and **"Still open."** Fixed items stay verbatim under the historical header; open items stay under the live header. Add a one-sentence framing note at the top.
 
-Option A is the correct long-term fix but requires out-of-scope infrastructure. Option C is the right minimal fix given the zero-infra constraint. Option B is a red flag.
+**Pro:** Structure makes current vs. historical immediately visible without reading each item. A domain-reviewer, implementer, or future issue author scanning for live failures lands directly on the "Still open" subsection.  
+**Con:** Slightly larger diff; moves content rather than annotating it.
+
+### C. Delete fixed items entirely
+Remove points 1, 3, 4, 5 entirely.
+
+**Con:** Loses the causal reasoning behind the fixes (adversarial phrasing rationale, calibration anchor motivation, threshold logic). Ruled out — diagnostic value is worth keeping.
+
+**Chosen:** B. Option A is locally consistent but poorly suited to paragraph-length content; Option C destroys historical context. B is the only option that makes the section accurate and scannable.
 
 ## 4. Chosen approach and why
 
-Option C. The `send_article_cards()` function in `telegram.py` assembles each card's text before calling `_send_chunk`. The fix adds a module-level constant `_ASYNC_FEEDBACK_NOTE` and appends it as an italics line to every card's message body.
+Verified against git diff of commit `8d36567` (the actual #53 fix):
 
-No ADR required: the change adds no new dependencies, does not alter any BC boundary or inter-context contract, introduces no infrastructure, and is trivially reversible. None of the six architectural-significance triggers in `docs/principles.md` fire.
+**Fixed by issue #53 — 4 points:**
+- Point 1: Query generator adversarial phrasing (`query_generator.py` rewritten with contradiction patterns)
+- Point 3: Ranker AND-logic (`ranker.py` — four-criteria conjunction replaced with single "CONTRADICTS or COMPLICATES" criterion + 9-10/7-8/5-6/1-4 calibration anchors)
+- Point 4: `min_signal_score=7` threshold (`config.py` — default 7→5, consistent with prod override)
+- Point 5: dev.to adapter (`devto.py` — `?tag=` replaced with `?q=` full-text search)
 
-**Implementation (committed in `7384f1e`):**
-```python
-_ASYNC_FEEDBACK_NOTE = "Реакции учитываются при след. запуске"
+**Still open — 4 points:**
+- Point 2: Narratives extracted from a curated pro-tech feed (no feed or prompt change)
+- Point 6: Source-narrative fit unmodelled (fan-out added, but source profiling not implemented)
+- Point 7: All-pairs ranking blurs per-narrative results (provenance still dropped at `search_all_sources()`)
+- Point 8: No feedback loop (unchanged)
 
-# in send_article_cards():
-async_note = escape_markdownv2(_ASYNC_FEEDBACK_NOTE)
-text = (
-    f"[{title_esc}]({url_esc})\n\n"
-    f"{summary_esc}\n\n"
-    f"*{source_esc}* · _{cat_esc}_\n"
-    f"_{async_note}_"
-)
-```
+This maps to the issue's option **(a): "Keep as historical record (label it explicitly)"** — fixed points are preserved verbatim under a historical subheading, not deleted.
+
+Also add a cross-reference from the "Still open" items to §3 "Missing concepts" where these gaps are already documented as design targets, to prevent readers treating them as undiscovered bugs.
+
+No ADR triggered: doc-only change, no BC boundary or inter-context contract change, no new dependency. Per `docs/principles.md` § "Что значит «архитектурно-значимо»": this is a story, not a decision.
 
 ## 5. Test strategy
 
-**Unit tests** (`tests/test_delivery_telegram.py`):
-- Assert that `send_article_cards()` includes the `_ASYNC_FEEDBACK_NOTE` text (escaped) in the message body sent to `_send_chunk`.
-- Assert that the note is italicised (wrapped in `_..._` after MarkdownV2 escaping).
-- Assert existing card structure (title link, summary, source·category line) is preserved — no regression.
+Documentation-only change — no runtime code is touched.
 
-No integration or e2e tests needed: the change is purely string formatting in a function already covered by unit tests. All network calls are mocked per `CLAUDE.md` constraints.
+**Acceptance criterion (issue #64):** `domain-reviewer` agent returns APPROVE verdict on the updated file.
+
+**Manual verification during implement:**
+- Points 1, 3, 4, 5 classified as fixed — confirmed against `git show 8d36567` diff of `query_generator.py`, `ranker.py`, `config.py`, `devto.py`.
+- Points 2, 6, 7, 8 still open — no corresponding code changes in any commit on `main`.
+
+No unit/integration tests: CI does not cover `.md` files.
 
 ## 6. Risks and unknowns
 
-- **MarkdownV2 escaping of the note text:** The string "Реакции учитываются при след. запуске" contains a period (special char in MarkdownV2). Verified in code: `escape_markdownv2(_ASYNC_FEEDBACK_NOTE)` is called before interpolation — period is correctly escaped to `\.`.
-- **Card length:** The extra line adds ~45 characters. Cards are well under `_SPLIT_LIMIT` (3800 chars), so no splitting risk.
-- **Test coverage gap:** If the existing `send_article_cards` test does not assert on the full message body, the note could be silently dropped in a future refactor. The test strategy above closes this gap.
-- **Future Option A cleanup:** When a webhook handler is eventually added, the note should be removed from card text. That cleanup must be tracked in the future serverless issue to avoid orphaned UX copy.
-
-Closes #66
+- **"Still open" list risks raising expectations.** Points 2, 6, 7, 8 are architectural gaps already documented in §3 "Missing concepts" as future-work design targets. Labelling them "still open" without context could make them look like tracked near-term bugs. Mitigation: cross-reference to §3 explicitly.
+- **domain-reviewer may flag vocabulary drift or concept collisions** beyond the scope of this fix (the file has known issues documented in §1 "Vocabulary drift"). Those findings should open a new issue, not block this PR. The APPROVE criterion here is specifically for the accuracy of the failure-mode classification.
