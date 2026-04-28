@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -124,6 +125,7 @@ async def collect_feedback(
     """
     offset = store.last_update_id + 1 if store.last_update_id > 0 else None
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    owner_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -190,7 +192,7 @@ async def collect_feedback(
                         text = message.get("text", "").strip()
                         if text == "/status":
                             chat_id = str(message.get("chat", {}).get("id", ""))
-                            if chat_id:
+                            if chat_id and chat_id == owner_chat_id:
                                 last_time = store.last_digest_time or "unknown"
                                 source_count = len(store.last_digest_sources)
                                 status_text = (
@@ -207,7 +209,7 @@ async def collect_feedback(
                                     logger.warning("Failed to send /status reply: %s", exc)
                         elif text == "/bubble":
                             chat_id = str(message.get("chat", {}).get("id", ""))
-                            if chat_id:
+                            if chat_id and chat_id == owner_chat_id:
                                 from digest.source_scorer import (
                                     compute_bubble_report,
                                     load_source_category_map,
@@ -224,10 +226,14 @@ async def collect_feedback(
                                     send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
                                     await client.post(
                                         send_url,
-                                        json={"chat_id": chat_id, "text": report},
+                                        json={"chat_id": chat_id, "text": report[:4096]},
                                     )
-                                except Exception as exc:
-                                    logger.warning("Failed to send /bubble reply: %s", exc)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to send /bubble reply (chat_id=%s, len=%d)",
+                                        chat_id,
+                                        len(report),
+                                    )
                         continue
 
                     callback_query = update.get("callback_query")

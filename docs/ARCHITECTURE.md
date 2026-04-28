@@ -1,5 +1,7 @@
 # Architecture — Daily News Digest v1.0.0
 
+> Bounded Context docs: [Digest BC](domain/digest/overview.md) · [Irritator BC](domain/irritator/overview.md)
+
 ## Overview
 
 Персональный генератор ежедневного новостного дайджеста. Работает полностью на GitHub Actions — без VPS, без постоянно запущенных процессов. Состояние между запусками хранится в JSON-файлах, которые коммитятся обратно в репозиторий.
@@ -18,10 +20,10 @@ sequenceDiagram
     participant col as collector.py
     participant sum as summarizer.py
     participant tg as telegram.py
-    participant md as markdown_writer.py
+    participant md as delivery/markdown.py
     participant cache as .cache/ (git)
 
-    GHA->>main: запуск python -m src
+    GHA->>main: запуск python -m digest
     main->>cache: load_config(), load_stats(), load_feedback()
     main->>fb: collect_feedback() — getUpdates polling
     fb-->>cache: обновить feedback.json (ratings, last_update_id)
@@ -58,7 +60,7 @@ sequenceDiagram
 | `feedback.py` | Polling Telegram getUpdates. Парсинг callback-запросов (`fb:a:g:{hash}`, `fb:a:b:{hash}`). Хранение оценок в `feedback.json`. |
 | `source_scorer.py` | Вычисление quality score по 4 метрикам. `calculate_effective_priorities()`. Обнаружение trending-источников. Trial source evaluation. |
 | `discovery.py` | LLM-генерация кандидатов источников для недопредставленных категорий. Валидация feed URL. Хранение в `pending_sources.json`. Отправка approval-кнопок в Telegram. |
-| `markdown_writer.py` | Запись дайджеста в `digests/YYYY-MM-DD.md` с YAML front matter для Obsidian. |
+| `delivery/markdown.py` | Запись дайджеста в `digests/YYYY-MM-DD.md` с YAML front matter для Obsidian. |
 | `_dns_pinning.py` | SSRF-защита: DNS pinning для всех исходящих HTTP-запросов. Блокирует запросы к internal IP ranges (RFC1918). |
 | `_sanitize.py` | Очистка HTML/текста из feed-контента перед передачей в LLM. |
 | `_util.py` | `atomic_json_write()` — атомарная запись JSON через временный файл + rename, предотвращает корруп цию при сбое. |
@@ -182,7 +184,7 @@ calculate_effective_priorities() учитывает feedback_score
 
 ```
 1. DISCOVERY
-   python -m src --discover
+   python -m digest --discover
    → LLM генерирует кандидатов для категорий с < N источников
    → валидация feed URL (реальный HTTP-запрос)
    → сохранение в .cache/pending_sources.json
@@ -218,6 +220,8 @@ calculate_effective_priorities() учитывает feedback_score
 | `seen_articles.json` | `{md5_hash: iso_timestamp}` для дедупликации | Записи старше 7 дней удаляются при `save_dedup_cache()` |
 | `source_stats.json` | `SourceStats` per source с daily history | История ограничена 30 снапшотами; неактивные источники pruned |
 | `feedback.json` | `ArticleFeedback[]` + `last_update_id` + `article_source_map` | Оценки старше 30 дней; `article_source_map` ограничен 1000 записями |
+| `source_state.json` | `SourceStateEntry` per source: `trial_started`, `graduated`, `demoted` | Никогда не pruned автоматически; схема версионирована (`schema_version`) |
+| `source_category_map.json` | `{source_name: category}` — снапшот конфига для `/bubble` | Перезаписывается при каждом успешном pipeline-запуске |
 | `pending_sources.json` | Очередь кандидатов на добавление из `--discover` | Очищается после apply_trial_decisions() |
 
 Запись всех файлов — атомарная через `atomic_json_write()` (write tmp → rename), что предотвращает частичную запись при сбое процесса.
@@ -234,7 +238,7 @@ Concurrency: group=digest, cancel-in-progress=false
 
 Jobs:
   test:   ruff check → mypy → pytest → validate config
-  digest: (needs: test) → python -m src → git add digests/ .cache/ config.yaml → git push
+  digest: (needs: test) → python -m digest → git add digests/ .cache/ config.yaml → git push
 ```
 
 После запуска дайджест коммитится обратно в `main` с сообщением `digest: YYYY-MM-DD`. Перед push делается `git pull --rebase` для обработки concurrent writes (например, если discover и digest запустились одновременно).
@@ -247,7 +251,7 @@ Concurrency: group=digest, cancel-in-progress=false  (та же группа, ч
 
 Jobs:
   test:     ruff check → mypy → pytest
-  discover: (needs: test) → python -m src --discover → git add .cache/ → git push
+  discover: (needs: test) → python -m digest --discover → git add .cache/ → git push
 ```
 
 Та же concurrency group предотвращает одновременную запись в `.cache/` двумя workflow.
@@ -296,7 +300,7 @@ Feed-контент (title, description) очищается перед пере�
 
 ### /bubble команда в Telegram
 
-Отправьте `/bubble` боту — он ответит снапшотом фильтр-пузыря: диверсификация источников (Shannon entropy 0–100), топ-5 источников за последние 7 дней, статистика обратной связи за 14 дней, состояние lifecycle источников. Ответ формируется из локального кеша (без LLM и сетевых запросов) и приходит при следующем запуске pipeline.
+Отправьте `/bubble` боту — он ответит снапшотом фильтр-пузыря: диверсификация источников (Shannon entropy 0–100), разбивка по **категориям** за последние 7 дней (если `source_category_map.json` доступен; иначе топ-5 источников), статистика обратной связи за 14 дней, состояние lifecycle источников (graduated/trial/demoted). Ответ формируется из локального кеша (без LLM и сетевых запросов). Доступен только владельцу бота (`TELEGRAM_CHAT_ID`). Требует `adaptive.enabled: true` и хотя бы одного завершённого pipeline-запуска.
 
 ### Failure notification
 
