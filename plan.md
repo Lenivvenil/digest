@@ -1,107 +1,152 @@
-# Plan: /bubble command — on-demand filter bubble analytics (issue #49)
+# Plan — Issue #55: Verbose and repetitive article summaries
 
 ## 1. Problem restatement
 
-The system already collects rich signal data: per-article vote ratings in `feedback.json`, per-source fetch statistics and daily snapshots in `source_stats.json`, and trial/graduated/demoted lifecycle state in `source_state.json`. None of this is surfaced to the user directly — the only bot command available is `/status`, which returns two lines (last digest time, source count). The user has no way to ask "how homogeneous is my information diet right now, and is my voting behaviour actually influencing anything?" without inspecting raw JSON files. The `/bubble` command fills this gap by computing a filter bubble snapshot from local cache and sending it as a single Telegram message.
+The digest produces article summaries that restate headlines and echo the same observations
+across multiple items in a single run. The Radar summarizer has two code paths: per-category
+free-text (`build_category_prompt`) and per-article JSON selection (`build_per_article_prompt`).
+Both paths lack an explicit instruction to focus on what is *surprising or non-obvious*, and
+the per-article JSON path requests 2-3 sentences when 1-2 are sufficient. Because categories
+run in parallel (`asyncio.gather`), nothing prevents two categories from making identical
+observations about closely related articles. The result is a digest where 50-60% of content
+carries no information gain over just reading the headlines.
 
 ## 2. Affected bounded contexts and files
 
-**BC: Digest (single BC, as per `docs/domain/digest/overview.md`)**
-
-Modules touched:
+**Radar BC** — sole affected context.
 
 | File | Change |
 |------|--------|
-| `digest/source_scorer.py` | Add `compute_bubble_report()` pure function |
-| `digest/feedback.py` | Add `/bubble` handler in `collect_feedback()`; add `cache_dir` keyword-only param |
-| `digest/main.py` | Pass `cache_dir` to `collect_feedback()` |
-| `tests/test_sources_init.py` — no | n/a |
-| `tests/test_bubble_analytics.py` (new) | Unit tests for `compute_bubble_report()` and `/bubble` handler path |
+| `digest/radar/summarizer.py` | Tighten live `instructions_category_*` keys (10) + `instructions_trends` (2) + `_PER_ARTICLE_INSTRUCTIONS` (2) = 14 strings; add `_cap_sentences()` utility; apply cap in `pick_top_articles()` |
+| `tests/test_radar_summarizer.py` | Add prompt-content assertions + sentence-cap unit tests |
 
-No BC boundary changes. No new domain terms introduced.
+**Dead code note:** `PROMPT_TEMPLATES` also contains `instructions_analytical`, `instructions_brief`,
+`instructions_detailed`, and their `_no_persp` siblings (5 keys × 2 languages = 10 strings).
+These are never referenced — `build_category_prompt` only uses `instructions_category_{style}` keys.
+They are **not modified** in this PR (out of scope) but noted here so reviewers don't flag the
+inconsistency. A follow-up cleanup is tracked in the PR description.
+
+No cross-BC contracts touched. `irritator/` and `delivery/` are unaffected.
 
 ## 3. Considered approaches
 
-### Approach A — Handle /bubble in `collect_feedback()` (chosen)
+### A — Prompt engineering only
 
-Extend `collect_feedback(bot_token, store)` with an optional `cache_dir: str = ".cache"` keyword argument. When the polling loop sees a `/bubble` text message, load `source_stats` and `source_state` from `cache_dir` (local disk reads, <5ms), call `compute_bubble_report()`, and send the reply.
+Tighten the instruction strings:
+- Reduce per-article JSON target from 2-3 sentences to 1-2 sentences
+- Add: "do NOT restate the headline verbatim"
+- Add: "focus on what is surprising, non-obvious, or has direct practical implications"
 
-**Pros:**
-- All bot text command handling lives in one place (consistent with existing `/status` handler at `feedback.py:186`)
-- No new CLI flag, no new GitHub Actions job
-- Pure function `compute_bubble_report()` is independently testable
-- `cache_dir` default makes the signature change backward-compatible; `main.py` call site needs one argument added
+Trade-offs:
+- Zero latency/cost overhead; reversible
+- Purely behavioural — LLM can still ignore the instruction on a bad run
+- Acceptance criterion 1 (≤ 2 sentences) cannot be verified mechanically
 
-**Cons:**
-- `collect_feedback()` gains a second responsibility (compute analytics, not just poll)
-- Response is delivered on the *next pipeline run* (~24h later in production), same limitation as `/status` — this is a known trade-off of the polling-not-webhook model, not a regression
+### B — Prompt engineering + mechanical sentence cap (chosen)
 
-### Approach B — Dedicated `--bubble` CLI mode + GitHub Actions workflow_dispatch
+Same prompt changes as A, **plus** a `_cap_sentences(text: str, n: int) -> str` helper that
+trims `ArticleSummary.summary` fields to at most `n=2` sentences before they are stored.
 
-Add `--bubble` to `main.py` argparse; it loads cache, computes, sends, exits. A `workflow_dispatch` trigger in `ci.yml` lets the user invoke it on demand without waiting for the daily run.
+Trade-offs:
+- Mechanically guarantees criterion 1 regardless of LLM drift; unit-testable
+- Sentence splitting has edge cases (abbreviations, ellipsis); acceptable for a personal digest
+- Adds ~10 lines of utility code + tests
 
-**Pros:**
-- True on-demand delivery (sub-minute round-trip)
-- `collect_feedback()` stays focused
+### C — Cross-category context window
 
-**Cons:**
-- Requires changes to `.github/workflows/ci.yml` — architectural scope (changes CI/CD pipeline, which requires careful review)
-- Two separate code paths for "send message to Telegram from bot" (delivery and this)
-- Adds operational surface: user needs to know to trigger the workflow, not just send `/bubble` in chat
+After all category summaries complete, run a second pass that receives all previously-generated
+summaries as context so the LLM can avoid repeating points already made.
 
-**Verdict:** Approach B's latency improvement is real but the CI/CD scope and dual code paths are disproportionate for a personal observability command. Approach A is correct for the current architecture.
+Trade-offs:
+- Directly addresses cross-category repetition (hypothesis 3 in the issue)
+- Doubles latency for the Radar phase (currently parallel → sequential second pass)
+- Higher token cost; changes `summarize_all` return contract
+
+Verdict: out of scope for this fix. Revisit if prompt tightening alone is insufficient.
+
+### D — Pre-dedup clustering
+
+Cluster near-duplicate articles before summarizing; summarize clusters not individual articles.
+
+Trade-offs:
+- Most thorough dedup; requires embedding model or TF-IDF — over-engineered for current scale
+
+Verdict: out of scope.
 
 ## 4. Chosen approach and why
 
-**Approach A.** Consistent with the existing `/status` pattern, minimal scope, independently testable analytics logic.
+**Approach B** — prompt tightening + mechanical sentence cap.
 
-No ADR triggered: no new library, no storage change, no BC boundary shift, no public API, no data model change, no security model change. This is a story.
+Prompt engineering alone (A) is insufficient: the category prompts already say "1-2 предложения"
+but LLMs routinely expand when given latitude. A mechanical cap enforces the hard constraint and
+makes criterion 1 testable without a real LLM call. This is consistent with principle 3 (automate
+deterministic, low-risk steps); sentence truncation is deterministic and reversible.
 
-**Relevant ADRs:** none directly; respects ADR-0003 (SourceStateStore is read-only here).
+**Which path is the primary offender:** Both paths produce visible output, but they differ:
+- `CategorySummary.summary_text` (from `summarize_all`) is the **main digest body** — each
+  article in a category gets an inline 1-2 sentence comment embedded in free-text markdown.
+  This is the higher-repetition path because categories run in parallel and can describe the
+  same event from different angles without awareness of each other.
+- `ArticleSummary.summary` (from `pick_top_articles`) is the **Telegram card** — 7 top
+  articles selected across all categories, each getting a 2-3 sentence card. Lower repetition
+  risk (the LLM sees all categories at once), but currently over-long.
 
-**Note:** This task touches 3 modules → 2 advisor calls required per `docs/principles.md §"нетривиальная задача"`.
+The mechanical `_cap_sentences` cap applies **only** to `ArticleSummary.summary` (Telegram
+cards). The category free-text path is controlled only by prompt instruction. This is accepted
+scope: the cap enforces criterion 1 (≤2 sentences) on the path where it can be measured;
+criterion 2 (information gain across summaries) is empirical and requires a real digest run.
 
-## 5. Metrics computed by `compute_bubble_report()`
+**ADR check against `docs/principles.md`:**
+- No new cross-cutting dependency
+- No BC boundary or inter-BC contract change
+- No infrastructure component selected
+- No public API established or removed
+- No hard-to-remove constraint introduced
+- No security or data model change
 
-All derived from existing cache files only. No LLM calls, no network calls.
+Not architecturally significant. No ADR required. This is a story.
 
-| Metric | Source data | Formula |
-|--------|-------------|---------|
-| **Source concentration** | `source_stats.history[-7:]` per source | Shannon entropy over `articles_included` share; expressed as "diversity score" 0–100 |
-| **Top 5 sources by inclusion** | `source_stats.history[-7:]` per source | Sorted descending, capped at 5 |
-| **Feedback engagement** | `feedback_store.ratings` (14d window) | Raw vote counts: total, +pos / -neg |
-| **Positive/negative ratio** | `feedback_store.ratings` (14d window) | Count +1 vs -1 (included in engagement row) |
-| **Source health** | `source_state.sources` | Count: active / trial / graduated / demoted |
-| **Days since last digest** | `feedback_store.last_digest_time` | `now - last_digest_time` |
+## 5. Test strategy
 
-Metrics deliberately excluded:
-- **Narrative drift velocity** — Narratives are transient (not persisted, per domain doc line 30). No data to compute this.
-- **Counter-signal hit rate** — `IrritatorStatus` is not persisted between runs. No data.
+**Unit tests in `tests/test_radar_summarizer.py`:**
 
-## 6. Test strategy
+- `test_per_article_instructions_are_terse` — assert `_PER_ARTICLE_INSTRUCTIONS["ru"]` and
+  `["en"]` contain the new constraint phrases (≤2 sentences, no headline restatement)
+- `test_category_prompts_contain_non_obvious_instruction` — explicit `(language, style)` matrix:
+  `("ru", "analytical")`, `("ru", "analytical_no_persp")`, `("ru", "brief")`,
+  `("ru", "detailed")`, `("ru", "detailed_no_persp")`,
+  `("en", "analytical")`, `("en", "analytical_no_persp")`, `("en", "brief")`,
+  `("en", "detailed")`, `("en", "detailed_no_persp")`
+  — assert the non-obvious/terse direction phrase is present in each combination
+- `test_cap_sentences_truncates_to_n` — pure unit for `_cap_sentences`; cases: already short
+  (unchanged), exactly n (unchanged), longer than n (truncated), empty string (empty)
+- `test_pick_top_articles_caps_summaries` — mock `complete` to return a 5-sentence summary;
+  assert the returned `ArticleSummary.summary` has ≤ 2 sentences
 
-**Unit tests (new `tests/test_bubble_analytics.py`):**
-- `compute_bubble_report()` with zero ratings, zero stats → output contains all section headers, no division-by-zero
-- `compute_bubble_report()` with known fixtures → diversity score matches expected value
-- `compute_bubble_report()` with 14d-old ratings only → engagement rate is 0, not stale data included
-- Formatted output fits within 4096 chars (Telegram limit)
+**No integration tests needed:** no HTTP boundary crossed, no BC contract changed.
 
-**Unit tests (extend `tests/test_delivery_telegram.py` or `tests/test_feedback.py`):**
-- Mock `getUpdates` returning a `/bubble` message → verify `sendMessage` called with a non-empty text payload
-- Mock `getUpdates` returning `/bubble` with no cache files → graceful degradation (no crash, sends a "no data yet" message)
+**Acceptance criteria that remain empirical (no automated test):**
+- "Reading all summaries adds new information each time" — verify manually on the next real
+  digest run after deploy.
 
-**No integration / e2e tests:** no cross-BC path, no real network calls needed. All HTTP mocked.
+## 6. Risks and unknowns
 
-After writing tests, run `ruff check tests/` before committing (per CLAUDE.md).
+1. **Sentence splitter false positives** — abbreviations like "Dr.", "U.S.A.", "e.g." may
+   be read as sentence boundaries, causing premature truncation. Mitigation: use a simple
+   period-followed-by-space-and-capital heuristic rather than a full NLP tokenizer; sufficient
+   for news summaries.
 
-## 7. Risks and unknowns
+2. **Perspectives block interaction** — `analytical` and `detailed` styles add a three-line
+   perspectives block (🟢/🔴/⚖️) for the top topic. The sentence cap must apply *only* to
+   `ArticleSummary.summary` (the per-article JSON field). It must NOT touch `CategorySummary.summary_text`
+   (the free-text category output). The scope is correct: `_cap_sentences` is called inside
+   `pick_top_articles` only.
 
-1. **Source stats sparsity in fresh installs:** if `source_stats.json` is empty (new prod instance), Shannon entropy over empty dict is undefined. `compute_bubble_report()` must handle this gracefully and return a "no data yet" message.
+3. **14 instruction strings to update** — `PROMPT_TEMPLATES` has many keys across two languages
+   and multiple style variants. Missing one is the most likely implementation mistake. Mitigated
+   by the parametric tests in §5 that cover all style/language combinations.
 
-2. **`collect_feedback()` signature change:** `main.py` calls `collect_feedback(bot_token, feedback_store)` at line 472. Adding `cache_dir` as keyword-only with default `.cache` is backward-compatible, but must verify no other callers in tests use positional args that would silently mismatch.
-
-3. **24h response delay:** users expecting real-time `/bubble` response will be surprised. The bot gives no acknowledgement when it *receives* `/bubble` — only when it *processes* it (next run). Mitigant: the reply message includes a timestamp so the user knows when the snapshot was computed.
-
-4. **Telegram message length:** with many sources, the report could exceed 4096 chars. Must cap the "top sources" list (e.g. top 5) and truncate gracefully.
-
-5. **Shannon entropy interpretation:** entropy value alone is not user-friendly. Must convert to a 0–100 scale or plain-language label ("Very concentrated", "Moderate", "Diverse") to be mobile-readable.
+4. **Repetition is reduced, not eliminated** — the prompt tightening directly addresses
+   hypotheses 1 and 2 (no repetition instruction, summaries too long). Hypothesis 3
+   (cross-category dedup) is only partially addressed (by demanding non-obvious content).
+   If repetition persists after this fix, approach C is the next candidate.
