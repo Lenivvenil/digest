@@ -93,25 +93,31 @@ RankedSignal[]              filtered by score ≥ min_signal_score (=5) [UPDATED
 - No invariant on the *kind* of contradiction (intent taxonomy is freeform).
 - No invariant that the operator's bubble is even modelled.
 
-### Where the BC breaks (the failure point)
+### Where the BC breaks — failure mode analysis
 
-The BC has produced zero passing `RankedSignal`s in production. The code supports a multi-cause diagnosis. In rough order of impact:
+This section was written as a diagnostic against the pre-fix codebase. Issue #53 (commit `8d36567`) addressed 4 of the 8 failure modes; 4 remain open.
 
-**1. Query generator prompt does not ask for contradictions.** `query_generator.py` line 47 says *"Craft search queries to find counter-signals"* — but to an LLM "search query for narrative X" is statistically very close to "keywords describing X." The prompt does not enumerate contradiction-shaped patterns ("failure of", "post-mortem", "security incident in", "vs", "criticism of", "limitations of", "did not work"). The generated queries mirror the narrative's vocabulary, so search engines return the *same* content that produced the narrative. (Hypothesis 1, code-supported.)
+#### Fixed by issue #53 (historical record)
+
+**1. Query generator prompt did not ask for contradictions.** `query_generator.py` said *"Craft search queries to find counter-signals"* — but to an LLM "search query for narrative X" is statistically very close to "keywords describing X." The prompt did not enumerate contradiction-shaped patterns ("failure of", "post-mortem", "security incident in", "vs", "criticism of", "limitations of", "did not work"). Generated queries mirrored the narrative's vocabulary, so search engines returned the *same* content that produced the narrative. *Fixed: prompt rewritten to require adversarial phrasing with explicit negation/failure keywords.*
+
+**3. The ranker prompt rewarded "substance + credibility" alongside "contradiction."** `ranker.py` scored signals on *"substance, contradiction to the narrative, source credibility, and surprise factor"* — four criteria AND-ish in LLM judgment. A spicy contrarian Reddit post scored low on credibility; an authoritative paper that mildly qualified the narrative scored low on contradiction. The conjunction collapsed to mid-scores (5–6), falling under the threshold. *Fixed: replaced with a single criterion ("how strongly does this CONTRADICT or COMPLICATE the narrative?") plus explicit 9-10/7-8/5-6/1-4 calibration anchors.*
+
+**4. `min_signal_score=7` sat just above the LLM hedge zone.** The prompt had no anchor examples for what a 7 looks like vs a 5 vs a 9. LLMs default to 5–7 for ambiguous cases. The threshold filtered out exactly the band the LLM produced most. *Fixed: default lowered to 5 (consistent with production `config.yaml` override); calibration anchors added to the ranker prompt (see point 3).*
+
+**5. dev.to adapter was structurally a consensus engine.** `devto.py` used `params={"tag": query.split()[0].lower()}` — a *tag-listing* call, not a text search. It returned popular tutorials for the first word of the query. For any narrative whose first keyword matched a hot tag (e.g. "ai", "rust", "kubernetes") it returned hype articles — the opposite of counter-signal. *Fixed: switched to `?q=full_query` for full-text search.*
+
+#### Still open
+
+The following 4 failure modes were not addressed in issue #53. They are also documented as structural design gaps in §3 "Missing concepts" below.
 
 **2. The narratives are extracted from a curated pro-tech feed.** Radar's source list is a tech-architect bubble (per `CLAUDE.md`). Narratives extracted from this corpus are themselves consensus-flavored. The narrative-extraction prompt (`narrative_extractor.py:30-69`) asks for "dominant narratives that are rarely questioned" — but never instructs the LLM that the corpus itself is selection-biased. (Hypothesis 4, code-supported.)
 
-**3. The ranker prompt rewards "substance + credibility" alongside "contradiction."** `ranker.py:31-42`: *"score on a 1–10 scale based on: substance, contradiction to the narrative, source credibility, and surprise factor."* Four criteria, AND-ish in LLM judgment. A spicy contrarian Reddit post will score low on credibility; an authoritative paper that mildly qualifies the narrative will score low on contradiction. The conjunction collapses to mid-scores (5–6), which fall under the threshold of 7. (Hypothesis 5 + 2 entangled.)
+**6. Source-narrative fit is unmodelled.** Even with fan-out (all queries now reach all sources), the query generator has no profile of what each source is *good for*. arXiv is great for "alternative academic findings" and useless for "industry post-mortems"; Reddit varies wildly by subreddit. Source selection is effectively uniform-prior guessing. See §3 "SourceProfile" for the missing concept. (Hypothesis 3, broader form.)
 
-**4. `min_signal_score=7` sits just above the LLM hedge zone.** The prompt has no anchor examples for what a 7 looks like vs a 5 vs a 9. LLMs default to 5–7 for ambiguous cases. The threshold filters out exactly the band the LLM produces most. (Hypothesis 2.)
+**7. All-pairs ranking blurs per-narrative results.** `irritator/__init__.py`: `for narrative in narratives: rank_signals(narrative, signals, config)`. Each narrative is ranked against the *full* validated signal pool — including signals fetched for *other narratives'* queries. Because provenance was dropped at `search_all_sources()`, there is no way to detect "we fetched zero signals targeting narrative N." A narrative whose own queries returned nothing can still get "ranked," typically with all-low scores from off-topic signals — indistinguishable from "we tried but the world had no contradictions." See §3 "Provenance edge" for the missing concept.
 
-**5. dev.to adapter is structurally a consensus engine.** `devto.py:25`: `params={"tag": query.split()[0].lower() if query else ""}`. This is a *tag-listing* call, not a text search. It returns popular tutorials for the first word of the query. For any narrative whose first keyword matches a hot tag (e.g. "ai", "rust", "kubernetes") it will return hype articles — the opposite of counter-signal. (Hypothesis 3, code-confirmed for dev.to specifically.)
-
-**6. Source-narrative fit is unmodelled.** `query_generator.py` passes the sources list as a flat enumeration — *"target_source — one of: hackernews, reddit, arxiv, devto, lobsters"*. The LLM has no profile of what each source is *good for*. arXiv is great for "alternative academic findings" and useless for "industry post-mortems"; Reddit varies wildly by subreddit. Source selection is effectively uniform-prior guessing. (Hypothesis 3, broader form.)
-
-**7. All-pairs ranking blurs per-narrative results.** `irritator/__init__.py:128-132`: `for narrative in narratives: rank_signals(narrative, signals, config)`. Each narrative is ranked against the *full* validated signal pool — including signals fetched for *other narratives'* queries. Because provenance was dropped at search time, there is no way to detect "we fetched zero signals targeting narrative N." A narrative whose own queries returned nothing can still get "ranked," typically with all-low scores from off-topic signals — which look indistinguishable from "we tried but the world had no contradictions."
-
-**8. No feedback loop.** Even if a counter-signal got through, the BC has no concept of "did this break the bubble for the operator?" The article-vote feedback collected in `feedback.py` is not wired back into Irritator at all. The system cannot learn that, e.g., its arXiv signals never get clicked.
+**8. No feedback loop.** Even if a counter-signal gets through, the BC has no concept of "did this break the bubble for the operator?" The article-vote feedback collected in `feedback.py` is not wired back into Irritator. The system cannot learn that, e.g., its arXiv signals never get clicked. See §3 "Bubble-break verification."
 
 ---
 
@@ -135,7 +141,7 @@ What concepts would a well-functioning counter-signal system need that the curre
 
 - **EmptyOutcome with reason code.** Today `IrritatorStatus.level == "empty"` is a single bucket. Operator gets `"5 narratives, 87 signals, 87 valid, 0 passed ranking"` — informative, but does not distinguish: "all signals were off-topic to their narratives" vs. "signals were on-topic but ranked below threshold" vs. "the threshold itself filtered the LLM's hedge band." Without this the operator can't tell which lever to pull.
 
-- **Calibration anchors.** Not a domain object exactly, but a domain *contract*: the ranker prompt must commit to anchor examples ("a 9 looks like X, a 7 looks like Y, a 5 looks like Z"). Otherwise the 1–10 scale is uncalibrated and `min_signal_score=7` is a guess.
+- **Calibration anchors.** ~~Not a domain object exactly, but a domain *contract*: the ranker prompt must commit to anchor examples ("a 9 looks like X, a 7 looks like Y, a 5 looks like Z"). Otherwise the 1–10 scale is uncalibrated and `min_signal_score=7` is a guess.~~ **[UPDATED — issue #53]** Calibration anchors (9-10/7-8/5-6/1-4) were added to the ranker prompt alongside the single-criterion rewrite; `min_signal_score` default lowered to 5. This item is no longer missing.
 
 - **Bubble-break verification.** The value act is "operator reads something they otherwise wouldn't have." Nothing in the BC observes whether a delivered counter-signal was clicked, saved, voted on, or ignored. Without closing this loop, the BC is blind to its own success/failure rate.
 
