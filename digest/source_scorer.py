@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 STATS_FILE = "source_stats.json"
 SOURCE_STATE_FILE = "source_state.json"
+CATEGORY_MAP_FILE = "source_category_map.json"
 SOURCE_STATE_SCHEMA_VERSION = 1
 HISTORY_MAX_DAYS = 30
 
@@ -135,6 +136,32 @@ def save_source_state(store: SourceStateStore, cache_dir: str) -> None:
         atomic_json_write(path, data)
     except Exception as exc:
         logger.warning("Failed to save source_state.json: %s", exc)
+
+
+def save_source_category_map(sources: list[SourceConfig], cache_dir: str) -> None:
+    """Persist {source_name: category} mapping for /bubble analytics."""
+    path = Path(cache_dir) / CATEGORY_MAP_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {s.name: s.category for s in sources}
+    try:
+        atomic_json_write(path, data)
+    except Exception as exc:
+        logger.warning("Failed to save source_category_map.json: %s", exc)
+
+
+def load_source_category_map(cache_dir: str) -> dict[str, str]:
+    """Load {source_name: category} from cache. Returns empty dict if missing."""
+    path = Path(cache_dir) / CATEGORY_MAP_FILE
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception as exc:
+        logger.warning("Failed to load source_category_map.json: %s", exc)
+    return {}
 
 
 def load_stats(cache_dir: str) -> dict[str, SourceStats]:
@@ -479,6 +506,7 @@ def compute_bubble_report(
     feedback_store: FeedbackStore,
     source_stats: dict[str, SourceStats],
     source_state: SourceStateStore,
+    category_map: dict[str, str] | None = None,
 ) -> str:
     """Build a single-screen filter bubble snapshot from cached data. No I/O."""
     now = datetime.now(tz=timezone.utc)
@@ -502,15 +530,27 @@ def compute_bubble_report(
     lines.append(f"Diversity: {label} ({score:.0f}/100)")
     lines.append("")
 
-    recent_sources: dict[str, int] = {
-        name: sum(snap.articles_included for snap in s.history[-7:])
-        for name, s in source_stats.items()
-        if sum(snap.articles_included for snap in s.history[-7:]) > 0
-    }
+    recent_sources: dict[str, int] = {}
+    for name, s in source_stats.items():
+        count = sum(snap.articles_included for snap in s.history[-7:])
+        if count > 0:
+            recent_sources[name] = count
+
     if recent_sources:
-        lines.append("Top sources (7d):")
-        for name, count in sorted(recent_sources.items(), key=lambda x: x[1], reverse=True)[:5]:
-            lines.append(f"  {name}: {count} art")
+        total_recent = sum(recent_sources.values())
+        if category_map:
+            category_counts: dict[str, int] = {}
+            for src, count in recent_sources.items():
+                cat = category_map.get(src, "Other")
+                category_counts[cat] = category_counts.get(cat, 0) + count
+            lines.append("Your bubble (7d):")
+            for cat, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
+                pct = round(count / total_recent * 100)
+                lines.append(f"  {cat}: {count} art ({pct}%)")
+        else:
+            lines.append("Top sources (7d):")
+            for name, count in sorted(recent_sources.items(), key=lambda x: x[1], reverse=True)[:5]:
+                lines.append(f"  {name}: {count} art")
         lines.append("")
 
     cutoff = now - timedelta(days=14)

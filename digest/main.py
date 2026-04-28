@@ -445,6 +445,7 @@ async def run(
         evaluate_trial_sources,
         load_source_state,
         load_stats,
+        save_source_category_map,
         save_source_state,
         save_stats,
     )
@@ -635,6 +636,7 @@ async def run(
     save_feedback(feedback_store, cache_dir)
     save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
+    save_source_category_map(config.enabled_sources, cache_dir)
 
     return RunStats(
         feeds_fetched=feeds_count, new_articles=total_articles,
