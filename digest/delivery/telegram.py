@@ -16,6 +16,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
+# Buttons are answered async (next pipeline run) — shown to user as a hint.
+_ASYNC_FEEDBACK_NOTE = "Реакции учитываются при след. запуске"  # noqa: E501
 _SPLIT_LIMIT = 3800
 _MAX_MESSAGE_LEN = 4096
 _MAX_RETRIES = 3
@@ -228,10 +230,12 @@ async def send_article_cards(
             cat_esc = escape_markdownv2(category)
             summary_esc = escape_markdownv2(summary)
 
+            async_note = escape_markdownv2(_ASYNC_FEEDBACK_NOTE)
             text = (
                 f"[{title_esc}]({url_esc})\n\n"
                 f"{summary_esc}\n\n"
-                f"*{source_esc}* \u00b7 _{cat_esc}_"
+                f"*{source_esc}* \u00b7 _{cat_esc}_\n"
+                f"_{async_note}_"
             )
 
             keyboard: dict[str, Any] = {
