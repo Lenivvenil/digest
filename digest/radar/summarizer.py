@@ -15,6 +15,18 @@ from digest.radar.collector import Article
 
 logger = logging.getLogger(__name__)
 
+# Matches the whitespace between a sentence-ending punctuation and the start of the next
+# sentence (Latin or Cyrillic capital). Used by _cap_sentences.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZА-ЯЁ])")
+
+
+def _cap_sentences(text: str, n: int) -> str:
+    """Return at most n sentences from text, preserving original punctuation."""
+    if not text:
+        return text
+    parts = _SENTENCE_SPLIT_RE.split(text.strip())
+    return " ".join(parts[:n])
+
 
 @dataclass
 class ArticleSummary:
@@ -100,6 +112,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Не пересказывай заголовок — выдели то, что нетривиально, неочевидно "
+            "или имеет прямое практическое значение. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
             "Для 1 наиболее значимой темы добавь блок из трёх перспектив:\n"
@@ -115,6 +129,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай аналитический комментарий в 1-2 предложения. "
+            "Не пересказывай заголовок — выдели то, что нетривиально, неочевидно "
+            "или имеет прямое практическое значение. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
             "НЕ добавляй раздел трендов."
@@ -123,6 +139,7 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "НЕ добавляй приветствия, вводные фразы или заключения. "
             "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Для каждой статьи дай одно предложение-комментарий. "
+            "Не пересказывай заголовок — выдели то, что нетривиально или неочевидно. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат. "
             "НЕ добавляй отдельную строку Link:. "
             "Используй markdown-форматирование. Никаких перспектив. НЕ добавляй раздел трендов."
@@ -132,6 +149,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Не пересказывай заголовок — выдели то, что нетривиально, неочевидно "
+            "или имеет прямое практическое значение. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки.\n"
             "Для КАЖДОЙ значимой темы добавь блок из трёх перспектив:\n"
@@ -146,12 +165,16 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Начни сразу с заголовка категории в формате ## Emoji Название.\n"
             "Выбери 3-5 самых важных статей. "
             "Для каждой статьи дай развёрнутый аналитический комментарий с полным контекстом. "
+            "Не пересказывай заголовок — выдели то, что нетривиально, неочевидно "
+            "или имеет прямое практическое значение. "
             "Заголовок статьи уже содержит ссылку в формате [Заголовок](URL) — сохрани этот формат в выводе. "
             "НЕ добавляй отдельную строку Link:. НЕ дублируй URL в тексте ссылки. "
             "НЕ добавляй раздел трендов."
         ),
         "instructions_trends": (
             "На основе саммари по категориям выдели 2-3 ключевых тренда дня. "
+            "Каждый тренд должен быть нетривиальным — не просто повторяй топ-темы, "
+            "а выяви неочевидные сквозные закономерности. "
             "Каждый тренд — 1 предложение. Используй маркированный список. "
             "Озаглавь раздел «## Ключевые тренды дня»."
         ),
@@ -217,6 +240,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a 1-2 sentence analytical comment. "
+            "Do not restate the headline — highlight what is non-obvious, surprising, "
+            "or has direct practical implications. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
             "For 1 most significant topic add a block of three perspectives:\n"
@@ -232,6 +257,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a 1-2 sentence analytical comment. "
+            "Do not restate the headline — highlight what is non-obvious, surprising, "
+            "or has direct practical implications. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
             "Do NOT add a trends section."
@@ -240,6 +267,7 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Do NOT add greetings, introductory phrases, or conclusions. "
             "Start directly with the category header in format ## Emoji Name.\n"
             "For each article write one sentence comment. "
+            "Do not restate the headline — highlight what is non-obvious or surprising. "
             "Article titles already contain links in [Title](URL) format — preserve this format. "
             "Do NOT add a separate Link: line. "
             "Use markdown formatting. No perspectives. Do NOT add a trends section."
@@ -249,6 +277,8 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a detailed analytical comment with full context. "
+            "Do not restate the headline — highlight what is non-obvious, surprising, "
+            "or has direct practical implications. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text.\n"
             "For EVERY significant topic add a block of three perspectives:\n"
@@ -263,12 +293,16 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
             "Start directly with the category header in format ## Emoji Name.\n"
             "Pick 3-5 most important articles. "
             "For each article provide a detailed analytical comment with full context. "
+            "Do not restate the headline — highlight what is non-obvious, surprising, "
+            "or has direct practical implications. "
             "Article titles already contain links in [Title](URL) format — preserve this format in output. "
             "Do NOT add a separate Link: line. Do NOT duplicate the URL in link text. "
             "Do NOT add a trends section."
         ),
         "instructions_trends": (
             "Based on the category summaries below, identify 2-3 key trends of the day. "
+            "Each trend must be non-obvious — do not just repeat the top topics; "
+            "reveal unexpected cross-cutting patterns. "
             "Each trend is 1 sentence. Use a bulleted list. "
             "Title the section '## Key Trends of the Day'."
         ),
@@ -284,23 +318,25 @@ _PER_ARTICLE_INSTRUCTIONS: dict[str, str] = {
     "ru": (
         "Из списка статей ниже выбери самые важные и интересные для "
         "Technology Architect в крупном банке. "
-        "Для каждой выбранной статьи напиши саммари в 2-3 предложения. "
-        "Саммари должно объяснять почему это важно, а не просто пересказывать заголовок.\n"
+        "Для каждой выбранной статьи напиши саммари в 1-2 предложения. "
+        "Не пересказывай заголовок — раскрой что нетривиального или неочевидного в этой новости, "
+        "выяви неожиданный аспект или прямое практическое значение.\n"
         "Ответь ТОЛЬКО валидным JSON-массивом (без markdown-обёртки), "
         "где каждый элемент:\n"
         '{{"title": "оригинальный заголовок", "link": "url", '
-        '"source": "название источника", "summary": "саммари 2-3 предложения"}}\n'
+        '"source": "название источника", "summary": "саммари 1-2 предложения"}}\n'
         "Выбери не более {max_articles} самых важных статей из всех категорий."
     ),
     "en": (
         "From the articles below, pick the most important and interesting ones "
         "for a Technology Architect at a major bank. "
-        "For each picked article write a 2-3 sentence summary. "
-        "The summary should explain why it matters, not just restate the headline.\n"
+        "For each picked article write a 1-2 sentence summary. "
+        "Do not restate the headline — reveal the non-obvious angle, unexpected implication, "
+        "or direct practical significance.\n"
         "Reply with ONLY a valid JSON array (no markdown wrapping), "
         "where each element is:\n"
         '{{"title": "original title", "link": "url", '
-        '"source": "source name", "summary": "2-3 sentence summary"}}\n'
+        '"source": "source name", "summary": "1-2 sentence summary"}}\n'
         "Pick at most {max_articles} most important articles across all categories."
     ),
 }
@@ -502,7 +538,7 @@ async def pick_top_articles(
     else:
         logger.info("LLM picked %d top articles", len(parsed))
 
-    # Assign correct categories from the original articles
+    # Assign correct categories from the original articles and enforce sentence cap
     link_to_category: dict[str, str] = {}
     for category, articles in articles_by_category.items():
         for art in articles:
@@ -510,5 +546,6 @@ async def pick_top_articles(
     for a in parsed:
         if a.category == "all":
             a.category = link_to_category.get(a.link, "")
+        a.summary = _cap_sentences(a.summary, 2)
 
     return parsed[:max_articles]

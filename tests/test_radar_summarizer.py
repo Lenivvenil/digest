@@ -22,6 +22,7 @@ from digest.config import (
     TelegramConfig,
 )
 from digest.radar.summarizer import (
+    _cap_sentences,
     _parse_article_summaries,
     build_category_prompt,
     build_trends_prompt,
@@ -394,3 +395,157 @@ class TestPickTopArticles:
             result = await pick_top_articles(articles, config, max_articles=2)
 
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# _cap_sentences
+# ---------------------------------------------------------------------------
+
+
+class TestCapSentences:
+    def test_empty_string_returns_empty(self) -> None:
+        assert _cap_sentences("", 2) == ""
+
+    def test_single_sentence_unchanged(self) -> None:
+        assert _cap_sentences("One sentence only.", 2) == "One sentence only."
+
+    def test_exactly_n_sentences_unchanged(self) -> None:
+        result = _cap_sentences("First sentence. Second sentence.", 2)
+        assert result == "First sentence. Second sentence."
+
+    def test_longer_than_n_is_truncated(self) -> None:
+        text = "First sentence. Second sentence. Third sentence."
+        result = _cap_sentences(text, 2)
+        assert result == "First sentence. Second sentence."
+
+    def test_works_with_exclamation_and_question(self) -> None:
+        text = "Is this important? Yes it is! And here is more."
+        result = _cap_sentences(text, 2)
+        assert result == "Is this important? Yes it is!"
+
+    def test_cyrillic_sentence_boundary(self) -> None:
+        text = "Это важно. Вот почему. И ещё кое-что."
+        result = _cap_sentences(text, 2)
+        assert result == "Это важно. Вот почему."
+
+    def test_cyrillic_single_sentence_unchanged(self) -> None:
+        text = "Компания объявила о запуске нового продукта."
+        assert _cap_sentences(text, 2) == text
+
+    def test_n_greater_than_sentence_count_returns_all(self) -> None:
+        text = "Only two. Sentences here."
+        assert _cap_sentences(text, 10) == text
+
+
+# ---------------------------------------------------------------------------
+# Terse prompt instructions
+# ---------------------------------------------------------------------------
+
+# All (language, style) combinations that build_category_prompt can produce.
+# brief has no _no_persp variant (brief never has perspectives) — tested with
+# perspectives=True and perspectives=False both via the same key.
+_CATEGORY_MATRIX = [
+    ("ru", "analytical", True),
+    ("ru", "analytical", False),
+    ("ru", "brief", False),
+    ("ru", "detailed", True),
+    ("ru", "detailed", False),
+    ("en", "analytical", True),
+    ("en", "analytical", False),
+    ("en", "brief", False),
+    ("en", "detailed", True),
+    ("en", "detailed", False),
+]
+
+_NON_OBVIOUS_PHRASES = [
+    "нетривиально",   # Russian
+    "non-obvious",    # English
+]
+
+
+class TestTersePromptInstructions:
+    def test_per_article_instructions_ru_are_terse(self) -> None:
+        from digest.radar.summarizer import _PER_ARTICLE_INSTRUCTIONS
+        text = _PER_ARTICLE_INSTRUCTIONS["ru"]
+        assert "1-2 предложения" in text
+        assert "нетривиального" in text or "нетривиально" in text
+
+    def test_per_article_instructions_en_are_terse(self) -> None:
+        from digest.radar.summarizer import _PER_ARTICLE_INSTRUCTIONS
+        text = _PER_ARTICLE_INSTRUCTIONS["en"]
+        assert "1-2 sentence" in text
+        assert "non-obvious" in text
+
+    @pytest.mark.parametrize("language,style,perspectives", _CATEGORY_MATRIX)
+    def test_category_prompt_contains_non_obvious_instruction(
+        self, language: str, style: str, perspectives: bool
+    ) -> None:
+        config = _make_config(language=language, summary_style=style, perspectives=perspectives)
+        articles = [_make_article()]
+        messages = build_category_prompt("Tech", articles, config)
+        user_content = messages[1]["content"]
+        assert any(phrase in user_content for phrase in _NON_OBVIOUS_PHRASES), (
+            f"No non-obvious instruction found for ({language}, {style}, perspectives={perspectives})"
+        )
+
+    def test_trends_prompt_ru_contains_non_obvious_instruction(self) -> None:
+        config = _make_config(language="ru")
+        summaries = {"AI": "AI summary."}
+        messages = build_trends_prompt(summaries, config)
+        assert "нетривиальным" in messages[1]["content"]
+
+    def test_trends_prompt_en_contains_non_obvious_instruction(self) -> None:
+        config = _make_config(language="en")
+        summaries = {"AI": "AI summary."}
+        messages = build_trends_prompt(summaries, config)
+        assert "non-obvious" in messages[1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# pick_top_articles — sentence cap enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestPickTopArticlesSentenceCap:
+    async def test_long_summary_is_capped_to_two_sentences(self) -> None:
+        config = _make_config(language="en")
+        articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
+        long_summary = (
+            "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence."
+        )
+        llm_response = (
+            f'[{{"title": "Article 1", "link": "https://example.com/1", '
+            f'"source": "TechCrunch", "summary": "{long_summary}"}}]'
+        )
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=5)
+
+        assert len(result) == 1
+        assert result[0].summary == "First sentence. Second sentence."
+
+    async def test_short_summary_is_not_modified(self) -> None:
+        config = _make_config(language="en")
+        articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
+        short_summary = "Just one sentence here."
+        llm_response = (
+            f'[{{"title": "Article 1", "link": "https://example.com/1", '
+            f'"source": "TechCrunch", "summary": "{short_summary}"}}]'
+        )
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=5)
+
+        assert result[0].summary == short_summary
+
+    async def test_cyrillic_summary_is_capped(self) -> None:
+        config = _make_config(language="ru")
+        articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
+        ru_summary = "Это важно. Вот почему это так. И ещё одна мысль."
+        llm_response = (
+            f'[{{"title": "Article 1", "link": "https://example.com/1", '
+            f'"source": "RuSource", "summary": "{ru_summary}"}}]'
+        )
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=5)
+
+        assert result[0].summary == "Это важно. Вот почему это так."
