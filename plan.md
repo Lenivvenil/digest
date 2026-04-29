@@ -1,160 +1,118 @@
-# Plan — Issues #55, #71, #72 (bundled PR)
-
-> **Scope note (2026-04-28):** This branch bundles three issues:
-> - **#55** — terse article summaries (Radar BC, `summarizer.py`)
-> - **#71** — `/bubble` filter bubble analytics command (Delivery BC, `feedback.py`, `source_scorer.py`)
-> - **#72** — fix `/bubble` to show topic categories instead of source names (same files)
->
-> Issues #71 and #72 are fully implemented and tested on this branch. The original plan below
-> covers #55 only; #71/#72 have no separate plan artifact (they were smaller stories).
+# Plan: fix Lobsters 429 on parallel fan-out (#63)
 
 ## 1. Problem restatement
 
-The digest produces article summaries that restate headlines and echo the same observations
-across multiple items in a single run. The Radar summarizer has two code paths: per-category
-free-text (`build_category_prompt`) and per-article JSON selection (`build_per_article_prompt`).
-Both paths lack an explicit instruction to focus on what is *surprising or non-obvious*, and
-the per-article JSON path requests 2-3 sentences when 1-2 are sufficient. Because categories
-run in parallel (`asyncio.gather`), nothing prevents two categories from making identical
-observations about closely related articles. The result is a digest where 50-60% of content
-carries no information gain over just reading the headlines.
+The fan-out introduced in #53 fires one `(query, source)` task per combination. With 15 queries and Lobsters as one of five sources, up to 10 concurrent HTTP requests can land on `lobste.rs/search.json` at once — the global `Semaphore(10)` in `search_all_sources` caps total in-flight across all sources at 10, so in the worst case all 10 slots are held by Lobsters. Lobsters rate-limits aggressively and returns 429 on most of them. A separate class of 400 responses also appears; the cause is unknown and out of scope for this fix (see §6). Both failure modes are silently swallowed by the graceful-degradation wrapper, so the adapter contributes nothing to the digest without any actionable alert.
 
 ## 2. Affected bounded contexts and files
 
-**Radar BC** — sole affected context.
+**Irritator BC** (`docs/domain/irritator/`):
 
-| File | Change |
-|------|--------|
-| `digest/radar/summarizer.py` | Tighten live `instructions_category_*` keys (10) + `instructions_trends` (2) + `_PER_ARTICLE_INSTRUCTIONS` (2) = 14 strings; add `_cap_sentences()` utility; apply cap in `pick_top_articles()` |
-| `tests/test_radar_summarizer.py` | Add prompt-content assertions + sentence-cap unit tests |
+| File | Role |
+|------|------|
+| `digest/irritator/sources/lobsters.py` | Lobsters adapter — primary change target |
+| `digest/irritator/sources/__init__.py` | Fan-out orchestrator; global semaphore lives here (read-only for this fix) |
+| `tests/test_sources_lobsters.py` | Unit tests for the adapter |
+| `tests/test_sources_init.py` | Integration path for `search_all_sources` graceful degradation |
 
-**Dead code note:** `PROMPT_TEMPLATES` also contains `instructions_analytical`, `instructions_brief`,
-`instructions_detailed`, and their `_no_persp` siblings (5 keys × 2 languages = 10 strings).
-These are never referenced — `build_category_prompt` only uses `instructions_category_{style}` keys.
-They are **not modified** in this PR (out of scope) but noted here so reviewers don't flag the
-inconsistency. A follow-up cleanup is tracked in the PR description.
-
-No cross-BC contracts touched. `irritator/` and `delivery/` are unaffected.
+No BC boundary changes. Delivery and Radar are unaffected.
 
 ## 3. Considered approaches
 
-### A — Prompt engineering only
+### A. Per-adapter self-contained semaphore in `lobsters.py` ← chosen
 
-Tighten the instruction strings:
-- Reduce per-article JSON target from 2-3 sentences to 1-2 sentences
-- Add: "do NOT restate the headline verbatim"
-- Add: "focus on what is surprising, non-obvious, or has direct practical implications"
+Add a module-level `asyncio.Semaphore` (limit 1) inside `lobsters.py`, created lazily on first call inside the running event loop. The adapter acquires it before each HTTP request, fully serialising Lobsters calls without touching any other adapter or the orchestrator.
 
-Trade-offs:
-- Zero latency/cost overhead; reversible
-- Purely behavioural — LLM can still ignore the instruction on a bad run
-- Acceptance criterion 1 (≤ 2 sentences) cannot be verified mechanically
+`Semaphore(1)` is chosen over a higher limit because: (a) Lobsters' rate limit is undocumented and empirically aggressive; (b) the digest runs once daily with ~15 Lobsters calls — fully serial worst-case is ~15 × `_TIMEOUT` = 15 s added to pipeline wall-clock, which is acceptable; (c) any higher value is a guess without measurement. If a follow-up profiling run shows this is a bottleneck, the limit can be raised with evidence.
 
-### B — Prompt engineering + mechanical sentence cap (chosen)
+The 400 responses are **out of scope** for this PR — the root cause (query length vs. special characters) is unconfirmed. A separate issue will be filed to investigate and reproduce. Bundling an unverified fix with a verified one makes post-merge attribution ambiguous.
 
-Same prompt changes as A, **plus** a `_cap_sentences(text: str, n: int) -> str` helper that
-trims `ArticleSummary.summary` fields to at most `n=2` sentences before they are stored.
+**Trade-offs:**
+- (+) Zero blast radius — other adapters and `search_all_sources` are untouched.
+- (+) Constraint lives next to the code that causes it — self-documenting.
+- (+) Per-adapter tuning without touching fan-out logic.
+- (−) Module-level mutable state; tests must reset `_semaphore = None` between runs (standard `monkeypatch`).
+- (−) Semaphore must be created inside a running event loop — lazy init handles this, adds minor ceremony.
 
-Trade-offs:
-- Mechanically guarantees criterion 1 regardless of LLM drift; unit-testable
-- Sentence splitting has edge cases (abbreviations, ellipsis); acceptable for a personal digest
-- Adds ~10 lines of utility code + tests
+### B. Per-host semaphore map in `search_all_sources`
 
-### C — Cross-category context window
+Maintain a `dict[str, asyncio.Semaphore]` keyed by source name in the orchestrator, with per-source concurrency limits from config or hardcoded defaults.
 
-After all category summaries complete, run a second pass that receives all previously-generated
-summaries as context so the LLM can avoid repeating points already made.
+**Trade-offs:**
+- (+) All rate-limit policy visible in one place.
+- (−) Adds non-trivial complexity to the orchestrator for a problem that currently affects only one adapter.
+- (−) Invites per-source config-surface creep (`config.yaml` fields for each adapter's concurrency).
+- (−) No benefit for adapters that already self-manage (e.g. Reddit OAuth).
 
-Trade-offs:
-- Directly addresses cross-category repetition (hypothesis 3 in the issue)
-- Doubles latency for the Radar phase (currently parallel → sequential second pass)
-- Higher token cost; changes `summarize_all` return contract
+### C. Retry with exponential backoff in `lobsters.py`
 
-Verdict: out of scope for this fix. Revisit if prompt tightening alone is insufficient.
+Catch `httpx.HTTPStatusError` for 429, sleep, retry up to N times.
 
-### D — Pre-dedup clustering
+**Trade-offs:**
+- (+) Handles transient single-request blips.
+- (−) Does not prevent the burst — 15 requests fire simultaneously, most get 429, then retries add wall-clock latency.
+- (−) Compounds total pipeline runtime; does not address the 400 problem.
+- (−) Cures the symptom, not the cause.
 
-Cluster near-duplicate articles before summarizing; summarize clusters not individual articles.
-
-Trade-offs:
-- Most thorough dedup; requires embedding model or TF-IDF — over-engineered for current scale
-
-Verdict: out of scope.
+**Verdict:** A is the correct fix. B is over-engineering for one adapter. C solves the wrong problem.
 
 ## 4. Chosen approach and why
 
-**Approach B** — prompt tightening + mechanical sentence cap.
+**Option A — per-adapter semaphore (limit 1) in `lobsters.py`.**
 
-Prompt engineering alone (A) is insufficient: the category prompts already say "1-2 предложения"
-but LLMs routinely expand when given latitude. A mechanical cap enforces the hard constraint and
-makes criterion 1 testable without a real LLM call. This is consistent with principle 3 (automate
-deterministic, low-risk steps); sentence truncation is deterministic and reversible.
+- The issue is Lobsters-specific; fixing it in the adapter keeps the change minimal and contained.
+- `Semaphore(1)` is the only choice that is guaranteed to prevent the burst, requires no empirical measurement, and keeps the fix unambiguous. Reasoning documented above in §3A.
+- 400 responses are deferred to a follow-up issue.
+- ADR check against `docs/principles.md`: no new cross-cutting dependency, no BC boundary change, no infrastructure component, no public API change, no security model change. **Not architecturally significant. No ADR required.**
 
-**Which path is the primary offender:** Both paths produce visible output, but they differ:
-- `CategorySummary.summary_text` (from `summarize_all`) is the **main digest body** — each
-  article in a category gets an inline 1-2 sentence comment embedded in free-text markdown.
-  This is the higher-repetition path because categories run in parallel and can describe the
-  same event from different angles without awareness of each other.
-- `ArticleSummary.summary` (from `pick_top_articles`) is the **Telegram card** — 7 top
-  articles selected across all categories, each getting a 2-3 sentence card. Lower repetition
-  risk (the LLM sees all categories at once), but currently over-long.
+Implementation sketch:
 
-The mechanical `_cap_sentences` cap applies **only** to `ArticleSummary.summary` (Telegram
-cards). The category free-text path is controlled only by prompt instruction. This is accepted
-scope: the cap enforces criterion 1 (≤2 sentences) on the path where it can be measured;
-criterion 2 (information gain across summaries) is empirical and requires a real digest run.
+```python
+# lobsters.py
+import asyncio
 
-**ADR check against `docs/principles.md`:**
-- No new cross-cutting dependency
-- No BC boundary or inter-BC contract change
-- No infrastructure component selected
-- No public API established or removed
-- No hard-to-remove constraint introduced
-- No security or data model change
+_semaphore: asyncio.Semaphore | None = None
 
-Not architecturally significant. No ADR required. This is a story.
+def _get_semaphore() -> asyncio.Semaphore:
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(1)
+    return _semaphore
+
+@_register("lobsters")
+async def search_lobsters(query: str, config: Any, client: httpx.AsyncClient) -> list[Signal]:
+    async with _get_semaphore():
+        resp = await client.get(
+            _BASE_URL,
+            params={"q": query, "what": "stories", "order": "relevance"},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        ...
+```
 
 ## 5. Test strategy
 
-**Unit tests in `tests/test_radar_summarizer.py`:**
+**Unit tests** (new/updated in `tests/test_sources_lobsters.py`):
 
-- `test_per_article_instructions_are_terse` — assert `_PER_ARTICLE_INSTRUCTIONS["ru"]` and
-  `["en"]` contain the new constraint phrases (≤2 sentences, no headline restatement)
-- `test_category_prompts_contain_non_obvious_instruction` — explicit `(language, style)` matrix:
-  `("ru", "analytical")`, `("ru", "analytical_no_persp")`, `("ru", "brief")`,
-  `("ru", "detailed")`, `("ru", "detailed_no_persp")`,
-  `("en", "analytical")`, `("en", "analytical_no_persp")`, `("en", "brief")`,
-  `("en", "detailed")`, `("en", "detailed_no_persp")`
-  — assert the non-obvious/terse direction phrase is present in each combination
-- `test_cap_sentences_truncates_to_n` — pure unit for `_cap_sentences`; cases: already short
-  (unchanged), exactly n (unchanged), longer than n (truncated), empty string (empty)
-- `test_pick_top_articles_caps_summaries` — mock `complete` to return a 5-sentence summary;
-  assert the returned `ArticleSummary.summary` has ≤ 2 sentences
+| Test | Assertion |
+|------|-----------|
+| `test_semaphore_limits_concurrency` | Launch N > 1 concurrent calls; mock handler uses `await asyncio.sleep(0)` to yield so concurrency actually manifests; assert peak in-flight count never exceeds 1 (shared counter via `monkeypatch`). Without the sleep, the event loop never switches and the test passes trivially against a broken implementation. |
+| `test_429_raises` | Mock returns 429; assert `HTTPStatusError` propagates from adapter (fan-out catches it upstream) |
+| `test_400_raises` | Mock returns 400; same assertion |
+| `test_semaphore_reset_between_tests` | Use `monkeypatch` to reset `lobsters._semaphore = None` between tests; verify no cross-test state leak |
 
-**No integration tests needed:** no HTTP boundary crossed, no BC contract changed.
+**Integration** (existing `tests/test_sources_init.py`):
 
-**Acceptance criteria that remain empirical (no automated test):**
-- "Reading all summaries adds new information each time" — verify manually on the next real
-  digest run after deploy.
+- Verify `search_all_sources` returns non-empty when Lobsters raises (graceful degradation). Existing test covers this; confirm it passes unchanged with the new semaphore.
+
+**e2e:** Not applicable — no real network calls in tests.
 
 ## 6. Risks and unknowns
 
-1. **Sentence splitter false positives** — abbreviations like "Dr.", "U.S.A.", "e.g." may
-   be read as sentence boundaries, causing premature truncation. Mitigation: use a simple
-   period-followed-by-space-and-capital heuristic rather than a full NLP tokenizer; sufficient
-   for news summaries.
-
-2. **Perspectives block interaction** — `analytical` and `detailed` styles add a three-line
-   perspectives block (🟢/🔴/⚖️) for the top topic. The sentence cap must apply *only* to
-   `ArticleSummary.summary` (the per-article JSON field). It must NOT touch `CategorySummary.summary_text`
-   (the free-text category output). The scope is correct: `_cap_sentences` is called inside
-   `pick_top_articles` only.
-
-3. **14 instruction strings to update** — `PROMPT_TEMPLATES` has many keys across two languages
-   and multiple style variants. Missing one is the most likely implementation mistake. Mitigated
-   by the parametric tests in §5 that cover all style/language combinations.
-
-4. **Repetition is reduced, not eliminated** — the prompt tightening directly addresses
-   hypotheses 1 and 2 (no repetition instruction, summaries too long). Hypothesis 3
-   (cross-category dedup) is only partially addressed (by demanding non-obvious content).
-   If repetition persists after this fix, approach C is the next candidate.
+| Risk | Likelihood | Mitigation |
+|------|-----------|------------|
+| Lobsters rate limit is time-window-based (not concurrency-based) — serial calls fired quickly may still 429 | Low | `Semaphore(1)` guarantees at most one in-flight at a time; each call takes up to `_TIMEOUT=10s`, giving natural pacing. If 429 persists, add `asyncio.sleep(1)` inside semaphore context (one-line follow-up) |
+| Lazy semaphore init not thread-safe | Low | Pipeline runs in a single event loop; no threading. Non-issue in practice. |
+| 400 responses unresolved by this PR | Medium | Deferred to a follow-up issue. The 429 fix is the verified problem; 400 root cause is unknown. |
+| Lobsters search response format changes (API is undocumented) | Low | Already handled by `isinstance(data, list)` branch; no new exposure |

@@ -2,34 +2,28 @@
 
 **Tests:** All changed paths covered.
 
-- `digest/irritator/sources/reddit.py` — `search_reddit` fully rewritten; all 8 branches
-  exercised by `tests/test_sources_reddit.py` (8 tests, 0 failures):
-  - No credentials (both absent): returns `[]`, zero HTTP calls asserted ✓
-  - One credential absent: returns `[]`, zero HTTP calls asserted ✓
-  - Token endpoint 4xx (401): returns `[]`, no exception propagated ✓
-  - Token returns `{}` (missing `access_token`): returns `[]` ✓
-  - Success: `Authorization: bearer <token>` header verified on search request ✓
-  - Multi-subreddit: `oauth.reddit.com/r/programming+fintech/search` URL verified ✓
-  - Empty results: `[]` returned ✓
-  - Search 4xx (429): `HTTPStatusError` raised (fan-out catches it) ✓
-  - Minor gap: the `except Exception` on `token_resp.json()` (non-JSON 200 body) has no
-    dedicated test. Escape hatch accepted: `respx` always returns well-formed `httpx.Response`;
-    the branch is defensive-only and the generic `except Exception` in `search_all_sources`
-    provides a second safety net. No test written.
+- `digest/irritator/sources/lobsters.py` — `_get_semaphore()` and semaphore-wrapped `search_lobsters`
+  exercised by `tests/test_sources_lobsters.py` (8 tests, 0 failures):
+  - `test_success_list_format` — happy path, list response format ✓
+  - `test_success_dict_format` — dict/`results` response format ✓
+  - `test_fallback_to_short_id_url` — URL fallback logic ✓
+  - `test_empty_results` — empty list response ✓
+  - `test_http_error_raises` — 500 raises `HTTPStatusError` ✓
+  - `test_429_raises` — 429 raises `HTTPStatusError` (fan-out catches it upstream) ✓
+  - `test_400_raises` — 400 raises `HTTPStatusError` ✓
+  - `test_semaphore_limits_concurrency` — 5 concurrent callers; asserts peak in-flight == 1 ✓
+    (mock handler uses `await asyncio.sleep(0.01)` — load-bearing yield so event loop
+    actually switches tasks; removing it would make the test pass trivially against a broken impl)
+  - `autouse` fixture resets `_semaphore = None` before each test — prevents event-loop
+    cross-contamination between pytest-asyncio test runs ✓
 
-- Full suite: 485 passed, 0 failed. Ruff clean on changed files.
+- Full suite: 488 passed, 0 failed. Ruff and mypy clean on changed files.
 
 **Docs:** All contracts current.
 
-- `CLAUDE.md` references `reddit.py` only as a file-tree label (lines 65, 80) — no behavioral
-  description that requires updating.
-- No `docs/runbooks/` directory exists — nothing to check.
-- `README.md` references to "sources" are about RSS feed sources (`pending_sources.json`),
-  not irritator adapters — no update required.
-- `.env.example` updated with `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`
-  entries and registration instructions.
+- `CLAUDE.md` references `lobsters.py` as a file-tree label only (lines 65, 79) — no behavioral
+  description requiring update.
+- No `docs/runbooks/` entries for the Lobsters adapter — nothing to check.
 
-**Production activation note (not automatable in CI):** The fix ships dormant until the
-operator registers a Reddit "script" app at `reddit.com/prefs/apps` and adds the three secrets
-to `digest-prod`. Verify on first prod run: non-zero Reddit signals in the fan-out log line
-(`Fetched N signals from M queries × K sources`) confirm the OAuth flow is working.
+**Open item (not blocking):** 400 responses from Lobsters are deferred to a follow-up issue
+(root cause — query length vs. special characters — is unconfirmed). Note this in the PR body.
