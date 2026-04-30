@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://lobste.rs/search.json"
 _TIMEOUT = 10.0
 _MAX_RESULTS = 10
+# Lobsters blocks requests with default httpx/curl User-Agents.
+_HEADERS = {"User-Agent": "digest-bot/2.0 (counter-signal search; +https://github.com/Lenivvenil/digest)"}
 
 # Serialise all Lobsters requests — lobste.rs rate-limits aggressively under
 # fan-out. Semaphore(1) guarantees at most one in-flight request at a time.
@@ -55,6 +57,7 @@ async def search_lobsters(
         resp = await client.get(
             _BASE_URL,
             params={"q": safe_query, "what": "stories", "order": "relevance"},
+            headers=_HEADERS,
             timeout=_TIMEOUT,
         )
     resp.raise_for_status()
