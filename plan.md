@@ -1,8 +1,10 @@
-# Plan: fix Lobsters 429 on parallel fan-out (#63)
+# Plan: fix Lobsters 400 Bad Request on adversarial queries (#77)
 
 ## 1. Problem restatement
 
-The fan-out introduced in #53 fires one `(query, source)` task per combination. With 15 queries and Lobsters as one of five sources, up to 10 concurrent HTTP requests can land on `lobste.rs/search.json` at once — the global `Semaphore(10)` in `search_all_sources` caps total in-flight across all sources at 10, so in the worst case all 10 slots are held by Lobsters. Lobsters rate-limits aggressively and returns 429 on most of them. A separate class of 400 responses also appears; the cause is unknown and out of scope for this fix (see §6). Both failure modes are silently swallowed by the graceful-degradation wrapper, so the adapter contributes nothing to the digest without any actionable alert.
+A subset of Lobsters search calls return `400 Bad Request`. The exact server-side cause is **unconfirmed** — we do not have a failing production query to reproduce manually (AC pre-condition not yet met). What we know: the queries are LLM-generated adversarial strings containing characters like `"`, `:`, `(`, `)`, `-` — natural outputs of the query-generator prompt patterns (`"X didn't work"`, `"failure of X: case study"`). Lobsters is open source; inspecting `app/models/search.rb` shows it has a `strip_operators` method that converts non-word characters to spaces before building a MariaDB MATCH...AGAINST query, but this runs *after* `SearchParser.new.parse(params[:q])` in `Search#initialize`. The 400 mechanism is unclear — a raised exception from the parser would be a Rails 500, not 400. Other candidates: Rack/Nginx middleware, a custom error handler, or a Rails `head :bad_request` somewhere in the chain we haven't found.
+
+**This plan ships a defensive sanitizer that mirrors Lobsters' own `strip_operators` logic.** This is valid defense-in-depth: even if the precise mechanism differs from our hypothesis, applying the same character-stripping the server applies before its own processing cannot make things worse, and very likely eliminates whatever character sequence triggers the 400. Root-cause confirmation via manual curl test is a merge gate (see §4).
 
 ## 2. Affected bounded contexts and files
 
@@ -11,85 +13,109 @@ The fan-out introduced in #53 fires one `(query, source)` task per combination. 
 | File | Role |
 |------|------|
 | `digest/irritator/sources/lobsters.py` | Lobsters adapter — primary change target |
-| `digest/irritator/sources/__init__.py` | Fan-out orchestrator; global semaphore lives here (read-only for this fix) |
-| `tests/test_sources_lobsters.py` | Unit tests for the adapter |
-| `tests/test_sources_init.py` | Integration path for `search_all_sources` graceful degradation |
+| `tests/test_sources_lobsters.py` | Adapter unit tests |
 
-No BC boundary changes. Delivery and Radar are unaffected.
+No BC boundary changes. All other adapters and `sources/__init__.py` are untouched.
 
 ## 3. Considered approaches
 
-### A. Per-adapter self-contained semaphore in `lobsters.py` ← chosen
+### A. Pre-send sanitization mirroring Lobsters' `strip_operators` ← chosen
 
-Add a module-level `asyncio.Semaphore` (limit 1) inside `lobsters.py`, created lazily on first call inside the running event loop. The adapter acquires it before each HTTP request, fully serialising Lobsters calls without touching any other adapter or the orchestrator.
+Apply the equivalent of Lobsters' own `strip_operators` logic **before** sending the query. Lobsters does:
 
-`Semaphore(1)` is chosen over a higher limit because: (a) Lobsters' rate limit is undocumented and empirically aggressive; (b) the digest runs once daily with ~15 Lobsters calls — fully serial worst-case is ~15 × `_TIMEOUT` = 15 s added to pipeline wall-clock, which is acceptable; (c) any higher value is a guess without measurement. If a follow-up profiling run shows this is a bottleneck, the limit can be raised with evidence.
+```ruby
+def strip_operators s
+  s.to_s
+    .gsub(/[^\p{Word}']/, " ")  # replace non-word chars (keep apostrophe) with space
+    .gsub("'", "\\\\'")         # escape apostrophes for MariaDB
+    .strip
+end
+```
 
-The 400 responses are **out of scope** for this PR — the root cause (query length vs. special characters) is unconfirmed. A separate issue will be filed to investigate and reproduce. Bundling an unverified fix with a verified one makes post-merge attribution ambiguous.
+Python equivalent in `lobsters.py`:
+```python
+import re
+
+# \w is Unicode-aware in Python 3 by default (matches \p{Word} like Ruby's regex),
+# which matters because LLM prompts are bilingual (RU/EN) and may produce Cyrillic terms.
+_STRIP_RE = re.compile(r"[^\w']")
+
+def _sanitize_query(q: str) -> str:
+    """Strip non-word characters to match Lobsters' own strip_operators logic."""
+    q = _STRIP_RE.sub(" ", q)
+    return " ".join(q.split())  # collapse whitespace, strip edges
+```
+
+No length cap: LLM queries are empirically short and a cap without a documented threshold is dead code with a magic number. If a length limit becomes relevant, it belongs in a follow-up with evidence.
 
 **Trade-offs:**
-- (+) Zero blast radius — other adapters and `search_all_sources` are untouched.
-- (+) Constraint lives next to the code that causes it — self-documenting.
-- (+) Per-adapter tuning without touching fan-out logic.
-- (−) Module-level mutable state; tests must reset `_semaphore = None` between runs (standard `monkeypatch`).
-- (−) Semaphore must be created inside a running event loop — lazy init handles this, adds minor ceremony.
+- (+) Mirrors the server-side logic — queries we send are a subset of what Lobsters' sanitizer would produce anyway.
+- (+) Self-contained in the adapter; no orchestrator changes.
+- (+) Fully testable in unit tests without hitting real Lobsters.
+- (+) Unicode-aware by default; handles Cyrillic queries correctly.
+- (−) If Lobsters changes `strip_operators` in a future version, our sanitizer could diverge (low risk — small, stable OSS project).
+- (−) Does not confirm the 400 cause; might not be the only fix needed.
 
-### B. Per-host semaphore map in `search_all_sources`
+### B. Retry on 400 with no sanitization
 
-Maintain a `dict[str, asyncio.Semaphore]` keyed by source name in the orchestrator, with per-source concurrency limits from config or hardcoded defaults.
-
-**Trade-offs:**
-- (+) All rate-limit policy visible in one place.
-- (−) Adds non-trivial complexity to the orchestrator for a problem that currently affects only one adapter.
-- (−) Invites per-source config-surface creep (`config.yaml` fields for each adapter's concurrency).
-- (−) No benefit for adapters that already self-manage (e.g. Reddit OAuth).
-
-### C. Retry with exponential backoff in `lobsters.py`
-
-Catch `httpx.HTTPStatusError` for 429, sleep, retry up to N times.
+Catch `httpx.HTTPStatusError` for 400, log and return `[]` (which already happens in the fan-out wrapper). Effectively: accept the loss.
 
 **Trade-offs:**
-- (+) Handles transient single-request blips.
-- (−) Does not prevent the burst — 15 requests fire simultaneously, most get 429, then retries add wall-clock latency.
-- (−) Compounds total pipeline runtime; does not address the 400 problem.
-- (−) Cures the symptom, not the cause.
+- (+) Zero code added to the adapter itself.
+- (−) Lobsters contributes no signals for queries with adversarial characters — the fix doesn't fix anything, it just makes the failure explicit.
+- (−) Does not satisfy the AC "fix applied in `lobsters.py`".
 
-**Verdict:** A is the correct fix. B is over-engineering for one adapter. C solves the wrong problem.
+### C. Escape / percent-encode special characters
+
+Use `urllib.parse.quote` to encode characters before sending, or wrap the query in quotes.
+
+**Trade-offs:**
+- (+) Alternative sanitization path.
+- (−) httpx already percent-encodes query params — the issue is not encoding, it's that Lobsters' parser sees the decoded characters on the server side.
+- (−) Quoting the whole query string as a phrase-search would narrow results significantly.
+
+**Verdict:** A is the only approach that addresses the root cause. B is not a fix. C misunderstands where the issue is.
 
 ## 4. Chosen approach and why
 
-**Option A — per-adapter semaphore (limit 1) in `lobsters.py`.**
+**Option A — pre-send `_sanitize_query()` in `lobsters.py`.**
 
-- The issue is Lobsters-specific; fixing it in the adapter keeps the change minimal and contained.
-- `Semaphore(1)` is the only choice that is guaranteed to prevent the burst, requires no empirical measurement, and keeps the fix unambiguous. Reasoning documented above in §3A.
-- 400 responses are deferred to a follow-up issue.
-- ADR check against `docs/principles.md`: no new cross-cutting dependency, no BC boundary change, no infrastructure component, no public API change, no security model change. **Not architecturally significant. No ADR required.**
+- Defense-in-depth: mirrors the server's own `strip_operators` logic so our queries are a strict subset of what Lobsters processes safely.
+- Self-contained; no BC boundary change, no new dependency (`re` is stdlib), no infrastructure choice.
+- ADR check: not architecturally significant. **No ADR required.**
+- Preserves `Semaphore(1)` from PR #76 — sanitization happens inside the semaphore context, before `client.get()`.
 
 Implementation sketch:
-
 ```python
-# lobsters.py
-import asyncio
+_STRIP_RE = re.compile(r"[^\w']")
 
-_semaphore: asyncio.Semaphore | None = None
-
-def _get_semaphore() -> asyncio.Semaphore:
-    global _semaphore
-    if _semaphore is None:
-        _semaphore = asyncio.Semaphore(1)
-    return _semaphore
+def _sanitize_query(q: str) -> str:
+    q = _STRIP_RE.sub(" ", q)
+    return " ".join(q.split())
 
 @_register("lobsters")
 async def search_lobsters(query: str, config: Any, client: httpx.AsyncClient) -> list[Signal]:
     async with _get_semaphore():
         resp = await client.get(
             _BASE_URL,
-            params={"q": query, "what": "stories", "order": "relevance"},
+            params={"q": _sanitize_query(query), "what": "stories", "order": "relevance"},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
         ...
 ```
+
+**Root-cause confirmation (merge gate):** The AC requires manual reproduction. Before merging, operator runs:
+```bash
+# With a query that contains operator chars — should 400 if our hypothesis is right:
+curl -s -o /dev/null -w "%{http_code}\n" \
+  'https://lobste.rs/search.json?q=%22AI+governance%3A+failure%22&what=stories&order=relevance'
+
+# With sanitized form — should 200:
+curl -s -o /dev/null -w "%{http_code}\n" \
+  'https://lobste.rs/search.json?q=AI+governance+failure&what=stories&order=relevance'
+```
+If both return 200 (Lobsters sanitizes silently), the 400s must have a different cause — note it in the PR thread and decide whether to ship as defensive hardening anyway.
 
 ## 5. Test strategy
 
@@ -97,22 +123,23 @@ async def search_lobsters(query: str, config: Any, client: httpx.AsyncClient) ->
 
 | Test | Assertion |
 |------|-----------|
-| `test_semaphore_limits_concurrency` | Launch N > 1 concurrent calls; mock handler uses `await asyncio.sleep(0)` to yield so concurrency actually manifests; assert peak in-flight count never exceeds 1 (shared counter via `monkeypatch`). Without the sleep, the event loop never switches and the test passes trivially against a broken implementation. |
-| `test_429_raises` | Mock returns 429; assert `HTTPStatusError` propagates from adapter (fan-out catches it upstream) |
-| `test_400_raises` | Mock returns 400; same assertion |
-| `test_semaphore_reset_between_tests` | Use `monkeypatch` to reset `lobsters._semaphore = None` between tests; verify no cross-test state leak |
+| `test_sanitize_query_strips_operators` | `"AI: failure (2024)"` → `"AI failure 2024"` |
+| `test_sanitize_query_keeps_apostrophes` | `"didn't work"` → `"didn't work"` (apostrophe preserved) |
+| `test_sanitize_query_collapses_whitespace` | `"foo   :   bar"` → `"foo bar"` |
+| `test_sanitize_query_unicode` | Cyrillic input `"провал ИИ: 2024"` → `"провал ИИ 2024"` (colon stripped, words kept) |
+| `test_query_sanitized_before_send` | Mock captures `q` param; assert operator-containing input arrives sanitized. **Note:** this test proves we sanitize before sending; it does not prove the unsanitized form would 400 (that requires the manual curl gate above). The test is still valuable — it guards against regression where sanitization is accidentally removed. |
+| `test_semaphore_not_regressed` | Existing `test_semaphore_limits_concurrency` continues to pass unchanged |
 
-**Integration** (existing `tests/test_sources_init.py`):
+**Integration** (existing `tests/test_sources_init.py`): no changes needed — graceful degradation path unchanged.
 
-- Verify `search_all_sources` returns non-empty when Lobsters raises (graceful degradation). Existing test covers this; confirm it passes unchanged with the new semaphore.
-
-**e2e:** Not applicable — no real network calls in tests.
+**e2e / manual**: Operator runs the curl test above before merge to confirm the live Lobsters endpoint rejects the unsanitized query and accepts the sanitized one. This satisfies the AC's "root cause confirmed via manual reproduction."
 
 ## 6. Risks and unknowns
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
-| Lobsters rate limit is time-window-based (not concurrency-based) — serial calls fired quickly may still 429 | Low | `Semaphore(1)` guarantees at most one in-flight at a time; each call takes up to `_TIMEOUT=10s`, giving natural pacing. If 429 persists, add `asyncio.sleep(1)` inside semaphore context (one-line follow-up) |
-| Lazy semaphore init not thread-safe | Low | Pipeline runs in a single event loop; no threading. Non-issue in practice. |
-| 400 responses unresolved by this PR | Medium | Deferred to a follow-up issue. The 429 fix is the verified problem; 400 root cause is unknown. |
-| Lobsters search response format changes (API is undocumented) | Low | Already handled by `isinstance(data, list)` branch; no new exposure |
+| Root cause is different from our hypothesis — sanitizer doesn't fix the 400s | Medium | The manual curl gate before merge tests this. If both sanitized and unsanitized queries return 200, we ship as defensive hardening and track whether 400s persist in the next prod run |
+| 400s were caused by the fan-out burst (#63) and already fixed by PR #76 | Medium | If first prod run after #76 has zero 400s, this PR is still safe to ship (sanitization is a no-op for well-formed queries) but we should note the finding |
+| Sanitization removes meaningful query signal (e.g., `"phrase"` intent) | Low | Lobsters' `strip_operators` strips these server-side anyway — we lose nothing Lobsters would have acted on. Adversarial keywords ("failure", "criticism") survive as plain tokens |
+| `_sanitize_query` returns empty string (all chars stripped) | Low | Lobsters returns empty results with `invalid("No search terms recognized")` — not a 400; graceful degradation handles it. We could add an explicit guard, but it's unnecessary given graceful degradation already exists |
+| Lobsters changes `strip_operators` in the future | Low | Undocumented API; any upstream change requires re-investigation. Not worth designing for now |
