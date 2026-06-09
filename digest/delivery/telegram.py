@@ -179,9 +179,11 @@ async def send_article_cards(
 ) -> dict[str, str]:
     """Send per-article Telegram posts with LLM summaries and voting buttons.
 
-    If *top_articles* (list of ``ArticleSummary``) is provided, those are
-    sent as cards with their LLM-generated summaries.  Otherwise falls back
-    to raw articles with truncated descriptions.
+    Only sends cards when *top_articles* (list of ``ArticleSummary``) is a
+    non-empty list. If it is ``None`` or empty (e.g. the LLM picker failed),
+    no cards are sent — preventing accidental fan-out of every raw feed
+    article when summarization is unavailable. The caller is expected to
+    surface an explicit status message in that case.
 
     The full ``article_source_map`` (hash → source) is always built from
     *articles_by_category* so feedback attribution works for every article.
@@ -205,19 +207,19 @@ async def send_article_cards(
             hash8 = article_hash(art.title, art.link)[:8]
             article_source_map[hash8] = art.source
 
-    # Determine what to send
-    cards: list[tuple[str, str, str, str, str]] = []  # (title, link, source, cat, desc)
-    if top_articles:
-        for a in top_articles:
-            cards.append((a.title, a.link, a.source, a.category, a.summary))
-    else:
-        # Fallback: raw articles with truncated descriptions
-        for category, articles in articles_by_category.items():
-            for art in articles:
-                desc = art.description[:200]
-                if len(art.description) > 200:
-                    desc += "\u2026"
-                cards.append((art.title, art.link, art.source, category, desc))
+    if not top_articles:
+        total = sum(len(v) for v in articles_by_category.values())
+        logger.warning(
+            "send_article_cards skipped: no top_articles "
+            "(would have flooded %d raw articles)",
+            total,
+        )
+        return article_source_map
+
+    # (title, link, source, cat, desc)
+    cards: list[tuple[str, str, str, str, str]] = [
+        (a.title, a.link, a.source, a.category, a.summary) for a in top_articles
+    ]
 
     sent_count = 0
     async with httpx.AsyncClient() as client:

@@ -51,7 +51,10 @@ def _make_stats(
 
 
 def _rating(rating: int, days_ago: int = 0) -> ArticleFeedback:
-    ts = (_NOW - timedelta(days=days_ago)).isoformat()
+    # Anchored to wall-clock now (not _NOW) because compute_bubble_report's
+    # 14-day window uses datetime.now() — anchoring to a fixed past date
+    # would make the test silently rot once the suite runs on a later day.
+    ts = (datetime.now(tz=timezone.utc) - timedelta(days=days_ago)).isoformat()
     return ArticleFeedback(
         article_hash="abc", source_name="S", rating=rating, timestamp=ts
     )

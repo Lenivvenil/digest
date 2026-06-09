@@ -123,6 +123,57 @@ class RunStats:
     duration_seconds: float = 0.0
 
 
+async def _send_status_message(text: str) -> bool:
+    """Send a one-line Telegram status notice. Returns True on success."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return False
+
+    import httpx as _httpx
+
+    from digest.delivery.telegram import _send_chunk, escape_markdownv2
+
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with _httpx.AsyncClient() as client:
+            await _send_chunk(client, api_url, chat_id, escape_markdownv2(text))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to send status message: %s", exc,
+        )
+        return False
+    return True
+
+
+async def _notify_skipped_cards(top_articles: list[Any]) -> None:
+    """Surface a Telegram notice when the LLM picker returned no cards.
+
+    Prevents the perception of a 'skipped digest' when summaries were still
+    written to markdown but no cards landed in Telegram.
+    """
+    if top_articles:
+        return
+    await _send_status_message(
+        "⚠️ Radar: LLM picker returned no top articles "
+        "— cards skipped; summary saved to markdown."
+    )
+
+
+async def _notify_summaries_failed(*, dry_run: bool, telegram_enabled: bool) -> None:
+    """Surface a Telegram notice when all summarization providers failed.
+
+    Prevents a 'silently skipped' digest when the whole pipeline aborted
+    before any markdown or card landed.
+    """
+    if dry_run or not telegram_enabled:
+        return
+    await _send_status_message(
+        "❌ Radar: all LLM providers for role=summarize failed "
+        "— digest not assembled (see workflow logs)."
+    )
+
+
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -515,6 +566,9 @@ async def run(
     summaries, trends = await summarize_all(articles_by_category, config)
     if not summaries:
         logger.error("All category summarizations failed.")
+        await _notify_summaries_failed(
+            dry_run=dry_run, telegram_enabled=config.telegram.enabled,
+        )
         return _empty_stats(total_articles)
 
     combined = _clean_summary(
@@ -581,12 +635,16 @@ async def run(
             )
             if article_source_map:
                 feedback_store.article_source_map.update(article_source_map)
-            telegram_sent = bool(article_source_map)
+            # Cards are only sent when top_articles is non-empty; the source map
+            # is built unconditionally for feedback attribution, so it can't be
+            # used as a "cards delivered" signal.
+            telegram_sent = bool(top_articles) and bool(article_source_map)
             if telegram_sent:
                 feedback_store.last_digest_sources = contributing_sources
                 feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
                     "%Y-%m-%d %H:%M UTC"
                 )
+            await _notify_skipped_cards(top_articles)
             await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
 
             # Send nano status footer
