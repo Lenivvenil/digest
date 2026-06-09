@@ -217,6 +217,19 @@ def _make_article(
     return make_article(title=title, link=link, description=description, source=source)
 
 
+def _make_top(
+    title: str = "Test Article",
+    link: str = "https://example.com/article",
+    source: str = "hackernews",
+    category: str = "tech",
+    summary: str = "A short LLM summary.",
+) -> Any:
+    from digest.radar.summarizer import ArticleSummary
+    return ArticleSummary(
+        title=title, link=link, source=source, category=category, summary=summary,
+    )
+
+
 @pytest.mark.asyncio
 class TestSendArticleCards:
     async def test_sends_cards_with_keyboard(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,12 +237,13 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         articles = {"tech": [_make_article(), _make_article(title="Second", link="https://b.com")]}
+        top = [_make_top(), _make_top(title="Second", link="https://b.com")]
 
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
             )
-            result = await send_article_cards(articles, _make_config())
+            result = await send_article_cards(articles, _make_config(), top_articles=top)
 
         assert len(result) == 2
         assert route.call_count == 2
@@ -239,12 +253,13 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         articles = {"ai": [_make_article(source="reddit")]}
+        top = [_make_top(source="reddit", category="ai")]
 
         with respx.mock:
             respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
             )
-            result = await send_article_cards(articles, _make_config())
+            result = await send_article_cards(articles, _make_config(), top_articles=top)
 
         assert len(result) == 1
         source_name = list(result.values())[0]
@@ -255,7 +270,9 @@ class TestSendArticleCards:
     async def test_missing_token_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
         monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-        result = await send_article_cards({"tech": [_make_article()]}, _make_config())
+        result = await send_article_cards(
+            {"tech": [_make_article()]}, _make_config(), top_articles=[_make_top()],
+        )
         assert result == {}
 
     async def test_card_failure_continues(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -263,6 +280,7 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         articles = {"tech": [_make_article(), _make_article(title="Good", link="https://good.com")]}
+        top = [_make_top(), _make_top(title="Good", link="https://good.com")]
 
         call_count = 0
 
@@ -275,7 +293,7 @@ class TestSendArticleCards:
 
         with respx.mock:
             respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=_side_effect)
-            result = await send_article_cards(articles, _make_config())
+            result = await send_article_cards(articles, _make_config(), top_articles=top)
 
         # Second card should still be in the map even if first failed
         assert len(result) == 2
@@ -284,17 +302,8 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
-        from digest.radar.summarizer import ArticleSummary
-
-        top = [
-            ArticleSummary(
-                title="Big News",
-                link="https://example.com/article",
-                source="TechCrunch",
-                category="AI",
-                summary="This is an important development in AI.",
-            ),
-        ]
+        top = [_make_top(title="Big News", source="TechCrunch", category="AI",
+                         summary="This is an important development in AI.")]
         articles = {"AI": [_make_article(title="Big News")]}
 
         with respx.mock:
@@ -312,14 +321,42 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         articles = {"tech": [_make_article()]}
+        top = [_make_top()]
 
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
             )
-            await send_article_cards(articles, _make_config())
+            await send_article_cards(articles, _make_config(), top_articles=top)
 
         assert route.call_count == 1
         payload = json.loads(route.calls[0].request.content)
         text: str = payload["text"]
         assert f"_{escape_markdownv2(_ASYNC_FEEDBACK_NOTE)}_" in text
+
+    async def test_skips_send_when_top_articles_empty(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: without top_articles the function must NOT fan out raw feed."""
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        articles = {
+            "tech": [
+                _make_article(title=f"A{i}", link=f"https://example.com/{i}")
+                for i in range(60)
+            ],
+        }
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            result_none = await send_article_cards(articles, _make_config())
+            result_empty = await send_article_cards(articles, _make_config(), top_articles=[])
+
+        # Nothing should have been sent — but source map is still populated
+        # for feedback attribution of articles that DO appear elsewhere.
+        assert route.call_count == 0
+        assert len(result_none) == 60
+        assert len(result_empty) == 60
