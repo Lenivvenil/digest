@@ -231,3 +231,13 @@ class TestWriteDigestWithTopArticles:
         assert result is not None
         text = result.read_text(encoding="utf-8")
         assert "Top Articles" not in text
+
+
+def test_same_day_retries_preserve_previous_digests(tmp_path: Path) -> None:
+    config = _make_config(output_dir=str(tmp_path))
+    dt = datetime(2026, 4, 9, 10, tzinfo=timezone.utc)
+    paths = [write_digest(content, config, date=dt) for content in ["First", "Retry", "Evening"]]
+    assert [p.name for p in paths if p] == ["2026-04-09.md", "2026-04-09-2.md", "2026-04-09-3.md"]
+    for path, expected in zip(paths, ["First", "Retry", "Evening"], strict=True):
+        assert path is not None
+        assert path.read_text(encoding="utf-8").endswith(f"{expected}\n")

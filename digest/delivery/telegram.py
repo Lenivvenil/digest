@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -27,6 +28,22 @@ _BOLD_OPEN = "\ue000"
 _BOLD_CLOSE = "\ue001"
 _LINK_PH_OPEN = "\ue002"
 _LINK_PH_CLOSE = "\ue003"
+
+
+@dataclass
+class ArticleDeliveryResult:
+    """Delivery counts and attribution for cards Telegram actually accepted.
+
+    ``article_source_map`` uses the 8-character callback hashes, while
+    ``delivered_hashes`` contains full hashes for the collector's dedup cache.
+    Skipped delivery (including missing credentials) has zero attempts.
+    """
+
+    attempted: int = 0
+    sent: int = 0
+    failed: int = 0
+    article_source_map: dict[str, str] = field(default_factory=dict)
+    delivered_hashes: set[str] = field(default_factory=set)
 
 
 def escape_markdownv2(text: str) -> str:
@@ -162,13 +179,13 @@ async def _send_chunk(
             resp.raise_for_status()
             return
         except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+            if attempt == _MAX_RETRIES - 1:
+                raise
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
                 retry_after = int(exc.response.headers.get("Retry-After", 2))
                 await asyncio.sleep(retry_after)
-            elif attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(2 ** attempt)
             else:
-                raise
+                await asyncio.sleep(2 ** attempt)
 
 
 async def send_article_cards(
@@ -176,7 +193,7 @@ async def send_article_cards(
     config: Any,
     *,
     top_articles: list[Any] | None = None,
-) -> dict[str, str]:
+) -> ArticleDeliveryResult:
     """Send per-article Telegram posts with LLM summaries and voting buttons.
 
     Only sends cards when *top_articles* (list of ``ArticleSummary``) is a
@@ -185,10 +202,9 @@ async def send_article_cards(
     article when summarization is unavailable. The caller is expected to
     surface an explicit status message in that case.
 
-    The full ``article_source_map`` (hash → source) is always built from
-    *articles_by_category* so feedback attribution works for every article.
-
-    Returns mapping of 8-char article hash -> source name.
+    Returns explicit delivery counts and attribution for successfully sent
+    cards only. Raw feed articles and failed cards are never reported as
+    delivered. Attribution uses the original feed source when available.
     """
     from digest.radar.collector import article_hash
 
@@ -196,16 +212,7 @@ async def send_article_cards(
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set, skipping cards")
-        return {}
-
-    api_url = _API_BASE.format(token=token)
-    article_source_map: dict[str, str] = {}
-
-    # Build full attribution map from all articles
-    for articles in articles_by_category.values():
-        for art in articles:
-            hash8 = article_hash(art.title, art.link)[:8]
-            article_source_map[hash8] = art.source
+        return ArticleDeliveryResult()
 
     if not top_articles:
         total = sum(len(v) for v in articles_by_category.values())
@@ -214,17 +221,25 @@ async def send_article_cards(
             "(would have flooded %d raw articles)",
             total,
         )
-        return article_source_map
+        return ArticleDeliveryResult()
+
+    api_url = _API_BASE.format(token=token)
+    source_by_hash = {
+        article_hash(art.title, art.link): art.source
+        for articles in articles_by_category.values()
+        for art in articles
+    }
 
     # (title, link, source, cat, desc)
     cards: list[tuple[str, str, str, str, str]] = [
         (a.title, a.link, a.source, a.category, a.summary) for a in top_articles
     ]
 
-    sent_count = 0
+    result = ArticleDeliveryResult()
     async with httpx.AsyncClient() as client:
         for title, link, source, category, summary in cards:
-            hash8 = article_hash(title, link)[:8]
+            full_hash = article_hash(title, link)
+            hash8 = full_hash[:8]
 
             title_esc = escape_markdownv2(title)
             url_esc = link.replace("\\", "\\\\").replace(")", "\\)")
@@ -249,6 +264,7 @@ async def send_article_cards(
                 ]
             }
 
+            result.attempted += 1
             try:
                 await _send_chunk(
                     client,
@@ -257,16 +273,22 @@ async def send_article_cards(
                     text,
                     reply_markup=keyboard,
                 )
-                sent_count += 1
+                result.sent += 1
+                result.article_source_map[hash8] = source_by_hash.get(full_hash, source)
+                result.delivered_hashes.add(full_hash)
             except Exception as exc:
+                result.failed += 1
                 logger.warning(
                     "Failed to send card for '%s': %s", title[:50], exc,
                 )
 
             await asyncio.sleep(0.5)
 
-    logger.info("Sent %d article cards to Telegram", sent_count)
-    return article_source_map
+    logger.info(
+        "Telegram article cards: %d attempted, %d sent, %d failed",
+        result.attempted, result.sent, result.failed,
+    )
+    return result
 
 
 async def send_counter_signals(
