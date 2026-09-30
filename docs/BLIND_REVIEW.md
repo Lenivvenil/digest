@@ -82,3 +82,12 @@ Identical maximum output tokens do not equal identical reasoning effort across
 model families. Character caps are not exact tokenizer/RPM/TPM accounting. Quotas
 can still make a review incomplete; that state is surfaced, not counted as an
 opinion. Existing crash/retry delivery limitations still apply.
+
+## Rejected-response diagnostics
+
+Invalid successful model completions retain a specific validator reason, response
+SHA-256 and at most 32,000 characters of untrusted rejected text in the JSON
+sidecar, not rendered as Markdown. Control characters and common credential-like
+patterns are redacted without inspecting environment secrets. Raw HTTP error
+bodies and headers are never retained. This diagnoses future contract failures
+without silently retrying a model or guessing what its first response contained.

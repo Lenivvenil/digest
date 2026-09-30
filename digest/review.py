@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from itertools import zip_longest
 from typing import Literal
@@ -66,6 +67,9 @@ class ModelReview:
     usage: dict[str, int] = field(default_factory=dict)
     error: str = ""
     resolved_model: str | None = None
+    response_sha256: str | None = None
+    rejected_output: str | None = None
+    rejected_output_truncated: bool = False
 
 
 @dataclass
@@ -169,8 +173,10 @@ def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tup
         identity, reason, quote, confidence = (item[k] for k in ["evidence_id", "reason", "quote", "confidence"])
         if not all(isinstance(v, str) for v in [identity, reason, quote, confidence]):
             raise ValueError("selection fields must be strings")
-        if identity not in known or identity in seen:
-            raise ValueError("unknown or duplicated evidence id")
+        if identity not in known:
+            raise ValueError("unknown evidence id")
+        if identity in seen:
+            raise ValueError("duplicated evidence id")
         if not reason.strip() or len(reason) > 600 or not quote.strip() or len(quote) > 200:
             raise ValueError("invalid selection text budget")
         if confidence not in {"low", "medium", "high"}:
@@ -181,6 +187,25 @@ def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tup
         seen.add(identity)
         parsed.append(EvidenceSelection(identity, reason.strip(), quote, confidence))
     return parsed, limitations
+
+
+def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, bool]:
+    """Retain bounded untrusted model text, never HTTP error bodies or headers."""
+    known_reasons = {
+        "response exceeds review budget", "expected selections and limitations",
+        "invalid selection count", "invalid limitations", "abstention needs an explanation",
+        "invalid selection schema", "selection fields must be strings", "unknown evidence id",
+        "duplicated evidence id", "invalid selection text budget", "invalid confidence",
+        "quote is not in supplied evidence",
+    }
+    reason = str(exc) if str(exc) in known_reasons else "invalid JSON or review contract"
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    cleaned = re.sub(
+        r"(?:sk-[A-Za-z0-9_-]{16,}|gsk_[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,})",
+        "[redacted credential-like text]", cleaned,
+    )
+    cleaned = re.sub(r"(?i)Bearer\s+[A-Za-z0-9._-]{16,}", "Bearer [redacted]", cleaned)
+    return reason, cleaned[:32000], len(cleaned) > 32000
 
 
 async def _review_slot(
@@ -198,15 +223,16 @@ async def _review_slot(
     except Exception as exc:
         result.error = type(exc).__name__  # Never retain response bodies or credentials.
         return result
+    result.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
     resolved_model = usage.get("resolved_model")
     result.resolved_model = resolved_model if isinstance(resolved_model, str) else None
     result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
                     and type(v) is int and v >= 0}
     try:
         result.selections, result.limitations = _parse_review(text, bundle, config.review.max_selections)
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
-        result.error = "invalid_review_contract"
+        result.error, result.rejected_output, result.rejected_output_truncated = _rejected_output_diagnostics(text, exc)
         return result
     result.status = "ok" if result.selections else "abstained"
     return result

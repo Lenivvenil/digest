@@ -297,3 +297,27 @@ async def test_trial_isolates_cache_and_never_calls_delivery(
     assert state.read_text() == '{"production": "untouched"}'
     assert (tmp_path / "output/review.json").exists()
     assert json.loads((tmp_path / "output/trial-metadata.json").read_text())["max_model_requests"] == 3
+
+
+@pytest.mark.asyncio
+async def test_invalid_review_preserves_reason_and_rejected_model_text() -> None:
+    config = fixture_config()
+    raw = ('{"selections":[{"evidence_id":"invented","reason":"Useful",'
+           '"quote":"text","confidence":"high"}],"limitations":[]}')
+    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))):
+        report = await run_blind_review(fixture_articles(), config)
+    assert report.reviews[0].error == "unknown evidence id"
+    assert report.reviews[0].rejected_output == raw
+    assert report.reviews[0].response_sha256
+    assert report.third_model_reason == "incomplete_primary_comparison"
+
+
+def test_rejected_response_diagnostics_are_bounded_and_redacted() -> None:
+    from digest.review import _rejected_output_diagnostics
+
+    text = "\x00sk-abcdefghijklmnopqrstuv Bearer abcdefghijklmnopqrstuv " + "x" * 33000
+    reason, rejected, truncated = _rejected_output_diagnostics(text, ValueError("unexpected provider body"))
+    assert reason == "invalid JSON or review contract"
+    assert len(rejected) == 32000 and truncated
+    assert "abcdefghijklmnopqrstuv" not in rejected
+    assert "\x00" not in rejected
