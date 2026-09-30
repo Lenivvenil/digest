@@ -522,11 +522,24 @@ def _save_failed_run_stats(
         save_stats(source_stats, cache_dir, active_sources=active_sources)
 
 
-def _review_status_line(report: BlindReviewReport | None) -> str:
+def _review_status_line(report: BlindReviewReport | None, language: str = "en") -> str:
     if report is None:
         return ""
-    slots = ", ".join(f"{r.slot}: {r.status}" for r in report.reviews)
-    return f"\nBlind review: {report.status} ({slots})"
+    russian = language == "ru"
+    statuses = ({"ok": "ответ принят", "partial": "часть карточек принята", "abstained": "нет выбора",
+                 "invalid": "ответ не прошёл проверку", "unavailable": "ответ не получен"} if russian else
+                {"ok": "accepted", "partial": "partially accepted", "abstained": "no selection",
+                 "invalid": "response failed validation", "unavailable": "no response"})
+    details = []
+    for review in report.reviews:
+        pending = review.error == "pending_independent_review"
+        state = (("ожидает отдельного этапа" if russian else "waiting for separate stage")
+                 if pending else statuses[review.status])
+        details.append(f"{review.model}: {state}")
+    complete = report.status == "complete"
+    heading = (("Сравнение моделей завершено" if complete else "Сравнение моделей ещё не завершено") if russian else
+               ("Model comparison complete" if complete else "Model comparison incomplete"))
+    return "\n" + heading + ". " + "; ".join(details)
 
 
 def _review_text(report: BlindReviewReport | None) -> str:
@@ -777,7 +790,7 @@ async def run(
                 sum(not m.fetch_ok for m in fetch_metrics.values()),
                 source_stats, config, effective_priorities,
             )
-            nano_status += _review_status_line(review_report)
+            nano_status += _review_status_line(review_report, config.radar.language)
             if review_led_only:
                 nano_status += "\n" + irritator_status.text
             token = os.environ.get("TELEGRAM_BOT_TOKEN", "")

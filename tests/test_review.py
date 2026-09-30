@@ -256,7 +256,7 @@ async def test_telegram_status_exposes_incomplete_peer_review() -> None:
     report.status = "incomplete"
     report.reviews[1].status = "unavailable"
     status = _review_status_line(report)
-    assert "incomplete" in status and "secondary: unavailable" in status
+    assert "incomplete" in status and "no response" in status
     assert _review_status_line(None) == ""
 
 
@@ -321,3 +321,17 @@ def test_rejected_response_diagnostics_are_bounded_and_redacted() -> None:
     assert len(rejected) == 32000 and truncated
     assert "abcdefghijklmnopqrstuv" not in rejected
     assert "\x00" not in rejected
+
+
+def test_review_status_pending_is_not_unavailable_in_russian():
+    from digest.main import _review_status_line
+    from digest.review import BlindReviewReport, ModelReview
+
+    bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
+    review = ModelReview("secondary", "groq", "openai/gpt-oss-120b", bundle.bundle_id, "hash", "unavailable",
+                         error="pending_independent_review")
+    report = BlindReviewReport(1, bundle, [review], "incomplete", None, [], "pending_independent_review")
+    text = _review_status_line(report, "ru")
+    assert "ожидает отдельного этапа" in text
+    assert "secondary" not in text and "unavailable" not in text
+    assert "ещё не завершено" in text

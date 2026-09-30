@@ -53,6 +53,14 @@ class EvidenceSelection:
     reason: str
     quote: str
     confidence: Literal["low", "medium", "high"]
+    typography_normalized: bool = False
+
+
+@dataclass(frozen=True)
+class RejectedSelection:
+    index: int
+    reason: str
+    evidence_id: str | None = None
 
 
 @dataclass
@@ -62,7 +70,7 @@ class ModelReview:
     model: str
     bundle_id: str
     prompt_hash: str
-    status: Literal["ok", "abstained", "invalid", "unavailable"]
+    status: Literal["ok", "partial", "abstained", "invalid", "unavailable"]
     selections: list[EvidenceSelection] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
@@ -74,6 +82,7 @@ class ModelReview:
     attempted_at: str | None = None
     generated_at: str | None = None
     reused_from_checkpoint: bool = False
+    rejected_items: list[RejectedSelection] = field(default_factory=list)
 
 
 @dataclass
@@ -153,7 +162,7 @@ def build_review_messages(bundle: EvidenceBundle, settings: ReviewConfig, langua
             {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
 
 
-def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tuple[list[EvidenceSelection], list[str]]:
+def _parse_review_envelope(text: str, max_selections: int) -> tuple[list[object], list[str]]:
     if len(text) > 32000:
         raise ValueError("response exceeds review budget")
     raw = _extract_json(text)
@@ -168,6 +177,12 @@ def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tup
         raise ValueError("invalid limitations")
     if not selections and not limitations:
         raise ValueError("abstention needs an explanation")
+    return selections, limitations
+
+
+def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tuple[list[EvidenceSelection], list[str]]:
+    """Strict accepted-selection contract, including when revalidating checkpoints."""
+    selections, limitations = _parse_review_envelope(text, max_selections)
     known = {item.evidence_id: item for item in bundle.items}
     seen: set[str] = set()
     parsed: list[EvidenceSelection] = []
@@ -191,6 +206,90 @@ def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tup
         seen.add(identity)
         parsed.append(EvidenceSelection(identity, reason.strip(), quote, confidence))
     return parsed, limitations
+
+
+def canonical_evidence_quote(quote: str, title: str, excerpt: str) -> tuple[str, bool]:
+    """Return literal source text; only ASCII/U+2010/U+2011 hyphens may align."""
+    if not isinstance(quote, str) or not quote.strip() or len(quote) > 200:
+        raise ValueError("invalid selection text budget")
+    if quote in title or quote in excerpt:
+        return quote, False
+    hyphens = str.maketrans({"\u2010": "-", "\u2011": "-"})
+    for source in (title, excerpt):
+        start = source.translate(hyphens).find(quote.translate(hyphens))
+        if start >= 0:
+            return source[start:start + len(quote)], True
+    raise ValueError("quote is not in supplied evidence")
+
+
+def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: list[str]) -> EvidenceSelection:
+    """Repair narrow hyphen typography only after schema/types/budgets validate."""
+    text = json.dumps({"selections": [item], "limitations": limitations})
+    try:
+        return _parse_review(text, bundle, 1)[0][0]
+    except ValueError as exc:
+        # The strict parser checks schema, types and length before quote matching.
+        if str(exc) != "quote is not in supplied evidence" or not isinstance(item, dict):
+            raise
+        evidence = next(evidence for evidence in bundle.items if evidence.evidence_id == item["evidence_id"])
+        quote, normalized = canonical_evidence_quote(item["quote"], evidence.title, evidence.excerpt)
+        canonical = {**item, "quote": quote}
+        parsed = _parse_review(json.dumps({"selections": [canonical], "limitations": limitations}), bundle, 1)
+        return replace(parsed[0][0], typography_normalized=normalized)
+
+
+def _parse_live_review(
+    text: str, bundle: EvidenceBundle, max_selections: int,
+) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
+    """Salvage individual entries only after the complete envelope is valid."""
+    selections, limitations = _parse_review_envelope(text, max_selections)
+    known = {item.evidence_id for item in bundle.items}
+    accepted: list[EvidenceSelection] = []
+    rejected: list[RejectedSelection] = []
+    seen: set[str] = set()
+    for index, item in enumerate(selections):
+        identity = item.get("evidence_id") if isinstance(item, dict) else None
+        known_identity = identity if isinstance(identity, str) and identity in known else None
+        try:
+            if known_identity is not None and known_identity in seen:
+                raise ValueError("duplicated evidence id")
+            if known_identity is not None:
+                seen.add(known_identity)
+            accepted.append(_parse_live_selection(item, bundle, limitations))
+        except (ValueError, TypeError, KeyError) as exc:
+            reason, _, _ = _rejected_output_diagnostics("", exc)
+            rejected.append(RejectedSelection(index, reason, known_identity))
+    return accepted, limitations, rejected
+
+
+def _validated_cached_selections(
+    review: ModelReview, bundle: EvidenceBundle, max_selections: int,
+) -> tuple[list[EvidenceSelection], list[str]]:
+    """Reuse accepted entries strictly, without repairing saved quotes a second time."""
+    selections, limitations = _parse_review(json.dumps({
+        "selections": [{key: value for key, value in asdict(item).items() if key != "typography_normalized"}
+                       for item in review.selections],
+        "limitations": review.limitations,
+    }), bundle, max_selections)
+    if any(type(item.typography_normalized) is not bool for item in review.selections):
+        raise ValueError("Invalid checkpoint typography provenance.")
+    selections = [replace(item, typography_normalized=original.typography_normalized)
+                  for item, original in zip(selections, review.selections, strict=True)]
+    expected_status = "ok" if selections else "abstained"
+    if review.status == "partial":
+        known = {item.evidence_id for item in bundle.items}
+        indices = [item.index for item in review.rejected_items]
+        if (not selections or not review.rejected_items
+                or len(selections) + len(indices) > max_selections or len(set(indices)) != len(indices)
+                or any(type(index) is not int or not 0 <= index < max_selections for index in indices)
+                or any(item.evidence_id is not None and item.evidence_id not in known for item in review.rejected_items)
+                or any(not isinstance(item.reason, str)
+                       or _rejected_output_diagnostics("", ValueError(item.reason))[0] != item.reason
+                       for item in review.rejected_items)):
+            raise ValueError("Invalid checkpoint partial-review provenance.")
+    elif review.status != expected_status or review.rejected_items:
+        raise ValueError("Checkpoint review status contradicts its selections.")
+    return selections, limitations
 
 
 def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, bool]:
@@ -235,10 +334,18 @@ async def _review_slot(
     result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
                     and type(v) is int and v >= 0}
     try:
-        result.selections, result.limitations = _parse_review(text, bundle, config.review.max_selections)
+        result.selections, result.limitations, result.rejected_items = _parse_live_review(
+            text, bundle, config.review.max_selections,
+        )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
         result.error, result.rejected_output, result.rejected_output_truncated = _rejected_output_diagnostics(text, exc)
+        return result
+    if result.rejected_items:
+        result.status = "partial" if result.selections else "invalid"
+        result.error, result.rejected_output, result.rejected_output_truncated = _rejected_output_diagnostics(
+            text, ValueError(result.rejected_items[0].reason),
+        )
         return result
     result.status = "ok" if result.selections else "abstained"
     return result
@@ -296,15 +403,10 @@ async def run_evidence_review(
     models = {"primary": settings.primary, "secondary": settings.secondary, "third": settings.tie_breaker}
     for name, previous in cached.items():
         model = models.get(name)
-        if (model is not None and previous.status in {"ok", "abstained"}
+        if (model is not None and previous.status in {"ok", "partial", "abstained"}
                 and (previous.provider, previous.model, previous.bundle_id, previous.prompt_hash)
                 == (model.provider, model.model, bundle.bundle_id, prompt_hash)):
-            selections, limitations = _parse_review(json.dumps({
-                "selections": [asdict(item) for item in previous.selections],
-                "limitations": previous.limitations,
-            }), bundle, settings.max_selections)
-            if previous.status != ("ok" if selections else "abstained"):
-                raise ValueError("Checkpoint review status contradicts its selections.")
+            selections, limitations = _validated_cached_selections(previous, bundle, settings.max_selections)
             reusable[name] = replace(previous, selections=selections, limitations=limitations,
                                      reused_from_checkpoint=True)
 
@@ -342,8 +444,8 @@ def primary_cards(
     originals = _ordered_unique_articles(articles_by_category)
     primary = report.reviews[0]
     if primary.status in {"invalid", "unavailable"}:
-        primary = next((r for r in report.reviews if r.slot == "secondary" and r.status == "ok"), primary)
-    if primary.status != "ok":
+        primary = next((r for r in report.reviews if r.slot == "secondary" and r.status in {"ok", "partial"}), primary)
+    if primary.status not in {"ok", "partial"}:
         return []
     label = "Мнение модели" if language == "ru" else "Model view"
     label += f" ({primary.provider}/{primary.model})"
@@ -377,7 +479,12 @@ def render_review(report: BlindReviewReport) -> str:
             item = evidence[selection.evidence_id]
             lines.append(f"- [{item.title}]({item.url}): {selection.reason} (confidence: {selection.confidence})")
             lines.append(f"  Evidence excerpt: {selection.quote}")
+            if selection.typography_normalized:
+                lines.append("  Quote provenance: hyphen typography repaired to exact supplied source text.")
         lines.extend(f"- Limitation: {limitation}" for limitation in review.limitations)
+        for rejected in review.rejected_items:
+            lines.append(f"- Rejected selection {rejected.index}: {rejected.reason}")
         if review.error:
-            lines.append(f"- Review unavailable: {review.error}")
+            label = "Partial review validation" if review.status == "partial" else "Review unavailable"
+            lines.append(f"- {label}: {review.error}")
     return "\n".join(lines)

@@ -22,7 +22,7 @@ from digest.config import Config, load_config
 from digest.review import (
     EvidenceBundle,
     ModelReview,
-    _parse_review,
+    _validated_cached_selections,
     build_review_messages,
     render_review,
     run_evidence_review,
@@ -94,15 +94,11 @@ def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: 
     slots = set()
     for review in reviews:
         model = models.get(review.slot)
-        if (model is None or review.status not in {"ok", "abstained"}
+        if (model is None or review.status not in {"ok", "partial", "abstained"}
                 or (review.provider, review.model, review.bundle_id, review.prompt_hash)
                 != (model.provider, model.model, bundle.bundle_id, prompt_hash)):
             continue
-        selections, _ = _parse_review(json.dumps({
-            "selections": [asdict(selection) for selection in review.selections], "limitations": review.limitations,
-        }), bundle, config.review.max_selections)
-        if review.status != ("ok" if selections else "abstained"):
-            raise ValueError("Checkpoint review status contradicts its selections.")
+        _validated_cached_selections(review, bundle, config.review.max_selections)
         slots.add(review.slot)
     return slots
 

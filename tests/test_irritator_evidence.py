@@ -18,12 +18,14 @@ from digest.irritator.evidence_stage import (
     MAX_RANKING_CANDIDATES,
     MAX_RANKING_JSON_CHARS,
     MAX_SOURCE_RESULTS,
+    _parse_narrative,
+    _parse_rankings,
     run_evidence_irritator,
 )
 from digest.llm import LLMRole
 from digest.review import EvidenceBundle, build_evidence_bundle
 from scripts.review_fixture import fixture_articles, fixture_config
-from tests.factories import make_signal
+from tests.factories import make_article, make_signal
 
 
 def _bundle(config: Config) -> EvidenceBundle:
@@ -565,3 +567,86 @@ async def test_more_than_three_generated_queries_is_rejected_without_search() ->
     assert not result.source_attempts
     diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
     assert diagnostic.error_detail == "Invalid response entry count."
+
+
+@pytest.mark.parametrize("source_hyphen", ["-", "\u2010", "\u2011"])
+@pytest.mark.parametrize("model_hyphen", ["-", "\u2010", "\u2011"])
+def test_narrative_hyphen_alignment_recovers_exact_original_quote(source_hyphen: str, model_hyphen: str) -> None:
+    config = fixture_config()
+    article = make_article(title=f"API{source_hyphen}powered systems")
+    bundle = build_evidence_bundle({article.category: [article]}, config.review)
+    original = asdict(bundle)
+    response = _narrative(bundle)
+    identity = bundle.items[0].evidence_id
+    response["narratives"][0]["quotes"][identity] = f"API{model_hyphen}powered systems"
+    narratives, _ = _parse_narrative(json.dumps(response), bundle)
+    assert narratives[0].quotes[identity] == article.title
+    assert narratives[0].quotes[identity] in bundle.items[0].title
+    assert narratives[0].typography_normalized == ([identity] if source_hyphen != model_hyphen else [])
+    assert asdict(bundle) == original
+
+
+@pytest.mark.parametrize("source_hyphen", ["-", "\u2010", "\u2011"])
+@pytest.mark.parametrize("model_hyphen", ["-", "\u2010", "\u2011"])
+def test_ranking_hyphen_alignment_recovers_exact_external_quote(source_hyphen: str, model_hyphen: str) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signal = make_signal(url="https://external.example/caveat", title=f"API{source_hyphen}powered limitations")
+    original = asdict(signal)
+    ranking = _ranking(signal.url)
+    ranking["rankings"][0]["quote"] = f"API{model_hyphen}powered limitations"
+    ranked, _ = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+    assert ranked[0].quote == signal.title
+    assert ranked[0].typography_normalized is (source_hyphen != model_hyphen)
+    assert asdict(signal) == original
+
+
+@pytest.mark.parametrize("bad_quote", [
+    "API\u2212powered systems", "API\u2013powered systems", "API\u2014powered systems",
+    "API-powered platforms", "API-powered ... systems", "API-powered … systems",
+])
+def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quote: str) -> None:
+    config = fixture_config()
+    article = make_article(title="API-powered systems")
+    bundle = build_evidence_bundle({article.category: [article]}, config.review)
+    response = _narrative(bundle)
+    narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
+    response["narratives"][0]["quotes"][bundle.items[0].evidence_id] = bad_quote
+    with pytest.raises(ValueError, match="not in original evidence"):
+        _parse_narrative(json.dumps(response), bundle)
+    signal = make_signal(url="https://external.example/caveat", title=article.title)
+    ranking = _ranking(signal.url)
+    ranking["rankings"][0]["quote"] = bad_quote
+    with pytest.raises(ValueError, match="not in the supplied external evidence"):
+        _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+
+
+def test_quote_length_is_checked_before_typography_repair() -> None:
+    config = fixture_config()
+    article = make_article(description="a" * 199 + "-z")
+    bundle = build_evidence_bundle({article.category: [article]}, config.review)
+    response = _narrative(bundle)
+    narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
+    response["narratives"][0]["quotes"][bundle.items[0].evidence_id] = article.description.replace("-", "\u2011")
+    signal = make_signal(url="https://external.example/caveat", snippet=article.description)
+    ranking = _ranking(signal.url)
+    ranking["rankings"][0]["quote"] = article.description.replace("-", "\u2011")
+    with patch("digest.irritator.evidence_stage.canonical_evidence_quote", side_effect=AssertionError("Too early")):
+        with pytest.raises(ValueError, match="text budget"):
+            _parse_narrative(json.dumps(response), bundle)
+        with pytest.raises(ValueError, match="text budget"):
+            _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+
+
+def test_one_bad_citation_rejects_whole_narrative_after_an_allowed_repair() -> None:
+    config = fixture_config()
+    articles = [make_article(title="API-powered systems"),
+                make_article(link="https://example.com/2", title="Other item")]
+    bundle = build_evidence_bundle({articles[0].category: articles}, config.review)
+    response = _narrative(bundle)
+    cited = response["narratives"][0]
+    cited["evidence_ids"] = [item.evidence_id for item in bundle.items]
+    cited["quotes"] = {bundle.items[0].evidence_id: bundle.items[0].title.replace("-", "\u2011"),
+                       bundle.items[1].evidence_id: "Invented evidence"}
+    with pytest.raises(ValueError, match="not in original evidence"):
+        _parse_narrative(json.dumps(response), bundle)

@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "evidence": {
+    "schema_version": 1,
+    "bundle_id": "83b79c4cd6173e42aaf6485a2ea02884b596c33ce5fe16baac557e44d2966d06",
+    "evidence_kind": "sanitized_rss_excerpt",
+    "omitted_articles": 35,
+    "items": [
+      {
+        "evidence_id": "02e3e700a2de3409f999d4825ccb2ab1",
+        "title": "Gemini 4 Argon: our next era of frontier intelligence",
+        "url": "https://deepmind.google/blog/gemini-4-argon-our-next-era-of-frontier-intelligence/",
+        "source": "Google DeepMind Blog",
+        "category": "AI & LLM",
+        "published": "2026-09-30T20:01:45+00:00",
+        "excerpt": "",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "b84ca0204fdd8bb23df027328e34b858",
+        "title": "Bluevine Agrees to $340 Million Acquisition by Valley National Bank",
+        "url": "https://finovate.com/bluevine-agrees-to-340-million-acquisition-by-valley-national-bank/",
+        "source": "Finovate",
+        "category": "Banking & Fintech",
+        "published": "2026-09-30T20:28:39+00:00",
+        "excerpt": "Small business digital banking platform Bluevine has agreed to be acquired by Valley National Bank (“Valley”). The approximately $340 million transaction will consist of approximately 75% cash and 25% Valley common stock. Bluevine serves 175,000 small business customers and has served more than 415,000 businesses since inception. The company offers an integrated suite of digital Read more... The post Bluevine Agrees to $340 Million Acquisition by Valley National Bank appeared first on Finovate .",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "2ec0b75d6c11b9ff2ba2af672f28b7ff",
+        "title": "Attackers have been exploiting critical Zimbra flaw to steal emails",
+        "url": "https://arstechnica.com/security/2026/09/attackers-have-been-exploiting-critical-zimbra-flaw-to-steal-emails/",
+        "source": "Ars Technica",
+        "category": "Breaking Tech News",
+        "published": "2026-09-30T20:44:48+00:00",
+        "excerpt": "A simple email gives the attackers the ability to remotely inject OS commands.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "9fa0949f99e61d29d3eced9f5c86413b",
+        "title": "How MHK built a HIPAA-eligible agentic AI solution on Amazon Bedrock",
+        "url": "https://aws.amazon.com/blogs/architecture/how-mhk-built-a-hipaa-eligible-agentic-ai-solution-on-amazon-bedrock/",
+        "source": "AWS Architecture Blog",
+        "category": "Cloud & Infrastructure",
+        "published": "2026-09-30T18:30:24+00:00",
+        "excerpt": "MHK built the SmartProminence AI Orchestrator, a HIPAA-eligible agentic workflow framework on AWS using Amazon Bedrock, Amazon ECS, and event-driven patterns. It reduced manual medical review effort by 90% and cut new AI feature deployment from months to weeks. Learn how MHK architected this reusable, multi-tenant orchestrator for healthcare AI.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "d35891121e1a5a54fb610af519603e7f",
+        "title": "Introducing ai_decide: make fast decisions on your governed data",
+        "url": "https://www.databricks.com/blog/introducing-aidecide-make-fast-decisions-your-governed-data",
+        "source": "Databricks Blog",
+        "category": "Data & Databases",
+        "published": "2026-09-30T16:59:34+00:00",
+        "excerpt": "Today, we’re launching a new Databricks AI Function ai_decide that makes fast decisions...",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "5d048b1ddb5b5005f74f05fc9fac3749",
+        "title": "Gemini 4 Argon",
+        "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/",
+        "source": "Hacker News Best",
+        "category": "Enterprise Architecture",
+        "published": "2026-09-30T20:04:37+00:00",
+        "excerpt": "See also: Gemini 4 Argon (High): Intelligence, Performance and Price Analysis - https://news.ycombinator.com/item?id=49914236 Comments URL: https://news.ycombinator.com/item?id=49913571 Points: 761 # Comments: 506",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "1f5f83fa63e7c30857eb05d518f0aeff",
+        "title": "Мирзиёеву представили первый отечественный автомобиль под брендом DOST. Фото",
+        "url": "https://www.spot.uz/ru/2026/09/30/adm-dost/",
+        "source": "Spot.uz",
+        "category": "Geopolitics & CIS",
+        "published": "2026-09-30T09:05:00+00:00",
+        "excerpt": "Сейчас ADM разрабатывает концепт будущего автомобиля. Первый прототип легковушки планируется показать в начале 2027 года.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "d780a4194a08a680e88bf78e0a470ddd",
+        "title": "Каждый LLM-фреймворк описывает инструмент по-своему",
+        "url": "https://habr.com/ru/articles/1088768/?utm_source=habrahabr&utm_medium=rss&utm_campaign=1088768",
+        "source": "Habr — Interesting",
+        "category": "Russian Tech",
+        "published": "2026-09-30T19:08:33+00:00",
+        "excerpt": "Чтобы дать LLM доступ к своему коду, пишут инструменты (tools). Инструмент — это функция и всё, что модели нужно знать, чтобы её вызвать: имя, описание и схема аргументов. Потом те же инструменты приходится писать ещё раз. Первая версия сделана на tool() из AI SDK. В проекте появляется MCP-сервер, и инструменты переписывают под registerTool. Соседняя команда использует Genkit, и те же инструменты пишут в третий раз, через defineTool. Функции остаются прежними, меняется только обёртка. Читать дал",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "4e4d8337c9c199de43f2326c88e8d3a3",
+        "title": "Deploying an HSTU Generative Recommender with NVIDIA Dynamo-Triton",
+        "url": "https://developer.nvidia.com/blog/deploying-an-hstu-generative-recommender-with-nvidia-dynamo-triton/",
+        "source": "NVIDIA Developer Blog",
+        "category": "AI & LLM",
+        "published": "2026-09-30T20:54:59+00:00",
+        "excerpt": "Generative recommender (GR) systems are emerging as a powerful new approach for large-scale personalization. Instead of treating recommendation as a set of...",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "bcf06f0105bafb97f86bee5e5e2ef2d9",
+        "title": "Citi launches multi-market instant payments on Swift scheme",
+        "url": "https://www.finextra.com/newsarticle/48508/citi-launches-multi-market-instant-payments-on-swift-scheme?utm_medium=rssfinextra&utm_source=finextrafeed",
+        "source": "Finextra",
+        "category": "Banking & Fintech",
+        "published": "2026-10-01T00:01:00+00:00",
+        "excerpt": "Citi has gone live with multiple markets on the Swift payments scheme, enabling bank clients to access multiple cross-border instant payment markets through a single account structure.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "5453dfde736308fc3a00670c07f37099",
+        "title": "BMW built the same car for gas and electric. The EV is $4,400 cheaper.",
+        "url": "https://techcrunch.com/2026/09/30/bmw-built-the-same-car-for-gas-and-electric-the-ev-is-4400-cheaper/",
+        "source": "TechCrunch",
+        "category": "Breaking Tech News",
+        "published": "2026-09-30T19:19:40+00:00",
+        "excerpt": "The new BMW 3 Series shows just how quickly EVs have caught up to fossil fuel vehicles on pricing.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "d9fd8564b3a5f144ae28e786f4846639",
+        "title": "Running multi-day AZ evacuation drills with ARC Zonal Shift",
+        "url": "https://aws.amazon.com/blogs/architecture/running-multi-day-az-evacuation-drills-with-arc-zonal-shift/",
+        "source": "AWS Architecture Blog",
+        "category": "Cloud & Infrastructure",
+        "published": "2026-09-30T19:01:57+00:00",
+        "excerpt": "Prove your multi-AZ architecture can sustain a real impairment. This post shows how to run a multi-day (48-72 hour) Availability Zone evacuation drill with ARC Zonal Shift across Amazon ECS, Amazon EKS, Amazon RDS for PostgreSQL, and Amazon Aurora PostgreSQL, with step-by-step CLI commands, prerequisites, observability metrics, and restore procedures.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "8ec0fe3077041a49c026e6491c132ea0",
+        "title": "IP Functions are Generally Available, bringing high-performance network analytics to the Lakehouse",
+        "url": "https://www.databricks.com/blog/ip-functions-are-generally-available-bringing-high-performance-network-analytics-lakehouse",
+        "source": "Databricks Blog",
+        "category": "Data & Databases",
+        "published": "2026-10-01T01:46:05+00:00",
+        "excerpt": "IP data is warehousing dataEvery firewall, load balancer, VPN, CDN edge, DNS resolver,...",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "18e2e7d8727efe8f3e182f28160a23f7",
+        "title": "You said no MCP",
+        "url": "https://earendil.com/posts/you-said-no-mcp/",
+        "source": "Hacker News Best",
+        "category": "Enterprise Architecture",
+        "published": "2026-09-30T09:55:23+00:00",
+        "excerpt": "Article URL: https://earendil.com/posts/you-said-no-mcp/ Comments URL: https://news.ycombinator.com/item?id=49906637 Points: 579 # Comments: 329",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "244462caf63538f30a8abef962e39739",
+        "title": "«Лучше отправлю через таксиста»: бизнес предложил снизить комиссию за внесение наличных через банкоматы",
+        "url": "https://www.spot.uz/ru/2026/09/30/atm-fees/",
+        "source": "Spot.uz",
+        "category": "Geopolitics & CIS",
+        "published": "2026-09-30T12:17:00+00:00",
+        "excerpt": "Зампред ЦБ Олимов допустил оптимизацию комиссии, но заявил, что сделать услугу бесплатной, скорее всего, не получится.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "ec9bb7a3dbb5afcc986124802d0de263",
+        "title": "Почему после смены работы может прийти НДФЛ к доплате, хотя работодатели всё удержали правильно",
+        "url": "https://habr.com/ru/articles/1088782/?utm_source=habrahabr&utm_medium=rss&utm_campaign=1088782",
+        "source": "Habr — Interesting",
+        "category": "Russian Tech",
+        "published": "2026-09-30T19:26:39+00:00",
+        "excerpt": "После смены работы можно получить НДФЛ к доплате, даже если оба работодателя весь год удерживали налог правильно. Разбираю на простом примере, почему так происходит при нескольких налоговых агентах, как ФНС пересчитывает совокупный доход и что стоит учесть тем, кто менял работу в 2026 году. Понять, откуда доплата",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "32bc0b8520ffeb97c8a3a6c9428fd65c",
+        "title": "Expanding AI Storage Access with NVIDIA cuObject and the NVIDIA SCADA Server SDK",
+        "url": "https://developer.nvidia.com/blog/expanding-ai-storage-access-with-nvidia-cuobject-and-the-nvidia-scada-server-sdk/",
+        "source": "NVIDIA Developer Blog",
+        "category": "AI & LLM",
+        "published": "2026-09-30T19:13:02+00:00",
+        "excerpt": "AI infrastructure engineers, storage developers, and cloud service providers need fast and secure access to high-capacity file and object storage to support AI...",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "99ada8d22c02d35366d235750e1e6def",
+        "title": "Capitolis agrees $200m eSecLending acquisition",
+        "url": "https://www.finextra.com/newsarticle/48509/capitolis-agrees-200m-eseclending-acquisition?utm_medium=rssfinextra&utm_source=finextrafeed",
+        "source": "Finextra",
+        "category": "Banking & Fintech",
+        "published": "2026-10-01T00:01:00+00:00",
+        "excerpt": "Capital markets technology provider Capitolis has added securities lending capabilities to its platform through a $200 million all-cash deal to buy eSecLending.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "b8a183626c92378b5d73fab6712ce2a4",
+        "title": "DoorDash’s drone strategy started on the ground",
+        "url": "https://techcrunch.com/2026/09/30/doordashs-drone-strategy-started-on-the-ground/",
+        "source": "TechCrunch",
+        "category": "Breaking Tech News",
+        "published": "2026-09-30T19:22:13+00:00",
+        "excerpt": "DoorDash unveiled the six-propeller aircraft that will be used in its new drone delivery business at its annual Dash Forward 2026 event.",
+        "excerpt_shortened_or_sanitized": false
+      },
+      {
+        "evidence_id": "1bdb5cba7f3bdd26197d8f4b6eaf207e",
+        "title": "Normalizing a Wide Well and Pipeline Telemetry Table Without Re-Ingesting History",
+        "url": "https://www.tigerdata.com/blog/normalizing-wide-well-pipeline-telemetry-table-without-re-ingesting-history",
+        "source": "TimescaleDB Blog",
+        "category": "Data & Databases",
+        "published": "2026-09-30T13:58:45+00:00",
+        "excerpt": "Reshape a wide oilfield SCADA table into a narrow hypertable plus tag metadata, in place, with dashboards running and history left where it is.",
+        "excerpt_shortened_or_sanitized": false
+      }
+    ]
+  },
+  "reviews": [
+    {
+      "slot": "primary",
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "bundle_id": "83b79c4cd6173e42aaf6485a2ea02884b596c33ce5fe16baac557e44d2966d06",
+      "prompt_hash": "e9b5b94098bb4415543063f63f8cfe72742602aa195eca0603793ff0c7554b1b",
+      "status": "unavailable",
+      "selections": [],
+      "limitations": [],
+      "usage": {},
+      "error": "RuntimeError",
+      "resolved_model": null,
+      "response_sha256": null,
+      "rejected_output": null,
+      "rejected_output_truncated": false,
+      "attempted_at": "2026-09-30T23:47:44.323354+00:00",
+      "generated_at": null,
+      "reused_from_checkpoint": false
+    },
+    {
+      "slot": "secondary",
+      "provider": "groq",
+      "model": "openai/gpt-oss-120b",
+      "bundle_id": "83b79c4cd6173e42aaf6485a2ea02884b596c33ce5fe16baac557e44d2966d06",
+      "prompt_hash": "e9b5b94098bb4415543063f63f8cfe72742602aa195eca0603793ff0c7554b1b",
+      "status": "invalid",
+      "selections": [],
+      "limitations": [],
+      "usage": {
+        "prompt_tokens": 3818,
+        "completion_tokens": 1087
+      },
+      "error": "quote is not in supplied evidence",
+      "resolved_model": "openai/gpt-oss-120b",
+      "response_sha256": "337ac198472c34af97a34dffcee222b18c1a84ea6774533b4860284448a547e6",
+      "rejected_output": "{\n  \"selections\": [\n    {\n      \"evidence_id\": \"9fa0949f99e61d29d3eced9f5c86413b\",\n      \"reason\": \"Shows a concrete example of building a HIPAA‑eligible, multi‑tenant AI orchestrator on AWS using Bedrock, ECS and event‑driven patterns, which can guide architects designing compliant, reusable AI pipelines in regulated domains.\",\n      \"quote\": \"MHK built the SmartProminence AI Orchestrator, a HIPAA‑eligible agentic workflow framework on AWS using Amazon Bedrock, Amazon ECS, and event‑driven patterns.\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"evidence_id\": \"d9fd8564b3a5f144ae28e786f4846639\",\n      \"reason\": \"Describes a step‑by‑step method for running multi‑day Availability Zone evacuation drills with ARC Zonal Shift across ECS, EKS, RDS and Aurora, offering architects a practical playbook for testing resilience and disaster‑recovery designs.\",\n      \"quote\": \"Prove your multi‑AZ architecture can sustain a real impairment… run a multi‑day (48‑72 hour) Availability Zone evacuation drill with ARC Zonal Shift across Amazon ECS, Amazon EKS, Amazon RDS for PostgreSQL, and Amazon Aurora PostgreSQL.\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"evidence_id\": \"32bc0b8520ffeb97c8a3a6c9428fd65c\",\n      \"reason\": \"Introduces NVIDIA cuObject and SCADA Server SDK for fast, secure high‑capacity storage access, a key consideration for architects provisioning AI‑heavy workloads that need low‑latency object storage.\",\n      \"quote\": \"AI infrastructure engineers, storage developers, and cloud service providers need fast and secure access to high‑capacity file and object storage to support AI...\",\n      \"confidence\": \"medium\"\n    },\n    {\n      \"evidence_id\": \"4e4d8337c9c199de43f2326c88e8d3a3\",\n      \"reason\": \"Details deployment of a generative recommender system using NVIDIA Dynamo‑Triton, illustrating modern model‑serving patterns that architects can adopt for large‑scale personalization services.\",\n      \"quote\": \"Deploying an HSTU Generative Recommender with NVIDIA Dynamo‑Triton\",\n      \"confidence\": \"medium\"\n    },\n    {\n      \"evidence_id\": \"d35891121e1a5a54fb610af519603e7f\",\n      \"reason\": \"Announces a new Databricks AI Function (ai_decide) for rapid decision‑making on governed data, highlighting emerging serverless AI capabilities that can be integrated into data‑centric architectures.\",\n      \"quote\": \"Today, we’re launching a new Databricks AI Function ai_decide that makes fast decisions...\",\n      \"confidence\": \"medium\"\n    }\n  ],\n  \"limitations\": [\n    \"Excerpts are incomplete and may omit critical context\",\n    \"Full articles were not reviewed, so claims are unverified\",\n    \"Potential source bias (vendor blogs, press releases)\",\n    \"Speculative performance or business impact not confirmed\",\n    \"Selection limited to provided RSS items only\"\n  ]\n}",
+      "rejected_output_truncated": false,
+      "attempted_at": "2026-09-30T23:48:48.129843+00:00",
+      "generated_at": "2026-09-30T23:48:50.967427+00:00",
+      "reused_from_checkpoint": false
+    }
+  ],
+  "status": "incomplete",
+  "selection_overlap": null,
+  "disputed_ids": [],
+  "third_model_reason": "pending_independent_review"
+}

@@ -28,7 +28,7 @@ from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import search_lobsters
 from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, _extract_json, complete
-from digest.review import EvidenceBundle
+from digest.review import EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import validate_evidence_bundle
 
 MAX_QUERIES = 3
@@ -55,12 +55,14 @@ StageState = Literal["not_run", "running", "complete", "empty", "incomplete", "e
 class EvidenceNarrative(Narrative):
     evidence_ids: list[str]
     quotes: dict[str, str]
+    typography_normalized: list[str] = field(default_factory=list)
 
 
 @dataclass
 class EvidenceRankedSignal(RankedSignal):
     relation: Literal["contradicts", "complicates"]
     quote: str
+    typography_normalized: bool = False
 
 
 @dataclass
@@ -169,11 +171,19 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
             raise ValueError("Unknown, duplicate or over-budget narrative evidence IDs.")
         if not isinstance(quotes, dict) or set(quotes) != set(identities):
             raise ValueError("Every evidence ID requires exactly one quote.")
+        canonical_quotes: dict[str, str] = {}
+        typography_normalized: list[str] = []
         for identity, quote in quotes.items():
             _bounded_text(quote, 200)
             evidence = known[identity]
-            if quote not in evidence.title and quote not in evidence.excerpt:
-                raise ValueError("Narrative quote is not in original evidence.")
+            try:
+                canonical_quotes[identity], normalized = canonical_evidence_quote(
+                    quote, evidence.title, evidence.excerpt,
+                )
+            except ValueError as exc:
+                raise ValueError("Narrative quote is not in original evidence.") from exc
+            if normalized:
+                typography_normalized.append(identity)
         if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 3:
             raise ValueError("Invalid narrative assumptions count.")
         category = _bounded_text(entry["category"], 200)
@@ -182,7 +192,7 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
         narratives.append(EvidenceNarrative(
             _bounded_text(entry["claim"], 600), category,
             [_bounded_text(item, 300) for item in assumptions],
-            _bounded_text(entry["why_worth_challenging"], 600), identities, quotes,
+            _bounded_text(entry["why_worth_challenging"], 600), identities, canonical_quotes, typography_normalized,
         ))
     return narratives, limitations
 
@@ -221,12 +231,14 @@ def _parse_rankings(
             raise ValueError("Ranking relation must contradict or complicate.")
         _bounded_text(quote, 200)
         signal = known[url]
-        if quote not in signal.title and quote not in signal.snippet:
-            raise ValueError("Ranking quote is not in the supplied external evidence.")
+        try:
+            quote, normalized = canonical_evidence_quote(quote, signal.title, signal.snippet)
+        except ValueError as exc:
+            raise ValueError("Ranking quote is not in the supplied external evidence.") from exc
         reasoning = _bounded_text(entry["reasoning"], 600)
         seen.add(url)
         if score >= min_score:
-            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote))
+            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, normalized))
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
     return ranked, limitations
 

@@ -16,6 +16,7 @@ from digest.review import (
     EvidenceItem,
     EvidenceSelection,
     ModelReview,
+    RejectedSelection,
 )
 
 
@@ -64,6 +65,7 @@ def load_review_checkpoint(path: Path, config: Config) -> tuple[EvidenceBundle, 
         for value in raw["reviews"]:
             item = dict(value)
             item["selections"] = [EvidenceSelection(**selection) for selection in item.get("selections", [])]
+            item["rejected_items"] = [RejectedSelection(**rejected) for rejected in item.get("rejected_items", [])]
             review = ModelReview(**item)
             if review.slot not in {"primary", "secondary", "third"}:
                 raise ValueError("Invalid checkpoint review slot.")
