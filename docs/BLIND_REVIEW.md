@@ -46,6 +46,7 @@ No category summary or prior output is recycled into another model's evidence.
 ```yaml
 review:
   enabled: true
+  review_led_only: false
   primary: {provider: gemini, model: gemini-3.8-flash}
   secondary: {provider: groq, model: openai/gpt-oss-120b}
   tie_breaker: {provider: groq, model: qwen/qwen3.8-27b}
@@ -123,3 +124,58 @@ once; old reports without timestamps are skipped. Resumed Markdown/JSON are
 archival supplements only: no Telegram message or dedup mutation occurs.
 A later scheduled run may use a different resolved version behind a provider model
 alias; original and new timestamps/model versions are visible in the report.
+
+### Review-led delivery without legacy enrichment
+
+Set `review.review_led_only: true` together with `review.enabled: true` to
+deliver the evidence-bound selected article cards and archive the blind-review
+report immediately after review. This opt-in skips category summaries,
+cross-category trends, and Irritator counter-signal analysis. The selected cards
+remain model opinions grounded only in the supplied RSS excerpts. Normal
+Telegram delivery checks and dedup rules still apply. The skipped analysis is
+explicitly logged; the default `false` preserves the existing full pipeline.
+
+This flag changes orchestration only, not the evidence bundle, review prompt,
+prompt hash, or cached-review validity. It reduces model work to the two blind
+slots plus an optional disagreement slot, before configured retries. It does not
+guarantee provider availability or a completed comparison.
+
+## Primary-first runtime with preserved Irritator
+
+The explicit `review.review_led_only: true` mode now delivers the primary
+selection first. It makes one primary request, or one secondary fallback only
+when the primary is unavailable/invalid. A valid abstention is respected. The
+independent opinion is marked pending, not counted as complete. Original evidence
+and prompts remain the same. The primary command emits `review_checkpoint` to
+GitHub Actions only after confirmed required delivery and state saves succeed.
+
+The runtime commits that primary receipt/cache and immutable review archive
+before starting a separate follow-up job. A timeout in that job cannot cancel or
+roll back the already committed primary result. The follow-up job has two bounded
+parts:
+
+1. Irritator: original RSS evidence → one evidence-cited narrative → up to three
+   adversarial queries → real Hacker News/arXiv/Lobsters searches → validation and
+   evidence-cited ranking. It does not manufacture category summaries or consume
+   another model's selections as source facts. Up to three single-provider model
+   attempts, no retries/fallback, a 180-second stage deadline, bounded excerpts
+   and ranking candidates. This deliberately samples one narrative; it is not the
+   old exhaustive per-category analysis. Errors/partial sources remain explicit,
+   never silently relabeled as absence of counter-evidence.
+2. Independent review: reuse validated successful slots and attempt only missing
+   slots on the same original bundle, at most two model calls. This is an archive
+   supplement; no extra Telegram comparison message.
+
+The same configured Telegram receives one bounded Irritator supplement with
+coverage/completeness labeling and external URLs when available. An attempt
+marker is committed before any optional requests. Results are written before
+sending; the marker records the Telegram outcome. An uncertain send is not
+retried automatically. This is at-most-one workflow attempt, not a promise of
+exactly-once network delivery. Failed/aborted marked stages require explicit
+inspection; normal workflow reruns cannot resend them.
+
+Quota spacing is conservative: optional Groq calls are spaced at least 65 seconds
+and the runtime leaves a 65-second gap before each follow-up phase. Real free-tier
+limits remain account-specific; a quota failure produces an incomplete archive,
+not a paid fallback. Successful primary delivery does not imply successful
+optional analysis; inspect the separate follow-up job reports.

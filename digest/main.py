@@ -126,6 +126,7 @@ class RunStats:
     duration_seconds: float = 0.0
     required_delivery_failed: bool = False
     review_status: str = "not_requested"
+    review_checkpoint: str = ""
 
 
 async def _send_status_message(text: str) -> bool:
@@ -534,6 +535,38 @@ def _review_text(report: BlindReviewReport | None) -> str:
     return render_review(report) if report is not None else ""
 
 
+def _deferred_review_status(language: str) -> str:
+    if language == "ru":
+        return "Независимое сравнение и этап контрсигналов отложены до завершения основной доставки."
+    return "Independent comparison and counter-signal stage postponed until after primary delivery."
+
+
+def _combined_summary(
+    summaries: list[CategorySummary], trends: str | None, review_led_only: bool, language: str,
+) -> str:
+    if review_led_only:
+        return _deferred_review_status(language)
+    return _clean_summary(
+        "\n\n".join(summary.summary_text for summary in summaries) + (f"\n\n{trends}" if trends else "")
+    )
+
+
+def _print_dry_run(
+    combined: str, top_articles: list[ArticleSummary], all_ranked: list[Any],
+    irritator_status: IrritatorStatus, review_report: BlindReviewReport | None,
+) -> None:
+    print(combined)
+    if top_articles:
+        print("\n=== TOP ARTICLES ===\n")
+        for article in top_articles:
+            print(f"[{article.category}] {article.title}")
+            print(f"  {article.summary}\n")
+    for ranked in all_ranked:
+        print(f"[{ranked.score}/10] {ranked.signal.title} — {ranked.signal.url}")
+    print(f"\n💢 Irritator: {irritator_status.text}")
+    print(_review_text(review_report))
+
+
 async def _analyze_articles(
     articles: dict[str, list[Article]], config: Any,
 ) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
@@ -541,10 +574,16 @@ async def _analyze_articles(
     from digest.radar import pick_top_articles, summarize_all
 
     if getattr(getattr(config, "review", None), "enabled", False):
-        from digest.review import primary_cards, run_blind_review
+        from digest.review import primary_cards, run_blind_review, run_primary_review
 
-        report = await run_blind_review(articles, config)
+        report = await (run_primary_review(articles, config) if config.review.review_led_only
+                        else run_blind_review(articles, config))
         cards = primary_cards(report, articles, config.radar.language)
+        if config.review.review_led_only:
+            logging.getLogger(__name__).info(
+                "Review-led only: skipping legacy category summaries, trends and counter-signal analysis."
+            )
+            return [], None, cards, report
         summaries, trends = await summarize_all(articles, config)
         return summaries, trends, cards, report
     summaries, trends = await summarize_all(articles, config)
@@ -579,6 +618,9 @@ async def run(
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
+    review_led_only = bool(
+        getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only
+    )
     logger = logging.getLogger(__name__)
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
@@ -663,10 +705,7 @@ async def run(
         )
         return _empty_stats(total_articles)
 
-    combined = _clean_summary(
-        "\n\n".join(s.summary_text for s in summaries)
-        + (f"\n\n{trends}" if trends else "")
-    )
+    combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
 
     if radar_only:
         print(combined)
@@ -678,20 +717,17 @@ async def run(
         )
 
     # Irritator pipeline
-    _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
+    if review_led_only:
+        from digest.irritator import IrritatorStatus
+
+        all_ranked: list[Any] = []
+        irritator_status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
+    else:
+        _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
 
     # Dry-run output
     if dry_run:
-        print(combined)
-        if top_articles:
-            print("\n=== TOP ARTICLES ===\n")
-            for a in top_articles:
-                print(f"[{a.category}] {a.title}")
-                print(f"  {a.summary}\n")
-        for r in all_ranked:
-            print(f"[{r.score}/10] {r.signal.title} — {r.signal.url}")
-        print(f"\n💢 Irritator: {irritator_status.text}")
-        print(_review_text(review_report))
+        _print_dry_run(combined, top_articles, all_ranked, irritator_status, review_report)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
             digest_length=len(combined), telegram_sent=False,
@@ -730,8 +766,9 @@ async def run(
                 feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
                     "%Y-%m-%d %H:%M UTC"
                 )
-            await _notify_skipped_cards(top_articles)
-            await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
+            if not review_led_only:
+                await _notify_skipped_cards(top_articles)
+                await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
 
             # Send nano status footer
             nano_status = _build_nano_status(
@@ -741,6 +778,8 @@ async def run(
                 source_stats, config, effective_priorities,
             )
             nano_status += _review_status_line(review_report)
+            if review_led_only:
+                nano_status += "\n" + irritator_status.text
             token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
             chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
             if token and chat_id:
@@ -826,7 +865,27 @@ async def run(
         duration_seconds=time.monotonic() - _t_run_start,
         required_delivery_failed=telegram_required and not telegram_sent,
         review_status=review_report.status if review_report is not None else "not_requested",
+        review_checkpoint=str(md_path.with_suffix(".review.json")) if md_path and review_report is not None else "",
     )
+
+
+def _publish_review_checkpoint(stats: RunStats) -> None:
+    """Expose a generated local archive only after successful delivery and saves."""
+    output = os.environ.get("GITHUB_OUTPUT")
+    if not output or not stats.markdown_saved or not stats.review_checkpoint:
+        return
+    try:
+        checkpoint = Path(stats.review_checkpoint).resolve(strict=True)
+        expected = Path(stats.markdown_path).resolve(strict=True).with_suffix(".review.json")
+        relative = checkpoint.relative_to(Path.cwd().resolve()).as_posix()
+        if (checkpoint != expected or not checkpoint.is_file()
+                or not re.fullmatch(r"[A-Za-z0-9_./-]+", relative)
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-\d+)?\.review\.json", checkpoint.name)):
+            raise ValueError("Unsafe or non-generated review checkpoint path.")
+        with Path(output).open("a", encoding="utf-8") as handle:
+            handle.write(f"review_checkpoint={relative}\n")
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning("Review checkpoint output unavailable: %s", exc)
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -893,6 +952,8 @@ async def main(argv: list[str] | None = None) -> int:
                 stats.new_articles,
             )
             return 1
+        if not args.dry_run and not args.radar_only:
+            _publish_review_checkpoint(stats)
         return 0
     except FileNotFoundError as exc:
         logging.getLogger(__name__).error("Config file not found: %s", exc)

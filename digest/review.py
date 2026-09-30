@@ -250,6 +250,34 @@ async def run_blind_review(articles_by_category: dict[str, list[Article]], confi
     return await run_evidence_review(bundle, config)
 
 
+async def run_primary_review(articles_by_category: dict[str, list[Article]], config: Config) -> BlindReviewReport:
+    """Select delivery cards with one primary attempt and at most one fallback.
+
+    Independent comparison is deliberately pending, including when both slots
+    were attempted for delivery. The checkpoint keeps the identical evidence
+    and prompt contract used by the later blind review stage.
+    """
+    from digest.review_checkpoint import validate_evidence_bundle
+
+    settings = config.review
+    bundle = build_evidence_bundle(articles_by_category, settings)
+    validate_evidence_bundle(bundle, config)
+    messages = build_review_messages(bundle, settings, config.radar.language)
+    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    # Do not mutate the caller's retry policy or share its provider cooldowns.
+    delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
+    primary = await _review_slot("primary", settings.primary, bundle, messages, delivery_config)
+    secondary = ModelReview(
+        "secondary", settings.secondary.provider, settings.secondary.model,
+        bundle.bundle_id, prompt_hash, "unavailable", error="pending_independent_review",
+    )
+    if primary.status in {"invalid", "unavailable"}:
+        secondary = await _review_slot("secondary", settings.secondary, bundle, messages, delivery_config)
+    return BlindReviewReport(
+        SCHEMA_VERSION, bundle, [primary, secondary], "incomplete", None, [], "pending_independent_review",
+    )
+
+
 async def run_evidence_review(
     bundle: EvidenceBundle, config: Config, cached_reviews: list[ModelReview] | None = None,
 ) -> BlindReviewReport:
@@ -341,6 +369,8 @@ def render_review(report: BlindReviewReport) -> str:
         lines.append(f"\n### {review.slot}: {review.provider}/{review.model} — {review.status}")
         lines.append(f"Resolved model: {review.resolved_model or 'not reported by provider'}")
         provenance = "reused checkpoint" if review.reused_from_checkpoint else "new attempt"
+        if review.error == "pending_independent_review" and review.attempted_at is None:
+            provenance = "pending independent review (not attempted)"
         lines.append(f"Provenance: {provenance}; attempted: {review.attempted_at or 'not recorded'}; "
                      f"generated: {review.generated_at or 'not recorded'}")
         for selection in review.selections:
