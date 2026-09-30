@@ -7,12 +7,15 @@ which roles it handles. On error (429/5xx/timeout), the next provider is tried.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
+import math
 import os
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -42,6 +45,7 @@ class LLMRole(str, enum.Enum):
     GENERATE_QUERIES = "generate_queries"
     RANK_SIGNALS = "rank_signals"
     FALLBACK = "fallback"
+    REVIEW_EVIDENCE = "review_evidence"
 
 
 async def _openai_compat_call(
@@ -51,12 +55,17 @@ async def _openai_compat_call(
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Single call to an OpenAI-compatible chat/completions endpoint."""
+    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
+    if max_output_tokens is not None:
+        token_field = "max_completion_tokens" if "api.groq.com" in base_url else "max_tokens"
+        body[token_field] = max_output_tokens
     resp = await client.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model, "messages": messages, "temperature": temperature},
+        json=body,
         timeout=60.0,
     )
     resp.raise_for_status()
@@ -67,7 +76,9 @@ async def _openai_compat_call(
     text: str = choices[0].get("message", {}).get("content", "")
     if not text:
         raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
-    usage: dict[str, Any] = data.get("usage", {})
+    usage: dict[str, Any] = dict(data.get("usage", {}))
+    if isinstance(data.get("model"), str):
+        usage["resolved_model"] = data["model"]
     return text, usage
 
 
@@ -77,6 +88,7 @@ async def _gemini_call(
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call Google Gemini generateContent API."""
     url = (
@@ -95,6 +107,8 @@ async def _gemini_call(
         "contents": contents,
         "generationConfig": {"temperature": temperature},
     }
+    if max_output_tokens is not None:
+        body["generationConfig"]["maxOutputTokens"] = max_output_tokens
     if system_parts:
         body["systemInstruction"] = {"parts": system_parts}
     resp = await client.post(
@@ -117,6 +131,8 @@ async def _gemini_call(
         "prompt_tokens": usage_meta.get("promptTokenCount", 0),
         "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
     }
+    if isinstance(data.get("modelVersion"), str):
+        usage["resolved_model"] = data["modelVersion"]
     return text, usage
 
 
@@ -126,6 +142,7 @@ async def _anthropic_call(
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Call Anthropic Messages API."""
     system_text = ""
@@ -137,7 +154,7 @@ async def _anthropic_call(
             api_messages.append({"role": msg["role"], "content": msg["content"]})
     body: dict[str, Any] = {
         "model": model,
-        "max_tokens": 4096,
+        "max_tokens": max_output_tokens if max_output_tokens is not None else 4096,
         "messages": api_messages,
         "temperature": temperature,
     }
@@ -163,6 +180,8 @@ async def _anthropic_call(
         "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
         "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
     }
+    if isinstance(data.get("model"), str):
+        usage["resolved_model"] = data["model"]
     return text, usage
 
 
@@ -215,6 +234,122 @@ def _resolve_routed_providers(
     return role_fallbacks
 
 
+@dataclass
+class _RequestState:
+    """Per-config, per-event-loop request limits shared by all pipeline stages."""
+
+    loop: asyncio.AbstractEventLoop
+    semaphore: asyncio.Semaphore
+    spacing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    next_request_at: float = 0.0
+    unavailable_until: dict[tuple[str, str], float] = field(default_factory=dict)
+
+
+def _request_state(config: Any) -> _RequestState:
+    loop = asyncio.get_running_loop()
+    state = getattr(config.llm, "_runtime", None)
+    if not isinstance(state, _RequestState) or state.loop is not loop:
+        state = _RequestState(
+            loop, asyncio.Semaphore(getattr(config.llm, "max_concurrent_requests", 4)),
+        )
+        config.llm._runtime = state
+    return state
+
+
+async def _pace_request(state: _RequestState, interval: float) -> None:
+    async with state.spacing_lock:
+        wait = state.next_request_at - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        state.next_request_at = time.monotonic() + interval
+
+
+async def _call_provider(
+    client: httpx.AsyncClient, provider: Any,
+    messages: list[dict[str, str]], temperature: float, max_output_tokens: int | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    if provider.name == "anthropic":
+        env_name = "ANTHROPIC_API_KEY"
+    elif provider.name == "gemini":
+        env_name = "GEMINI_API_KEY"
+    elif provider.name in _OPENAI_COMPAT:
+        env_name = _OPENAI_COMPAT[provider.name]["api_key_env"]
+    else:
+        logger.warning("Unknown provider '%s', skipping", provider.name)
+        return None
+    api_key = os.environ.get(env_name, "")
+    if not api_key:
+        logger.warning("%s not set, skipping %s", env_name, provider.name)
+        return None
+    if provider.name == "anthropic":
+        return await _anthropic_call(client, api_key, provider.model, messages, temperature, max_output_tokens)
+    if provider.name == "gemini":
+        return await _gemini_call(client, api_key, provider.model, messages, temperature, max_output_tokens)
+    return await _openai_compat_call(
+        client, _OPENAI_COMPAT[provider.name]["base_url"], api_key,
+        provider.model, messages, temperature, max_output_tokens,
+    )
+
+
+def _safe_provider_error(exc: Exception) -> str:
+    """Log status and a machine code, never response text, prompts or credentials."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return type(exc).__name__
+    code = "unknown"
+    try:
+        body = exc.response.json()
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        if isinstance(error, dict):
+            candidate = error.get("code") or error.get("status") or error.get("type")
+            known_codes = {
+                "model_not_found", "model_decommissioned", "rate_limit_exceeded",
+                "insufficient_quota", "insufficient_balance", "invalid_api_key",
+                "permission_denied", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND",
+            }
+            if isinstance(candidate, str) and candidate in known_codes:
+                code = candidate
+    except ValueError:
+        pass
+    return f"HTTP {exc.response.status_code} code={code}"
+
+
+def _provider_cooldown(state: _RequestState, provider: Any, exc: Exception) -> None:
+    """Share server backoff / permanent failures across concurrent stage calls."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return
+    key = (provider.name, provider.model)
+    if exc.response.status_code in {401, 402, 403, 404}:
+        state.unavailable_until[key] = math.inf
+    elif exc.response.status_code == 429:
+        try:
+            delay = float(exc.response.headers.get("retry-after", "60"))
+        except ValueError:
+            delay = 60.0
+        if not math.isfinite(delay) or delay < 0:
+            delay = 60.0
+        state.unavailable_until[key] = max(
+            state.unavailable_until.get(key, 0), time.monotonic() + delay,
+        )
+
+
+def _retry_delay(exc: Exception, attempt: int, max_wait: float) -> float | None:
+    """Retry transient errors only. Long server backoffs fall through to fallback."""
+    delay = float(2 ** attempt)
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response.status_code not in {429, 500, 502, 503, 504}:
+            return None
+        try:
+            default_delay = "60" if exc.response.status_code == 429 else "0"
+            delay = max(delay, float(exc.response.headers.get("retry-after", default_delay)))
+        except ValueError:
+            pass
+    elif not isinstance(exc, httpx.TransportError):
+        return None
+    if delay > max_wait:
+        return None
+    return delay
+
+
 async def complete(
     role: LLMRole,
     messages: list[dict[str, str]],
@@ -222,94 +357,57 @@ async def complete(
     *,
     temperature: float = 0.3,
     category: str | None = None,
+    provider_override: Any | None = None,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Call LLM for *role*, trying providers in priority order with fallback.
-
-    If *category* is provided and a routing rule matches, the routed provider
-    is tried first before falling back to the normal role-based chain.
-
-    Returns (response_text, usage_dict).
-    Raises RuntimeError if all providers fail.
-    """
-    providers = _resolve_routed_providers(role, category, config)
+    """Bounded LLM calls. Explicit model slots never silently fall back."""
+    providers = ([provider_override] if provider_override is not None
+                 else _resolve_routed_providers(role, category, config))
     if not providers:
         raise RuntimeError(
             f"No providers configured for role '{role.value}'. "
             "Check llm.providers[].role in config.yaml."
         )
-    async with httpx.AsyncClient() as client:
-        last_error: Exception | None = None
+    state = _request_state(config)
+    retries = getattr(config.llm, "max_retries", 0)
+    interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
+    max_wait = getattr(config.llm, "retry_max_wait_seconds", 60.0)
+    last_error = "providers unavailable or credentials missing"
+    async with state.semaphore, httpx.AsyncClient() as client:
         for provider in providers:
-            t0 = time.monotonic()
-            try:
-                if provider.name == "anthropic":
-                    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-                    if not api_key:
-                        logger.warning("ANTHROPIC_API_KEY not set, skipping anthropic")
-                        continue
-                    text, usage = await _anthropic_call(
-                        client, api_key, provider.model, messages, temperature
-                    )
-                elif provider.name == "gemini":
-                    api_key = os.environ.get("GEMINI_API_KEY", "")
-                    if not api_key:
-                        logger.warning("GEMINI_API_KEY not set, skipping gemini")
-                        continue
-                    text, usage = await _gemini_call(
-                        client, api_key, provider.model, messages, temperature
-                    )
-                elif provider.name in _OPENAI_COMPAT:
-                    meta = _OPENAI_COMPAT[provider.name]
-                    api_key = os.environ.get(meta["api_key_env"], "")
-                    if not api_key:
-                        logger.warning(
-                            "%s not set, skipping %s",
-                            meta["api_key_env"],
-                            provider.name,
-                        )
-                        continue
-                    text, usage = await _openai_compat_call(
-                        client,
-                        meta["base_url"],
-                        api_key,
-                        provider.model,
-                        messages,
-                        temperature,
-                    )
-                else:
-                    logger.warning("Unknown provider '%s', skipping", provider.name)
-                    continue
-                elapsed = time.monotonic() - t0
-                completion_tokens = usage.get("completion_tokens") or usage.get(
-                    "candidatesTokenCount", "?"
-                )
-                logger.info(
-                    "LLM %s/%s role=%s tokens=%s latency=%.1fs",
-                    provider.name,
-                    provider.model,
-                    role.value,
-                    completion_tokens,
-                    elapsed,
-                )
-                return text, usage
-            except (
-                httpx.HTTPStatusError,
-                httpx.TimeoutException,
-                httpx.RequestError,
-            ) as exc:
-                elapsed = time.monotonic() - t0
-                logger.warning(
-                    "Provider %s failed for role %s after %.1fs: %s",
-                    provider.name,
-                    role.value,
-                    elapsed,
-                    exc,
-                )
-                last_error = exc
+            if state.unavailable_until.get((provider.name, provider.model), 0) > time.monotonic():
+                logger.info("Skipping unavailable provider %s/%s for this run", provider.name, provider.model)
                 continue
-    raise RuntimeError(
-        f"All providers failed for role '{role.value}'. Last error: {last_error}"
-    )
+            for attempt in range(retries + 1):
+                await _pace_request(state, interval)
+                # A concurrent call may have received a backoff while this one queued.
+                if state.unavailable_until.get((provider.name, provider.model), 0) > time.monotonic():
+                    break
+                t0 = time.monotonic()
+                try:
+                    result = await _call_provider(client, provider, messages, temperature, max_output_tokens)
+                    if result is None:
+                        break
+                    text, usage = result
+                    logger.info(
+                        "LLM %s/%s role=%s tokens=%s latency=%.1fs",
+                        provider.name, provider.model, role.value,
+                        usage.get("completion_tokens", "?"), time.monotonic() - t0,
+                    )
+                    return text, usage
+                except (httpx.HTTPError, ValueError) as exc:
+                    last_error = _safe_provider_error(exc)
+                    _provider_cooldown(state, provider, exc)
+                    logger.warning(
+                        "Provider %s/%s failed for role %s: %s",
+                        provider.name, provider.model, role.value, last_error,
+                    )
+                    delay = _retry_delay(exc, attempt, max_wait)
+                    if attempt >= retries or delay is None:
+                        break
+                    logger.info("Retrying %s in %.1fs", provider.name, delay)
+                    await asyncio.sleep(delay)
+    raise RuntimeError(f"All providers failed for role '{role.value}'. Last error: {last_error}")
 
 
 def _extract_json(text: str) -> Any:

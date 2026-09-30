@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -12,6 +13,9 @@ import respx
 
 from digest.delivery.telegram import (
     _ASYNC_FEEDBACK_NOTE,
+    _MAX_RETRIES,
+    ArticleDeliveryResult,
+    _send_chunk,
     escape_markdownv2,
     send_article_cards,
     send_counter_signals,
@@ -19,6 +23,7 @@ from digest.delivery.telegram import (
     to_markdownv2,
 )
 from digest.irritator import IrritatorStatus
+from digest.radar.collector import article_hash
 from tests.factories import make_article, make_ranked_signal
 
 # ---------------------------------------------------------------------------
@@ -116,6 +121,51 @@ def _make_config(telegram_enabled: bool = True) -> Any:
     class Cfg:
         telegram = TelegramCfg()
     return Cfg()
+
+
+# ---------------------------------------------------------------------------
+# _send_chunk (retry exhaustion must never masquerade as a successful send)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestSendChunk:
+    async def test_repeated_rate_limits_raise(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sleep = AsyncMock()
+        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", sleep)
+        api_url = "https://api.telegram.org/botfake-token/sendMessage"
+
+        with respx.mock:
+            route = respx.post(api_url).mock(
+                return_value=httpx.Response(429, headers={"Retry-After": "3"}),
+            )
+            async with httpx.AsyncClient() as client:
+                with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                    await _send_chunk(client, api_url, "123", "test")
+
+        assert exc_info.value.response.status_code == 429
+        assert route.call_count == _MAX_RETRIES
+        assert sleep.await_count == _MAX_RETRIES - 1
+        assert all(call.args == (3,) for call in sleep.await_args_list)
+
+    async def test_rate_limit_then_success(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sleep = AsyncMock()
+        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", sleep)
+        api_url = "https://api.telegram.org/botfake-token/sendMessage"
+
+        with respx.mock:
+            route = respx.post(api_url).mock(side_effect=[
+                httpx.Response(429, headers={"Retry-After": "1"}),
+                httpx.Response(200, json={"ok": True}),
+            ])
+            async with httpx.AsyncClient() as client:
+                await _send_chunk(client, api_url, "123", "test")
+
+        assert route.call_count == 2
+        sleep.assert_awaited_once_with(1)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +282,10 @@ def _make_top(
 
 @pytest.mark.asyncio
 class TestSendArticleCards:
+    @pytest.fixture(autouse=True)
+    def no_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", AsyncMock())
+
     async def test_sends_cards_with_keyboard(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -245,7 +299,11 @@ class TestSendArticleCards:
             )
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
-        assert len(result) == 2
+        assert (result.attempted, result.sent, result.failed) == (2, 2, 0)
+        assert len(result.article_source_map) == 2
+        assert result.delivered_hashes == {
+            article_hash(article.title, article.link) for article in top
+        }
         assert route.call_count == 2
 
     async def test_returns_hash_source_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -261,10 +319,11 @@ class TestSendArticleCards:
             )
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
-        assert len(result) == 1
-        source_name = list(result.values())[0]
+        assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
+        assert len(result.article_source_map) == 1
+        source_name = list(result.article_source_map.values())[0]
         assert source_name == "reddit"
-        hash_key = list(result.keys())[0]
+        hash_key = list(result.article_source_map.keys())[0]
         assert len(hash_key) == 8
 
     async def test_missing_token_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,7 +332,7 @@ class TestSendArticleCards:
         result = await send_article_cards(
             {"tech": [_make_article()]}, _make_config(), top_articles=[_make_top()],
         )
-        assert result == {}
+        assert result == ArticleDeliveryResult()
 
     async def test_card_failure_continues(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -295,8 +354,63 @@ class TestSendArticleCards:
             respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=_side_effect)
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
-        # Second card should still be in the map even if first failed
-        assert len(result) == 2
+        good_hash = article_hash("Good", "https://good.com")
+        assert (result.attempted, result.sent, result.failed) == (2, 1, 1)
+        assert result.article_source_map == {good_hash[:8]: "hackernews"}
+        assert result.delivered_hashes == {good_hash}
+
+    async def test_all_cards_fail_returns_no_delivery(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+        articles = {"tech": [_make_article(), _make_article(title="Second", link="https://b.com")]}
+        top = [_make_top(), _make_top(title="Second", link="https://b.com")]
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                side_effect=httpx.ConnectError("Cannot connect"),
+            )
+            result = await send_article_cards(articles, _make_config(), top_articles=top)
+
+        assert route.call_count == 2
+        assert result == ArticleDeliveryResult(attempted=2, failed=2)
+
+    async def test_exhausted_rate_limit_marks_card_failed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(429, headers={"Retry-After": "0"}),
+            )
+            result = await send_article_cards(
+                {"tech": [_make_article()]}, _make_config(), top_articles=[_make_top()],
+            )
+
+        assert route.call_count == _MAX_RETRIES
+        assert result == ArticleDeliveryResult(attempted=1, failed=1)
+
+    async def test_only_selected_delivered_articles_are_attributed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+        articles = {"tech": [_make_article(), _make_article(title="Not picked", link="https://b.com")]}
+
+        with respx.mock:
+            respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True}),
+            )
+            result = await send_article_cards(
+                articles, _make_config(), top_articles=[_make_top(source="Rewritten source")],
+            )
+
+        full_hash = article_hash("Test Article", "https://example.com/article")
+        assert result.article_source_map == {full_hash[:8]: "hackernews"}
+        assert result.delivered_hashes == {full_hash}
 
     async def test_sends_top_articles_with_summaries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -312,7 +426,7 @@ class TestSendArticleCards:
             )
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
-        assert len(result) == 1
+        assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
         assert route.call_count == 1
 
     async def test_card_includes_async_feedback_note(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,8 +469,7 @@ class TestSendArticleCards:
             result_none = await send_article_cards(articles, _make_config())
             result_empty = await send_article_cards(articles, _make_config(), top_articles=[])
 
-        # Nothing should have been sent — but source map is still populated
-        # for feedback attribution of articles that DO appear elsewhere.
+        # No selected cards means no sends and no delivery attribution.
         assert route.call_count == 0
-        assert len(result_none) == 60
-        assert len(result_empty) == 60
+        assert result_none == ArticleDeliveryResult()
+        assert result_empty == ArticleDeliveryResult()

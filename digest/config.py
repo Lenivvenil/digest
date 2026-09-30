@@ -17,7 +17,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 VALID_PROVIDERS = {"anthropic", "gemini", "groq", "mistral", "deepseek"}
-VALID_ROLES = {"summarize", "extract_narratives", "generate_queries", "rank_signals", "fallback"}
+VALID_ROLES = {"summarize", "extract_narratives", "generate_queries", "rank_signals", "review_evidence", "fallback"}
 VALID_SUMMARY_STYLES = {"analytical", "brief", "detailed"}
 VALID_LANGUAGES = {"ru", "en"}
 VALID_SOURCES = {"hackernews", "reddit", "arxiv", "devto", "lobsters"}
@@ -41,6 +41,11 @@ class RouteConfig:
 class LLMConfig:
     providers: list[ProviderConfig]
     routing: list[RouteConfig] = field(default_factory=list)
+    max_concurrent_requests: int = 4
+    min_request_interval_seconds: float = 0.0
+    max_retries: int = 0
+    retry_max_wait_seconds: float = 60.0
+    _runtime: Any = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def provider(self) -> str:
@@ -100,6 +105,7 @@ class FiltersConfig:
 @dataclass
 class TelegramConfig:
     enabled: bool = True
+    required: bool = False
     split_messages: bool = True
     max_messages: int = 10
 
@@ -121,6 +127,29 @@ class AdaptiveConfig:
     max_priority: int = 5
 
 
+@dataclass(frozen=True)
+class ReviewModelConfig:
+    provider: str
+    model: str
+
+
+@dataclass
+class ReviewConfig:
+    enabled: bool = False
+    primary: ReviewModelConfig = field(
+        default_factory=lambda: ReviewModelConfig("gemini", "gemini-3.8-flash")
+    )
+    secondary: ReviewModelConfig = field(
+        default_factory=lambda: ReviewModelConfig("groq", "openai/gpt-oss-120b")
+    )
+    tie_breaker: ReviewModelConfig | None = None
+    max_evidence_articles: int = 20
+    max_excerpt_chars: int = 500
+    max_selections: int = 5
+    max_output_tokens: int = 4096
+    disagreement_threshold: float = 0.5
+
+
 @dataclass
 class Config:
     llm: LLMConfig
@@ -133,6 +162,7 @@ class Config:
     adaptive: AdaptiveConfig = field(
         default_factory=lambda: AdaptiveConfig(enabled=False)
     )
+    review: ReviewConfig = field(default_factory=ReviewConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -181,6 +211,27 @@ def _require_bool(data: dict[str, Any], key: str, section: str) -> bool:
             f"Remove quotes around the value in your YAML."
         )
     return value
+
+
+def _load_llm_limits(section: dict[str, Any]) -> dict[str, Any]:
+    """Validate optional pacing/retry controls; old configs retain no retries."""
+    values: dict[str, Any] = {}
+    for name, default, low, high in [
+        ("max_concurrent_requests", 4, 1, 20), ("max_retries", 0, 0, 3),
+    ]:
+        value = _safe_int(section.get(name, default), name, "llm")
+        if not low <= value <= high:
+            raise ValueError(f"llm.{name} must be between {low} and {high}.")
+        values[name] = value
+    for float_name, float_default, float_low, float_high in [
+        ("min_request_interval_seconds", 0.0, 0.0, 120.0),
+        ("retry_max_wait_seconds", 60.0, 0.0, 300.0),
+    ]:
+        float_value = _safe_float(section.get(float_name, float_default), float_name, "llm")
+        if not math.isfinite(float_value) or not float_low <= float_value <= float_high:
+            raise ValueError(f"llm.{float_name} must be between {float_low} and {float_high}.")
+        values[float_name] = float_value
+    return values
 
 
 def _load_llm(data: dict[str, Any]) -> LLMConfig:
@@ -279,7 +330,7 @@ def _load_llm(data: dict[str, Any]) -> LLMConfig:
                 route.categories,
             )
 
-    return LLMConfig(providers=providers, routing=routing)
+    return LLMConfig(providers=providers, routing=routing, **_load_llm_limits(section))
 
 
 def _load_radar(data: dict[str, Any]) -> RadarConfig:
@@ -494,6 +545,11 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
     if not isinstance(section, dict):
         raise ValueError("Config field 'telegram' must be a mapping.")
     enabled = bool(section.get("enabled", True))
+    required = section.get("required", False)
+    if not isinstance(required, bool):
+        raise ValueError("telegram.required must be a boolean.")
+    if required and not enabled:
+        raise ValueError("telegram.required cannot be true when telegram.enabled is false.")
     split_messages = bool(section.get("split_messages", True))
     max_messages = _safe_int(
         section.get("max_messages", 10), "max_messages", "telegram"
@@ -501,7 +557,7 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
     if max_messages < 1:
         raise ValueError(f"telegram.max_messages must be >= 1, got {max_messages}.")
     return TelegramConfig(
-        enabled=enabled, split_messages=split_messages, max_messages=max_messages
+        enabled=enabled, required=required, split_messages=split_messages, max_messages=max_messages
     )
 
 
@@ -583,6 +639,52 @@ def _load_adaptive(data: dict[str, Any]) -> AdaptiveConfig:
     )
 
 
+def _load_review(data: dict[str, Any]) -> ReviewConfig:
+    section = data.get("review", {})
+    if not isinstance(section, dict):
+        raise ValueError("review must be a mapping.")
+    defaults = ReviewConfig()
+    enabled = section.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("review.enabled must be a boolean.")
+
+    def model_slot(name: str, default: ReviewModelConfig | None) -> ReviewModelConfig | None:
+        raw = section.get(name)
+        if raw is None:
+            return default
+        if not isinstance(raw, dict):
+            raise ValueError(f"review.{name} must be a provider/model mapping.")
+        provider = raw.get("provider")
+        model = raw.get("model")
+        if (not isinstance(provider, str) or provider not in VALID_PROVIDERS
+                or not isinstance(model, str) or not model.strip()):
+            raise ValueError(f"review.{name} needs a supported provider and non-empty model.")
+        return ReviewModelConfig(str(provider), model.strip())
+
+    primary = model_slot("primary", defaults.primary)
+    secondary = model_slot("secondary", defaults.secondary)
+    tie_breaker = model_slot("tie_breaker", None)
+    assert primary is not None and secondary is not None
+    slots = [primary, secondary] + ([tie_breaker] if tie_breaker else [])
+    if len(set(slots)) != len(slots):
+        raise ValueError("review slots must use distinct provider/model identities.")
+    bounds = {"max_evidence_articles": (20, 1, 100), "max_excerpt_chars": (500, 50, 1000),
+              "max_selections": (5, 1, 10), "max_output_tokens": (4096, 128, 8192)}
+    values: dict[str, int] = {}
+    for key, (default, low, high) in bounds.items():
+        value = _safe_int(section.get(key, default), key, "review")
+        if not low <= value <= high:
+            raise ValueError(f"review.{key} must be between {low} and {high}.")
+        values[key] = value
+    threshold = _safe_float(section.get("disagreement_threshold", 0.5), "disagreement_threshold", "review")
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("review.disagreement_threshold must be between 0 and 1.")
+    return ReviewConfig(
+        enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
+        disagreement_threshold=threshold, **values,
+    )
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -612,6 +714,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     telegram = _load_telegram(data)
     obsidian = _load_obsidian(data)
     adaptive = _load_adaptive(data)
+    review = _load_review(data)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -629,4 +732,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         telegram=telegram,
         obsidian=obsidian,
         adaptive=adaptive,
+        review=review,
     )

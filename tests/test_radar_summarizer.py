@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -337,6 +338,41 @@ class TestParseArticleSummaries:
         result = _parse_article_summaries("not json at all", "tech")
         assert result == []
 
+    @pytest.mark.parametrize("text", [
+        '[{"title": "A",}]',
+        'Here are the results: [{"title": "A",}]',
+        '[{"title": "A"',
+        "[not json]",
+    ])
+    def test_malformed_array_returns_empty(self, text: str) -> None:
+        assert _parse_article_summaries(text, "tech") == []
+
+    def test_valid_array_surrounded_by_prose(self) -> None:
+        text = (
+            'Here are the results: [{"title": "A", "link": "https://a.com", '
+            '"source": "S", "summary": "Good"}] End of results.'
+        )
+        result = _parse_article_summaries(text, "tech")
+        assert len(result) == 1
+        assert result[0].title == "A"
+
+    @pytest.mark.parametrize("field", ["title", "link", "source", "summary"])
+    @pytest.mark.parametrize("value", [None, True, 7, 1.5, ["text"], {"text": "value"}])
+    def test_non_string_fields_are_skipped(self, field: str, value: object) -> None:
+        valid: dict[str, object] = {
+            "title": "A", "link": "https://a.com", "source": "S", "summary": "Good",
+        }
+        invalid = {**valid, field: value}
+        result = _parse_article_summaries(json.dumps([invalid, valid]), "tech")
+        assert len(result) == 1
+        assert result[0].title == "A"
+
+    @pytest.mark.parametrize("field", ["title", "link", "summary"])
+    def test_whitespace_required_fields_are_skipped(self, field: str) -> None:
+        item = {"title": "A", "link": "https://a.com", "source": "S", "summary": "Good"}
+        item[field] = " \n\t"
+        assert _parse_article_summaries(json.dumps([item]), "tech") == []
+
     def test_missing_required_fields_skipped(self) -> None:
         text = '[{"title": "A", "link": "", "source": "S", "summary": "X"}]'
         result = _parse_article_summaries(text, "tech")
@@ -382,9 +418,47 @@ class TestPickTopArticles:
 
         assert result == []
 
-    async def test_respects_max_articles(self) -> None:
+    async def test_malformed_picker_json_returns_empty(self) -> None:
         config = _make_config()
         articles = {"Tech": [_make_article()]}
+        llm_response = '[{"title": "A",}]'
+
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config)
+
+        assert result == []
+
+    async def test_parser_failure_returns_empty(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [_make_article()]}
+
+        with (
+            patch("digest.radar.summarizer.complete", AsyncMock(return_value=("[]", {}))),
+            patch("digest.radar.summarizer._parse_article_summaries", side_effect=ValueError("bad JSON")),
+        ):
+            result = await pick_top_articles(articles, config)
+
+        assert result == []
+
+    async def test_non_string_summary_is_skipped(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [_make_article()]}
+        llm_response = (
+            '[{"title": "A", "link": "https://example.com/1", '
+            '"source": "S", "summary": ["Not a string"]}]'
+        )
+
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config)
+
+        assert result == []
+
+    async def test_respects_max_articles(self) -> None:
+        config = _make_config()
+        articles = {"Tech": [
+            _make_article(title=title, link=f"https://{title.lower()}.com")
+            for title in ("A", "B", "C")
+        ]}
         llm_response = (
             '[{"title": "A", "link": "https://a.com", "source": "S", "summary": "X"},'
             ' {"title": "B", "link": "https://b.com", "source": "S", "summary": "Y"},'
@@ -395,6 +469,45 @@ class TestPickTopArticles:
             result = await pick_top_articles(articles, config, max_articles=2)
 
         assert len(result) == 2
+
+    async def test_picker_preserves_original_article_identity(self) -> None:
+        config = _make_config()
+        original = _make_article(title="A" * 220, source="Original Source")
+        articles = {"Original Category": [original]}
+        llm_response = json.dumps([{
+            "title": "A" * 200,
+            "link": original.link,
+            "source": "Invented Source",
+            "summary": "Useful summary.",
+        }])
+
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config)
+
+        assert len(result) == 1
+        assert result[0].title == original.title
+        assert result[0].link == original.link
+        assert result[0].source == original.source
+        assert result[0].category == "Original Category"
+        assert result[0].summary == "Useful summary."
+
+    async def test_unknown_and_duplicate_links_do_not_consume_slots(self) -> None:
+        config = _make_config()
+        first = _make_article(title="First", link="https://example.com/1")
+        second = _make_article(title="Second", link="https://example.com/2")
+        articles = {"Tech": [first, second]}
+        llm_response = json.dumps([
+            {"title": "Fake", "link": "https://invented.example/a", "summary": "Unknown link."},
+            {"title": "First", "link": first.link, "summary": "First summary."},
+            {"title": "Duplicate", "link": first.link, "summary": "Duplicate summary."},
+            {"title": "Second", "link": second.link, "summary": "Second summary."},
+        ])
+
+        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
+            result = await pick_top_articles(articles, config, max_articles=2)
+
+        assert [a.link for a in result] == [first.link, second.link]
+        assert [a.summary for a in result] == ["First summary.", "Second summary."]
 
 
 # ---------------------------------------------------------------------------
