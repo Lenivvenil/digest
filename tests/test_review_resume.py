@@ -122,7 +122,7 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
         assert json.loads(_marker(path).read_text())["execution_started_at"]
         assert config.llm.max_retries == 0
         assert config.llm.max_concurrent_requests == 1
-        assert config.llm.min_request_interval_seconds == 20.0
+        assert config.llm.min_request_interval_seconds == 65.0
         assert config.review.max_evidence_articles == 20
         assert config.review.max_excerpt_chars == 500
         assert config.review.max_output_tokens <= 4096

@@ -148,6 +148,7 @@ class ReviewConfig:
     max_selections: int = 5
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
+    review_led_only: bool = False
 
 
 @dataclass
@@ -647,6 +648,9 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     enabled = section.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ValueError("review.enabled must be a boolean.")
+    review_led_only = section.get("review_led_only", False)
+    if not isinstance(review_led_only, bool):
+        raise ValueError("review.review_led_only must be a boolean.")
 
     def model_slot(name: str, default: ReviewModelConfig | None) -> ReviewModelConfig | None:
         raw = section.get(name)
@@ -681,7 +685,7 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
     )
 
 

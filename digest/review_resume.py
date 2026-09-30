@@ -63,7 +63,7 @@ def _config(path: Path) -> Config:
         raise ValueError("Resume model is outside the approved free-route lineup.")
     config.llm.max_retries = 0
     config.llm.max_concurrent_requests = 1
-    config.llm.min_request_interval_seconds = 20.0
+    config.llm.min_request_interval_seconds = 65.0
     config.review.max_evidence_articles = min(config.review.max_evidence_articles, 20)
     config.review.max_excerpt_chars = min(config.review.max_excerpt_chars, 500)
     config.review.max_output_tokens = min(config.review.max_output_tokens, 4096)
