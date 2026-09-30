@@ -91,3 +91,35 @@ sidecar, not rendered as Markdown. Control characters and common credential-like
 patterns are redacted without inspecting environment secrets. Raw HTTP error
 bodies and headers are never retained. This diagnoses future contract failures
 without silently retrying a model or guessing what its first response contained.
+
+### Resume a report-only comparison
+
+`python -m digest.review_trial --config config.yaml --resume previous/review.json --output fresh-output`
+
+Resume keeps the exact saved RSS evidence, verifies its content hash and budgets,
+and does not collect sources or touch production dedup state. Only successful
+`ok`/`abstained` slots whose provider, model, evidence hash and current prompt hash
+match are reused. Their selection contract is revalidated before any request.
+Missing or failed slots are attempted once; changed prompts/models invalidate
+reuse. Output must be fresh and cannot replace the original checkpoint. Reports
+label reused versus newly attempted slots and preserve original generation times;
+legacy version-one reports with no timestamp explicitly show `not recorded`.
+Hashes detect accidental mismatch, not malicious editing: checkpoints are trusted
+local artifacts, not authenticated provider receipts. Model aliases may change
+behind a provider's API; the recorded resolved model is retained for inspection.
+
+When the primary is unavailable or invalid, a successful secondary selection can
+lead the digest. Cards identify the actual provider/model and explicitly mark an
+incomplete independent comparison. A primary's valid abstention is respected;
+it is not silently replaced. Reusing a result never creates another opinion.
+
+The trial CLI is a manual, report-only recovery boundary. The separate
+`digest.review_resume` production command provides prepare/execute phases for the
+existing runtime schedule. It keeps production evidence budgets, limits completion
+to two calls with no retries, and requires an immutable checkpoint attempt marker.
+The runtime must commit and push that marker before execute; if persistence fails,
+no inference is allowed. Newest incomplete reports under 24 hours old are eligible
+once; old reports without timestamps are skipped. Resumed Markdown/JSON are
+archival supplements only: no Telegram message or dedup mutation occurs.
+A later scheduled run may use a different resolved version behind a provider model
+alias; original and new timestamps/model versions are visible in the report.

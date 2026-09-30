@@ -10,7 +10,8 @@ import asyncio
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from itertools import zip_longest
 from typing import Literal
 from urllib.parse import urlparse
@@ -70,6 +71,9 @@ class ModelReview:
     response_sha256: str | None = None
     rejected_output: str | None = None
     rejected_output_truncated: bool = False
+    attempted_at: str | None = None
+    generated_at: str | None = None
+    reused_from_checkpoint: bool = False
 
 
 @dataclass
@@ -213,7 +217,8 @@ async def _review_slot(
     messages: list[dict[str, str]], config: Config,
 ) -> ModelReview:
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
-    result = ModelReview(slot, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable")
+    result = ModelReview(slot, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable",
+                         attempted_at=datetime.now(UTC).isoformat())
     try:
         text, usage = await complete(
             LLMRole.REVIEW_EVIDENCE, messages, config, temperature=0.2,
@@ -223,6 +228,7 @@ async def _review_slot(
     except Exception as exc:
         result.error = type(exc).__name__  # Never retain response bodies or credentials.
         return result
+    result.generated_at = datetime.now(UTC).isoformat()
     result.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
     resolved_model = usage.get("resolved_model")
     result.resolved_model = resolved_model if isinstance(resolved_model, str) else None
@@ -241,10 +247,46 @@ async def _review_slot(
 async def run_blind_review(articles_by_category: dict[str, list[Article]], config: Config) -> BlindReviewReport:
     settings = config.review
     bundle = build_evidence_bundle(articles_by_category, settings)
+    return await run_evidence_review(bundle, config)
+
+
+async def run_evidence_review(
+    bundle: EvidenceBundle, config: Config, cached_reviews: list[ModelReview] | None = None,
+) -> BlindReviewReport:
+    """Resume only independently validated successes for the identical evidence and prompt."""
+    from digest.review_checkpoint import validate_evidence_bundle
+
+    validate_evidence_bundle(bundle, config)
+    settings = config.review
     messages = build_review_messages(bundle, settings, config.radar.language)
+    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    cached = {review.slot: review for review in cached_reviews or []}
+    if len(cached) != len(cached_reviews or []):
+        raise ValueError("Checkpoint contains duplicate review slots.")
+
+    reusable: dict[str, ModelReview] = {}
+    models = {"primary": settings.primary, "secondary": settings.secondary, "third": settings.tie_breaker}
+    for name, previous in cached.items():
+        model = models.get(name)
+        if (model is not None and previous.status in {"ok", "abstained"}
+                and (previous.provider, previous.model, previous.bundle_id, previous.prompt_hash)
+                == (model.provider, model.model, bundle.bundle_id, prompt_hash)):
+            selections, limitations = _parse_review(json.dumps({
+                "selections": [asdict(item) for item in previous.selections],
+                "limitations": previous.limitations,
+            }), bundle, settings.max_selections)
+            if previous.status != ("ok" if selections else "abstained"):
+                raise ValueError("Checkpoint review status contradicts its selections.")
+            reusable[name] = replace(previous, selections=selections, limitations=limitations,
+                                     reused_from_checkpoint=True)
+
+    async def slot(name: str, model: ReviewModelConfig) -> ModelReview:
+        if name in reusable:
+            return reusable[name]
+        return await _review_slot(name, model, bundle, messages, config)
+
     reviews = list(await asyncio.gather(
-        _review_slot("primary", settings.primary, bundle, messages, config),
-        _review_slot("secondary", settings.secondary, bundle, messages, config),
+        slot("primary", settings.primary), slot("secondary", settings.secondary),
     ))
     valid = all(r.status in {"ok", "abstained"} for r in reviews)
     first, second = ({s.evidence_id for s in r.selections} for r in reviews)
@@ -257,7 +299,7 @@ async def run_blind_review(articles_by_category: dict[str, list[Article]], confi
     if valid and overlap is not None and overlap < settings.disagreement_threshold:
         reason = "third_model_not_configured"
         if settings.tie_breaker:
-            reviews.append(await _review_slot("third", settings.tie_breaker, bundle, messages, config))
+            reviews.append(await slot("third", settings.tie_breaker))
             reason = "selection_overlap_below_threshold"
     return BlindReviewReport(
         SCHEMA_VERSION, bundle, reviews,
@@ -271,9 +313,14 @@ def primary_cards(
 ) -> list[ArticleSummary]:
     originals = _ordered_unique_articles(articles_by_category)
     primary = report.reviews[0]
+    if primary.status in {"invalid", "unavailable"}:
+        primary = next((r for r in report.reviews if r.slot == "secondary" and r.status == "ok"), primary)
     if primary.status != "ok":
         return []
     label = "Мнение модели" if language == "ru" else "Model view"
+    label += f" ({primary.provider}/{primary.model})"
+    if report.status != "complete":
+        label += "; независимое сравнение не завершено" if language == "ru" else "; independent comparison incomplete"
     cards = []
     for selection in primary.selections:
         article = originals[selection.evidence_id]
@@ -293,6 +340,9 @@ def render_review(report: BlindReviewReport) -> str:
     for review in report.reviews:
         lines.append(f"\n### {review.slot}: {review.provider}/{review.model} — {review.status}")
         lines.append(f"Resolved model: {review.resolved_model or 'not reported by provider'}")
+        provenance = "reused checkpoint" if review.reused_from_checkpoint else "new attempt"
+        lines.append(f"Provenance: {provenance}; attempted: {review.attempted_at or 'not recorded'}; "
+                     f"generated: {review.generated_at or 'not recorded'}")
         for selection in review.selections:
             item = evidence[selection.evidence_id]
             lines.append(f"- [{item.title}]({item.url}): {selection.reason} (confidence: {selection.confidence})")

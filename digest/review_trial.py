@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import tempfile
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from digest.config import load_config
 from digest.radar.collector import collect
-from digest.review import render_review, run_blind_review
+from digest.review import render_review, run_blind_review, run_evidence_review
+from digest.review_checkpoint import load_review_checkpoint
 
 _ALLOWED_MODELS = {
     ("gemini", "gemini-3.8-flash"),
@@ -25,8 +28,14 @@ _ALLOWED_MODELS = {
 }
 
 
-async def run_trial(config_path: Path, output_dir: Path) -> int:
+async def run_trial(config_path: Path, output_dir: Path, resume_path: Path | None = None) -> int:
     config_path, output_dir = config_path.resolve(), output_dir.resolve()
+    if resume_path is not None:
+        resume_path = resume_path.resolve()
+        if resume_path == output_dir / "review.json":
+            raise ValueError("Resume output must not overwrite the original checkpoint.")
+    if any((output_dir / name).exists() for name in ("review.json", "review.md", "trial-metadata.json")):
+        raise ValueError("Trial output already exists; choose a fresh output directory.")
     config = load_config(config_path)
     if not config.review.enabled:
         raise ValueError("The trial requires review.enabled: true.")
@@ -57,10 +66,14 @@ async def run_trial(config_path: Path, output_dir: Path) -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="digest-blind-trial-") as isolated:
             os.chdir(isolated)
-            articles, _unpersisted_cache = await collect(config)
-            if not articles:
-                raise ValueError("No source evidence collected; no model calls made.")
-            report = await run_blind_review(articles, config)
+            if resume_path is not None:
+                bundle, cached_reviews = load_review_checkpoint(resume_path, config)
+                report = await run_evidence_review(bundle, config, cached_reviews)
+            else:
+                articles, _unpersisted_cache = await collect(config)
+                if not articles:
+                    raise ValueError("No source evidence collected; no model calls made.")
+                report = await run_blind_review(articles, config)
     finally:
         os.chdir(previous_cwd)
 
@@ -68,6 +81,12 @@ async def run_trial(config_path: Path, output_dir: Path) -> int:
     (output_dir / "review.json").write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2) + "\n")
     (output_dir / "review.md").write_text("# Controlled blind-review trial\n" + render_review(report) + "\n")
     metadata = {
+        "created_at": datetime.now(UTC).isoformat(),
+        "source_checkpoint_sha256": (hashlib.sha256(resume_path.read_bytes()).hexdigest()
+                                     if resume_path is not None else None),
+        "resumed": resume_path is not None,
+        "reused_slots": [r.slot for r in report.reviews if r.reused_from_checkpoint],
+        "new_attempt_slots": [r.slot for r in report.reviews if not r.reused_from_checkpoint],
         "trial_only": True, "production_state_written": False, "telegram_used": False,
         "max_model_requests": 3, "model_retries": 0,
         "max_evidence_articles": config.review.max_evidence_articles,
@@ -86,8 +105,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--resume", type=Path, help="Prior report JSON; reuse valid matching slots only")
     args = parser.parse_args()
-    return asyncio.run(run_trial(args.config, args.output))
+    return asyncio.run(run_trial(args.config, args.output, args.resume))
 
 
 if __name__ == "__main__":
