@@ -21,7 +21,10 @@ identities and must remain unchanged.
 - Translate generated card summaries, category-summary prose, and published Irritator
   narrative/assessment prose after analysis. Keep original titles, source metadata,
   URLs, literal quotations, evidence and raw reviews canonical. Presentation targets do not alter review/search input.
-- Pin one explicitly configured existing provider/model; do not enter the fallback chain.
+- Pin one explicitly configured existing provider/model from `llm.providers` or an
+  explicit `review.primary`, `review.secondary` or `review.tie_breaker` mapping. Implicit
+  review defaults do not authorize reuse. Ordinary role routing is unchanged; do not
+  enter the fallback chain.
   Bound calls, total translation time, input allowance and output tokens. Configuration
   does not prove account pricing: the operator must choose an entitled free route for a
   free-only runtime. No new credentials or provider is configured automatically.

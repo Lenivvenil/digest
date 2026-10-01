@@ -704,7 +704,9 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     )
 
 
-def _load_translation(data: dict[str, Any], llm: LLMConfig, radar: RadarConfig) -> TranslationConfig:
+def _load_translation(
+    data: dict[str, Any], llm: LLMConfig, radar: RadarConfig, review: ReviewConfig,
+) -> TranslationConfig:
     if "translation" not in data:
         return TranslationConfig()  # Legacy generation language and call count are unchanged.
     section = data["translation"]
@@ -742,8 +744,17 @@ def _load_translation(data: dict[str, Any], llm: LLMConfig, radar: RadarConfig) 
         if radar.language != "en":
             raise ValueError("Translation requires radar.language: en canonical text. "
                              "Keep translation absent for legacy direct Russian generation.")
-        if not provider or not model or not any(p.name == provider and p.model == model for p in llm.providers):
-            raise ValueError("Translation requires an explicit provider/model already present in llm.providers.")
+        configured = {(p.name, p.model) for p in llm.providers}
+        review_section = data.get("review", {})
+        for slot in ("primary", "secondary", "tie_breaker"):
+            route = getattr(review, slot)
+            # Defaults are not operator-configured routes. Only validated explicit
+            # mappings can authorize reuse; ordinary provider roles stay unchanged.
+            if isinstance(review_section.get(slot), dict) and route is not None:
+                configured.add((route.provider, route.model))
+        if not provider or not model or (provider, model) not in configured:
+            raise ValueError("Translation requires an explicit provider/model already present in "
+                             "llm.providers or an explicitly configured review route.")
     return TranslationConfig(enabled=enabled, target_language=target, provider=provider, model=model,
                              timeout_seconds=float(timeout), **values)
 
@@ -778,7 +789,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     obsidian = _load_obsidian(data)
     adaptive = _load_adaptive(data)
     review = _load_review(data)
-    translation = _load_translation(data, llm, radar)
+    translation = _load_translation(data, llm, radar, review)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",

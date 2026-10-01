@@ -318,8 +318,8 @@ radar:
 translation:
   enabled: true
   target_language: ru
-  provider: gemini             # Must already exist in llm.providers
-  model: YOUR_GEMINI_MODEL_ID  # Must match that configured provider/model
+  provider: gemini             # Must exist in llm.providers or an explicit review route
+  model: YOUR_GEMINI_MODEL_ID  # Exact match to that configured provider/model
   max_calls: 1                # Per presentation pass, without HTTP retries
   timeout_seconds: 90         # Explicit total budget; accommodates a 65-second shared interval
   max_output_tokens: 2048

@@ -375,3 +375,33 @@ async def test_legacy_primary_and_supplement_use_one_translation_budget(tmp_path
     assert summary.startswith("Перевод:") and ranked[0].reasoning.startswith("Перевод:")
     assert ranked[0].signal is item.signal and item.reasoning == "Only a preview."
     call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_explicit_review_translation_route_preserves_ordinary_roles_and_cache_identity(tmp_path: Path) -> None:
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(MINIMAL_CONFIG))
+    data["review"] = {"tie_breaker": {"provider": "groq", "model": "configured-presentation-model"}}
+    data["translation"] = {"enabled": True, "provider": "groq", "model": "configured-presentation-model"}
+    path = tmp_path / "route.yaml"
+    path.write_text(yaml.safe_dump(data))
+    cfg = load_config(path)
+    assert [(p.name, p.model, p.role) for p in cfg.llm.providers] == [
+        ("groq", "llama-3.3-70b-versatile", ["summarize"]),
+    ]
+    response = '{"translations":[{"id":"a","text":"Только участники."}]}'
+    with patch("digest.translation.complete", AsyncMock(return_value=(response, {"finish_reason": "stop"}))) as call:
+        result = await translate_fields({"a": "Only participants."}, cfg, tmp_path / "cache")
+    assert result.status == "translated"
+    assert call.call_args.kwargs["provider_override"] == ProviderConfig("groq", "configured-presentation-model")
+    record = json.loads(next((tmp_path / "cache").glob("*.json")).read_text())
+    assert record["provider"] == "groq" and record["model"] == "configured-presentation-model"
+    # Neither an arbitrary model nor an implicit default review slot authorizes reuse.
+    for provider, model in (("groq", "unconfigured-model"),
+                            (cfg.review.primary.provider, cfg.review.primary.model)):
+        data["translation"]["provider"] = provider
+        data["translation"]["model"] = model
+        path.write_text(yaml.safe_dump(data))
+        with pytest.raises(ValueError, match="already present"):
+            load_config(path)
