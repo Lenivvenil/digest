@@ -116,6 +116,9 @@ class _Config:
     def enabled_sources(self) -> list[_SourceCfg]:
         return [s for s in self.sources if s.enabled]
 
+    def effective_sources(self, state) -> list[_SourceCfg]:
+        return [s for s in self.enabled_sources if not state.is_demoted(s.name)]
+
 
 @dataclass
 class _CategorySummary:
@@ -449,7 +452,7 @@ class TestMain:
         with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main([])
         assert result == 0
-        mock_run.assert_called_once_with("config.yaml", False, False, False)
+        mock_run.assert_called_once_with("config.yaml", False, False, False, feedback_precollected=False)
 
     async def test_all_flags(self) -> None:
         mock_stats = RunStats(
@@ -458,9 +461,10 @@ class TestMain:
             markdown_saved=False, markdown_path="",
         )
         with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
-            result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml"])
+            result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml",
+                                 "--feedback-precollected"])
         assert result == 0
-        mock_run.assert_called_once_with("alt.yaml", True, True, True)
+        mock_run.assert_called_once_with("alt.yaml", True, True, True, feedback_precollected=True)
 
 
 @pytest.mark.asyncio
@@ -645,3 +649,78 @@ async def test_required_telegram_failure_is_red_even_when_markdown_exists() -> N
     )
     with patch("digest.main.run", AsyncMock(return_value=stats)):
         assert await main([]) == 1
+
+
+@pytest.mark.asyncio
+async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_run_never_repolls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    from digest.feedback import ArticleFeedback, load_feedback, save_feedback
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
+    cfg = _mock_config()
+    cfg.telegram.enabled = True
+    assert not cfg.adaptive.enabled
+    vote = ArticleFeedback("12345678", "test", -1, datetime.now(timezone.utc).isoformat())
+
+    async def collect_vote(_token, _store, *, cache_dir):
+        store = FeedbackStore(ratings=[vote], last_update_id=100)
+        save_feedback(store, cache_dir, strict=True)
+        return store
+
+    article = _Article()
+    card = ArticleSummary(article.title, article.link, "test", "tech", "Canonical summary.")
+    with (
+        patch("digest.config.load_config", return_value=cfg),
+        patch("digest.feedback.collect_feedback", side_effect=collect_vote) as poll,
+        patch("digest.radar.collect", AsyncMock(return_value=({"tech": [article]}, {}))) as collect,
+        patch("digest.main._analyze_articles", AsyncMock(return_value=([_CategorySummary()], None, [card], None))),
+        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.delivery.write_digest", return_value=None),
+        patch("digest.delivery.send_article_cards", AsyncMock(return_value=ArticleDeliveryResult(1, 0, 1))),
+        patch("digest.delivery.send_counter_signals", AsyncMock()),
+        patch("digest.main._process_pending_approvals") as approvals,
+    ):
+        result = await run("config.yaml", False, False, False)
+        assert not result.telegram_sent and not result.markdown_saved
+        assert collect.call_args.kwargs["effective_priorities"]["test"] == 2
+        assert load_feedback(".cache", strict=True).ratings == [vote]
+        assert load_feedback(".cache", strict=True).last_update_id == 100
+        poll.assert_awaited_once()
+        approvals.assert_not_called()
+        poll.reset_mock()
+        collect.return_value = ({}, {})
+        await run("config.yaml", False, False, False, feedback_precollected=True)
+        poll.assert_not_called()
+        assert load_feedback(".cache", strict=True).ratings == [vote]
+
+
+def test_pending_source_approval_requires_current_identity_and_keeps_failed_decision(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from digest.discovery import PendingSource
+    from digest.main import _process_pending_approvals
+
+    now = datetime.now(timezone.utc)
+    fresh = PendingSource("Fresh", "https://example.com/fresh", "Tech", now.isoformat())
+    failed = PendingSource("Retry", "https://example.com/retry", "Tech", now.isoformat())
+    stale = PendingSource("Stale", "https://example.com/stale", "Tech", (now-timedelta(days=31)).isoformat())
+    wrong = PendingSource("Wrong", "https://example.com/wrong", "Tech", now.isoformat(), "12345678")
+    store = FeedbackStore(source_decisions={x.source_hash: "approved" for x in (fresh, failed, stale, wrong)})
+
+    def apply(_path, proposal):
+        if proposal is failed:
+            raise OSError("synthetic write failure")
+
+    with (
+        patch("digest.discovery.load_pending", return_value=[fresh, failed, stale, wrong]),
+        patch("digest.discovery.add_source_to_config", side_effect=apply) as add,
+        patch("digest.discovery.save_pending"),
+    ):
+        _process_pending_approvals("config.yaml", str(tmp_path), store)
+    assert [call.args[1] for call in add.call_args_list] == [fresh, failed]
+    assert fresh.source_hash not in store.source_decisions
+    assert store.source_decisions[failed.source_hash] == "approved"

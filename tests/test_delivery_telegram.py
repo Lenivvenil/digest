@@ -465,10 +465,10 @@ class TestSendArticleCards:
         assert route.call_count == 1
 
     @pytest.mark.parametrize("language,enabled,note", [
-        ("en", True, "Feedback is collected on pipeline runs"),
-        ("en", False, "Feedback collection is disabled"),
-        ("ru", True, "Реакции собираются при запусках дайджеста"),
-        ("ru", False, "Сбор реакций отключён"),
+        ("en", True, "Votes are processed on digest runs; private owner chat only"),
+        ("en", False, "Votes are processed on digest runs; private owner chat only"),
+        ("ru", True, "Оценки обрабатываются при запусках дайджеста; только личный чат владельца"),
+        ("ru", False, "Оценки обрабатываются при запусках дайджеста; только личный чат владельца"),
     ])
     async def test_card_includes_async_feedback_note(
         self, monkeypatch: pytest.MonkeyPatch, language: str, enabled: bool, note: str,

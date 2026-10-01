@@ -874,3 +874,21 @@ def test_save_stats_no_prune_without_param(tmp_path: Path) -> None:
     loaded = load_stats(str(tmp_path))
     assert "A" in loaded
     assert "B" in loaded
+
+
+def test_feedback_only_priorities_preserve_unrated_sources_and_bound_candidate_allocation() -> None:
+    from digest.radar.collector import allocate_slots
+    from digest.source_scorer import calculate_feedback_priorities
+
+    sources = [_make_source("A", priority=3), _make_source("B", priority=3), _make_source("C", priority=1)]
+    config = _default_adaptive()
+    config.enabled = False
+    neutral = calculate_feedback_priorities(sources, {}, config)
+    adjusted = calculate_feedback_priorities(sources, {"A": 1.0, "B": 0.0}, config)
+    assert neutral == {"A": 3, "B": 3, "C": 1}
+    assert adjusted == {"A": 4, "B": 2, "C": 1}
+    before, after = allocate_slots(sources, 21, neutral), allocate_slots(sources, 21, adjusted)
+    assert after["A"] > before["A"] and after["B"] < before["B"]
+    assert after["C"] == before["C"] and sources[0].priority == 3
+    assert calculate_feedback_priorities([_make_source("low", 1)], {"low": 0}, config) == {"low": 1}
+    assert calculate_feedback_priorities([_make_source("high", 5)], {"high": 1}, config) == {"high": 5}

@@ -387,6 +387,27 @@ def calculate_effective_priorities(
     return result
 
 
+def calculate_feedback_priorities(
+    sources: list[SourceConfig], feedback_scores: dict[str, float], adaptive_config: AdaptiveConfig,
+) -> dict[str, int]:
+    """Bounded vote-only adjustment; unrated sources keep their configured priority.
+
+    No objective quality/trending signal or source lifecycle mutation is introduced
+    when automatic adaptive management is disabled.
+    """
+    span = adaptive_config.max_priority - adaptive_config.min_priority
+    result: dict[str, int] = {}
+    for source in sources:
+        score = feedback_scores.get(source.name)
+        if score is None or adaptive_config.feedback_weight == 0:
+            result[source.name] = source.priority
+            continue
+        delta = round((2 * score - 1) * adaptive_config.feedback_weight * span)
+        result[source.name] = max(adaptive_config.min_priority,
+                                  min(adaptive_config.max_priority, source.priority + delta))
+    return result
+
+
 def evaluate_trial_sources(
     sources: list[SourceConfig],
     stats: dict[str, SourceStats],

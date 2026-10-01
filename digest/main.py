@@ -20,11 +20,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from digest.feedback import FeedbackStore
     from digest.irritator import IrritatorStatus
     from digest.radar.collector import Article, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
@@ -458,6 +459,7 @@ def _process_pending_approvals(
         add_source_to_config,
         load_pending,
         save_pending,
+        source_hash,
     )
     from digest.feedback import save_feedback
 
@@ -469,14 +471,29 @@ def _process_pending_approvals(
         return
     remaining: list[PendingSource] = []
     for ps in pending:
-        decision = feedback_store.source_decisions.pop(ps.source_hash, None)
+        decision = feedback_store.source_decisions.get(ps.source_hash)
+        if decision:
+            try:
+                discovered = datetime.fromisoformat(ps.discovered_at)
+                if discovered.tzinfo is None:
+                    discovered = discovered.replace(tzinfo=timezone.utc)
+                valid = (ps.source_hash == source_hash(ps.url)
+                         and timedelta(0) <= datetime.now(timezone.utc) - discovered <= timedelta(days=30))
+            except ValueError:
+                valid = False
+            if not valid:
+                logger.warning("Ignoring stale or mismatched pending source approval")
+                remaining.append(ps)
+                continue
         if decision == "approved":
             try:
                 add_source_to_config(config_path, ps)
+                feedback_store.source_decisions.pop(ps.source_hash, None)
             except Exception as exc:
                 logger.error("Failed to add source '%s' to config: %s", ps.name, exc)
                 remaining.append(ps)
         elif decision == "rejected":
+            feedback_store.source_decisions.pop(ps.source_hash, None)
             logger.info("Source '%s' rejected by user, removing from pending", ps.name)
         else:
             remaining.append(ps)
@@ -643,16 +660,45 @@ async def _publication_presentation(
     return await translate_publication_presentation(combined, cards, ranked, config, cache)
 
 
+async def _collect_run_feedback(
+    config: Any, cache_dir: str, dry_run: bool, precollected: bool,
+) -> tuple[FeedbackStore, bool, int]:
+    """Feedback durability is independent of today's analysis/delivery outcome."""
+    from digest.feedback import FeedbackStore, collect_feedback, load_feedback
+
+    logger = logging.getLogger(__name__)
+    try:
+        store = load_feedback(cache_dir, strict=True)
+    except Exception as exc:
+        logger.warning("Feedback state unavailable (%s); preserve it and continue without polling", type(exc).__name__)
+        return FeedbackStore(), False, 0
+    if dry_run or precollected or not config.telegram.enabled:
+        return store, True, 0
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return store, True, 0
+    before = len(store.ratings)
+    try:
+        store = await collect_feedback(token, store, cache_dir=cache_dir)
+    except Exception as exc:
+        logger.warning("Feedback collection incomplete (%s); primary processing continues", type(exc).__name__)
+        # Strict collector writes a candidate atomically. Reload any committed prefix
+        # (including votes whose UI acknowledgement failed), never replace it blindly.
+        try:
+            store = load_feedback(cache_dir, strict=True)
+        except Exception:
+            return store, False, 0
+    return store, True, max(0, len(store.ratings) - before)
+
+
 async def run(
-    config_path: str, dry_run: bool, radar_only: bool, verbose: bool
+    config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
     from digest._util import cleanup_stale_tmp
     from digest.config import load_config
     from digest.feedback import (
-        collect_feedback,
         get_source_feedback_score,
-        load_feedback,
         save_feedback,
     )
     from digest.radar import AllFeedsFailedError, collect, save_dedup_cache
@@ -660,6 +706,7 @@ async def run(
     from digest.source_scorer import (
         apply_trial_decisions_to_cache,
         calculate_effective_priorities,
+        calculate_feedback_priorities,
         evaluate_trial_sources,
         load_source_state,
         load_stats,
@@ -679,31 +726,22 @@ async def run(
     feeds_count = len(config.enabled_sources)
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
-    feedback_store = load_feedback(cache_dir)
-    effective_priorities: dict[str, int] | None = None
-    feedback_collected = 0
-
-    saved_update_id = feedback_store.last_update_id
-    saved_ratings_count = len(feedback_store.ratings)
+    feedback_store, feedback_usable, feedback_collected = await _collect_run_feedback(
+        config, cache_dir, dry_run, feedback_precollected,
+    )
     saved_article_source_map = dict(feedback_store.article_source_map)
-
+    feedback_scores: dict[str, float] = {}
+    for source in config.enabled_sources:
+        score = get_source_feedback_score(feedback_store, source.name)
+        if score is not None:
+            feedback_scores[source.name] = score
     if config.adaptive.enabled:
-        if not dry_run:
-            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            if bot_token:
-                old_count = len(feedback_store.ratings)
-                feedback_store = await collect_feedback(bot_token, feedback_store, cache_dir=cache_dir)
-                feedback_collected = len(feedback_store.ratings) - old_count
-                if feedback_collected:
-                    logger.info("Collected %d new feedback ratings", feedback_collected)
-
-        feedback_scores: dict[str, float] = {}
-        for source in config.enabled_sources:
-            score = get_source_feedback_score(feedback_store, source.name)
-            if score is not None:
-                feedback_scores[source.name] = score
         effective_priorities = calculate_effective_priorities(
-            config.effective_sources(source_state), source_stats, feedback_scores, config.adaptive
+            config.effective_sources(source_state), source_stats, feedback_scores, config.adaptive,
+        )
+    else:
+        effective_priorities = calculate_feedback_priorities(
+            config.effective_sources(source_state), feedback_scores, config.adaptive,
         )
 
     run_config = dataclasses.replace(
@@ -738,7 +776,8 @@ async def run(
             save_dedup_cache(cache)
             _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
             save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
-            save_feedback(feedback_store, cache_dir)
+            if feedback_usable:
+                save_feedback(feedback_store, cache_dir)
         return _empty_stats()
 
     contributing_sources = sorted(
@@ -884,7 +923,8 @@ async def run(
 
         # Process pending approvals BEFORE save_stats so newly approved
         # sources aren't pruned from stats as "unknown"
-        _process_pending_approvals(config_path, cache_dir, feedback_store)
+        if feedback_usable and feedback_store.source_decisions:
+            _process_pending_approvals(config_path, cache_dir, feedback_store)
 
         if config.adaptive.enabled:
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
@@ -896,21 +936,12 @@ async def run(
                 sources_promoted = len(promote)
                 sources_demoted = len(demote)
     else:
-        # Roll back feedback state — updates will be reprocessed on next run.
-        # article_source_map is also rewound to prevent FIFO eviction of mappings
-        # for cards that were never delivered.
-        logger.info(
-            "Delivery failed — rolling back feedback: last_update_id %d→%d, ratings %d→%d",
-            feedback_store.last_update_id,
-            saved_update_id,
-            len(feedback_store.ratings),
-            saved_ratings_count,
-        )
-        feedback_store.last_update_id = saved_update_id
-        feedback_store.ratings = feedback_store.ratings[:saved_ratings_count]
+        # Only attribution for undelivered new cards is delivery-dependent.
+        # Previously persisted votes/cursor must survive an unrelated delivery failure.
         feedback_store.article_source_map = saved_article_source_map
 
-    save_feedback(feedback_store, cache_dir)
+    if feedback_usable:
+        save_feedback(feedback_store, cache_dir)
     save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
     save_source_category_map(config.enabled_sources, cache_dir)
@@ -982,6 +1013,10 @@ async def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use LLM to suggest new RSS sources for underrepresented categories, then exit",
     )
+    parser.add_argument(
+        "--feedback-precollected", action="store_true",
+        help="Managed runtime owns feedback collection/persistence; do not poll again in this process",
+    )
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
@@ -991,7 +1026,8 @@ async def main(argv: list[str] | None = None) -> int:
         if args.discover:
             return await discover_sources(args.config)
 
-        stats = await run(args.config, args.dry_run, args.radar_only, args.verbose)
+        stats = await run(args.config, args.dry_run, args.radar_only, args.verbose,
+                          feedback_precollected=args.feedback_precollected)
         _print_stats(stats)
 
         if stats.required_delivery_failed:
