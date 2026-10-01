@@ -1,5 +1,11 @@
 # Blind evidence review (opt-in experiment)
 
+This runbook describes the RSS-review code available on main. Full-source enrichment
+in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93) is not installed by these
+instructions. Editorial quality remains open in [#55](https://github.com/Lenivvenil/digest/issues/55).
+The English documentation/onboarding slice of [#94](https://github.com/Lenivvenil/digest/issues/94)
+is currently active; optional post translation is not yet a separate implemented setting.
+
 `review.enabled` adds provider-neutral independent selection to the existing RSS,
 Markdown and Telegram pipeline. It defaults to false for existing configurations.
 
