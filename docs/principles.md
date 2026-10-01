@@ -1,82 +1,98 @@
 # Principles
 
-Этот документ — контракт. Каждое решение сверяется с ним; каждое нарушение должно быть осознанным и зафиксированным в ADR.
+This document is a contract. Every decision is checked against it; every violation must be deliberate and recorded in an ADR.
 
-## Четыре директивы
+<a id="четыре-директивы"></a>
 
-### 1. Красные флаги вместо трейдоффов
+## Four directives
 
-В местах соблазна «вариант A vs вариант B — выбирайте по вкусу» — прямой ответ какой вариант правильный, а какой костыль. Если правильного ответа нет — честное «не знаю, требуется эмпирика».
+<a id="1-красные-флаги-вместо-трейдоффов"></a>
 
-Проверка: если в документе появляется фраза «оба хороши» или «зависит от предпочтений» без конкретных условий разветвления — это красный флаг самой формулировки, не полезный нейтралитет.
+### 1. Red flags instead of trade-offs
 
-### 2. Claude — душный напарник, не эксперт
+Where it is tempting to say “option A vs. option B — choose whichever you prefer,” give a direct answer about which option is correct and which is a workaround. If there is no correct answer, say honestly: “I don't know; empirical evidence is needed.”
 
-Роль Claude — задавать неудобные вопросы, требовать полноты артефактов, отказываться принимать «ну пока сойдёт». Единственный автор и ответственный за домен и архитектуру — человек-оператор.
+Check: if a document says “both are good” or “it depends on preferences” without specifying the conditions that determine the choice, the wording itself is a red flag, not useful neutrality.
 
-Материально это выражается в ролях агентов: все критики read-only, ни один не пишет код. `adr-reviewer` не предлагает альтернатив, которые автор не рассмотрел. `domain-reviewer` не добавляет термины. `backlog-groomer` не мутирует issues.
+<a id="2-claude--душный-напарник-не-эксперт"></a>
 
-### 3. Автоматизировать только низкорискованное
+### 2. Claude is a demanding partner, not an expert
 
-Разметка каждого шага pipeline по риску.
+Claude's role is to ask uncomfortable questions, require complete artifacts, and refuse to accept “good enough for now.” The human operator is the sole author and accountable owner of the domain and architecture.
 
-**Без approval:** lint, typecheck, форматирование, read-only анализ, черновики, запуск тестов, чтение документации, поиск в коде.
+In practice, this is reflected in agent roles: all critics are read-only; none writes code. `adr-reviewer` does not suggest alternatives the author has not considered. `domain-reviewer` does not add terms. `backlog-groomer` does not mutate issues.
 
-**С approval:** архитектурные решения, выбор библиотек, трактовка неоднозначных требований, security-чувствительные изменения, production-конфигурация, миграции, merge в main.
+<a id="3-автоматизировать-только-низкорискованное"></a>
 
-Материально: `auto-mode` покрывает первую категорию; `deny-rules` отсекают утечки секретов; `governance-hook` блокирует коммиты без issue-ссылки или без ADR-линка для архитектурных изменений.
+### 3. Automate only low-risk work
 
-### 4. Knowledge в инструментах, не в памяти
+Classify every pipeline step by risk.
 
-Всё значимое — в git (`docs/adr/`, `docs/domain/`, `CLAUDE.md`-индекс) и GitHub (Issues, Projects v2, PR). Memory Claude — кэш, не источник истины.
+**Without approval:** linting, type checking, formatting, read-only analysis, drafts, running tests, reading documentation, and searching code.
 
-**Тест:** любой коллега (или вы сами через 3 месяца) заходит в репо и за час восстанавливает контекст **без чата и без разговоров**. Если требуется устный ввод — это регресс документации.
+**With approval:** architectural decisions, library selection, interpreting ambiguous requirements, security-sensitive changes, production configuration, migrations, and merging into main.
+
+In practice: `auto-mode` covers the first category; `deny-rules` prevent secret leaks; `governance-hook` blocks commits without an issue reference or, for architectural changes, an ADR link.
+
+<a id="4-knowledge-в-инструментах-не-в-памяти"></a>
+
+### 4. Knowledge belongs in tools, not memory
+
+Everything significant belongs in git (`docs/adr/`, `docs/domain/`, the `CLAUDE.md` index) and GitHub (Issues, Projects v2, PRs). Claude's memory is a cache, not the source of truth.
+
+**Test:** any colleague (or you, three months later) can enter the repository and recover the context within an hour **without chat history or conversations**. If a verbal introduction is required, the documentation has regressed.
 
 ## Definition of Done
 
-Изменение **Done** когда все условия истинны:
+A change is **Done** when all conditions are true:
 
-- [ ] ADR открыт и смерджен, если изменение архитектурно-значимо
-- [ ] Domain-доки обновлены, если изменилась граница BC или термин
-- [ ] Unit-тесты написаны; integration-тесты для cross-BC путей; coverage ≥ project floor (дефолт 80%)
-- [ ] `/review` (Claude) одобрил
-- [ ] `/codex-review` (Codex) одобрил ИЛИ создан `type:deferred-review` issue с обоснованием graceful degradation
-- [ ] Разногласия между Claude и Codex разрешены в PR-треде (консенсус или фиксация disagreement)
-- [ ] Human self-review выполнен
-- [ ] Security scans clean: `uv pip audit` / `cargo audit` / `npm audit --audit-level=high` / `govulncheck` — в зависимости от языка
-- [ ] Docs обновлены: README (при публичных изменениях), relevant runbook, CHANGELOG (через release-please)
-- [ ] CI зелёный на всех required jobs
-- [ ] Conventional Commits; governance-hook проверку прошёл
-- [ ] PR body ссылается на issue (`Closes #NNN`) и на ADR (`Implements docs/decisions/NNNN-*.md`) если был
+- [ ] An ADR has been opened and merged if the change is architecturally significant
+- [ ] Domain documentation is updated if a BC boundary or term has changed
+- [ ] Unit tests are written; integration tests cover cross-BC paths; coverage ≥ the project floor (80% by default)
+- [ ] `/review` (Claude) has approved
+- [ ] `/codex-review` (Codex) has approved OR a `type:deferred-review` issue records the rationale for graceful degradation
+- [ ] Disagreements between Claude and Codex are resolved in the PR thread (consensus or a recorded disagreement)
+- [ ] Human self-review is complete
+- [ ] Security scans are clean: `uv pip audit` / `cargo audit` / `npm audit --audit-level=high` / `govulncheck`, depending on the language
+- [ ] Documentation is updated: README (for public changes), the relevant runbook, and CHANGELOG (through release-please)
+- [ ] CI is green for all required jobs
+- [ ] Conventional Commits are used; the governance-hook check has passed
+- [ ] The PR body references the issue (`Closes #NNN`) and the ADR (`Implements docs/decisions/NNNN-*.md`), if applicable
 
-Этот чек-лист копируется в `pull_request_template.md` и проверяется на каждом PR.
+This checklist is copied into `pull_request_template.md` and checked on every PR.
 
-### 5. Scope инструмента ограничен явной установкой
+<a id="5-scope-инструмента-ограничен-явной-установкой"></a>
 
-Claude-mini не влияет ни на что за пределами репозиториев, файлов и настроек, куда его installer физически положил артефакты. Никаких глобальных git-конфигов, path-паттернов, allowlist-ов, или иных механизмов, применяющих правила по совпадению пути или имени. Граница — факт установки, а не конфигурационный паттерн.
+### 5. Tool scope is bounded by explicit installation
 
-Материально: commit-msg хук копируется напрямую в `.git/hooks/commit-msg` через `universal-setup.sh --hook-this-repo` — `core.hooksPath` не трогается; новые pet-проекты требуют явного `--install` (стейджит хук в `~/.claude/git-hooks/`) и затем `--hook-this-repo` (кладёт его в `.git/hooks/`); системно-интегрированные механизмы (global launchd, shell-rc conditions, cross-project indexing) выходят за scope инструмента и требуют пересмотра принципа перед реализацией.
+Claude-mini affects nothing outside the repositories, files, and settings where its installer physically placed artifacts. No global git configuration, path patterns, allowlists, or other mechanisms that apply rules by matching a path or name. The boundary is actual installation, not a configuration pattern.
 
-## Что значит «архитектурно-значимо» (триггер для ADR)
+In practice: the commit-msg hook is copied directly to `.git/hooks/commit-msg` by `universal-setup.sh --hook-this-repo`; `core.hooksPath` is untouched. New pet projects require an explicit `--install` (which stages the hook in `~/.claude/git-hooks/`) followed by `--hook-this-repo` (which puts it in `.git/hooks/`). System-integrated mechanisms (global launchd, shell-rc conditions, cross-project indexing) are outside the tool's scope and require revisiting this principle before implementation.
 
-Решение требует ADR, если истинно **хотя бы одно**:
+<a id="что-значит-архитектурно-значимо-триггер-для-adr"></a>
 
-- Добавляется или удаляется зависимость, которая становится cross-cutting (логгер, ORM, HTTP-клиент)
-- Меняется граница bounded context или сигнатура межконтекстного контракта
-- Выбирается хранилище, очередь, или иной инфраструктурный компонент
-- Устанавливается или отменяется публичный API
-- Принимается ограничение, которое будет трудно снять через 6 месяцев (например, единственный язык, единственная БД, единственная облачная платформа)
-- Меняется модель безопасности или модель данных
+## What “architecturally significant” means (ADR trigger)
 
-Если ни одно — это story, а не decision. `/plan` достаточно.
+A decision requires an ADR if **at least one** of the following is true:
 
-## Что значит «нетривиальная задача» (триггер для advisor × 2)
+- A dependency that becomes cross-cutting (logger, ORM, HTTP client) is added or removed
+- A bounded-context boundary or the signature of a cross-context contract changes
+- A store, queue, or other infrastructure component is selected
+- A public API is established or removed
+- A constraint that will be difficult to remove in six months is adopted (for example, a single language, database, or cloud platform)
+- The security model or data model changes
 
-Задача требует два вызова advisor, если истинно **хотя бы одно**:
+If none applies, this is a story, not a decision. `/plan` is sufficient.
 
-- Затрагивает более одного модуля/пакета
-- Имеет неочевидные edge cases
-- Конкурирует с существующим похожим кодом (дублирование не очевидно)
-- Содержит асинхронность, concurrency, rare-path обработку ошибок
+<a id="что-значит-нетривиальная-задача-триггер-для-advisor--2"></a>
 
-Тривиальное (advisor не нужен): форматирование, rename, линт-фиксы, однострочные bug-fixes с тестом, обновление строки в docs.
+## What a “nontrivial task” means (advisor × 2 trigger)
+
+A task requires two advisor calls if **at least one** of the following is true:
+
+- It affects more than one module/package
+- It has non-obvious edge cases
+- It competes with similar existing code (duplication is not obvious)
+- It involves asynchrony, concurrency, or rare-path error handling
+
+Trivial work (no advisor needed): formatting, renaming, lint fixes, one-line bug fixes with a test, and updating a line in documentation.

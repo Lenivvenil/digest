@@ -1,0 +1,22 @@
+{
+  "fixture_only": true,
+  "articles": [
+    {"title": "Queue outage from unbounded retries", "link": "https://example.com/retries", "description": "A payment service outage was traced to unbounded retry traffic.", "source": "Engineering Report", "category": "Architecture"},
+    {"title": "Database retry guide", "link": "https://example.com/idempotency", "description": "Engineers use idempotency keys to prevent duplicate payment processing.", "source": "Bank Engineering", "category": "Architecture"},
+    {"title": "Benchmark reports faster model", "link": "https://example.com/benchmark", "description": "Vendor reports lower latency on its own benchmark; test method is not included.", "source": "Vendor Blog", "category": "AI"},
+    {"title": "Architecture case study", "link": "https://example.com/migration", "description": "A migration reduced infrastructure cost by 15% in a single team's workload.", "source": "Case Study", "category": "AI"}
+  ],
+  "responses": {
+    "gemini-3.8-flash": [
+      {"url": "https://example.com/retries", "reason": "A useful reliability failure mode to check against retry policies.", "quote": "unbounded retry traffic", "confidence": "high"},
+      {"url": "https://example.com/idempotency", "reason": "A concrete mechanism relevant to duplicate payment prevention.", "quote": "idempotency keys", "confidence": "high"}
+    ],
+    "openai/gpt-oss-120b": [
+      {"url": "https://example.com/retries", "reason": "The outage mechanism is more actionable than a general performance claim.", "quote": "unbounded retry traffic", "confidence": "high"},
+      {"url": "https://example.com/migration", "reason": "Worth inspecting the workload boundaries before extrapolating cost savings.", "quote": "a single team's workload", "confidence": "medium"}
+    ],
+    "qwen/qwen3.8-27b": [
+      {"url": "https://example.com/idempotency", "reason": "Payment correctness deserves priority, but the full implementation is absent.", "quote": "prevent duplicate payment processing", "confidence": "medium"}
+    ]
+  }
+}

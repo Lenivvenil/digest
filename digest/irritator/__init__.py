@@ -29,10 +29,11 @@ class IrritatorStatus:
       "ok"    — ranked signals exist; status accompanies the signal post
       "empty" — pipeline ran fully, nothing survived filters/ranking
       "error" — a pipeline stage raised an exception
+      "deferred" — stage intentionally postponed until after primary delivery
     """
 
     text: str
-    level: Literal["ok", "empty", "error"]
+    level: Literal["ok", "empty", "error", "deferred"]
 
 
 async def run_irritator(

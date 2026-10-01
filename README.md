@@ -1,386 +1,357 @@
-# Ежедневный новостной дайджест
+# Daily News Digest
 
-**v1.0.0** — стабильная версия
+A personal information-intake tool for a technology architect: **Radar** finds and
+explains relevant developments, **Irritator** looks for external evidence that challenges
+the prevailing narrative, and feedback helps shape the next reading list.
 
-Персональный генератор ежедневного новостного дайджеста для технического архитектора крупного банка.
-Собирает RSS/Atom-ленты, суммирует их через LLM, отправляет в Telegram
-и сохраняет markdown-файлы в репозиторий (для Obsidian через git-sync).
+Collect RSS/Atom feeds, compare perspectives, deliver article cards to Telegram, and
+keep a Markdown archive for Obsidian through git sync. Run on GitHub Actions without
+a VPS or a continuously running service. Provider choice and runtime configuration
+belong to the operator; free quotas are constraints, not guarantees of availability.
 
-Работает на **GitHub Actions** (бесплатный tier) — без VPS и платного хостинга.
+## Why Digest
 
-## Архитектура
+A useful reading list should sharpen your judgment, not just compress more headlines.
+Digest starts with sources you care about, connects developments across categories,
+and deliberately looks for evidence outside that selection.
+
+- **Radar:** what changed, why it matters, and which source is worth your time
+- **Three perspectives:** an Optimist, a Skeptic and a Realist examine important topics
+  through different reasoning, so enthusiasm does not become the only lens
+- **Irritator:** what challenges the story you are being told, found through external
+  sources rather than manufactured disagreement
+- **A learning reading habit:** vote on articles, review proposed feeds, and evolve your
+  source portfolio while keeping the operator in control
+- **A durable personal archive:** read in Telegram today and revisit the connections in
+  Obsidian later
+
+That is the product intent. The current implementation and its open quality gaps are
+stated below so the intended reading experience is not mistaken for a completed guarantee.
+
+## Architecture
 
 ```mermaid
 flowchart TD
-    CFG[config.yaml] --> COL[collector]
-    COL --> RSS[(RSS/Atom)]
-    COL --> SUM[summarizer]
-    SUM --> PC{ProviderChain}
-    PC --> P[Anthropic / Gemini / Groq / Mistral / DeepSeek]
-    SUM --> TG[Telegram Bot]
-    SUM --> MD[Markdown]
-    MD --> GH[GitHub Actions]
-    GH --> OBS[Obsidian]
+    CFG[Runtime configuration] --> RADAR[Radar: collect, select, analyse]
+    RSS[RSS / Atom sources] --> RADAR
+    RADAR --> PERSPECTIVES[Perspectives and cross-category trends]
+    RADAR --> DELIVERY[Telegram cards and Markdown archive]
+    PERSPECTIVES --> IRRITATOR[Irritator: narratives and external search]
+    EXTERNAL[Independent external sources] --> IRRITATOR
+    IRRITATOR --> COUNTER[Relevant counter-signals]
+    COUNTER --> DELIVERY
+    DELIVERY --> FEEDBACK[Operator votes and approved source discovery]
+    FEEDBACK --> CFG
+    DELIVERY --> OBS[Obsidian through git sync]
 ```
 
-Каждая категория суммируется параллельно через назначенного провайдера (или цепочку по умолчанию, если маршрутизация не задана).
-**ProviderChain** автоматически переключается на следующего провайдера при сбое — дайджест всегда доставляется, даже если один API недоступен.
+These are complementary product loops. Different model opinions do not replace
+Irritator's external evidence. Source reliability is not the same as relevance,
+popularity is not contradiction, and quotation matching does not prove a whole
+article was understood. Read the [Digest domain overview](docs/domain/digest/overview.md),
+[Irritator domain overview](docs/domain/irritator/overview.md) and
+[current architecture](docs/ARCHITECTURE.md) for contracts and known gaps.
 
-## Архитектура LLM-провайдеров
+## Project status
 
-### ProviderChain fallback
+The package version is **2.0.0**. Product rehabilitation is tracked in
+[#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
+suite does not establish editorial quality. Full-source quality work in
+[draft #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
+[#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
+[#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
+optional post translation. This documentation change does not enable a new pipeline.
 
-```mermaid
-flowchart LR
-    REQ[Request] --> P1[Primary]
-    P1 -- OK --> RES[Result]
-    P1 -- Fail --> P2[Fallback 1]
-    P2 -- OK --> RES
-    P2 -- Fail --> P3[Fallback N]
-    P3 -- OK --> RES
-    P3 -- Fail --> ERR[RuntimeError]
-```
+This is the **engine repository**. Your separate runtime repository holds configuration,
+secrets references, schedules, `.cache/` and generated `digests/`; see
+[ADR-0002](docs/decisions/0002-engine-instance-split.md). Cloning this repository does
+not install a daily schedule or configure a Telegram destination.
 
-### Параллельная обработка по категориям
+## LLM providers and fallback
 
-Каждая категория обрабатывается параллельно:
+`digest/llm.py` implements provider adapters, role-based routing, bounded retries and
+fallback. The supported provider names are Anthropic, Gemini, Groq, Mistral and
+DeepSeek. Configure only services and models you intend to use; fallback does not
+establish that a service is free or has sufficient quota. If every eligible route
+fails, the run reports failure or incomplete work rather than guaranteed delivery.
 
-1. `main.py` вызывает `resolve_category_providers` — получает словарь `категория → ProviderChain`
-2. Для каждой категории параллельно запускается `build_category_prompt` + вызов LLM
-3. После получения всех категорий строится `build_trends_prompt` и вызывается LLM для трендов
-4. Итоговый дайджест собирается из всех категорий + трендов
+The category-analysis mode runs category work concurrently within configured limits,
+then produces cross-category trends. `review.enabled` adds independent selection from
+a shared RSS evidence packet. `review.review_led_only` prioritizes those selected
+cards and defers supplementary work. See the [review runbook](docs/BLIND_REVIEW.md)
+for its excerpt limits, incomplete outcomes and separate post-delivery stage.
 
-## Маршрутизация по категориям
+### Category routing
 
-Можно назначить конкретного LLM-провайдера отдельным категориям. Категории без маршрутизации используют цепочку по умолчанию. Если API-ключ назначенного провайдера отсутствует — автоматически используется цепочка по умолчанию.
+Unrouted categories use the configured role/provider chain. A route can nominate a
+provider and model for specific categories; missing credentials are handled by the
+existing fallback rules. The model IDs below are placeholders, not recommendations:
 
 ```yaml
 llm:
   providers:
-    - name: "gemini"
-      model: "gemini-2.5-flash"
-    - name: "groq"
-      model: "llama-3.3-70b-versatile"
+    - name: gemini
+      model: YOUR_GEMINI_MODEL_ID
+      role: [summarize, rank_signals, fallback]
+    - name: groq
+      model: YOUR_GROQ_MODEL_ID
+      role: [fallback]
   routing:
-    - categories: ["AI & LLM", "AI Engineering"]
-      provider: "gemini"
-      model: "gemini-2.5-flash"
+    - categories: [AI Engineering]
+      provider: gemini
+      model: YOUR_GEMINI_MODEL_ID
 ```
 
-## Рекомендации по выбору моделей
+### Choosing models
 
-Рекомендации основаны на комментариях в `config.yaml`. Это не жёсткие правила — любая модель справится с любой категорией, и вы можете настроить любую комбинацию.
+Check the provider's current model availability, account entitlement, rate limits and
+billing before a live run. Context capacity, tokens per minute, requests per day and
+price are different constraints. A large context window does not imply a matching
+free throughput budget. Do not assume a provider is better for banking or architecture
+without representative output evidence. Never add a paid fallback to a free-only
+runtime inadvertently.
 
-| Категория | Провайдер | Модель | Почему |
-|-----------|-----------|--------|--------|
-| AI & LLM, AI Engineering | Gemini | gemini-2.5-flash | Быстрый, хорошо разбирается в AI-тематике, бесплатный tier |
-| Banking & Fintech, Payments & Fintech | Groq | llama-3.3-70b-versatile | Быстрый inference, хорошо работает с финансовой аналитикой |
-| Architecture & Distributed Systems | DeepSeek | deepseek-chat | Силён в технических и архитектурных темах |
-| Остальные категории | По умолчанию | — | Используется цепочка из `llm.providers` |
+## Quick start
 
-## Быстрый старт
+### 1. Install the engine
 
-### 1. Форк / клон репозитория
+Python **3.12 or newer** is required. From a checkout:
 
-```bash
-git clone https://github.com/<you>/digest.git
+```sh
+git clone https://github.com/Lenivvenil/digest.git
 cd digest
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+python -m digest --help
 ```
 
-### 2. Создайте Telegram-бота
+For a separate runtime, install a reviewed immutable engine commit instead of following
+`main` automatically. Keep the previous pin and runtime configuration for rollback.
+Installing the engine alone does not register credentials or enable delivery.
 
-1. Найдите **@BotFather** в Telegram, отправьте `/newbot`.
-2. Следуйте инструкциям и сохраните полученный **токен бота**.
-3. Напишите любое сообщение своему новому боту, затем откройте:
-   `https://api.telegram.org/bot<TOKEN>/getUpdates`
-   Найдите `chat.id` в ответе. Альтернативно используйте **@userinfobot**.
+### 2. Validate an example without credentials or external requests
 
-### 3. Получите API-ключ LLM
+The [example configuration](examples/config.example.yaml) has English output, no enabled
+feeds and delivery disabled. It is deliberately safe for first configuration checks.
 
-Выберите одного или нескольких провайдеров (у Gemini и Groq есть бесплатные тиры):
-
-| Провайдер | Консоль | Бесплатный tier |
-|-----------|---------|----------------|
-| Anthropic Claude | https://console.anthropic.com/ | Пробные кредиты |
-| Google Gemini | https://aistudio.google.com/app/apikey | Да |
-| Groq | https://console.groq.com/ | Да |
-| Mistral | https://console.mistral.ai/ | Пробные кредиты |
-| DeepSeek | https://platform.deepseek.com/ | Пробные кредиты |
-
-### 4. Настройте дайджест
-
-Отредактируйте `config.yaml`:
-
-```yaml
-llm:
-  provider: "anthropic"   # или "gemini", "groq"
-  model: "claude-sonnet-4-20250514"
-
-digest:
-  language: "ru"               # "ru" или "en"
-  summary_style: "analytical"  # "analytical" | "brief" | "detailed"
+```sh
+python -c "from digest.config import load_config; c = load_config('examples/config.example.yaml'); print('Configuration valid:', c.radar.language)"
+python -m digest --config examples/config.example.yaml --dry-run --radar-only
 ```
 
-### 5. Добавьте GitHub Secrets
+This is an offline empty-input smoke check, **not** a demonstrated news digest. To
+produce useful output, copy the example to your runtime's `config.yaml`, replace the
+model placeholder and feed URL, enable a real feed, and configure its provider key.
+Do not put runtime data or real credentials in this public engine repository.
 
-В вашем форке: **Settings → Secrets and variables → Actions → New repository secret**.
+### 3. Configure a live report-only run
 
-Добавьте секреты для выбранных провайдеров:
+Use environment variables for credentials. `.env.example` is a reference only: the
+engine does **not** automatically load a `.env` file. Load credentials securely through
+your shell or runner. Set only the providers you selected.
 
-| Имя секрета           | Описание                                        |
-|-----------------------|-------------------------------------------------|
-| `ANTHROPIC_API_KEY`   | API-ключ Anthropic (если используете Claude)    |
-| `GEMINI_API_KEY`      | API-ключ Gemini (если используете Gemini)       |
-| `GROQ_API_KEY`        | API-ключ Groq (если используете Groq)           |
-| `MISTRAL_API_KEY`     | API-ключ Mistral (если используете Mistral)     |
-| `DEEPSEEK_API_KEY`    | API-ключ DeepSeek (если используете DeepSeek)   |
-| `TELEGRAM_BOT_TOKEN`  | Токен бота от @BotFather                        |
-| `TELEGRAM_CHAT_ID`    | Ваш Telegram chat ID                            |
+Run from an isolated runtime working directory so its local cache and output paths
+cannot interfere with another instance:
 
-### 6. Активируйте workflow
+```sh
+python -m digest --config config.yaml --check
+python -m digest --config config.yaml --dry-run --radar-only
+```
 
-Дайджест запускается ежедневно в **06:00 UTC** (11:00 по Ташкенту, UTC+5).
+`--check` probes feed URLs and checks expected environment variables; it is **not an
+offline validation command** and does not establish editorial quality. `--dry-run`
+can fetch sources and call configured models, consuming their quotas, while suppressing
+normal digest delivery and saved digest output. Do not use it as a no-network probe.
+Keep Telegram and Markdown delivery disabled until you review the output.
 
-Также можно запустить вручную:
-**Actions → Daily News Digest → Run workflow**
+### 4. Enable delivery in your runtime
 
-Сгенерированные файлы дайджеста сохраняются в `digests/` и автоматически коммитятся в репозиторий.
+Create your own Telegram bot through the official BotFather flow and configure its
+existing token and intended chat ID in your runtime's environment/Actions secrets.
+Never paste a token into a committed URL, screenshot, issue or log. The engine sends
+to `TELEGRAM_CHAT_ID`; it does not choose recipients for you.
 
-## CLI Reference
+Set `telegram.enabled: true` only when ready. Set `telegram.required: true` if a
+Markdown archive alone must not count as successful delivery. Enable `obsidian` to
+save Markdown files in the configured output directory and sync that runtime archive
+to Obsidian. API acceptance confirms transport acceptance, not that a person read it.
 
-```bash
+### 5. Add a runtime workflow
+
+The public engine's CI checks source code. The operator's runtime owns its schedule,
+engine pin, secrets, persistence and delivery. There is no universal daily time in this
+repository. Serialize runs that share state, preserve confirmed receipts and diagnostic
+outcomes, and commit only intended runtime files. Use the
+[architecture guide](docs/ARCHITECTURE.md) and [review runbook](docs/BLIND_REVIEW.md)
+when enabling the separately reserved post-delivery stage.
+
+## CLI reference
+
+```sh
 python -m digest [OPTIONS]
 ```
 
-| Флаг | Описание |
-|------|---------|
-| _(без флагов)_ | Полный пайплайн: collect → summarize → deliver → commit cache |
-| `--config PATH` | Путь к config-файлу (по умолчанию: `config.yaml`) |
-| `--dry-run` | Собрать и суммировать, но не отправлять в Telegram и не сохранять markdown |
-| `--verbose` | Включить DEBUG-уровень логирования |
-| `--discover` | LLM-поиск новых RSS-источников для недопредставленных категорий, затем выход |
-| `--check` | Валидация config + проверка всех feed URL, затем выход (exit 0 = OK, exit 1 = ошибки) |
+| Option | Behavior |
+| --- | --- |
+| No flags | Run configured collection, analysis and delivery; runtime workflow owns git persistence |
+| `--config PATH` | Read YAML configuration; default `config.yaml` |
+| `--dry-run` | Fetch/analyse and print results without normal Telegram/Markdown digest delivery; may call models |
+| `--radar-only` | Print Radar summary and return before Irritator and normal Telegram/Markdown delivery; may still fetch sources/call models and, without `--dry-run`, poll feedback |
+| `--verbose` | Enable debug logging; inspect logs before sharing them |
+| `--check` | Validate configuration, check environment variables and probe feed URLs |
+| `--discover` | Request source suggestions, validate them, persist candidates and send approval cards when configured |
 
-## Локальный запуск
+## Sources and categories
 
-```bash
-# Установить зависимости
-pip install -r requirements.txt
-
-# Скопировать и заполнить credentials
-cp .env.example .env
-# отредактировать .env с вашими ключами
-
-# Проверить конфиг и API-ключи
-python -m digest --check
-
-# Запустить дайджест
-python -m digest
-
-# Dry-run: собрать и суммировать, но не отправлять и не сохранять
-python -m digest --dry-run --verbose
-
-# Использовать другой конфиг-файл
-python -m digest --config my-config.yaml
-
-# Найти новые RSS-источники через LLM
-python -m digest --discover
-```
-
-## Добавление и удаление источников
-
-Отредактируйте список `sources` в `config.yaml`. Каждый источник имеет поля:
+Edit the runtime's `sources` list:
 
 ```yaml
 sources:
-  - name: "My Feed"          # отображаемое название (используется в дайджесте)
-    url: "https://..."       # URL RSS или Atom-ленты
-    category: "AI & LLM"    # группирует источники в дайджесте
-    enabled: true            # false — временно отключить без удаления
-    priority: 3              # от 1 (низший) до 5 (высший); по умолчанию 3
+  - name: My Feed
+    url: https://example.com/feed.xml  # Replace before enabling
+    category: Architecture
+    enabled: false
+    priority: 3
+    recency_hours: 24
+    trial: false
+    trial_days: 7
 ```
 
-Необязательные поля для пробных источников:
+Priority ranges from 1 to 5 and influences the legacy source-slot allocation. It is
+not proof that an article is useful. Categories are operator-defined; banking/payments,
+AI engineering, distributed systems, enterprise architecture and regional affairs are
+examples from the project's original use, not mandatory presets shipped as a personal
+profile. The public example contains no private source list.
 
-```yaml
-    trial: true                  # тестировать новый источник с ограниченными слотами
-    trial_started: "2026-03-15"  # заполняется автоматически при старте испытания
-    trial_days: 7                # дней до автоматического повышения/понижения (по умолчанию 7)
+<a id="обратная-связь-и-адаптивная-система"></a>
+
+## Adaptive source management and feedback
+
+The intended learning loop uses Telegram article votes, observed source behavior and
+explicit base priorities. With adaptive processing enabled, source scores combine
+reliability, productivity, description length and recency; trial sources receive a
+separate allocation and may graduate or be demoted. See the architecture guide for
+weights and state ownership.
+
+Current main polls Telegram on an eligible pipeline run, not continuously. It couples
+polling to `adaptive.enabled`; disabling adaptation also prevents that polling path.
+A button therefore does not imply immediate acknowledgement or demonstrated influence
+on the review-led selector. [#48](https://github.com/Lenivvenil/digest/issues/48) tracks
+end-to-end feedback repair and acceptance. Preserve the product loop while describing
+its current limitation honestly.
+
+<a id="формат-дайджеста"></a>
+
+## Digest format and perspectives
+
+The category-summary path supports `radar.summary_style` values `analytical`, `brief`
+and `detailed`. Set `radar.perspectives: true` to request Optimist, Skeptic and Realist
+views for significant topics. Brief mode does not use the three-perspective format.
+The views should offer different reasoning, not three tones repeating a headline.
+
+Illustrative structure, **not a factual news item or benchmark**:
+
+```text
+Architecture
+A source describes a new deployment mechanism — source link
+A concise statement of the mechanism and its stated conditions.
+
+🟢 Optimist — The opportunity, conditional on those conditions holding.
+🔴 Skeptic — The unsupported assumption or relevant counter-evidence.
+⚖️ Realist — The practical trade-off and what remains unknown.
 ```
 
-Поле `priority` определяет долю слотов статей, которую получает источник относительно других.
-Источники с высоким приоритетом также обрабатываются первыми и всегда заполняют свою квоту
-до того, как источники с низким приоритетом займут общий бюджет.
+Minor items can use a short analytical comment. Cross-category trends connect related
+developments. Markdown output includes front matter for Obsidian. The review-led path
+instead produces explicitly attributed model-selection cards from RSS evidence; its
+current limitations are described in the review runbook. Neither format should invent
+benefits, certainty or facts to fill a template.
 
-## Адаптивное управление источниками
+<a id="автоматическое-обнаружение-источников"></a>
 
-При включении (`adaptive.enabled: true` в config.yaml) система автоматически настраивает приоритеты источников:
+## External counter-signals and source discovery
 
-- **Обратная связь**: реакции 👍/👎 на сообщения дайджеста в Telegram влияют на приоритеты.
-- **Оценка качества**: отслеживает надёжность, продуктивность и качество описаний по каждому источнику.
-- **Пробные источники**: новые источники с `trial: true` получают отдельный бюджет слотов. По истечении пробного периода качественные источники переходят в постоянные; некачественные отключаются.
-- **Определение трендов**: источники с ростом числа статей >50% за 7 дней получают бонус к приоритету.
+Irritator extracts narratives, generates challenging queries, searches external sources
+and ranks relevant contrary or complicating evidence. It should help the operator read
+something outside the current information bubble. A failed search is not evidence that
+no counter-signal exists. Supported adapter contracts and their current failures are
+tracked in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
-Предустановленные категории:
-- **Banking & Fintech** — Finextra, PYMNTS, Monzo Tech Blog
-- **AI & LLM** — MIT Technology Review, The Batch, Hugging Face Blog, OpenAI News
-- **Architecture & Distributed Systems** — High Scalability, Brendan Gregg, SRE Weekly, Martin Fowler
-- **Enterprise Architecture** — InfoQ, ThoughtWorks, Hacker News Best
-- **Geopolitics & CIS** — Spot.uz, Kun.uz
+`python -m digest --discover` separately proposes feeds for underrepresented categories,
+checks their URLs, saves candidates and requests operator approval through Telegram.
+Approved candidates enter the source lifecycle; runtime configuration and lifecycle
+state are separate under [ADR-0003](docs/decisions/0003-source-state-split.md). Do not
+assume an approval changes the engine repository or that a weekly schedule exists
+without a corresponding runtime workflow.
 
-## Формат дайджеста
+## Cache and persistence
 
-Дайджест использует формат **трёх перспектив** для наиболее важных новостей в каждой категории:
+The runtime owns `.cache/` and the Markdown archive. No database or always-on service
+is required. GitHub Actions persistence is the runtime workflow's responsibility.
 
-```
-### AI & LLM
+| File | Purpose |
+| --- | --- |
+| `seen_articles.json` | Delivered/consumed article deduplication state |
+| `source_stats.json` | Source observations and recent history |
+| `feedback.json` | Votes, polling offset and article-to-source mapping |
+| `pending_sources.json` | Source suggestions awaiting operator decisions |
+| `source_state.json` | Trial/graduation/demotion lifecycle state |
+| `source_category_map.json` | Category mapping for diagnostics |
 
-**OpenAI выпускает GPT-5** — [OpenAI Blog](https://...)
+Do not delete state as a retry mechanism. Distinguish confirmed failure from unknown
+Telegram outcomes; a retry must not assume an uncertain send was safe to repeat.
+Optional supplementary failures must remain visible and must not erase primary receipts.
 
-Краткое аналитическое описание новости.
+## Language and translation status
 
-🟢 **Оптимист** — Это прорыв, который в 10 раз увеличит продуктивность разработчиков
-и наконец сделает AI-агентов надёжными в production.
+This documentation and the new example are English. Current main supports
+`radar.language: en` or `ru`; its legacy omitted-field default remains `ru`. Set the
+language explicitly. Optional post translation is planned in #94 and is **not yet a
+separate implemented setting**. Existing Russian runtimes must retain their explicit
+configuration during migration. Original evidence is never translated in place.
 
-🔴 **Скептик** — Накрутка бенчмарков и галлюцинации сохраняются. Корпоративное
-внедрение отстанет от хайпа на 12–18 месяцев, как обычно.
+## Development
 
-⚖️ **Реалист** — Реальный скачок возможностей, но сложность интеграции означает,
-что большинство команд будет получать пользу постепенно, за 6–12 месяцев.
-```
-
-Второстепенные новости получают стандартный аналитический комментарий в 2–3 предложения без перспектив.
-
-Стили суммаризации (задаются через `digest.summary_style`):
-- `analytical` — анализ трендов + три перспективы для топ-тем (по умолчанию)
-- `brief` — одно предложение на новость, без перспектив
-- `detailed` — полный контекст, три перспективы для всех новостей
-
-## Пример вывода дайджеста
-
-```markdown
----
-title: "Daily Digest 2026-03-14"
-date: "2026-03-14"
-sources_count: 13
-articles_count: 24
-llm_provider: anthropic
-tags:
-  - digest
-  - daily
----
-
-## 🏦 Banking & Fintech
-
-**Visa запускает рельсы для трансграничных платежей в реальном времени** — [Finextra](https://...)
-
-Новая инфраструктура Visa нацелена на B2B-коридоры в 40 странах...
-
-🟢 **Оптимист** — ...
-🔴 **Скептик** — ...
-⚖️ **Реалист** — ...
-
----
-
-## 🤖 AI & LLM
-
-...
-
-## 📈 Ключевые тренды дня
-
-1. Платежи в реальном времени продолжают вытеснять корреспондентский банкинг...
-2. ...
+```sh
+python -m pip install -r requirements-dev.txt
+make lint
+make typecheck
+make test
+# Or all three:
+make check
 ```
 
-## Обратная связь и адаптивная система
+Optional local pre-commit hooks are configured in `.pre-commit-config.yaml`; install
+only if you want them in your checkout. Follow [project principles](docs/principles.md),
+[domain documentation](docs/domain/digest/overview.md) and the [ADR index](docs/decisions/README.md).
+Unit tests use mocked external calls. Real-source usefulness and operational delivery
+remain separate acceptance checks. Historical plans and diagnostics preserve their
+original context; see [documentation status](docs/README.md).
 
-Каждая статья в Telegram приходит с кнопками 👍/👎. Оценки накапливаются и влияют на то, сколько статей от каждого источника попадает в следующий дайджест.
+## Environment variables
 
-**Как это работает:**
-1. Нажимаете 👍 или 👎 под статьёй в Telegram
-2. При следующем запуске дайджест собирает все нажатия через Telegram getUpdates
-3. Оценки за последние 14 дней формируют `feedback_score` источника [0.0..1.0]
-4. `feedback_score` комбинируется с автоматическими метриками качества (`score_weight`) и базовым приоритетом (`base_weight`) — см. формулу в `config.yaml`
-5. Эффективный приоритет определяет долю слотов статей в дайджесте
+See [.env.example](.env.example). Missing keys disable matching provider routes; they do
+not guarantee another route can succeed. Missing required Telegram credentials is a
+failure, even when Markdown can be saved.
 
-Источники с высокими оценками получают больше места в следующих дайджестах, источники с низкими — меньше.
+| Variable | Purpose |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Anthropic provider |
+| `GEMINI_API_KEY` | Gemini provider |
+| `GROQ_API_KEY` | Groq provider |
+| `MISTRAL_API_KEY` | Mistral provider |
+| `DEEPSEEK_API_KEY` | DeepSeek provider |
+| `TELEGRAM_BOT_TOKEN` | Configured Telegram bot |
+| `TELEGRAM_CHAT_ID` | Intended destination and supported owner checks |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME` | Optional existing Reddit adapter credentials |
 
-## Автоматическое обнаружение источников
+## Releases and licensing
 
-```bash
-python -m digest --discover
-```
+Use the package version, immutable commit and [changelog](CHANGELOG.md) together when
+upgrading; a historical release entry is not proof that every current quality gate has
+passed. Keep the previous engine pin and compatible runtime state for rollback.
 
-Команда использует LLM для предложения новых RSS-источников в категории, где источников мало. Алгоритм:
-
-1. Находит категории с недостаточным количеством активных источников
-2. Просит LLM предложить релевантные RSS-ленты
-3. Проверяет, что URL реально существуют и отдают feed
-4. Сохраняет кандидатов в `.cache/pending_sources.json`
-5. Отправляет в Telegram карточку с кнопками **✅ Approve** / **❌ Reject**
-
-При нажатии Approve источник автоматически добавляется в `config.yaml` в режиме trial. Через `trial_days` (по умолчанию 7) дней система оценивает качество источника и либо переводит его в постоянные, либо отключает.
-
-Discover workflow запускается автоматически каждое воскресенье в 06:00 UTC.
-
-## Кэш и состояние
-
-Все состояние хранится в `.cache/` и коммитится в репозиторий GitHub Actions после каждого запуска:
-
-| Файл | Назначение |
-|------|-----------|
-| `seen_articles.json` | Дедупликация: хеши просмотренных статей (7 дней) |
-| `source_stats.json` | Статистика источников: надёжность, продуктивность, история (30 дней) |
-| `feedback.json` | Оценки пользователя из Telegram, last_update_id для polling |
-| `pending_sources.json` | Очередь кандидатов из `--discover`, ожидающих одобрения |
-
-Никакой базы данных, никакого внешнего хранилища — только git.
-
-## Разработка
-
-Установите зависимости для разработки и активируйте pre-commit хуки:
-
-```bash
-pip install -r requirements-dev.txt
-pre-commit install
-```
-
-После этого перед каждым коммитом автоматически запускается ruff (lint + format).
-
-Используйте `Makefile` для стандартных задач:
-
-```bash
-make lint       # ruff check digest/ tests/
-make lint-fix   # ruff check --fix + ruff format
-make typecheck  # mypy digest/
-make test       # pytest tests/ -v
-make check      # lint + typecheck + test
-```
-
-Или прямые команды:
-
-```bash
-# Запустить тесты
-python -m pytest tests/ -v
-
-# Проверка типов
-python -m mypy digest/ --ignore-missing-imports
-
-# Линтинг
-python -m ruff check digest/
-```
-
-## Переменные окружения
-
-См. `.env.example` для полного списка. Все переменные необязательны — скрипт деградирует gracefully:
-если Telegram-credentials отсутствуют, доставка пропускается, но markdown-файл всё равно сохраняется.
-
-| Переменная            | Описание                          |
-|-----------------------|-----------------------------------|
-| `ANTHROPIC_API_KEY`   | API-ключ Anthropic Claude         |
-| `GEMINI_API_KEY`      | API-ключ Google Gemini            |
-| `GROQ_API_KEY`        | API-ключ Groq                     |
-| `MISTRAL_API_KEY`     | API-ключ Mistral                  |
-| `DEEPSEEK_API_KEY`    | API-ключ DeepSeek                 |
-| `TELEGRAM_BOT_TOKEN`  | Токен Telegram-бота               |
-| `TELEGRAM_CHAT_ID`    | Telegram chat ID                  |
+**License unresolved:** this repository currently contains no LICENSE file or declared
+package license. An owner-confirmed license is an outstanding release decision; this
+document does not grant additional reuse or distribution rights.
