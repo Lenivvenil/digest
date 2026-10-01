@@ -22,13 +22,11 @@ _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
 # Static presentation labels follow canonical generation language, not translation targets.
 _LABELS = {
     "en": {
-        "feedback_enabled": "Feedback is collected on pipeline runs",
-        "feedback_disabled": "Feedback collection is disabled",
+        "feedback": "Votes are processed on digest runs; private owner chat only",
         "irritator": "Irritator",
     },
     "ru": {
-        "feedback_enabled": "Реакции собираются при запусках дайджеста",
-        "feedback_disabled": "Сбор реакций отключён",
+        "feedback": "Оценки обрабатываются при запусках дайджеста; только личный чат владельца",
         "irritator": "Раздражатор",
     },
 }
@@ -269,9 +267,7 @@ async def send_article_cards(
             summary_esc = escape_markdownv2(summary)
 
             labels = _labels(config)
-            collection_enabled = getattr(getattr(config, "adaptive", None), "enabled", False)
-            note_key = "feedback_enabled" if collection_enabled else "feedback_disabled"
-            async_note = escape_markdownv2(labels[note_key])
+            async_note = escape_markdownv2(labels["feedback"])
             text = (
                 f"[{title_esc}]({url_esc})\n\n"
                 f"{summary_esc}\n\n"

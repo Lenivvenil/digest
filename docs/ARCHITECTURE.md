@@ -142,17 +142,42 @@ as proof that no interesting articles or counter-signals exist.
 ## Feedback loop
 
 Article cards contain callbacks such as `fb:a:g:{article_hash}` and `fb:a:b:{article_hash}`.
-The article/source mapping connects a later vote to the source. Current main polls
-`getUpdates` during non-dry adaptive runs and acknowledges supported callbacks when
-processed. It does not provide continuous button handling between scheduled runs.
+The article/source mapping connects a later vote to the source. Polling is independent
+of automatic adaptation and does not continuously handle buttons between scheduled runs.
+A private owner chat and matching sender are required; group/inline callbacks cannot
+change preferences. An active webhook is reported and preserved, never deleted.
 
-The current poller checks webhook state and can request `deleteWebhook`; this is an
-existing behavior requiring care for shared bots, not a recommendation to replace an
-operator's webhook. Webhook preservation and owner-scoped feedback are open acceptance
-items in #48. A configuration with adaptation disabled does not execute this polling
-path. Do not promise that a visible button is already changing the next selection.
+One bounded batch is applied to a candidate store and strictly persisted with its offset
+and minimal pending reply receipts. Managed runtimes commit/push that store before
+acknowledging its exact SHA256-bound batch; `--feedback-precollected` prevents a second
+poll even after optional-stage failure. Local CLI use has a local-disk durability scope.
+Callback expiry is UI-only failure: votes remain saved and future ingestion can proceed. Pending UI receipts are best effort: a later successful collection supersedes any
+unanswered earlier receipts while keeping their votes. Command replies and expired
+button acknowledgements are not promised eventual delivery.
+Only recognized authorized command tags are retained, never arbitrary message bodies.
 
-Source feedback uses a 14-day window; saved ratings older than 30 days are pruned.
+When adaptive management is off, a rated source receives the centered adjustment
+`round((2 * feedback_score - 1) * feedback_weight * (max_priority - min_priority))`
+to its configured priority, clamped to the configured range. Unrated sources retain their
+exact configured priority. No quality/trending bonuses or lifecycle decisions are added.
+Collection allocation uses these effective priorities; model prompts receive
+ordinary article evidence, not individual vote data. This changes candidate availability,
+not a promise about the final editorial selection.
+
+Source feedback uses a 14-day window and the latest valid rating per article; repeated
+taps do not multiply its influence. Stored history is retained unchanged until the
+existing 30-day pruning policy applies. Callback IDs are bounded to the newest 1,000
+receipts, alongside the existing 1,000-entry article map; a batch contains at most 100
+updates. This comfortably covers ordinary twice-daily batches over Telegram's 24-hour
+retention window, not an unlimited high-frequency event stream.
+
+Telegram may restart update IDs after a week without events. A missing, future or
+six-day-old observation timestamp therefore triggers a single read with no offset.
+This does not confirm pending updates. The previous cursor is retained as audit data;
+a nonempty returned batch establishes the new cursor only through strict persistence.
+An empty recovery read leaves the old cursor untrusted. The six-day trust limit is
+conservative because received events may already be up to 24 hours old. See the
+[official update semantics](https://core.telegram.org/bots/api#getupdates).
 The article/source mapping is bounded to 1,000 retained entries. Existing `/status`
 and `/bubble` commands are handled through this same scheduled poller and restrict
 responses to the configured owner chat. Bubble diagnostics describe saved diversity,

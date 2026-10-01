@@ -201,6 +201,7 @@ python -m digest [OPTIONS]
 | `--radar-only` | Print Radar summary and return before Irritator and normal Telegram/Markdown delivery; may still fetch sources/call models and, without `--dry-run`, poll feedback |
 | `--verbose` | Enable debug logging; inspect logs before sharing them |
 | `--check` | Validate configuration, check environment variables and probe feed URLs |
+| `--feedback-precollected` | Let a managed runtime own feedback ingestion; never poll again inside this digest process |
 | `--discover` | Request source suggestions, validate them, persist candidates and send approval cards when configured |
 
 ## Sources and categories
@@ -235,12 +236,39 @@ reliability, productivity, description length and recency; trial sources receive
 separate allocation and may graduate or be demoted. See the architecture guide for
 weights and state ownership.
 
-Current main polls Telegram on an eligible pipeline run, not continuously. It couples
-polling to `adaptive.enabled`; disabling adaptation also prevents that polling path.
-A button therefore does not imply immediate acknowledgement or demonstrated influence
-on the review-led selector. [#48](https://github.com/Lenivvenil/digest/issues/48) tracks
-end-to-end feedback repair and acceptance. Preserve the product loop while describing
-its current limitation honestly.
+Feedback is collected on eligible runs, independently of `adaptive.enabled`; there is
+no continuously running bot service. The supported owner is the configured private
+chat, and the sender must match that recipient. Group and inline callbacks are rejected
+until an explicit ownership contract exists. Only recognized `/status` and `/bubble`
+commands are retained, not other message bodies.
+
+Votes and their polling offset are saved together before acknowledgement. On a managed
+GitHub Actions runtime, run `python -m digest.feedback_poll collect`, commit and push
+`.cache/feedback.json`, then run `python -m digest.feedback_poll ack --expected-sha256`
+with the SHA256 of that exact committed file. Invoke the digest with
+`--feedback-precollected` even if the optional feedback stage fails, so it cannot
+consume another uncommitted batch. Direct local use saves strictly to local disk before
+acknowledgement; that is not a guarantee of remote repository persistence.
+
+A button tap may not be processed until the next scheduled run, and its Telegram
+acknowledgement may already have expired. That UI failure does not remove the recorded
+vote. Later feed, model or delivery failures also do not roll votes back. Pending UI receipts are best effort: a later successful collection supersedes any
+unanswered earlier receipts while keeping their votes. Command replies and expired
+button acknowledgements are not promised eventual delivery. Corrupt state
+is preserved for diagnosis, not silently replaced during ingestion. Telegram retains
+unconsumed updates for at most 24 hours, so older missed votes cannot be recovered.
+Unknown or stale cursor history uses one non-confirming read without an offset before
+re-anchoring; it never blindly confirms updates using an old high offset. See the
+[Telegram update contract](https://core.telegram.org/bots/api#getupdates).
+
+With automatic adaptation disabled, source feedback alone can adjust configured
+priorities within the existing bounds; unrated sources retain their configured priority.
+The latest valid vote per article is effective; repeated taps change an opinion rather
+than amplify it. Raw rating history follows the existing retention policy, and raw
+votes are never model input. This affects the candidate pool, not a guarantee that
+an individual article will be selected. Automatic trial decisions remain disabled with adaptation; explicit authenticated
+source approvals still apply only to previously pending proposals. [#48](https://github.com/Lenivvenil/digest/issues/48)
+tracks operational acceptance of this learning loop.
 
 <a id="формат-дайджеста"></a>
 

@@ -1243,3 +1243,28 @@ async def test_collect_reports_fetch_metrics_without_mutating_source_stats(
         "good": SourceFetchMetrics(True, 1, 11.0),
         "bad": SourceFetchMetrics(False, 0, 0.0),
     }
+
+
+@pytest.mark.asyncio
+async def test_feedback_allocation_changes_candidates_seen_by_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.config import ReviewConfig
+    from digest.review import build_evidence_bundle
+
+    monkeypatch.chdir(tmp_path)
+    sources = [make_source(name="A", url="https://example.com/a"),
+               make_source(name="B", url="https://example.com/b")]
+    config = _make_config(sources=sources, max_articles_per_category=3)
+    now = datetime.now(timezone.utc)
+
+    async def fetched(_client, source):
+        return [Article(f"{source.name}{i}", f"{source.url}/{i}", "Evidence", source.name, source.category, now)
+                for i in range(3)]
+
+    with patch("digest.radar.collector._fetch_feed", side_effect=fetched):
+        neutral, _ = await collect(config)
+        weighted, _ = await collect(config, effective_priorities={"A": 4, "B": 2})
+    settings = ReviewConfig(max_evidence_articles=2)
+    assert [item.source for item in build_evidence_bundle(neutral, settings).items] == ["A", "B"]
+    assert [item.source for item in build_evidence_bundle(weighted, settings).items] == ["A", "A"]

@@ -128,8 +128,11 @@ Observation baseline: engine commit
 - The optional legacy category path still contains three-perspective prose. That
   format, an external Irritator counter-signal, and an independent second model
   opinion are three different capabilities; none is proof of either of the others.
-- Feedback ingestion is gated by adaptive enablement, and review-led selection does
-  not consume feedback. This is a documented regression (#48), not a revised domain goal.
+- #48 separates vote ingestion/durability from automatic adaptation and delivery.
+  A managed runtime must push the exact feedback batch before acknowledgement; the
+  normal digest then skips collection. Vote-only bounded source priorities influence
+  candidate allocation without exposing raw votes to models. Operational
+  acceptance still requires real authorized callbacks; synthetic tests are not that proof.
 - The collector uses MD5 of `title|link` for article identity and source-configured
   recency windows. Historical statements below describing SHA-256 of description,
   a universal 48-hour window, or priority range 1–10 are not current code invariants.
@@ -350,7 +353,7 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 - 3a: All feeds are unavailable → `AllFeedsFailedError` → the pipeline exits with code 1.
 - 3b: No new articles → the pipeline exits successfully without delivery.
 - 5a: The Irritator pipeline is empty → `IrritatorStatus.level == "empty"` → no counter-signals are published.
-- 7a: Telegram delivery failed → `FeedbackStore` is rolled back; both delivery failures → exit code 1.
+- 7a: Telegram delivery failed → retain already saved votes/offset; only undelivered-card attribution is rolled back. Both delivery failures → exit code 1.
 
 **Postconditions:** `feedback.json`, `source_state.json`, `source_stats.json`, and `source_category_map.json` are updated; an `.md` file is created; Telegram messages are sent; the dedup cache is updated.
 
@@ -367,10 +370,13 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 2. On the next run, `collect_feedback()` receives the callback query.
 3. Parse `callback_data = "fb:a:{g|b}:{article_hash}"` → `rating = +1 / -1`.
 4. Add `ArticleFeedback(article_hash, source_name, rating, timestamp)` to `FeedbackStore.ratings`.
-5. Answer the Telegram callback query (clear the loading indicator).
+5. Strictly persist ratings, the handled update offset and minimal pending reply receipts together.
+6. In managed Actions, successfully commit/push that exact state before acknowledgement;
+   direct CLI use provides local persistence. Verify the expected file hash before responding.
+7. Answer the callback best-effort. Expired acknowledgements do not undo the saved vote.
 
 **Alternatives:**
-- 3a: `article_source_map` has no entry for `hash` → record `ArticleFeedback` with `source_name=""` and log a warning.
+- 3a: `article_source_map` has no entry for `hash` → do not add unattributed source feedback; report that the article cannot be matched.
 - 4a: The feedback entry is > 30 days old → prune it at the next `save_feedback()`.
 
 **Postconditions:** `FeedbackStore` contains the new `ArticleFeedback`; on the next run, it affects that source's `effective_priorities`.
