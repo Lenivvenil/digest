@@ -16,11 +16,15 @@ from urllib.parse import urlparse
 
 from digest._util import atomic_json_write
 from digest.config import Config
+from digest.enrichment_tokens import InputCount
 from digest.llm import ProviderResponseDiagnostics, validate_response_diagnostics
+from digest.publication_contract import PROMPT_VERSION as PUBLICATION_PROMPT_VERSION
+from digest.publication_contract import FactualAudit, PublicationDraft, audit_complete, messages, text_hash
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 
-STATE_VERSION = 2
+STATE_VERSION = 3
+SOURCE_SPAN_CHARS = 1500
 CHUNKING_VERSION = "complete-offsets-v1"
 PROMPT_VERSION = "source-ids-v7-ru"
 MAX_STATE_BYTES = 32 * 1024 * 1024
@@ -120,6 +124,8 @@ class Attempt:
     response_sha256: str | None = None
     rejected_output: str | None = None
     provider_diagnostics: ProviderResponseDiagnostics | None = None
+    input_count: InputCount | None = None
+    parsed_result_sha256: str | None = None
 
 
 @dataclass
@@ -136,6 +142,28 @@ class Generation:
     blocked_until: str | None = None
     last_error: str = ""
     split_chunks: dict[str, tuple[Chunk, ...]] = field(default_factory=dict)
+
+
+@dataclass
+class PublicationWork:
+    binding: str
+    body_sha256: str
+    prompt_version: str
+    language: str
+    writer_provider: str
+    writer_model: str
+    verifier_provider: str
+    verifier_model: str
+    drafts: list[PublicationDraft] = field(default_factory=list)
+    audits: list[FactualAudit] = field(default_factory=list)
+    attempts: list[Attempt] = field(default_factory=list)
+    repair_round: int = 0
+    repair_binding: str | None = None
+    outcome: Literal["pending", "model_checked", "rejected", "abstained", "unknown"] = "pending"
+    last_error: str = ""
+    blocked_until: str | None = None
+    wait_reason: str = ""
+
 
 
 @dataclass
@@ -156,6 +184,7 @@ class ArticleWork:
     coverage_notes: tuple[str, ...] = ()
     chunks: tuple[Chunk, ...] = ()
     generations: dict[str, Generation] = field(default_factory=dict)
+    publications: dict[str, PublicationWork] = field(default_factory=dict)
     acquisition_attempts: list[Attempt] = field(default_factory=list)
     acquisition_retry_at: str | None = None
     acquisition_error: str = ""
@@ -273,6 +302,21 @@ def make_chunks(body: str) -> tuple[Chunk, ...]:
     text_sha = hashlib.sha256(body[start:].encode()).hexdigest()
     identity = content_hash([body_sha, CHUNKING_VERSION, len(result), start, len(body), text_sha])
     result.append(Chunk(identity, len(result), start, len(body), text_sha))
+    return tuple(result)
+
+
+def source_spans(chunks: tuple[Chunk, ...], body: str) -> tuple[Span, ...]:
+    """Numbered, source-verbatim spans cover every character, without model copying."""
+    result = []
+    for chunk in chunks:
+        start = chunk.start
+        while start < chunk.end:
+            end = min(start + SOURCE_SPAN_CHARS, chunk.end)
+            boundary = body.rfind("\n", start + SOURCE_SPAN_CHARS // 2, end)
+            if boundary >= start and end < chunk.end:
+                end = boundary + 1
+            result.append(Span(chunk.chunk_id, start, end, body[start:end]))
+            start = end
     return tuple(result)
 
 
@@ -417,7 +461,9 @@ def _decode(value: Any, expected: Any, depth: int = 0) -> Any:
         names = {item.name for item in fields(expected)}
         if (not isinstance(value, dict) or set(value) - names
                 or (names - set(value) and not (
-                    expected is Attempt and names - set(value) == {"provider_diagnostics"}))):
+                    expected is Attempt and names - set(value) <= {
+                        "provider_diagnostics", "input_count", "parsed_result_sha256",
+                    }))):
             raise ValueError("Unknown editorial dataclass fields.")
         hints = get_type_hints(expected)
         values = {}
@@ -547,6 +593,99 @@ def _validate_final(
             raise ValueError("Editorial rejection requires a reason.")
 
 
+def publication_binding(body_sha256: str, prompt_version: str, language: str,
+                        writer_provider: str, writer_model: str, verifier_provider: str, verifier_model: str) -> str:
+    return content_hash([body_sha256, prompt_version, language, writer_provider, writer_model,
+                         verifier_provider, verifier_model])
+
+
+def publication_draft_id(draft: PublicationDraft) -> str:
+    return content_hash([asdict(claim) for claim in draft.claims] + [draft.prompt_hash, draft.response_hash])
+
+
+def _validate_publication(work: PublicationWork, body: str) -> None:
+    expected = publication_binding(work.body_sha256, work.prompt_version, work.language,
+                                   work.writer_provider, work.writer_model, work.verifier_provider, work.verifier_model)
+    if (work.binding != expected or work.language not in {"en", "ru"} or work.repair_round not in {0, 1}
+            or len(work.drafts) > 2 or len(work.drafts) > work.repair_round + 1
+            or len(work.audits) > len(work.drafts)):
+        raise ValueError("Invalid publication identity or one-repair state")
+    source_ids = {f"S{i}" for i, _ in enumerate(source_spans(make_chunks(body), body))}
+    for draft in work.drafts:
+        if (draft.draft_id != publication_draft_id(draft)
+                or not _HEX.fullmatch(draft.prompt_hash) or not _HEX.fullmatch(draft.response_hash)
+                or len({claim.writer_id for claim in draft.claims}) != len(draft.claims)):
+            raise ValueError("Invalid publication draft binding")
+        for index, claim in enumerate(draft.claims):
+            if (claim.claim_id != f"C{index + 1}" or not claim.text.strip() or not claim.writer_id.strip()
+                    or not claim.source_ids or not set(claim.source_ids) <= source_ids):
+                raise ValueError("Invalid publication claim or source references")
+    for index, audit in enumerate(work.audits):
+        draft = work.drafts[index]
+        planned = tuple(identity for batch in audit.batches for identity in batch)
+        expected_ids = tuple(claim.claim_id for claim in draft.claims)
+        if (audit.draft_id != draft.draft_id or planned != expected_ids or not audit.batches
+                or any(not batch for batch in audit.batches) or len(audit.batches) > 2
+                or not 0 <= audit.completed_batches <= len(audit.batches)):
+            raise ValueError("Invalid factual-check plan or draft binding")
+        finished = {identity for batch in audit.batches[:audit.completed_batches] for identity in batch}
+        if {item.claim_id for item in audit.verdicts} != finished or len(audit.verdicts) != len(finished):
+            raise ValueError("Factual-check coverage differs from completed batches")
+        claims = {claim.claim_id: claim for claim in draft.claims}
+        if any(not item.reason.strip() or item.text_sha256 != text_hash(claims[item.claim_id].text)
+               or not set(item.source_ids) <= source_ids
+               or (item.verdict in {"supported", "contradicted"} and not item.source_ids)
+               for item in audit.verdicts):
+            raise ValueError("Factual verdict is not bound to exact source-backed text")
+    if work.repair_round:
+        if (not work.drafts or not work.audits or not audit_complete(work.drafts[0], work.audits[0])
+                or not any(item.verdict in {"unsupported", "contradicted"} for item in work.audits[0].verdicts)
+                or work.repair_binding != content_hash([
+                    work.binding, work.drafts[0].draft_id, asdict(work.audits[0]), 1])):
+            raise ValueError("Repair reservation is not bound to its original draft/check")
+        repairs = [attempt for attempt in work.attempts if attempt.stage == "repair"]
+        if (not 1 <= len(repairs) <= 2 or (len(repairs) == 2 and (
+                repairs[0].status != "failed" or repairs[0].response_sha256 is not None
+                or repairs[0].provider_diagnostics is None
+                or repairs[0].provider_diagnostics.status_code not in {429, 503}
+                or repairs[0].prompt_hash != repairs[1].prompt_hash
+                or repairs[0].task_key != repairs[1].task_key))):
+            raise ValueError("Invalid bounded correction transport retry")
+    elif work.repair_binding is not None:
+        raise ValueError("Unreserved publication repair")
+    if work.prompt_version == PUBLICATION_PROMPT_VERSION:
+        table = [{"source_id": f"S{i}", "text": span.quote}
+                 for i, span in enumerate(source_spans(make_chunks(body), body))]
+        for index, draft in enumerate(work.drafts):
+            expected_prompt = messages(table, language=work.language) if index == 0 else messages(
+                table, language=work.language, repair=work.drafts[0],
+                feedback=[item for item in work.audits[0].verdicts if item.verdict != "supported"],
+            )
+            if draft.prompt_hash != content_hash(expected_prompt) or not any(
+                attempt.status == "success" and attempt.stage == ("draft" if index == 0 else "repair")
+                and attempt.prompt_hash == draft.prompt_hash and attempt.response_sha256 == draft.response_hash
+                and attempt.parsed_result_sha256 == content_hash([asdict(claim) for claim in draft.claims])
+                for attempt in work.attempts
+            ):
+                raise ValueError("Publication draft has no matching successful bound request")
+        for index, audit in enumerate(work.audits):
+            draft = work.drafts[index]
+            for batch in audit.batches[:audit.completed_batches]:
+                checked = tuple(claim for claim in draft.claims if claim.claim_id in batch)
+                prompt_hash = content_hash(messages(table, checked))
+                parsed_hash = content_hash([asdict(item) for item in audit.verdicts if item.claim_id in batch])
+                if not any(attempt.status == "success" and attempt.stage == "check"
+                           and attempt.prompt_hash == prompt_hash and attempt.response_sha256
+                           and attempt.parsed_result_sha256 == parsed_hash
+                           for attempt in work.attempts):
+                    raise ValueError("Factual verdicts lack a matching successful bound request")
+    if work.outcome == "model_checked":
+        from digest.publication_contract import render_card
+        if not work.drafts or not work.audits:
+            raise ValueError("Checked publication lacks a draft/audit")
+        render_card(work.drafts[-1], work.audits[-1], source="", title="", url="")
+
+
 def validate_state(state: EditorialState, state_dir: Path) -> None:
     if (state.schema_version != STATE_VERSION or len(set(state.order)) != len(state.order)
             or set(state.order) != set(state.articles) or state.cursor < 0):
@@ -555,12 +694,14 @@ def validate_state(state: EditorialState, state_dir: Path) -> None:
         if identity != article.article_id or article_hash(article.title, article.url) != identity:
             raise ValueError("Editorial article identity mismatch.")
         attempts = article.acquisition_attempts + [attempt for generation in article.generations.values()
-                                                    for attempt in generation.attempts]
+                                                    for attempt in generation.attempts] + [
+                                                        attempt for work in article.publications.values()
+                                                        for attempt in work.attempts]
         for attempt in attempts:
             if attempt.provider_diagnostics is not None:
                 validate_response_diagnostics(attempt.provider_diagnostics)
         if article.body_sha256 is None:
-            if article.chunks or article.generations:
+            if article.chunks or article.generations or article.publications:
                 raise ValueError("Unacquired article contains analysis.")
             continue
         if (article.final_url is None or urlparse(article.final_url).scheme not in {"http", "https"}
@@ -582,6 +723,11 @@ def validate_state(state: EditorialState, state_dir: Path) -> None:
                 state_dir, generation.body_sha256,
             )
             _validate_generation(article, generation, generation_body)
+        for key, work in article.publications.items():
+            if key != work.binding:
+                raise ValueError("Publication mapping differs from bound identity")
+            work_body = body if work.body_sha256 == article.body_sha256 else read_body(state_dir, work.body_sha256)
+            _validate_publication(work, work_body)
 
 
 def load_state(state_dir: Path) -> EditorialState:
@@ -609,6 +755,14 @@ def load_state(state_dir: Path) -> EditorialState:
                     if "split_chunks" in generation:
                         raise ValueError("Unversioned adaptive split manifest.")
                     generation["split_chunks"] = {}
+            raw["schema_version"] = 2
+        if type(raw.get("schema_version")) is int and raw["schema_version"] == 2:
+            if not isinstance(raw.get("articles"), dict):
+                raise ValueError("Invalid legacy editorial articles")
+            for article in raw["articles"].values():
+                if not isinstance(article, dict) or "publications" in article:
+                    raise ValueError("Unversioned publication record")
+                article["publications"] = {}
             raw["schema_version"] = STATE_VERSION
         state: EditorialState = _decode(raw, EditorialState)
         validate_state(state, state_dir)

@@ -1,4 +1,4 @@
-"""Enrich a saved shortlist into internal drafts; report-only unless --execute is supplied."""
+"""Enrich a saved shortlist into internal reports; --execute permits fetch/model work, never delivery."""
 
 from __future__ import annotations
 
@@ -18,8 +18,9 @@ import yaml
 
 from digest._util import atomic_json_write
 from digest.config import Config, load_config
-from digest.editorial_state import EditorialState, admit_articles, load_state, ready_results, store_state
-from digest.editorial_worker import run_editorial_pass, summarize_state
+from digest.editorial_state import EditorialState, admit_articles, load_state, store_state
+from digest.publication_contract import render_card
+from digest.publication_worker import current_work, run_publication_pass
 from digest.radar.collector import Article, article_hash
 from digest.review import EvidenceSelection, _validated_cached_selections
 from digest.review_checkpoint import load_review_checkpoint
@@ -166,19 +167,37 @@ def write_report(config: Config, state: EditorialState, manifests: list[Selectio
     if output.is_symlink():
         raise ValueError("Enrichment report directory must not be a symlink.")
     output.mkdir(parents=True, exist_ok=True)
-    drafts = ready_results(state, config)
-    summary = summarize_state(state, config)
+    drafts = []
+    checks = []
+    for article in state.articles.values():
+        work = current_work(article.article_id, state, config)
+        checks.append({"article_id": article.article_id, "acquisition_error": article.acquisition_error,
+                       "coverage_notes": article.coverage_notes, "factual_check": asdict(work) if work else None})
+        if work is not None and work.outcome == "model_checked":
+            text = render_card(work.drafts[-1], work.audits[-1], source=article.source,
+                               title=article.title, url=article.url, feed_published_at=article.published,
+                               source_published_at=article.source_published, fetched_at=article.fetched_at)
+            drafts.append({"article_id": article.article_id, "body_sha256": article.body_sha256,
+                           "binding": work.binding, "text": text})
+    outcomes = [current_work(identity, state, config) for identity in state.order]
+    summary = {"admitted": len(state.articles),
+               "acquired": sum(article.body_sha256 is not None for article in state.articles.values()),
+               "model_checked": len(drafts),
+               "rejected": sum(work is not None and work.outcome == "rejected" for work in outcomes),
+               "pending": sum(work is None or work.outcome in {"pending", "unknown"} for work in outcomes)}
     coverage_note = ("Unselected bundle items and omitted articles are not semantic rejections. "
                      "Omitted articles were not reviewed; counts are per checkpoint, not unique across runs.")
     report = {
         "schema_version": 1, "status": "internal_drafts_not_fact_verified", "language": config.radar.language,
-        "selections": [asdict(manifest) for manifest in manifests], "summary": asdict(summary),
-        "drafts": [asdict(draft) for draft in drafts],
+        "selections": [asdict(manifest) for manifest in manifests], "summary": summary,
+        "drafts": drafts, "publication_checks": checks,
+        "check_kind": "draft_aware_factual_check_not_blind_independent_opinion",
+        "legacy_generation_count": sum(len(article.generations) for article in state.articles.values()),
         "coverage_note": coverage_note,
     }
     lines = ["# Editorial enrichment", "", "Internal drafts. Not fact-verified. No delivery approval.", "",
-             f"Selected work: {len(state.articles)}; acquired: {summary.acquired}; "
-             f"drafts: {len(drafts)}; pending: {summary.pending}."]
+             f"Selected work: {len(state.articles)}; acquired: {summary['acquired']}; "
+             f"drafts: {len(drafts)}; pending: {summary['pending']}."]
     for manifest in manifests:
         lines.extend(["", f"Checkpoint: {manifest.checkpoint_sha256}; evidence bundle: {manifest.bundle_id}",
                       f"Selection: {manifest.selection_slot}/{manifest.selection_status}; "
@@ -186,13 +205,9 @@ def write_report(config: Config, state: EditorialState, manifests: list[Selectio
                       f"in_bundle_unselected: {len(manifest.in_bundle_unselected)}; "
                       f"omitted_unreviewed: {manifest.omitted_unreviewed}."])
     lines.extend(["", coverage_note])
+    lines.append("Factual checking sees the draft; it is not a blind independent opinion.")
     for draft in drafts:
-        lines.extend(["", f"## Draft: {draft.title}", draft.url,
-                      f"Model: {draft.provider}/{draft.model}; body: {draft.body_sha256}"])
-        for label, value in (("Source-referenced draft", draft.fact), ("Limitation", draft.limitation),
-                             ("Model inference", draft.inference), ("Why read", draft.why_read)):
-            if value is not None:
-                lines.append(f"{label}: {value.text}")
+        lines.extend(["", str(draft["text"])])
     _write_bytes(output / "enrichment-report.json", (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode())
     _write_bytes(output / "enrichment-report.md", ("\n".join(lines) + "\n").encode())
 
@@ -215,7 +230,7 @@ async def main(argv: list[str] | None = None) -> int:
     manifests = prepare_selected_state(config, args.state, args.checkpoint)
     if args.execute:
         state = load_state(args.state)
-        result = await run_editorial_pass(config, args.state, [state.articles[key].to_article() for key in state.order],
+        result = await run_publication_pass(config, args.state,
                                           deadline_seconds=args.deadline_seconds, max_calls=args.max_calls)
         state = result.state
     else:

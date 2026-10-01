@@ -14,7 +14,7 @@ import pytest
 from digest import editorial_enrichment as enrichment
 from digest.config import Config
 from digest.editorial_state import EditorialState, admit_articles, load_state, store_state
-from digest.editorial_worker import WorkerResult, summarize_state
+from digest.publication_worker import PublicationPassResult
 from digest.radar.collector import Article, article_hash
 from digest.review import BlindReviewReport, EvidenceSelection, ModelReview, build_evidence_bundle
 from scripts.review_fixture import fixture_config
@@ -29,6 +29,7 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("httpx.AsyncClient", forbidden)
     monkeypatch.setattr("digest.review.complete", forbidden)
     monkeypatch.setattr("digest.editorial_worker.complete", forbidden)
+    monkeypatch.setattr("digest.publication_worker.complete", forbidden)
 
 
 @pytest.fixture
@@ -192,7 +193,7 @@ async def test_default_report_and_resume_never_invoke_worker(checkpoint: tuple, 
     path, config, _ = checkpoint
     monkeypatch.setattr(enrichment, "enrichment_config", lambda _: config)
     worker = AsyncMock(side_effect=AssertionError("Report-only must not execute"))
-    monkeypatch.setattr(enrichment, "run_editorial_pass", worker)
+    monkeypatch.setattr(enrichment, "run_publication_pass", worker)
     output, directory = tmp_path / "report", tmp_path / "state"
     args = ["--state", str(directory), "--output", str(output)]
     assert await enrichment.main(args + ["--checkpoint", str(path)]) == 0
@@ -212,14 +213,15 @@ async def test_execute_passes_only_selected_articles_and_budget(checkpoint: tupl
     path, config, raw = checkpoint
     monkeypatch.setattr(enrichment, "enrichment_config", lambda _: config)
 
-    async def run(config: Config, state_dir: Path, articles: list[Article], **kwargs: Any) -> WorkerResult:
-        assert [article.link for article in articles] == [raw["evidence"]["items"][0]["url"]]
+    async def run(config: Config, state_dir: Path, **kwargs: Any) -> PublicationPassResult:
+        assert [article.url for article in load_state(state_dir).articles.values()] == [
+            raw["evidence"]["items"][0]["url"]]
         assert kwargs == {"deadline_seconds": 30.0, "max_calls": 1}
         state = load_state(state_dir)
-        return WorkerResult(state, summarize_state(state, config))
+        return PublicationPassResult(state, 0, "fixture")
 
     worker = AsyncMock(side_effect=run)
-    monkeypatch.setattr(enrichment, "run_editorial_pass", worker)
+    monkeypatch.setattr(enrichment, "run_publication_pass", worker)
     assert await enrichment.main(["--checkpoint", str(path), "--state", str(tmp_path / "state"),
                                   "--output", str(tmp_path / "report"), "--execute",
                                   "--deadline-seconds", "30", "--max-calls", "1"]) == 0

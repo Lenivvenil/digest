@@ -291,7 +291,7 @@ that operational guard; no paid provider is an automatic fallback.
 ## Current #55 slice: enrich a saved selection without delivery
 
 The isolated `digest.editorial_enrichment` entry reuses a saved RSS review checkpoint
-and the existing durable source worker. It does not recollect feeds or select every
+and durable source acquisition. It does not recollect feeds or select every
 article. Its output is an **internal, unverified draft**, not a published digest.
 
 Prepare or inspect the selected work without network or model calls:
@@ -326,3 +326,81 @@ reading advice and extra limitations need not be invented to fill fields. Valid 
 IDs establish provenance, not factual truth. Independent real-output review remains
 the publication gate; a successful offline replay or a manually edited example does
 not pass it.
+
+### Explicit publication routes and local request budgets
+
+Execution requires the optional [offline tokenizer profiles](ENRICHMENT_TOKENIZERS.md)
+and an explicit `enrichment` section. It never inherits writer/checker roles from the
+RSS review slots. This example declares routes; it does not enable delivery or prove
+free entitlement for an account:
+
+```yaml
+enrichment:
+  writer:
+    provider: groq
+    model: qwen/qwen3.8-27b
+  verifier:
+    provider: groq
+    model: openai/gpt-oss-120b
+  tokenizer_cache: .cache/enrichment-tokenizers
+  pacing: fixed
+  requests_per_minute: 30
+  writer_output_tokens: 2200
+  verifier_output_tokens: 4096
+```
+
+The entry checks the complete source against the local route profile, completion
+reservation and a 512-token safety allowance inside the supported 8K request budget.
+It uses at most two verifier batches, each with the complete source; only the claim
+list is partitioned. Unsupported routes, missing/mismatched assets and complete-source
+requests that cannot fit remain technical pending. Existing long-source evidence and
+intermediates survive, but this publication contract does **not** yet provide a verified
+hierarchical publication path for those articles. It does not silently promote older
+compressed summaries or discard the source as uninteresting.
+
+A writer returns exact ordered publication statements. The factual checker sees that
+draft and checks every statement. This is **not a blind independent opinion** and does
+not update the RSS review's `independent_complete`. If a complete check rejects a claim,
+one correction may use the original source, draft and only its nonpassing feedback.
+The whole revised draft is checked again without previous verdicts. There is no second
+correction. Unresolved or incomplete checks are held; a second rejection is explicit.
+
+Each request is reserved durably before contact. Exact source, route, language, prompt,
+draft and parsed-result hashes bind cached work; uncertain requests are not replayed
+automatically. Confirmed transient provider failures can resume after a saved cooldown,
+but never retry within the same pass. The single correction permits at most two
+transport attempts: only an explicit HTTP 429 or 503 before any corrected draft allows
+one retry of the identical prompt after its saved cooldown. Unknown/timeout, invalid
+output, a second transport failure or an already completed correction never starts
+another repair request. Keep state and immutable body files together between invocations.
+
+`model_checked` means the configured model accepted the exact internal draft. It does
+not establish independent truth, complete editorial quality or permission to deliver.
+The renderer includes all checked statements in order, source attribution and a link;
+it cannot fix missing qualifications by silently editing prose. Old experimental
+generations stay inspectable and do not inherit this status.
+Source-page publication metadata, feed publication metadata and acquisition time are
+rendered separately when available. Missing dates remain unknown; a later feed update
+or acquisition timestamp does not make an old article new.
+
+The next real-output gate must exercise this actual engine entry with one normal
+source-attributed candidate, without diagnostic controls or manually selected claims.
+Independent review must compare its exact final text against the full source. A
+successful control fixture or parser replay cannot establish that result.
+
+### Optional provider-aware pacing
+
+`pacing: fixed` preserves a conservative 65-second enrichment spacing. Explicit
+`provider_aware` may reduce that fallback only with fresh, validated target-route and
+latest shared-provider observations. The operator's `llm.min_request_interval_seconds`
+always remains a floor, as does the configured RPM interval. A configured 65-second
+floor therefore stays 65 seconds. Missing/stale observations use the conservative
+fallback; a cold writer-to-verifier transition normally has no verifier observation.
+Daily reset/cooldown evidence remains authoritative beyond short telemetry freshness.
+
+Reports retain safe numeric usage, local input count, signed actual-minus-estimated
+input delta and normalized quota/reset provenance. Different models do not imply
+independent organization budgets. Full-cycle capacity must include source acquisition,
+selection, cold-start waits, factual checks and the possible correction. Isolated API
+latency or a warm-cache calculation does not demonstrate sustained throughput. No
+production timeout, frequency or quota allowance changes with this setting.

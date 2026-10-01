@@ -788,19 +788,22 @@ def test_long_final_preserves_original_qualification_spans_within_request_budget
         worker._final_messages(article, root, generation)
 
 
-def test_schema_one_migrates_split_manifest_without_mutating_saved_evidence(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_schema_migrates_without_mutating_saved_evidence(tmp_path: Path, version: int) -> None:
     state, article, _ = _ready_state(tmp_path, prompt_version="russian-source-ids-v5")
     article.delivery_state = "unknown"
     article.delivery_attempt_id = "preserved-delivery-attempt"
     payload = asdict(state)
-    payload["schema_version"] = 1
+    payload["schema_version"] = version
     for saved_article in payload["articles"].values():
-        for generation in saved_article["generations"].values():
-            del generation["split_chunks"]
+        del saved_article["publications"]
+        if version == 1:
+            for generation in saved_article["generations"].values():
+                del generation["split_chunks"]
     path = _write_payload(tmp_path, payload)
     before = path.read_bytes()
     loaded = editorial.load_state(tmp_path)
-    assert loaded == state and loaded.schema_version == 2
+    assert loaded == state and loaded.schema_version == editorial.STATE_VERSION
     assert path.read_bytes() == before
     assert editorial.ready_results(loaded, fixture_config()) == []
 

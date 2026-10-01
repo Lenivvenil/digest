@@ -45,6 +45,7 @@ from digest.editorial_state import (
     read_body,
     ready_results,
     save_body,
+    source_spans,
     split_chunk,
     store_state,
     utc_now,
@@ -56,7 +57,6 @@ from digest.review import _rejected_output_diagnostics
 MAX_INPUT_ESTIMATE = 4500
 REQUEST_TOKEN_ENVELOPE = 8000
 REQUEST_TOKEN_RESERVE = 512
-SOURCE_SPAN_CHARS = 1500
 FAILURE_COOLDOWN_SECONDS = 3600
 PERMANENT_FAILURE_COOLDOWN_SECONDS = 24 * 3600
 GROQ_SPACING_SECONDS = 65
@@ -123,20 +123,6 @@ def _messages(system: str, payload: Any) -> list[dict[str, str]]:
 def _prompt_hash(messages: list[dict[str, str]]) -> str:
     return hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
 
-
-def source_spans(chunks: tuple[Chunk, ...], body: str) -> tuple[Span, ...]:
-    """Numbered, source-verbatim spans cover every character, without model copying."""
-    result = []
-    for chunk in chunks:
-        start = chunk.start
-        while start < chunk.end:
-            end = min(start + SOURCE_SPAN_CHARS, chunk.end)
-            boundary = body.rfind("\n", start + SOURCE_SPAN_CHARS // 2, end)
-            if boundary >= start and end < chunk.end:
-                end = boundary + 1
-            result.append(Span(chunk.chunk_id, start, end, body[start:end]))
-            start = end
-    return tuple(result)
 
 
 def _source_table(spans: tuple[Span, ...]) -> list[dict[str, str]]:

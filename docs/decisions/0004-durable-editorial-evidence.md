@@ -34,6 +34,9 @@ second active implementation path. The active work is #55; #94 translation follo
   It receives no controls, expected labels or prior supported verdicts. A new stateless
   check sees the complete revised draft and source, without prior judgments. A second
   failure leaves an explicit rejected/pending result; no unbounded repair loop.
+  The one semantic correction may have one additional identical transport attempt only
+  after an explicit HTTP 429/503 without a corrected draft and its persisted cooldown.
+  Unknown requests, invalid output and a second transport failure remain held.
 - Execution allowance governs progress, not editorial eligibility. Missing source text,
   unavailable media, quota exhaustion or a request envelope that cannot yet be verified
   remain technical pending. Preserve existing long-source progress; do not call a lossy

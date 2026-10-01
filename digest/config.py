@@ -151,6 +151,20 @@ class ReviewConfig:
     review_led_only: bool = False
 
 
+@dataclass(frozen=True)
+class EnrichmentConfig:
+    """Explicit isolated publication routes; never inherited from blind review."""
+
+    writer: ReviewModelConfig
+    verifier: ReviewModelConfig
+    tokenizer_cache: str = ".cache/enrichment-tokenizers"
+    pacing: str = "fixed"
+    requests_per_minute: int = 30
+    writer_output_tokens: int = 2200
+    verifier_output_tokens: int = 4096
+
+
+
 @dataclass
 class Config:
     llm: LLMConfig
@@ -164,6 +178,7 @@ class Config:
         default_factory=lambda: AdaptiveConfig(enabled=False)
     )
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    enrichment: EnrichmentConfig | None = None
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -689,6 +704,41 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     )
 
 
+def _load_enrichment(data: dict[str, Any]) -> EnrichmentConfig | None:
+    section = data.get("enrichment")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ValueError("enrichment must be an explicit writer/verifier mapping.")
+    allowed = {"writer", "verifier", "tokenizer_cache", "pacing", "requests_per_minute",
+               "writer_output_tokens", "verifier_output_tokens"}
+    if set(section) - allowed:
+        raise ValueError("Unknown enrichment setting.")
+    routes = {}
+    for role in ("writer", "verifier"):
+        raw = section.get(role)
+        if (not isinstance(raw, dict) or set(raw) != {"provider", "model"}
+                or not isinstance(raw.get("provider"), str) or raw.get("provider") not in VALID_PROVIDERS
+                or not isinstance(raw.get("model"), str) or not raw["model"].strip()):
+            raise ValueError(f"enrichment.{role} requires an explicit supported provider/model pair.")
+        routes[role] = ReviewModelConfig(raw["provider"], raw["model"].strip())
+    pacing = section.get("pacing", "fixed")
+    if not isinstance(pacing, str) or pacing not in {"fixed", "provider_aware"}:
+        raise ValueError("enrichment.pacing must be fixed or provider_aware.")
+    cache = section.get("tokenizer_cache", ".cache/enrichment-tokenizers")
+    if not isinstance(cache, str) or not cache.strip():
+        raise ValueError("enrichment.tokenizer_cache requires a local directory path.")
+    values = {}
+    for key, default, low, high in (("requests_per_minute", 30, 1, 30),
+                                  ("writer_output_tokens", 2200, 128, 4096),
+                                  ("verifier_output_tokens", 4096, 128, 4096)):
+        value = section.get(key, default)
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"enrichment.{key} must be an integer in {low}..{high}.")
+        values[key] = value
+    return EnrichmentConfig(routes["writer"], routes["verifier"], cache, pacing, **values)
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -737,4 +787,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         obsidian=obsidian,
         adaptive=adaptive,
         review=review,
+        enrichment=_load_enrichment(data),
     )
