@@ -48,6 +48,15 @@ class Article:
     pub_date: datetime | None
 
 
+@dataclass
+class SourceFetchMetrics:
+    """Fetch observations, independent of whether delivery later succeeds."""
+
+    fetch_ok: bool
+    articles_found: int
+    avg_description_length: float
+
+
 def _strip_html(text: str) -> str:
     """Remove HTML tags, decode HTML entities, and collapse whitespace."""
     text = re.sub(r"<[^>]+>", " ", text)
@@ -337,6 +346,8 @@ def save_dedup_cache(cache: dict[str, str]) -> None:
 async def collect(
     config: Config,
     effective_priorities: dict[str, int] | None = None,
+    *,
+    fetch_metrics: dict[str, SourceFetchMetrics] | None = None,
 ) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
@@ -345,6 +356,9 @@ async def collect(
 
     If *effective_priorities* is provided (from adaptive scoring), those
     values override static ``source.priority`` during slot allocation.
+
+    If supplied, *fetch_metrics* receives per-source fetch observations for
+    the orchestrator to combine with confirmed delivery counts.
 
     Returns:
         A tuple of (articles_by_category, updated_cache). The caller is
@@ -368,6 +382,17 @@ async def collect(
 
         tasks = [_limited(source) for source in config.enabled_sources]
         results = await asyncio.gather(*tasks)
+
+    if fetch_metrics is not None:
+        for source, raw_articles in zip(config.enabled_sources, results, strict=True):
+            fetch_metrics[source.name] = SourceFetchMetrics(
+                fetch_ok=raw_articles is not None,
+                articles_found=len(raw_articles) if raw_articles is not None else 0,
+                avg_description_length=(
+                    sum(len(a.description) for a in raw_articles) / len(raw_articles)
+                    if raw_articles else 0.0
+                ),
+            )
 
     if config.enabled_sources and all(r is None for r in results):
         raise AllFeedsFailedError(

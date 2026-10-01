@@ -1,6 +1,174 @@
 # Bounded Context: Digest
 
-_Discovered: 2026-04-26. Updated: 2026-04-28. Post-interview sections added from code._
+_Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconciliation: 2026-10-01, issue #55._
+
+## Decision and evidence register — 2026-10-01
+
+This is the existing canonical Digest domain page, not a new architecture proposal.
+As of 2026-10-01, documentation and onboarding
+[#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active item. Editorial
+quality [#55](https://github.com/Lenivvenil/digest/issues/55), tracked in work order
+[#91](https://github.com/Lenivvenil/digest/issues/91), awaits real-output verification
+and is not complete. Feedback #48 and source contracts #77 remain queued. This
+documentation work makes no production change; the existence of this register
+does not approve a code change.
+
+### Product intent comes before the latest implementation
+
+The [README](../../../README.md) remains the product entry point. Its dated setup
+examples are not a reason to discard its product concept:
+
+- **Radar and useful reading:** a personal, category-aware analytical news digest
+  for a technology architect, delivered to Telegram and retained in Obsidian.
+  [Analytical/detailed formats](../../../README.md#формат-дайджеста) include genuinely
+  different Optimist, Skeptic and Realist reasoning for significant topics; the
+  brief style deliberately omits those perspectives. Important cross-cutting
+  trends are part of the analytical intent, not interchangeable vendor headlines.
+- **A learning information diet:** [article votes](../../../README.md#обратная-связь-и-адаптивная-система)
+  change source allocation, and [source discovery](../../../README.md#автоматическое-обнаружение-источников)
+  uses explicit operator approval and trials. Visible buttons without a working
+  influence path violate this concept; they do not redefine it.
+- **Bubble breaking:** the later [Irritator domain](../irritator/overview.md#purpose)
+  extends this concept with external material that challenges, contradicts or
+  complicates dominant narratives. This purpose is documented there and in #53;
+  it is not claimed to appear in the older README's architecture diagram.
+- **Operational setting:** GitHub Actions, a minimal deterministic Python layer,
+  multiple LLM providers, Telegram and a Markdown archive. A recent recovery
+  shortcut must not silently turn this product into a generic RSS card sender.
+
+The October primary-first recovery changes execution order and failure isolation.
+It does **not** establish that category analysis, trends, meaningful perspectives,
+feedback adaptation or counter-signals have ceased to matter. Where the review-led
+path omits an existing capability, record the gap and obtain a deliberate product
+resolution; do not rewrite the README to legitimize the omission.
+
+### How to read authority and status
+
+- **Owner requirement**: an explicit operator direction. The current October
+  directions below supersede conflicting *implementation proposals*, not history.
+- **Historical decision/plan**: a recorded rationale, with its original scope and
+  status. A merged implementation is not evidence that its output met the product goal.
+- **Implementation observation**: behavior verified in the linked commit. It is
+  neither a new requirement nor permission to preserve a defect.
+- **Open/rejected proposal**: must not become an invariant, acceptance criterion,
+  or deployed behavior without the missing decision.
+
+This distinction implements [Principles §2–4](../../principles.md), especially
+operator ownership of the domain and knowledge recoverable from the repository.
+
+### Current owner requirements and acceptance traces
+
+The October owner directions are recorded here as requirements, not as an
+endorsement of any particular queue, chunking method, model, or card quota.
+Their issue-level review surface is #55 and its linked work order #91.
+
+| ID | Owner requirement | Source and rationale | Acceptance / current state |
+|---|---|---|---|
+| D-01 | Remain a zero-incremental-spend experiment; do not depend exclusively on one model vendor | October owner direction; original [project plan](../../plans/completed/digest.md#plan-daily-news-digest) already requires free hosting/no VPS/no payment | Provider availability, rate quota, context size and output allowance are separate operational constraints. No paid fallback is authorized by this requirement. Current blind review is implemented; two valid independent opinions on one real bundle remain unverified (#91). |
+| D-02 | A Russian digest must add a specific non-obvious insight, with evidence, limitations and a reason to read the original | [#55](https://github.com/Lenivvenil/digest/issues/55); historical [PR73](https://github.com/Lenivvenil/digest/pull/73) already targeted information gain rather than headline repetition | The [three-source sample](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922127576) received only provisional positive feedback, [recorded here](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922207102). It is not a final gold standard, a fixed template, or a three-card quota. |
+| D-03 | Full source material must support the analysis; provider limits must not silently turn into editorial rejection of longer articles | October owner rejection of the proposed max-three/shared-input-budget policy, tracked under #55 | No article may be labelled uninteresting merely because it is long or a quota is exhausted. Pending/inaccessible/technically incomplete evidence must be distinguished from a completed editorial rejection. The mechanism is not yet decided or implemented. |
+| D-04 | Preserve the Irritator's genuine external counter-signal function while primary delivery remains independent of optional-stage failure | Owner-approved primary-first recovery; [PR89](https://github.com/Lenivvenil/digest/pull/89); historical [#53](https://github.com/Lenivvenil/digest/issues/53) defines the unmet core value | Search, provenance, ranking and honest incomplete status must survive editorial changes. A successful supplementary API send does not prove a useful contradiction was found. Source repairs remain #77. |
+| D-05 | Telegram is the required primary destination; archived evidence and delivery state must remain truthful and replay-safe | Owner-approved recovery, [PR88](https://github.com/Lenivvenil/digest/pull/88), [PR89](https://github.com/Lenivvenil/digest/pull/89), [PR90](https://github.com/Lenivvenil/digest/pull/90) | Only confirmed card delivery consumes its dedup identity. Footer-only output, an archived report or a green workflow is not proof of a useful delivered digest. |
+| D-06 | Changes must preserve accumulated domain analysis and follow one visible issue at a time | Current owner direction; [Principles §4 and Definition of Done](../../principles.md); [#91](https://github.com/Lenivvenil/digest/issues/91) | Link requirement/source → decision/rationale → issue acceptance → change → verification before resuming implementation. Existing documents and issues are updated, not replaced by parallel sources of truth. |
+
+### Historical decisions that must not be rediscovered
+
+| Record | What it established | Scope, implementation and remaining evidence gap |
+|---|---|---|
+| [Original completed plan](../../plans/completed/digest.md), Tasks 1–3 | Free GitHub Actions, minimal Python dependencies, multiple provider adapters; RSS descriptions capped at 500 characters | This is the original implementation baseline. It did not establish full-article analysis or a permanent editorial rule to prefer short material. Its old model names and quota numbers are historical, not current provider documentation. |
+| [March 21 truncation fix](https://github.com/Lenivvenil/digest/commit/764b771d026e9a7e4407f148644e89e25d2fe39d) | Replaced silent use of Gemini MAX_TOKENS output with an explicit truncation failure | Token constraints and incomplete-output handling were known before this rehabilitation. Raising a context/output setting is not evidence that throughput quotas permit the request. |
+| [#63](https://github.com/Lenivvenil/digest/issues/63) (April 28) | Parallel Lobsters fan-out produced 429s and some 400s; spacing/backoff was a known investigation path | An observed rate failure, not approval to weaken the editorial goal or a verified adapter fix. #77 retains the unresolved contract work. |
+| [#84](https://github.com/Lenivvenil/digest/issues/84), [PR85](https://github.com/Lenivvenil/digest/pull/85) (June 9) | DeepSeek 402, Gemini 429/503 and partial Groq failures caused a cascade; raw-feed fallback produced 61 messages | The raw-card fallback was removed. Free-provider failure was a known system constraint, not a newly discovered reason to send weaker content. |
+| [PR73](https://github.com/Lenivvenil/digest/pull/73), [plan §3–6](../../../plan.md#3-considered-approaches) (April 28) | Chose prompt tightening plus a mechanical two-sentence cap. Deferred cross-category second-pass context because of latency/token cost, explicitly to revisit if tightening was insufficient. Pre-clustering was also deferred | Implemented in [1cf3e545](https://github.com/Lenivvenil/digest/commit/1cf3e545a4a35d06c5ced437d69827633f1cf878). The plan explicitly leaves information gain to empirical evaluation on a real digest; prompt-string and sentence-cap tests do not prove it. Repeating that patch is not a new solution to #55. |
+| [March 26 card change](https://github.com/Lenivvenil/digest/commit/0d70a474a517e8908ab224348d1105f6b295b652), [April 16 usability change](https://github.com/Lenivvenil/digest/commit/9b747ae4338a0d6bde16da5c5659e1d0daf4e2b7) | One article per Telegram post with its own meaningful summary and vote attribution; effective source priorities wired into collection | The aim was readable, actionable intake and a closed feedback loop, not merely successful message transport. Perspectives were deliberately disabled in that runtime change; the README capability is not a mandate to restore them on every card. |
+| [April 13 recovery](https://github.com/Lenivvenil/digest/commit/896a9d869ed4182153918eb8195ae182a003a78a) | Restored v1 features lost in the v2 rewrite: twice-daily schedule, discovery, adaptive feedback/scoring, provider/routing support and observability | Losing accumulated capabilities during a structural rewrite is a documented prior failure mode. The next design must map retained capabilities before changing orchestration. |
+| [#39](https://github.com/Lenivvenil/digest/issues/39) (April 26) | Article lifecycle/replay was missing; action was deferred until replay, filtered-item traceability or cross-run analysis was needed | A parked architectural debt, not an already accepted durable article queue. No such accepted queue design was found in the reviewed public ADRs, plans or issue bodies. |
+| [#66](https://github.com/Lenivvenil/digest/issues/66), [PR67](https://github.com/Lenivvenil/digest/pull/67) | Accepted delayed callback collection with an explicit “next run” note and no new infrastructure | This did not authorize loss of feedback. Current ingestion/selection regression is #48. Immediate acknowledgement and recorded-vote influence are different properties. |
+| [#51](https://github.com/Lenivvenil/digest/issues/51), [#52](https://github.com/Lenivvenil/digest/issues/52) | Topic/narrative adaptation and adjacent-topic exploration are intended extensions | Open proposals; #51 explicitly requires an ADR. They are not current implemented personalization and must not be silently folded into #55. |
+| [ADR0002](../../decisions/0002-engine-instance-split.md), [PR35](https://github.com/Lenivvenil/digest/pull/35); [ADR0003](../../decisions/0003-source-state-split.md), [PR41](https://github.com/Lenivvenil/digest/pull/41) | Engine/runtime separation and static configuration versus mutable source state | Implementations landed, but both ADR headers still say **proposed**. This register does not retroactively declare them accepted. Formal-status reconciliation remains explicit. |
+
+### Dated constraint evidence — do not substitute an assumed quota
+
+Audit date: **2026-10-01**. Scope: public engine README, domain pages, three ADRs,
+completed plans, the retained April #55 plan, issue bodies and relevant commits.
+This is an evidence inventory, not a current pricing/limits specification.
+
+| Constraint | Dated evidence and what is actually established | Verification status |
+|---|---|---|
+| GitHub Actions free execution | The [original plan](../../plans/completed/digest.md) and [architecture limits](https://github.com/Lenivvenil/digest/blob/1cd1a97cb83574fdeb39d7be3c4680c30f35e4e3/docs/ARCHITECTURE.md#ограничения-и-известные-особенности) use **2,000 minutes/month** and estimate **two ~3-minute runs/day** | Historical planning assumption. Current account entitlement, actual runtime and remaining allowance are not established by that text. The original zero-cost intent is established. |
+| Gemini output truncation | [2026-03-21 commit](https://github.com/Lenivvenil/digest/commit/1e3fc4486bcb0a7ea4447623ab381e4bb2b7f51f) changed client `maxOutputTokens` **8,192 → 65,536**; the [later same-day fix](https://github.com/Lenivvenil/digest/commit/764b771d026e9a7e4407f148644e89e25d2fe39d) stopped silently accepting partial output | These are configured output ceilings and an observed truncation class, **not** verified requests/minute, tokens/minute, daily allowance, or available context. |
+| Provider availability/credit failure | [#84](https://github.com/Lenivvenil/digest/issues/84), **2026-06-09**: DeepSeek **402**, Gemini **429/503**, partial Groq failure; **61** raw cards escaped through the fallback | The failure cascade is evidenced. Its HTTP statuses do not reveal an exact current provider/account/model quota. |
+| Search-service throughput | [#63](https://github.com/Lenivvenil/digest/issues/63), **2026-04-28**: up to **15 parallel** Lobsters queries, mostly **429**, some **400** | A known external-service constraint. Exact supported endpoint and safe request cadence remained investigation items; neither an inferred cause nor a configured semaphore proves the fix. |
+| Current Groq public free-plan limits | [Official rate-limit table](https://console.groq.com/docs/rate-limits), checked **2026-10-01**, lists `openai/gpt-oss-120b`: **30 RPM, 1,000 RPD, 8,000 TPM, 200,000 TPD** | Current provider documentation, not a recovered historical project decision or verified account allowance. Limits apply at organization level and exceptions may exist. This does not justify an editorial article-count or length cap. |
+| Current Groq model capacity | [Official models table](https://console.groq.com/docs/models), checked **2026-10-01**, lists `openai/gpt-oss-120b` context **131,072 tokens** and maximum completion **65,536 tokens** | Model capacity, not free-tier throughput or a billing entitlement. The adjacent throughput column is explicitly for the Developer plan and must not be substituted for the free-plan table above. |
+| Recent editorial packet limits | **Three articles / 4.5K estimated input tokens** belonged to the unshipped October implementation proposal | **Rejected by the owner.** These are not provider guarantees, recovered historical decisions, or product acceptance criteria. |
+
+The historical project artifacts reviewed did not contain that dated Groq quota
+record or a ready-made durable article-analysis queue. That is a bounded audit finding, not a claim that no
+such discussion ever occurred. Future records should name provider, model, account
+tier, limit dimension, observation date and primary source; never infer TPM from a
+large context window or infer editorial irrelevance from rate exhaustion.
+
+### Current implementation versus intended product
+
+Observation baseline: engine commit
+[`a1beb435`](https://github.com/Lenivvenil/digest/tree/a1beb435c47f988096469e4b7337c77e0733819c).
+
+- PR88–PR90 introduced evidence/review contracts and persisted follow-up state,
+  but no corresponding new accepted ADR is present in the reviewed public decision
+  directory. This is a governance/traceability gap under the existing ADR triggers,
+  not permission to label those contracts architecturally accepted retroactively.
+- The review-led path supplies bounded RSS evidence, not full articles. Literal
+  citation validation and per-item salvage establish provenance only. See
+  [review.py](../../../digest/review.py) and [review protocol](../../BLIND_REVIEW.md).
+- Primary delivery precedes separately persisted, bounded Irritator and missing-slot
+  review work. These checkpoints are implemented; they are not an all-article
+  acquisition/analysis queue.
+- The optional legacy category path still contains three-perspective prose. That
+  format, an external Irritator counter-signal, and an independent second model
+  opinion are three different capabilities; none is proof of either of the others.
+- Feedback ingestion is gated by adaptive enablement, and review-led selection does
+  not consume feedback. This is a documented regression (#48), not a revised domain goal.
+- The collector uses MD5 of `title|link` for article identity and source-configured
+  recency windows. Historical statements below describing SHA-256 of description,
+  a universal 48-hour window, or priority range 1–10 are not current code invariants.
+
+### Rejected proposals and decisions still open
+
+**Rejected during #55:** a permanent maximum of three analyzed articles; fitting
+only short articles into one shared 4.5K estimated-token packet as an editorial
+selection policy; calling truncated windows a full read. These were implementation
+proposals, not requirements. The isolated experimental patch was not deployed.
+
+**Not yet decided:** how complete-source analysis, provider-specific quotas,
+continuation, evidence retention and cross-article comparison should work together.
+A durable queue/chunking proposal is not an accepted architecture merely because it
+was suggested. Any new persistent state or cross-context contract must satisfy the
+existing [ADR triggers](../../principles.md#что-значит-архитектурно-значимо-триггер-для-adr).
+
+The older “full-text storage outside scope” boundary below concerned the original
+RSS/hash implementation. Reading original material and retaining replayable evidence
+are separate decisions. The current quality requirement must be reconciled with that
+boundary explicitly; do not silently delete the boundary or infer a retention policy.
+
+### Verification gate for the next #55 change
+
+1. Record the selected design and rationale against D-01–D-06, including how it
+   preserves long-material eligibility and distinguishes unfinished work from rejection.
+2. Map each acceptance criterion to deterministic tests **and**, where needed, a
+   real-output observation. Reuse existing delivery, provenance and resume regressions.
+3. Evaluate a report-only real-source output for information gain, Russian clarity,
+   factual support, non-repetition and limitations. Include candidate coverage and
+   unresolved work. A fully mocked model response is not this evidence.
+4. Record owner/editorial review and remaining gaps before automatic-card rollout.
+   Keep useful delivery, semantic quality and independent-review success separate.
+
+## Historical domain snapshot — April 2026
+
+The following material records the earlier interview/code-derived model. It remains
+for traceability, not as an override of the reconciliation above. Its lifecycle,
+provider behavior and delivery order must not be treated as current verified facts.
+
 
 ---
 
@@ -26,7 +194,7 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 ## Events (Event Storming)
 
-**Orange — что произошло (с указанием агрегата-владельца):**
+**Orange — what happened (with the owning aggregate):**
 
 | Event | Aggregate owner | Module |
 |-------|----------------|--------|
@@ -48,7 +216,7 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 | BubbleReportRequested | — (query, no state change) | Delivery.telegram |
 | BubbleReportGenerated | — (query result) | Delivery.telegram |
 
-**Blue — команды:**
+**Blue — commands:**
 
 | Command | Target aggregate | Module |
 |---------|----------------|--------|
@@ -65,71 +233,71 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 | RejectSource | PendingSource | Discovery |
 | RequestBubbleReport | — (query) | Delivery.telegram |
 
-**Lilac — политики:**
+**Lilac — policies:**
 
-- Когда `FeedbackReceived` → `UpdateSourcePriority` (14-дневное затухание). Исполнитель: Radar.collector при следующем pipeline-запуске. ¹ Ownership размазан: Delivery записывает, Radar применяет — hot spot #3.
-- Когда Trial активен ≥ `trial_days` дней → `EvaluateTrialSource` (graduated/demoted). Исполнитель: Radar.collector.
-- Когда Article старше 48 часов → `ArticleFiltered`. Исполнитель: Radar.collector.
-- Когда `SourceApproved` → `AddSourceToConfig` (добавляет trial-блок в `config.yaml`) → `TrialStarted`. Исполнитель: Discovery.
-- Когда delivery провалилась → откатить `FeedbackStore.last_update_id` и `ratings` до pre-run состояния. Исполнитель: main.py.
+- When `FeedbackReceived` → `UpdateSourcePriority` (14-day decay). Executor: Radar.collector on the next pipeline run. ¹ Ownership is split: Delivery records it, Radar applies it — hot spot #3.
+- When a Trial has been active for ≥ `trial_days` days → `EvaluateTrialSource` (graduated/demoted). Executor: Radar.collector.
+- When an Article is older than 48 hours → `ArticleFiltered`. Executor: Radar.collector.
+- When `SourceApproved` → `AddSourceToConfig` (adds a trial block to `config.yaml`) → `TrialStarted`. Executor: Discovery.
+- When delivery fails → roll back `FeedbackStore.last_update_id` and `ratings` to their pre-run state. Executor: main.py.
 
-**Yellow — агрегаты:**
+**Yellow — aggregates:**
 
-- **Source** — владеет: `user_priority`, `enabled`. Runtime-состояние (`trial_started`, `graduated`, `demoted`) хранится в `SourceStateStore` (`.cache/source_state.json`) — не на агрегате (ADR-0003).
-- **Article** — владеет: `hash` (identity), `relevance_score`, `age`, `source_ref`, `delivered_flag`.
-- **PendingSource** — владеет: `name`, `url`, `category`, `discovered_at`, `source_hash`. Lifecycle: `discovered → approved/rejected`.
+- **Source** — owns `user_priority` and `enabled`. Runtime state (`trial_started`, `graduated`, `demoted`) is stored in `SourceStateStore` (`.cache/source_state.json`), not on the aggregate (ADR-0003).
+- **Article** — owns `hash` (identity), `relevance_score`, `age`, `source_ref`, and `delivered_flag`.
+- **PendingSource** — owns `name`, `url`, `category`, `discovered_at`, and `source_hash`. Lifecycle: `discovered → approved/rejected`.
 
-> **Trial state вне Source (ADR-0003):** `trial_started`, `graduated`, `demoted` хранятся в `SourceStateStore`, позволяя `config.yaml` оставаться декларативным.
+> **Trial state outside Source (ADR-0003):** `trial_started`, `graduated`, and `demoted` are stored in `SourceStateStore`, allowing `config.yaml` to remain declarative.
 
 **Green — read models:**
 
-- `BubbleReport` — снимок filter bubble: diversity score (Shannon entropy по 7-дневным включениям статей), топ-категории по объёму, счётчики feedback за 14 дней, trial/graduated/demoted источники. Генерируется on-demand по команде `/bubble`.
-- `DigestHistory` — `.md`-файлы в Obsidian (формат подчинён ожиданиям Obsidian).
-- `NanoStatus` — двухстрочный footer каждого дайджеста: кол-во источников/статей, LLM-провайдер, promoted/demoted счётчики, средний score источников.
+- `BubbleReport` — a filter-bubble snapshot: diversity score (Shannon entropy over seven days of article inclusions), top categories by volume, 14-day feedback counters, and trial/graduated/demoted sources. Generated on demand by the `/bubble` command.
+- `DigestHistory` — `.md` files in Obsidian (the format conforms to Obsidian's expectations).
+- `NanoStatus` — a two-line footer for each digest: source/article counts, LLM provider, promoted/demoted counters, and average source score.
 
-**Red — горячие точки:**
+**Red — hotspots:**
 
-1. **Source dual-storage**: `config.yaml` мутируется двумя путями: `apply_trial_decisions()` и `add_source_to_config()`. Нет единого владельца. → Issue #37.
-2. **Article без явного lifecycle**: нет состояний `raw → scored → delivered → archived`. Дедупликация через hash — ad-hoc. → Issue #39.
-3. **Feedback decay owner**: логика затухания размазана между Delivery (запись) и Radar (применение). → Issue #40.
-4. **Radar→Delivery contract drift**: `CategorySummary` расширяется `ArticleSummary`-набором без явного внутрифазового контракта. → Issue #29.
+1. **Source dual-storage**: `config.yaml` is mutated through two paths: `apply_trial_decisions()` and `add_source_to_config()`. There is no single owner. → Issue #37.
+2. **Article lacks an explicit lifecycle**: no `raw → scored → delivered → archived` states. Hash-based deduplication is ad hoc. → Issue #39.
+3. **Feedback decay owner**: decay logic is split between Delivery (recording) and Radar (application). → Issue #40.
+4. **Radar→Delivery contract drift**: `CategorySummary` is extended with a set of `ArticleSummary` objects without an explicit intra-phase contract. → Issue #29.
 
 ---
 
 ## Boundary
 
-**В scope:**
-- Сбор статей из RSS (Radar)
-- Фильтрация и оценка релевантности по контексту пользователя
-- Дедупликация Article по hash
-- Генерация нарративов и поиск контрсигналов (Irritator)
-- Доставка через Telegram и запись в Obsidian (Delivery)
-- Адаптивная система приоритетов источников (trial + feedback)
-- Обнаружение и одобрение новых источников (Discovery)
-- Filter bubble аналитика (BubbleReport)
+**In scope:**
+- Collecting articles from RSS (Radar)
+- Filtering and scoring relevance against the user's context
+- Article deduplication by hash
+- Narrative generation and counter-signal search (Irritator)
+- Telegram delivery and writing to Obsidian (Delivery)
+- Adaptive source priorities (trial + feedback)
+- Discovering and approving new sources (Discovery)
+- Filter-bubble analytics (BubbleReport)
 
-**Намеренно вне scope:**
-- Полнотекстовое хранилище сырых статей
-- Политика уведомлений пользователя (Telegram's concern)
-- Полнотекстовый поиск по истории дайджестов (Obsidian's concern)
-- Аутентификация и авторизация
+**Deliberately outside scope:**
+- Full-text storage of raw articles
+- User notification policy (Telegram's concern)
+- Full-text search across digest history (Obsidian's concern)
+- Authentication and authorization
 
-**Термин, меняющий смысл на границе:**
-`Article` — на стороне RSS это XML-запись без контекста. После ingestion в Radar.collector Article приобретает `relevance_score`, `age`, `source_ref`.
+**Term whose meaning changes at the boundary:**
+`Article` — on the RSS side, this is an XML entry without context. After ingestion in Radar.collector, an Article acquires `relevance_score`, `age`, and `source_ref`.
 
 ---
 
 ## Aggregate Root
 
 **Source**
-- Инварианты: `priority` ∈ [1..10]; `url` является валидным HTTP/HTTPS URL; `name` уникален среди enabled sources; demoted source не участвует в pipeline (фильтруется в `main.py` через `source_state.is_demoted()`).
-- Runtime-состояние trial в `SourceStateStore`, не на агрегате.
+- Invariants: `priority` ∈ [1..10]; `url` is a valid HTTP/HTTPS URL; `name` is unique among enabled sources; a demoted source does not participate in the pipeline (filtered in `main.py` through `source_state.is_demoted()`).
+- Trial runtime state belongs in `SourceStateStore`, not on the aggregate.
 
 **Article**
-- Инварианты: `hash` = SHA-256 первых 500 символов description + title; одна и та же пара (hash, source) никогда не ingested дважды в рамках `CACHE_MAX_AGE_DAYS=7`; `pub_date` старше 48 часов → Article не ingested.
+- Invariants: `hash` = SHA-256 of the first 500 characters of description + title; the same (hash, source) pair is never ingested twice within `CACHE_MAX_AGE_DAYS=7`; `pub_date` older than 48 hours → Article is not ingested.
 
 **PendingSource**
-- Инварианты: `source_hash` уникален в pending-списке; `url` прошёл SSRF-валидацию (`_dns_pinning.validate_url`) до попадания в pending.
+- Invariants: `source_hash` is unique in the pending list; `url` has passed SSRF validation (`_dns_pinning.validate_url`) before entering pending.
 
 ---
 
@@ -137,12 +305,12 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 | Trigger | Action | Executor |
 |---------|--------|----------|
-| `FeedbackReceived` | `UpdateSourcePriority` с 14-дневным затуханием | Radar.collector, следующий запуск |
-| Trial активен ≥ `trial_days` И `calculate_score > 0.6` | `TrialGraduated` | Radar.collector |
-| Trial активен ≥ `trial_days` И `calculate_score < 0.3` | `TrialDemoted` | Radar.collector |
+| `FeedbackReceived` | `UpdateSourcePriority` with 14-day decay | Radar.collector, next run |
+| Trial active for ≥ `trial_days` AND `calculate_score > 0.6` | `TrialGraduated` | Radar.collector |
+| Trial active for ≥ `trial_days` AND `calculate_score < 0.3` | `TrialDemoted` | Radar.collector |
 | Article `pub_date > 48h` | `ArticleFiltered` | Radar.collector |
-| `SourceApproved` | Добавить trial-блок в `config.yaml`, эмитировать `TrialStarted` | Discovery |
-| `delivery_ok == False` | Откатить `FeedbackStore` до pre-run состояния | main.py |
+| `SourceApproved` | Add a trial block to `config.yaml`; emit `TrialStarted` | Discovery |
+| `delivery_ok == False` | Roll back `FeedbackStore` to its pre-run state | main.py |
 
 ---
 
@@ -150,113 +318,121 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 | Upstream BC / System | Pattern | Notes |
 |----------------------|---------|-------|
-| RSS Feed Providers | **Conformist** | Потребляем Atom/RSS через feedparser; подстраиваемся под их формат |
-| Telegram Bot API | **Conformist** | Используем их Published Language (MarkdownV2, inline keyboards, callback queries) |
-| HN / Reddit / arXiv / dev.to / Lobsters | **Conformist** | Читаем публичные API без контракта; breakage возможен при изменении API |
-| Obsidian Vault | **Customer-Supplier** | Obsidian — downstream customer; формат `.md` подчинён его ожиданиям; Digest — supplier |
+| RSS Feed Providers | **Conformist** | We consume Atom/RSS through feedparser and adapt to their format |
+| Telegram Bot API | **Conformist** | We use their Published Language (MarkdownV2, inline keyboards, callback queries) |
+| HN / Reddit / arXiv / dev.to / Lobsters | **Conformist** | We read public APIs without a contract; API changes can cause breakage |
+| Obsidian Vault | **Customer-Supplier** | Obsidian is the downstream customer; the `.md` format conforms to its expectations; Digest is the supplier |
 
 ---
 
 ## Use Cases
 
-### UC-1: Ежедневный запуск пайплайна
+<a id="uc-1-ежедневный-запуск-пайплайна"></a>
+
+### UC-1: Daily pipeline run
 
 **Actor:** GitHub Actions (Scheduler)
-**Preconditions:** `config.yaml` существует и валиден; LLM API key доступен; `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` установлены.
+**Preconditions:** `config.yaml` exists and is valid; an LLM API key is available; `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set.
 **Main scenario:**
-1. `collect_feedback()` опрашивает Telegram getUpdates; новые votes и approval-решения записываются в `FeedbackStore`.
-2. `calculate_effective_priorities()` пересчитывает приоритеты источников.
-3. `collect()` фетчит RSS-фиды параллельно; новые Articles дедуплицируются по hash.
-4. `summarize_all()` суммаризирует каждую категорию через LLM; для ≥1 топ-тем генерирует три перспективы (Optimist/Skeptic/Realist) если `summary_style != brief`.
-5. `run_irritator()` извлекает нарративы → генерирует adversarial-запросы → ищет контрсигналы → валидирует → ранжирует.
-6. `write_digest()` сохраняет `.md` в Obsidian.
-7. `send_article_cards()` публикует individual Telegram posts с кнопками 👍/👎.
-8. `send_counter_signals()` публикует контрсигналы с IrritatorStatus footer.
-9. `evaluate_trial_sources()` принимает решения о graduated/demoted.
-10. Все сторы персистируются атомарно.
+1. `collect_feedback()` polls Telegram getUpdates; new votes and approval decisions are recorded in `FeedbackStore`.
+2. `calculate_effective_priorities()` recalculates source priorities.
+3. `collect()` fetches RSS feeds in parallel; new Articles are deduplicated by hash.
+4. `summarize_all()` summarizes each category through an LLM; for ≥1 top topics, it generates three perspectives (Optimist/Skeptic/Realist) if `summary_style != brief`.
+5. `run_irritator()` extracts narratives → generates adversarial queries → searches for counter-signals → validates → ranks.
+6. `write_digest()` saves `.md` to Obsidian.
+7. `send_article_cards()` publishes individual Telegram posts with 👍/👎 buttons.
+8. `send_counter_signals()` publishes counter-signals with an IrritatorStatus footer.
+9. `evaluate_trial_sources()` makes graduated/demoted decisions.
+10. All stores are persisted atomically.
 
 **Alternatives:**
-- 3a: Все фиды недоступны → `AllFeedsFailedError` → пайплайн завершается с кодом 1.
-- 3b: Нет новых статей → пайплайн завершается успешно, без доставки.
-- 5a: Irritator pipeline пуст → `IrritatorStatus.level == "empty"` → контрсигналы не публикуются.
-- 7a: Telegram delivery провалилась → `FeedbackStore` откатывается; оба delivery failures → exit code 1.
+- 3a: All feeds are unavailable → `AllFeedsFailedError` → the pipeline exits with code 1.
+- 3b: No new articles → the pipeline exits successfully without delivery.
+- 5a: The Irritator pipeline is empty → `IrritatorStatus.level == "empty"` → no counter-signals are published.
+- 7a: Telegram delivery failed → `FeedbackStore` is rolled back; both delivery failures → exit code 1.
 
-**Postconditions:** `feedback.json`, `source_state.json`, `source_stats.json`, `source_category_map.json` обновлены; `.md`-файл создан; Telegram messages отправлены; dedup cache обновлён.
+**Postconditions:** `feedback.json`, `source_state.json`, `source_stats.json`, and `source_category_map.json` are updated; an `.md` file is created; Telegram messages are sent; the dedup cache is updated.
 
 ---
 
-### UC-2: Пользователь голосует за статью
+<a id="uc-2-пользователь-голосует-за-статью"></a>
 
-**Actor:** User (через Telegram inline button)
-**Preconditions:** Article card уже доставлена с кнопками `fb:a:g:{hash}` / `fb:a:b:{hash}`; `article_source_map` содержит `hash → source_name`.
+### UC-2: User votes on an article
+
+**Actor:** User (through a Telegram inline button)
+**Preconditions:** An article card has been delivered with `fb:a:g:{hash}` / `fb:a:b:{hash}` buttons; `article_source_map` contains `hash → source_name`.
 **Main scenario:**
-1. Пользователь нажимает 👍 или 👎.
-2. На следующем запуске `collect_feedback()` получает callback query.
-3. Парсинг `callback_data = "fb:a:{g|b}:{article_hash}"` → `rating = +1 / -1`.
-4. `ArticleFeedback(article_hash, source_name, rating, timestamp)` добавляется в `FeedbackStore.ratings`.
-5. Telegram callback query отвечается (loading indicator сбрасывается).
+1. The user presses 👍 or 👎.
+2. On the next run, `collect_feedback()` receives the callback query.
+3. Parse `callback_data = "fb:a:{g|b}:{article_hash}"` → `rating = +1 / -1`.
+4. Add `ArticleFeedback(article_hash, source_name, rating, timestamp)` to `FeedbackStore.ratings`.
+5. Answer the Telegram callback query (clear the loading indicator).
 
 **Alternatives:**
-- 3a: `article_source_map` miss для `hash` → `ArticleFeedback` записывается с `source_name=""`, логируется warning.
-- 4a: Feedback запись от > 30 дней назад → будет pruned при следующем `save_feedback()`.
+- 3a: `article_source_map` has no entry for `hash` → record `ArticleFeedback` with `source_name=""` and log a warning.
+- 4a: The feedback entry is > 30 days old → prune it at the next `save_feedback()`.
 
-**Postconditions:** `FeedbackStore` содержит новый `ArticleFeedback`; при следующем запуске он влияет на `effective_priorities` этого источника.
+**Postconditions:** `FeedbackStore` contains the new `ArticleFeedback`; on the next run, it affects that source's `effective_priorities`.
 
 ---
 
-### UC-3: Пользователь запрашивает filter bubble отчёт
+<a id="uc-3-пользователь-запрашивает-filter-bubble-отчёт"></a>
+
+### UC-3: User requests a filter-bubble report
 
 **Actor:** User (Telegram command `/bubble`)
-**Preconditions:** Хотя бы один запуск пайплайна был завершён; `.cache/source_stats.json`, `.cache/source_state.json`, `.cache/source_category_map.json` существуют.
+**Preconditions:** At least one pipeline run has completed; `.cache/source_stats.json`, `.cache/source_state.json`, and `.cache/source_category_map.json` exist.
 **Main scenario:**
-1. `collect_feedback()` получает message `text="/bubble"`.
-2. Загружаются `stats`, `state`, `category_map` из `.cache/`.
-3. `compute_bubble_report()` вычисляет: дата последнего дайджеста, `_diversity_score()` (Shannon entropy), топ-категории по 7-дневным включениям, feedback за 14 дней, trial/graduated/demoted счётчики.
-4. Отчёт отправляется в тот же chat.
+1. `collect_feedback()` receives a message with `text="/bubble"`.
+2. Load `stats`, `state`, and `category_map` from `.cache/`.
+3. `compute_bubble_report()` calculates the last digest date, `_diversity_score()` (Shannon entropy), top categories by seven-day inclusions, 14-day feedback, and trial/graduated/demoted counters.
+4. Send the report to the same chat.
 
 **Alternatives:**
-- 2a: `.cache/`-файлы отсутствуют → `compute_bubble_report()` возвращает отчёт с нулями.
+- 2a: `.cache/` files are missing → `compute_bubble_report()` returns a report with zeros.
 
-**Postconditions:** Пользователь получил read-only снимок своего информационного пузыря; состояние системы не изменилось.
+**Postconditions:** The user has received a read-only snapshot of their information bubble; system state is unchanged.
 
 ---
 
-### UC-4: Оператор одобряет/отклоняет новый источник
+<a id="uc-4-оператор-одобряетотклоняет-новый-источник"></a>
+
+### UC-4: Operator approves/rejects a new source
 
 **Actor:** User (Telegram inline button)
-**Preconditions:** Discovery phase (`--discover`) нашла новый источник и отправила approval message с кнопками `src:ok:{hash}` / `src:no:{hash}`; PendingSource сохранён в `.cache/pending_sources.json`.
+**Preconditions:** The discovery phase (`--discover`) has found a new source and sent an approval message with `src:ok:{hash}` / `src:no:{hash}` buttons; PendingSource is saved in `.cache/pending_sources.json`.
 **Main scenario:**
-1. Пользователь нажимает "✅ Добавить" или "❌ Отклонить".
-2. На следующем запуске `collect_feedback()` парсит `callback_data = "src:{ok|no}:{source_hash}"`.
-3. Решение записывается в `FeedbackStore.source_decisions`.
-4. `_process_pending_approvals()` загружает pending список, находит соответствие по `source_hash`.
-5. Если approved: `add_source_to_config()` добавляет trial-блок в `config.yaml`; `TrialStarted` эмитируется на следующем запуске.
-6. Если rejected: PendingSource удаляется из pending.
+1. The user presses “✅ Add” or “❌ Reject” (original Russian UI labels: “✅ Добавить” / “❌ Отклонить”).
+2. On the next run, `collect_feedback()` parses `callback_data = "src:{ok|no}:{source_hash}"`.
+3. Record the decision in `FeedbackStore.source_decisions`.
+4. `_process_pending_approvals()` loads the pending list and finds the match by `source_hash`.
+5. If approved: `add_source_to_config()` adds a trial block to `config.yaml`; `TrialStarted` is emitted on the next run.
+6. If rejected: remove PendingSource from pending.
 
 **Alternatives:**
-- 4a: PendingSource уже удалён (например, отклонён ранее) → решение игнорируется.
-- 5a: `add_source_to_config()` падает → ошибка логируется, PendingSource остаётся в pending.
+- 4a: PendingSource has already been removed (for example, previously rejected) → ignore the decision.
+- 5a: `add_source_to_config()` fails → log the error; PendingSource stays in pending.
 
-**Postconditions:** `config.yaml` обновлён (approved) или PendingSource удалён (rejected).
+**Postconditions:** `config.yaml` is updated (approved) or PendingSource is removed (rejected).
 
 ---
 
 ### UC-5: Trial source evaluation (graduated/demoted)
 
-**Actor:** GitHub Actions (Scheduler, автоматически в конце pipeline)
-**Preconditions:** В `config.yaml` есть источник с `trial: true`; `SourceStateStore` содержит `trial_started`; прошло ≥ `trial_days` дней.
+**Actor:** GitHub Actions (Scheduler, automatically at the end of the pipeline)
+**Preconditions:** `config.yaml` contains a source with `trial: true`; `SourceStateStore` contains `trial_started`; ≥ `trial_days` days have elapsed.
 **Main scenario:**
-1. `evaluate_trial_sources()` читает `SourceStateStore` и `SourceStats`.
-2. Для каждого trial-источника вычисляет `calculate_score()` (reliability 30% + productivity 30% + desc_quality 20% + recency 20%).
+1. `evaluate_trial_sources()` reads `SourceStateStore` and `SourceStats`.
+2. For each trial source, calculate `calculate_score()` (reliability 30% + productivity 30% + desc_quality 20% + recency 20%).
 3. `score > 0.6` → `TrialGraduated`: `SourceStateStore.mark_graduated(name)`.
-4. `score < 0.3` → `TrialDemoted`: `SourceStateStore.mark_demoted(name)`; источник исключается из следующих запусков.
-5. `SourceStateStore` сохраняется.
+4. `score < 0.3` → `TrialDemoted`: `SourceStateStore.mark_demoted(name)`; exclude the source from future runs.
+5. Save `SourceStateStore`.
 
 **Alternatives:**
-- 2a: `score` ∈ [0.3..0.6] → источник остаётся в trial ещё один цикл.
-- 3a: Источник уже graduated/demoted → пропускается.
+- 2a: `score` ∈ [0.3..0.6] → the source stays in trial for another cycle.
+- 3a: The source has already graduated/been demoted → skip it.
 
-**Postconditions:** `source_state.json` обновлён; demoted источник не участвует в следующем pipeline-запуске.
+**Postconditions:** `source_state.json` is updated; the demoted source does not participate in the next pipeline run.
 
 ---
 
@@ -266,23 +442,23 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
-| `title` | str | непустой |
-| `link` | str | валидный URL |
-| `description` | str | max 500 символов после sanitize |
-| `source` | str | существует в `config.sources` |
-| `category` | str | существует в `config.sources` |
-| `pub_date` | `datetime \| None` | если известна, не старше 48 часов (иначе filtered) |
+| `title` | str | nonempty |
+| `link` | str | valid URL |
+| `description` | str | max 500 characters after sanitization |
+| `source` | str | exists in `config.sources` |
+| `category` | str | exists in `config.sources` |
+| `pub_date` | `datetime \| None` | if known, no older than 48 hours (otherwise filtered) |
 
-Состояния: `raw` (из feedparser) → `ingested` (прошёл dedup + age + blocklist) → `summarized` (включён в `CategorySummary`). Архивирование — через dedup cache TTL 7 дней.
+States: `raw` (from feedparser) → `ingested` (passed dedup + age + blocklist) → `summarized` (included in `CategorySummary`). Archival is through the dedup cache's seven-day TTL.
 
 ### CategorySummary
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
 | `category` | str | |
-| `summary_text` | str | прошёл `_clean_summary()` |
+| `summary_text` | str | passed `_clean_summary()` |
 | `article_count` | int | ≥ 1 |
-| `article_summaries` | `list[ArticleSummary]` | пустой список если per-article summaries не запрошены |
+| `article_summaries` | `list[ArticleSummary]` | empty list if per-article summaries were not requested |
 
 ### ArticleSummary
 
@@ -292,27 +468,27 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 | `link` | str | |
 | `source` | str | |
 | `category` | str | |
-| `summary` | str | ≤ 2 предложения; раскрывает нетривиальный/неочевидный аспект (бизнес-правило, зафиксировано в UL) |
+| `summary` | str | ≤ 2 sentences; reveals a nontrivial/non-obvious aspect (business rule recorded in the UL) |
 
 ### Source (aggregate)
 
-Хранится декларативно в `config.yaml`. Runtime-состояние в `SourceStateStore`.
+Stored declaratively in `config.yaml`. Runtime state is in `SourceStateStore`.
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
-| `name` | str | уникален среди enabled sources |
-| `url` | str | HTTP/HTTPS, прошёл SSRF-валидацию |
+| `name` | str | unique among enabled sources |
+| `url` | str | HTTP/HTTPS; passed SSRF validation |
 | `category` | str | |
 | `priority` | int | [1..10] |
 | `enabled` | bool | |
 | `trial` | bool | |
-| `trial_days` | int | > 0 если `trial=true` |
+| `trial_days` | int | > 0 if `trial=true` |
 
 Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: bool`, `demoted: bool`.
 
 ### FeedbackStore
 
-Персистируется в `.cache/feedback.json`. Prunes ratings > 30 дней; `article_source_map` capped at 1000 entries.
+Persisted in `.cache/feedback.json`. Prunes ratings > 30 days old; `article_source_map` is capped at 1000 entries.
 
 | Field | Type |
 |-------|------|
@@ -325,7 +501,7 @@ Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: boo
 
 ### SourceStats
 
-Персистируется в `.cache/source_stats.json`. History capped at 30 дней.
+Persisted in `.cache/source_stats.json`. History is capped at 30 days.
 
 | Field | Type |
 |-------|------|
@@ -340,14 +516,14 @@ Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: boo
 
 ### BubbleReport (read model)
 
-Генерируется on-demand по команде `/bubble`. Не персистируется — вычисляется из `.cache/`-файлов каждый раз.
+Generated on demand by the `/bubble` command. Not persisted: computed from `.cache/` files each time.
 
 | Field | Type | Source |
 |-------|------|--------|
 | `generated_at` | str (UTC) | `datetime.now()` |
 | `last_digest_time` | str | `FeedbackStore.last_digest_time` |
-| `diversity_score` | float [0..100] | Shannon entropy по 7-дневным включениям статей по источникам |
-| `diversity_label` | `"Diverse"\|"Moderate"\|"Concentrated"` | score ≥ 70 → Diverse; ≥ 40 → Moderate; иначе Concentrated |
+| `diversity_score` | float [0..100] | Shannon entropy over seven days of article inclusions by source |
+| `diversity_label` | `"Diverse"\|"Moderate"\|"Concentrated"` | score ≥ 70 → Diverse; ≥ 40 → Moderate; otherwise Concentrated |
 | `category_breakdown` | `dict[category, count]` (7d) | `source_category_map` + `SourceStats.history` |
 | `feedback_summary` | `(total, positive, negative)` (14d) | `FeedbackStore.ratings` |
 | `trial_summary` | `(graduated, trial, demoted)` | `SourceStateStore` |
@@ -358,7 +534,7 @@ Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: boo
 
 | Interface | Direction | Protocol | Operations | Handled failures | Unhandled failures |
 |-----------|-----------|----------|-----------|------------------|--------------------|
-| RSS Feed Providers | inbound | HTTP/HTTPS + feedparser | GET feed URL | timeout → source marked error; `feedparser.bozo` + empty entries → warn | SSL errors, schema changes в XML |
+| RSS Feed Providers | inbound | HTTP/HTTPS + feedparser | GET feed URL | timeout → source marked error; `feedparser.bozo` + empty entries → warn | SSL errors, XML schema changes |
 | Telegram Bot API (delivery) | outbound | HTTPS REST | `sendMessage` (MarkdownV2), `sendMessage` (inline keyboard) | HTTP 4xx → logged warning, non-critical | Bot token revoked |
 | Telegram Bot API (feedback) | inbound | HTTPS polling | `getUpdates` + `answerCallbackQuery` + `deleteWebhook` | webhook active → auto-delete before polling; 0 results → info log | Rate limiting, update_id skew |
 | Irritator sources (HN/Reddit/arXiv/devto/Lobsters) | outbound | HTTPS REST | search queries (per-adapter) | per-adapter exceptions caught; empty results → continue | API schema changes |
@@ -369,7 +545,7 @@ Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: boo
 
 ## NFR
 
-Только механически-проверяемые ограничения:
+Mechanically verifiable constraints only:
 
 | Constraint | Enforcement | Artifact |
 |------------|-------------|----------|
@@ -399,7 +575,7 @@ Runtime state (`SourceStateEntry`): `trial_started: str | None`, `graduated: boo
 
 ## Red Hotspots
 
-1. **Source dual-storage**: `config.yaml` мутируется двумя независимыми runtime-путями. → Issue #37.
-2. **Article без явного lifecycle**: нет типизированных состояний между ingestion и archival. → Issue #39.
-3. **Feedback decay owner**: логика затухания распределена между Delivery и Radar. → Issue #40.
-4. **Radar→Delivery contract drift**: нет явного внутрифазового контракта между Radar и Delivery. → Issue #29.
+1. **Source dual-storage**: `config.yaml` is mutated through two independent runtime paths. → Issue #37.
+2. **Article lacks an explicit lifecycle**: there are no typed states between ingestion and archival. → Issue #39.
+3. **Feedback decay owner**: decay logic is distributed between Delivery and Radar. → Issue #40.
+4. **Radar→Delivery contract drift**: no explicit intra-phase contract between Radar and Delivery. → Issue #29.
