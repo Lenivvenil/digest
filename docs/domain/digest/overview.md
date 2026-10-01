@@ -160,6 +160,16 @@ boundary explicitly; do not silently delete the boundary or infer a retention po
 4. Record owner/editorial review and remaining gaps before automatic-card rollout.
    Keep useful delivery, semantic quality and independent-review success separate.
 
+### Subsequent decision: durable complete-source processing
+
+[ADR0004](../../decisions/0004-durable-editorial-evidence.md) records the next #55
+choice after this reconciliation. Root technical and independent editorial review
+accepted implementation under the operator's delegated execution on 2026-10-01.
+It does not make the prior sample final acceptance or close the real-output gate.
+Complete-source persistence is now an explicit boundary change; incomplete work is
+pending rather than rejected by article length or provider quota. See the ADR for
+coverage lineage, acquisition uncertainty, storage, delivery and verification rules.
+
 ## Historical domain snapshot — April 2026
 
 The following material records the earlier interview/code-derived model. It remains
