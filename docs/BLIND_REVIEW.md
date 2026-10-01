@@ -219,74 +219,25 @@ The captured public-RSS regression fixture in
 hyphen repairs and one originally exact quote) and rejects one over-budget,
 paraphrased quote. These tests make no model or network calls.
 
-## Durable complete-source editorial path (ADR0004)
+## Historical complete-source experiment (ADR0004)
 
-The new path is separate from the schema-1 RSS selection experiment above.
-[ADR0004](decisions/0004-durable-editorial-evidence.md) records its decision,
-source-coverage invariants, private evidence storage and release gates.
+[ADR0004](decisions/0004-durable-editorial-evidence.md) preserves the earlier all-admit,
+chunk/reduction and separate editorial-delivery design. That experiment did not
+establish sustainable throughput or release-quality output. Its standalone
+`digest.editorial_pipeline` CLI and all-admit collector extension have been excluded
+from this draft's release surface; their source remains in earlier PR commits.
+They are not commands available in the selected enrichment entry below.
 
-**Experimental, not enabled for production:** `python -m digest.editorial_pipeline work`
-admits every collected article that passes the existing freshness/blocklist/dedup
-filters, before the legacy slot budget. Those filters do not establish semantic
-relevance. This all-admit mode has not demonstrated sustainable throughput. The
-execution deadline and request allowance bound a pass; unfinished material remains
-pending. `--output` is a diagnostic output directory, not a production digest
-archive. Use a runner-temporary directory so reports do not become runtime clutter.
-Complete extracted bodies and versioned progress belong in `.cache/editorial/`.
-The report exposes admission/acquisition/completion, oldest pending work, provider
-attempts and possible repeated-event diagnostics. Provider attempts retain
-only allowlisted numeric quota observations and normalized server retry/reset
-boundaries, with their provenance. These are separate from the worker's policy
-cooldown; an unknown quota dimension stays unknown. Raw error prose, request headers
-and credentials are not retained by this diagnostic contract. A completed analysis
-is not proof of editorial usefulness; real-output review remains required.
+Immutable source storage, exact offsets, pending work and old generation validation
+remain. Older progress can be inspected without silently promoting it to the new
+publication contract. Technical failure or quota exhaustion is not editorial rejection.
 
-The complete-source path uses deterministic numbered source spans, resolved by the
-engine to unchanged body offsets. Models reference those IDs rather than transcribe
-quotations. A fitting whole body goes directly to editorial synthesis; larger bodies
-retain complete chunk coverage and reduce findings only when needed. Raw source
-nodes are explicitly unclassified, and valid references alone do not prove semantic
-entailment. Qualifiers, audience boundaries and quantifiers remain quality checks.
-A changed prompt creates a new analysis generation; prior acquisition is reusable,
-but earlier model opinions are not silently relabelled under the new contract.
-Explicit provider output exhaustion remains failed/incomplete work, even if its
-partial response happens to be parseable JSON. A truncated chunk is subdivided with
-a generation-local manifest; successful sibling work is retained. Exhaustion of an
-unsplittable segment is an explicit technical block. Optional ranking explanations
-and topic labels cannot invalidate substantive card content. Additional inference
-may be absent; actual source qualifications cannot be omitted to fill a template.
-
-If the experimental delivery path is later approved for rollout, its required ordering is:
-
-1. Run `work`; persist its state, including normal bounded partial progress.
-2. Run `repair-archives` to repair receipts whose confirmed delivery outlived an
-   archive failure. This command never sends Telegram messages.
-3. Run `prepare`; persist and push the exact delivery reservation.
-4. Only after that push succeeds, run `deliver --attempt <reserved-path>` once.
-   Preserve receipts/state even when some cards fail. Unknown outcomes remain held
-   and are never automatically resent. Existing Telegram transport limits defer
-   ready cards; they do not limit source analysis or classify deferred cards as weak.
-5. Run the existing separately reserved post-delivery Irritator using the emitted
-   source-context checkpoint. Its current bounded RSS/search coverage is explicit;
-   this is not a claim of independent full-article verification.
-6. `independent` advances the other provider's own full-body analysis and archives
-   it. It never consumes the first provider's opinions or repeats primary delivery.
-
-Serialize these commands with the existing runtime concurrency group. A hard runner
-loss before state reaches git can repeat provider work; an already reserved Telegram
-send is held rather than guessed safe to repeat. Do not convert a model timeout,
-inaccessible source or oversized transport payload into editorial rejection.
-
-For a report-only verification, run `work` in an isolated temporary working directory
-with absolute config/state/output paths and without Telegram credentials. The pass
-may write isolated source-health observations but cannot consume production dedup or
-send cards. Keep the full state/body artifact for independent source-based review.
-
-The CLI currently enforces the explicitly approved free-route model lineup shared
-with the trial guard. That is a release safety guard, not a domain claim that the
-product can only ever use those models. A later approved lineup must update and test
-that operational guard; no paid provider is an automatic fallback.
-
+The unshipped delivery design's requirements also remain open under #55: persist work
+before dispatch, preserve an exact reservation before sending, hold unknown outcomes
+without automatic replay, distinguish confirmed failure from uncertainty, and repair
+archive failures without resending confirmed messages. Removing experimental commands
+does not claim those requirements have been implemented for a future enrichment rollout.
+Existing normal delivery and the separately reserved external Irritator are unaffected.
 
 ## Current #55 slice: enrich a saved selection without delivery
 
@@ -308,7 +259,7 @@ can omit `--checkpoint` to resume the saved selection. Completed source acquisit
 and compatible intermediate work are reused; unfinished long articles remain pending.
 No command in this entry sends Telegram messages, reserves delivery, runs Irritator,
 or writes the production dedup/source-health state. Keep its state directory separate
-from the experimental all-admit worker and preserve it when progress must survive a
+from any historical experimental state and preserve it when progress must survive a
 runner restart. Using a new temporary directory each run does not provide durable
 resume across runners.
 

@@ -12,6 +12,13 @@ This section supersedes earlier all-admitted rollout and unverified final-prose 
 for the selected report-only entry. Historical reasoning below remains a record, not a
 second active implementation path. The active work is #55; #94 translation follows it.
 
+The standalone all-admit editorial CLI, its collector extension and only their
+specific tests/verification fixture are excluded from the proposed release. Git
+history preserves the experiment; source/state compatibility and its unresolved
+lifecycle requirements remain. This removes an unshipped execution path, not a
+promise that its requirements are satisfied by the selected report-only entry.
+
+
 - Preserve the saved selection manifest, omitted/unreviewed counts, safe acquisition,
   immutable body/offset provenance, resumable work and strict technical-pending states.
   Do not change normal delivery or admit the whole feed pool through this entry.
