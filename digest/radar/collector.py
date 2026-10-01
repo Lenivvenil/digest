@@ -57,6 +57,16 @@ class SourceFetchMetrics:
     avg_description_length: float
 
 
+@dataclass
+class CollectionCoverage:
+    """Current collection counts; pending durable work belongs to the queue."""
+
+    raw_fetched: int = 0
+    eligible_unique: int = 0
+    admitted: int = 0
+    legacy_allocated: int | None = None
+
+
 def _strip_html(text: str) -> str:
     """Remove HTML tags, decode HTML entities, and collapse whitespace."""
     text = re.sub(r"<[^>]+>", " ", text)
@@ -343,11 +353,38 @@ def save_dedup_cache(cache: dict[str, str]) -> None:
     _save_cache(cache)
 
 
+def _reset_coverage(
+    coverage: CollectionCoverage | None, results: list[list[Article] | None], admit_all: bool,
+) -> None:
+    if coverage is not None:
+        coverage.raw_fetched = sum(len(batch) for batch in results if batch is not None)
+        coverage.eligible_unique = coverage.admitted = 0
+        coverage.legacy_allocated = None if admit_all else 0
+
+
+def _admit_eligible(
+    source_eligible: list[tuple[SourceConfig, list[tuple[str, Article]]]], coverage: CollectionCoverage | None,
+) -> dict[str, list[Article]]:
+    grouped: dict[str, list[Article]] = {}
+    admitted_ids: set[str] = set()
+    for source, eligible in source_eligible:
+        for identity, article in eligible:
+            if identity not in admitted_ids:
+                grouped.setdefault(source.category, []).append(article)
+                admitted_ids.add(identity)
+    if coverage is not None:
+        coverage.admitted = len(admitted_ids)
+    logger.info("Admitted %d eligible unique articles before legacy slot allocation", len(admitted_ids))
+    return grouped
+
+
 async def collect(
     config: Config,
     effective_priorities: dict[str, int] | None = None,
     *,
     fetch_metrics: dict[str, SourceFetchMetrics] | None = None,
+    admit_all: bool = False,
+    coverage: CollectionCoverage | None = None,
 ) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
@@ -358,7 +395,12 @@ async def collect(
     values override static ``source.priority`` during slot allocation.
 
     If supplied, *fetch_metrics* receives per-source fetch observations for
-    the orchestrator to combine with confirmed delivery counts.
+    the orchestrator to combine with confirmed delivery counts. *coverage*
+    reports raw, unique eligible and admitted counts for this collection.
+
+    *admit_all* queues every eligible unique article before legacy allocation;
+    priorities order admission, never discard candidates. It adds no identities
+    to the delivery dedup cache and never persists that cache.
 
     Returns:
         A tuple of (articles_by_category, updated_cache). The caller is
@@ -382,6 +424,8 @@ async def collect(
 
         tasks = [_limited(source) for source in config.enabled_sources]
         results = await asyncio.gather(*tasks)
+
+    _reset_coverage(coverage, results, admit_all)
 
     if fetch_metrics is not None:
         for source, raw_articles in zip(config.enabled_sources, results, strict=True):
@@ -408,8 +452,6 @@ async def collect(
     successful_sources = [
         s for s, r in zip(config.enabled_sources, results, strict=True) if r is not None
     ]
-    raw_slots = allocate_slots(successful_sources, total_budget, priority_overrides=effective_priorities)
-
     grouped: dict[str, list[Article]] = {}
     total_collected = 0
 
@@ -417,7 +459,8 @@ async def collect(
     source_eligible: list[tuple[SourceConfig, list[tuple[str, Article]]]] = []
     for source, raw_articles in sorted(
         zip(config.enabled_sources, results, strict=True),
-        key=lambda x: x[0].priority,
+        key=lambda x: (effective_priorities.get(x[0].name, x[0].priority)
+                       if admit_all and effective_priorities is not None else x[0].priority),
         reverse=True,
     ):
         if raw_articles is None:
@@ -437,6 +480,12 @@ async def collect(
             eligible.append((h, article))
         source_eligible.append((source, eligible))
 
+    if coverage is not None:
+        coverage.eligible_unique = len({identity for _, eligible in source_eligible for identity, _ in eligible})
+    if admit_all:
+        return _admit_eligible(source_eligible, coverage), cache
+
+    raw_slots = allocate_slots(successful_sources, total_budget, priority_overrides=effective_priorities)
     per_source_taken: dict[str, int] = {s.name: 0 for s, _ in source_eligible}
 
     # Pass 1: fill up to proportional slot limits.
@@ -475,6 +524,8 @@ async def collect(
                 total_collected += 1
             per_source_taken[source.name] = taken
 
+    if coverage is not None:
+        coverage.admitted = coverage.legacy_allocated = total_collected
     logger.info(
         "Collected %d new articles across %d categories",
         total_collected,

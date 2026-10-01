@@ -211,3 +211,50 @@ The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
 hyphen repairs and one originally exact quote) and rejects one over-budget,
 paraphrased quote. These tests make no model or network calls.
+
+## Durable complete-source editorial path (ADR0004)
+
+The new path is separate from the schema-1 RSS selection experiment above.
+[ADR0004](decisions/0004-durable-editorial-evidence.md) records its decision,
+source-coverage invariants, private evidence storage and release gates.
+
+`python -m digest.editorial_pipeline work` admits every semantically eligible
+collected article before the legacy slot budget and advances saved analysis. The
+execution deadline and request allowance bound a pass; unfinished material remains
+pending. `--output` is a diagnostic output directory, not a production digest
+archive. Use a runner-temporary directory so reports do not become runtime clutter.
+Complete extracted bodies and versioned progress belong in `.cache/editorial/`.
+The report exposes admission/acquisition/completion, oldest pending work, provider
+attempts and possible repeated-event diagnostics. A completed analysis is not proof
+of editorial usefulness; real-output review remains required.
+
+Production ordering is mandatory:
+
+1. Run `work`; persist its state, including normal bounded partial progress.
+2. Run `repair-archives` to repair receipts whose confirmed delivery outlived an
+   archive failure. This command never sends Telegram messages.
+3. Run `prepare`; persist and push the exact delivery reservation.
+4. Only after that push succeeds, run `deliver --attempt <reserved-path>` once.
+   Preserve receipts/state even when some cards fail. Unknown outcomes remain held
+   and are never automatically resent. Existing Telegram transport limits defer
+   ready cards; they do not limit source analysis or classify deferred cards as weak.
+5. Run the existing separately reserved post-delivery Irritator using the emitted
+   source-context checkpoint. Its current bounded RSS/search coverage is explicit;
+   this is not a claim of independent full-article verification.
+6. `independent` advances the other provider's own full-body analysis and archives
+   it. It never consumes the first provider's opinions or repeats primary delivery.
+
+Serialize these commands with the existing runtime concurrency group. A hard runner
+loss before state reaches git can repeat provider work; an already reserved Telegram
+send is held rather than guessed safe to repeat. Do not convert a model timeout,
+inaccessible source or oversized transport payload into editorial rejection.
+
+For a report-only verification, run `work` in an isolated temporary working directory
+with absolute config/state/output paths and without Telegram credentials. The pass
+may write isolated source-health observations but cannot consume production dedup or
+send cards. Keep the full state/body artifact for independent source-based review.
+
+The CLI currently enforces the explicitly approved free-route model lineup shared
+with the trial guard. That is a release safety guard, not a domain claim that the
+product can only ever use those models. A later approved lineup must update and test
+that operational guard; no paid provider is an automatic fallback.
