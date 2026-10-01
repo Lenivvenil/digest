@@ -16,7 +16,9 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
+from typing import Any, Literal
 
 import httpx
 
@@ -240,6 +242,170 @@ def _resolve_routed_providers(
     return role_fallbacks
 
 
+QuotaAxis = Literal["unknown", "requests", "tokens", "requests_per_minute", "requests_per_day",
+                    "tokens_per_minute", "tokens_per_day"]
+QuotaAxisSource = Literal["unknown", "error_quota_axis", "error_type"]
+_NUMERIC_QUOTA_HEADERS = frozenset({
+    "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+})
+_RESET_QUOTA_HEADERS = frozenset({"x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"})
+_KNOWN_ERROR_CODES = frozenset({
+    "model_not_found", "model_decommissioned", "rate_limit_exceeded", "insufficient_quota",
+    "insufficient_balance", "invalid_api_key", "permission_denied", "RESOURCE_EXHAUSTED",
+    "UNAVAILABLE", "NOT_FOUND",
+})
+_QUOTA_AXES: dict[str, QuotaAxis] = {
+    "requests": "requests", "tokens": "tokens", "requests_per_minute": "requests_per_minute",
+    "requests_per_day": "requests_per_day", "tokens_per_minute": "tokens_per_minute",
+    "tokens_per_day": "tokens_per_day", "rpm": "requests_per_minute", "rpd": "requests_per_day",
+    "tpm": "tokens_per_minute", "tpd": "tokens_per_day",
+}
+
+
+@dataclass(frozen=True)
+class RetryTiming:
+    seconds: float
+    format: Literal["seconds", "duration", "http_date"]
+    server_retry_at: str
+
+
+@dataclass(frozen=True)
+class ProviderFailureDiagnostics:
+    status_code: int
+    error_code: str
+    quota_axis: QuotaAxis
+    quota_axis_source: QuotaAxisSource
+    observed_at: str
+    numeric_headers: dict[str, float] = field(default_factory=dict)
+    retry_after: RetryTiming | None = None
+    reset_headers: dict[str, RetryTiming] = field(default_factory=dict)
+
+
+class LLMProviderError(RuntimeError):
+    """The same failure contract, carrying only this call's sanitized diagnostics."""
+
+    def __init__(self, message: str, diagnostics: ProviderFailureDiagnostics | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+def _finite_header_number(value: str) -> float | None:
+    if len(value) > 128:
+        return None
+    try:
+        number = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _header_timing(value: str, observed_at: datetime, *, allow_duration: bool) -> RetryTiming | None:
+    if not value or len(value) > 128:
+        return None
+    value = value.strip()
+    seconds = _finite_header_number(value)
+    kind: Literal["seconds", "duration", "http_date"] = "seconds"
+    if seconds is None and allow_duration:
+        parts = re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h|d)", value)
+        if parts and "".join(number + unit for number, unit in parts) == value:
+            units = {"ms": .001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+            seconds = sum(float(number) * units[unit] for number, unit in parts)
+            kind = "duration"
+    if seconds is not None:
+        if not math.isfinite(seconds) or seconds < 0:
+            return None
+        try:
+            boundary = observed_at + timedelta(seconds=seconds)
+        except (OverflowError, ValueError):
+            return None
+        return RetryTiming(float(seconds), kind, boundary.isoformat())
+    try:
+        boundary = parsedate_to_datetime(value)
+        if boundary.tzinfo is None:
+            return None
+        boundary = boundary.astimezone(UTC)
+        seconds = max(0.0, (boundary - observed_at).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return RetryTiming(seconds, "http_date", boundary.isoformat())
+
+
+def _machine_error(response: httpx.Response) -> dict[str, Any]:
+    # Examine only a bounded response to derive fixed codes; retain no response prose.
+    if len(response.content) > 65536:
+        return {}
+    try:
+        body = response.json()
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        return error if isinstance(error, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _machine_code(error: dict[str, Any]) -> str:
+    for name in ("code", "status", "type"):
+        candidate = error.get(name)
+        if isinstance(candidate, str) and candidate in _KNOWN_ERROR_CODES:
+            return candidate
+    return "unknown"
+
+
+def provider_failure_diagnostics(
+    exc: Exception, observed_at: datetime | None = None,
+) -> ProviderFailureDiagnostics | None:
+    """Allowlisted observations only; they do not change retry policy."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    observed = (observed_at or datetime.now(UTC)).astimezone(UTC)
+    response = exc.response
+    error = _machine_error(response)
+    axis: QuotaAxis = "unknown"
+    source: QuotaAxisSource = "unknown"
+    for name, provenance in (("quota_axis", "error_quota_axis"), ("type", "error_type")):
+        candidate = error.get(name)
+        if isinstance(candidate, str) and candidate.lower() in _QUOTA_AXES:
+            axis = _QUOTA_AXES[candidate.lower()]
+            source = "error_quota_axis" if provenance == "error_quota_axis" else "error_type"
+            break
+    numbers = {}
+    for name in sorted(_NUMERIC_QUOTA_HEADERS):
+        number = _finite_header_number(response.headers.get(name, ""))
+        if number is not None:
+            numbers[name] = number
+    resets = {}
+    for name in sorted(_RESET_QUOTA_HEADERS):
+        timing = _header_timing(response.headers.get(name, ""), observed, allow_duration=True)
+        if timing is not None:
+            resets[name] = timing
+    return ProviderFailureDiagnostics(
+        response.status_code, _machine_code(error), axis, source, observed.isoformat(), numbers,
+        _header_timing(response.headers.get("retry-after", ""), observed, allow_duration=False), resets,
+    )
+
+
+def validate_failure_diagnostics(diagnostic: ProviderFailureDiagnostics) -> None:
+    """Keep loaded checkpoints within the same finite, non-secret vocabulary."""
+    if (not 100 <= diagnostic.status_code <= 599 or diagnostic.error_code not in _KNOWN_ERROR_CODES | {"unknown"}
+            or diagnostic.quota_axis not in set(_QUOTA_AXES.values()) | {"unknown"}
+            or diagnostic.quota_axis_source not in {"unknown", "error_quota_axis", "error_type"}
+            or not set(diagnostic.numeric_headers) <= _NUMERIC_QUOTA_HEADERS
+            or not set(diagnostic.reset_headers) <= _RESET_QUOTA_HEADERS):
+        raise ValueError("Invalid sanitized provider diagnostic.")
+    if datetime.fromisoformat(diagnostic.observed_at).tzinfo is None:
+        raise ValueError("Provider diagnostic timestamp requires timezone.")
+    if any(not math.isfinite(value) or value < 0 for value in diagnostic.numeric_headers.values()):
+        raise ValueError("Provider diagnostic numbers must be finite and nonnegative.")
+    timings = list(diagnostic.reset_headers.values())
+    if diagnostic.retry_after is not None:
+        timings.append(diagnostic.retry_after)
+    for timing in timings:
+        if (not math.isfinite(timing.seconds) or timing.seconds < 0
+                or timing.format not in {"seconds", "duration", "http_date"}
+                or datetime.fromisoformat(timing.server_retry_at).tzinfo is None):
+            raise ValueError("Invalid normalized provider retry timing.")
+
+
 @dataclass
 class _RequestState:
     """Per-config, per-event-loop request limits shared by all pipeline stages."""
@@ -249,6 +415,7 @@ class _RequestState:
     spacing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     next_request_at: float = 0.0
     unavailable_until: dict[tuple[str, str], float] = field(default_factory=dict)
+    failure_diagnostics: dict[tuple[str, str], ProviderFailureDiagnostics] = field(default_factory=dict)
 
 
 def _request_state(config: Any) -> _RequestState:
@@ -301,22 +468,7 @@ def _safe_provider_error(exc: Exception) -> str:
     """Log status and a machine code, never response text, prompts or credentials."""
     if not isinstance(exc, httpx.HTTPStatusError):
         return type(exc).__name__
-    code = "unknown"
-    try:
-        body = exc.response.json()
-        error = body.get("error", {}) if isinstance(body, dict) else {}
-        if isinstance(error, dict):
-            candidate = error.get("code") or error.get("status") or error.get("type")
-            known_codes = {
-                "model_not_found", "model_decommissioned", "rate_limit_exceeded",
-                "insufficient_quota", "insufficient_balance", "invalid_api_key",
-                "permission_denied", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "NOT_FOUND",
-            }
-            if isinstance(candidate, str) and candidate in known_codes:
-                code = candidate
-    except ValueError:
-        pass
-    return f"HTTP {exc.response.status_code} code={code}"
+    return f"HTTP {exc.response.status_code} code={_machine_code(_machine_error(exc.response))}"
 
 
 def _provider_cooldown(state: _RequestState, provider: Any, exc: Exception) -> None:
@@ -379,6 +531,7 @@ async def complete(
     interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
     max_wait = getattr(config.llm, "retry_max_wait_seconds", 60.0)
     last_error = "providers unavailable or credentials missing"
+    last_diagnostics: ProviderFailureDiagnostics | None = None
     async with state.semaphore, httpx.AsyncClient() as client:
         for provider in providers:
             if state.unavailable_until.get((provider.name, provider.model), 0) > time.monotonic():
@@ -390,6 +543,7 @@ async def complete(
                 if state.unavailable_until.get((provider.name, provider.model), 0) > time.monotonic():
                     break
                 t0 = time.monotonic()
+                state.failure_diagnostics.pop((provider.name, provider.model), None)
                 try:
                     result = await _call_provider(client, provider, messages, temperature, max_output_tokens)
                     if result is None:
@@ -405,17 +559,27 @@ async def complete(
                     return text, usage
                 except (httpx.HTTPError, ValueError) as exc:
                     last_error = _safe_provider_error(exc)
+                    last_diagnostics = provider_failure_diagnostics(exc)
+                    if last_diagnostics is not None:
+                        state.failure_diagnostics[(provider.name, provider.model)] = last_diagnostics
                     _provider_cooldown(state, provider, exc)
                     logger.warning(
                         "Provider %s/%s failed for role %s: %s",
                         provider.name, provider.model, role.value, last_error,
                     )
+                    if last_diagnostics is not None:
+                        logger.info(
+                            "Provider quota observations: axis=%s retry_after=%s resets=%s numeric_headers=%s",
+                            last_diagnostics.quota_axis, last_diagnostics.retry_after,
+                            last_diagnostics.reset_headers, last_diagnostics.numeric_headers,
+                        )
                     delay = _retry_delay(exc, attempt, max_wait)
                     if attempt >= retries or delay is None:
                         break
                     logger.info("Retrying %s in %.1fs", provider.name, delay)
                     await asyncio.sleep(delay)
-    raise RuntimeError(f"All providers failed for role '{role.value}'. Last error: {last_error}")
+    raise LLMProviderError(f"All providers failed for role '{role.value}'. Last error: {last_error}",
+                           last_diagnostics)
 
 
 def _extract_json(text: str) -> Any:

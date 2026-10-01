@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from digest._util import atomic_json_write
 from digest.config import Config
+from digest.llm import ProviderFailureDiagnostics, validate_failure_diagnostics
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 
@@ -118,6 +119,7 @@ class Attempt:
     usage: dict[str, int] = field(default_factory=dict)
     response_sha256: str | None = None
     rejected_output: str | None = None
+    provider_diagnostics: ProviderFailureDiagnostics | None = None
 
 
 @dataclass
@@ -385,7 +387,10 @@ def _decode(value: Any, expected: Any, depth: int = 0) -> Any:
             raise ValueError("Expected editorial mapping.")
         return {_decode(key, args[0], depth + 1): _decode(item, args[1], depth + 1) for key, item in value.items()}
     if is_dataclass(expected):
-        if not isinstance(value, dict) or set(value) != {item.name for item in fields(expected)}:
+        names = {item.name for item in fields(expected)}
+        if (not isinstance(value, dict) or set(value) - names
+                or (names - set(value) and not (
+                    expected is Attempt and names - set(value) == {"provider_diagnostics"}))):
             raise ValueError("Unknown editorial dataclass fields.")
         hints = get_type_hints(expected)
         values = {}
@@ -517,6 +522,11 @@ def validate_state(state: EditorialState, state_dir: Path) -> None:
     for identity, article in state.articles.items():
         if identity != article.article_id or article_hash(article.title, article.url) != identity:
             raise ValueError("Editorial article identity mismatch.")
+        attempts = article.acquisition_attempts + [attempt for generation in article.generations.values()
+                                                    for attempt in generation.attempts]
+        for attempt in attempts:
+            if attempt.provider_diagnostics is not None:
+                validate_failure_diagnostics(attempt.provider_diagnostics)
         if article.body_sha256 is None:
             if article.chunks or article.generations:
                 raise ValueError("Unacquired article contains analysis.")

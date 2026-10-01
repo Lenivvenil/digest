@@ -466,3 +466,176 @@ async def test_review_retains_empty_output_exhaustion_for_resumable_processing(
     assert text == ""
     assert usage["finish_reason"] in {"length", "MAX_TOKENS"}
     assert usage["completion_tokens"] == 2000
+
+
+# ---------------------------------------------------------------------------
+# Bounded, synthetic provider-failure observability regressions
+# ---------------------------------------------------------------------------
+
+
+def test_failure_diagnostics_parse_finite_headers_and_duration_resets() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from digest.llm import provider_failure_diagnostics
+
+    observed = datetime(2026, 10, 1, 5, tzinfo=UTC)
+    response = httpx.Response(429, headers={
+        "retry-after": "12.5",
+        "x-ratelimit-limit-requests": "30",
+        "x-ratelimit-limit-tokens": "6000",
+        "x-ratelimit-remaining-requests": "0",
+        "x-ratelimit-remaining-tokens": "125.5",
+        "x-ratelimit-reset-requests": "1m30s",
+        "x-ratelimit-reset-tokens": "2h3m",
+        "x-request-id": "SECRET_IGNORED_HEADER",
+    }, json={"error": {"code": "rate_limit_exceeded"}},
+        request=httpx.Request("POST", "https://example.com"))
+    error = httpx.HTTPStatusError("limited", request=response.request, response=response)
+    diagnostics = provider_failure_diagnostics(error, observed_at=observed)
+    assert diagnostics is not None
+    assert diagnostics.status_code == 429
+    assert diagnostics.error_code == "rate_limit_exceeded"
+    assert diagnostics.quota_axis == "unknown"
+    assert diagnostics.quota_axis_source == "unknown"
+    assert datetime.fromisoformat(diagnostics.observed_at) == observed
+    assert diagnostics.numeric_headers == {
+        "x-ratelimit-limit-requests": 30.0,
+        "x-ratelimit-limit-tokens": 6000.0,
+        "x-ratelimit-remaining-requests": 0.0,
+        "x-ratelimit-remaining-tokens": 125.5,
+    }
+    assert diagnostics.retry_after is not None
+    assert diagnostics.retry_after.seconds == 12.5
+    assert diagnostics.retry_after.format == "seconds"
+    assert datetime.fromisoformat(diagnostics.retry_after.server_retry_at) == observed + timedelta(seconds=12.5)
+    assert set(diagnostics.reset_headers) == {"x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"}
+    for name, seconds in [("x-ratelimit-reset-requests", 90.0), ("x-ratelimit-reset-tokens", 7380.0)]:
+        timing = diagnostics.reset_headers[name]
+        assert timing.seconds == seconds
+        assert timing.format == "duration"
+        assert datetime.fromisoformat(timing.server_retry_at) == observed + timedelta(seconds=seconds)
+
+
+@pytest.mark.parametrize("axis_field", ["quota_axis", "type"])
+def test_failure_diagnostics_parse_http_date_and_explicit_machine_axis(axis_field: str) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from digest.llm import provider_failure_diagnostics
+
+    observed = datetime(2026, 10, 1, 5, tzinfo=UTC)
+    response = httpx.Response(429, headers={
+        "retry-after": "Thu, 01 Oct 2026 05:02:00 GMT",
+        "x-ratelimit-reset-requests": "90",
+    }, json={"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", axis_field: "tokens_per_minute"}},
+        request=httpx.Request("POST", "https://example.com"))
+    error = httpx.HTTPStatusError("limited", request=response.request, response=response)
+    diagnostics = provider_failure_diagnostics(error, observed_at=observed)
+    assert diagnostics is not None
+    assert diagnostics.quota_axis == "tokens_per_minute"
+    assert diagnostics.error_code == "RESOURCE_EXHAUSTED"
+    assert diagnostics.quota_axis_source == f"error_{axis_field}"
+    assert diagnostics.retry_after is not None
+    assert diagnostics.retry_after.seconds == 120.0
+    assert diagnostics.retry_after.format == "http_date"
+    assert datetime.fromisoformat(diagnostics.retry_after.server_retry_at) == observed + timedelta(seconds=120)
+    reset = diagnostics.reset_headers["x-ratelimit-reset-requests"]
+    assert reset.seconds == 90.0
+    assert reset.format == "seconds"
+
+
+def test_failure_diagnostics_drop_nonfinite_malformed_and_arbitrary_secrets() -> None:
+    import json
+    from dataclasses import asdict
+    from datetime import UTC, datetime
+
+    from digest.llm import provider_failure_diagnostics
+
+    request = httpx.Request("POST", "https://example.com/?key=SECRET_QUERY",
+                           headers={"Authorization": "Bearer SECRET_API_KEY"}, content="SECRET_PROMPT")
+    response = httpx.Response(429, headers={
+        "retry-after": "NaN",
+        "x-ratelimit-limit-requests": "NaN",
+        "x-ratelimit-limit-tokens": "inf",
+        "x-ratelimit-remaining-requests": "-inf",
+        "x-ratelimit-remaining-tokens": "SECRET_HEADER",
+        "x-ratelimit-reset-requests": "1e309s",
+        "x-ratelimit-reset-tokens": "1mSECRET_RESET",
+        "authorization": "SECRET_RESPONSE_HEADER",
+    }, json={"error": {
+        "code": "SECRET_CODE", "quota_axis": "SECRET_AXIS", "type": "SECRET_TYPE",
+        "message": "Daily request quota exhausted: SECRET_RESPONSE_BODY",
+    }}, request=request)
+    error = httpx.HTTPStatusError("SECRET_EXCEPTION", request=request, response=response)
+    diagnostics = provider_failure_diagnostics(error, observed_at=datetime(2026, 10, 1, 5, tzinfo=UTC))
+    assert diagnostics is not None
+    assert diagnostics.error_code == "unknown"
+    assert diagnostics.quota_axis == "unknown"
+    assert diagnostics.quota_axis_source == "unknown"
+    assert diagnostics.numeric_headers == {}
+    assert diagnostics.reset_headers == {}
+    assert diagnostics.retry_after is None
+    serialized = json.dumps(asdict(diagnostics), allow_nan=False)
+    assert "SECRET" not in serialized
+    assert "Daily request" not in serialized
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_failure_diagnostics_survive_exhaustion_without_changing_retries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from dataclasses import asdict
+    from unittest.mock import AsyncMock
+
+    from digest.llm import LLMProviderError, _request_state
+
+    caplog.set_level("INFO", logger="digest.llm")
+    config = _make_config([{"name": "groq", "model": "fixture", "role": ["summarize"]}])
+    config.llm.max_retries = 1
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=[
+        httpx.Response(503, headers={"retry-after": "3"}, json={"error": {"code": "UNAVAILABLE"}}),
+        httpx.Response(429, headers={
+            "retry-after": "3600",
+            "x-ratelimit-remaining-requests": "0",
+            "x-ratelimit-remaining-tokens": "250",
+            "x-request-id": "SECRET_RESPONSE_HEADER",
+        }, json={"error": {"code": "rate_limit_exceeded", "message": "SECRET_RESPONSE_BODY"}}),
+    ])
+    state = _request_state(config)
+    key = ("groq", "fixture")
+    with (
+        patch.dict("os.environ", {"GROQ_API_KEY": "SECRET_API_KEY"}),
+        patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
+    ):
+        with pytest.raises(RuntimeError, match="HTTP 429 code=rate_limit_exceeded") as failed:
+            await complete(LLMRole.SUMMARIZE, [{"role": "user", "content": "SECRET_PROMPT"}], config)
+        saved = state.failure_diagnostics[key]
+        assert isinstance(failed.value, LLMProviderError)
+        assert failed.value.diagnostics is saved
+        assert saved.status_code == 429
+        assert saved.error_code == "rate_limit_exceeded"
+        assert saved.quota_axis == "unknown"
+        assert saved.retry_after is not None
+        assert saved.retry_after.seconds == 3600.0
+        assert route.call_count == 2
+        sleep.assert_awaited_once_with(3.0)
+        assert "SECRET" not in str(asdict(saved)) + str(failed.value) + caplog.text
+
+        # A skipped cooldown preserves the last actual response for inspection.
+        with pytest.raises(LLMProviderError, match="All providers failed") as skipped:
+            await complete(LLMRole.SUMMARIZE, [], config)
+        assert skipped.value.diagnostics is None
+        assert state.failure_diagnostics[key] is saved
+        assert route.call_count == 2
+        sleep.assert_awaited_once_with(3.0)
+
+        # A new non-HTTP failure must not inherit the old response diagnostics.
+        state.unavailable_until[key] = 0.0
+        config.llm.max_retries = 0
+        route.mock(side_effect=httpx.ConnectError("SECRET_TRANSPORT_ERROR"))
+        with pytest.raises(LLMProviderError, match="ConnectError") as transport_failed:
+            await complete(LLMRole.SUMMARIZE, [], config)
+        assert transport_failed.value.diagnostics is None
+    assert route.call_count == 3
+    assert key not in state.failure_diagnostics
+    assert "SECRET" not in caplog.text

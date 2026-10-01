@@ -893,3 +893,20 @@ def test_empty_optional_metadata_remains_valid_in_completed_cache(tmp_path: Path
     editorial.store_state(state, tmp_path)
     result = editorial.ready_results(editorial.load_state(tmp_path), fixture_config())[0]
     assert result.value_rationale == result.event_key == ""
+
+
+def test_prior_attempt_checkpoint_defaults_only_new_provider_diagnostics(tmp_path: Path) -> None:
+    state, article, generation = _ready_state(tmp_path)
+    generation.attempts = [Attempt("old-failed-call", "final", "old-task", "old-prompt", NOW, "failed", "RuntimeError")]
+    payload = asdict(state)
+    raw_attempt = payload["articles"][article.article_id]["generations"][generation.generation_id]["attempts"][0]
+    del raw_attempt["provider_diagnostics"]
+    _write_payload(tmp_path, payload)
+    loaded = editorial.load_state(tmp_path)
+    assert loaded == state and loaded.articles[article.article_id].generations[generation.generation_id].attempts[
+        0
+    ].provider_diagnostics is None
+    del raw_attempt["status"]
+    _write_payload(tmp_path, payload)
+    with pytest.raises(ValueError):
+        editorial.load_state(tmp_path)

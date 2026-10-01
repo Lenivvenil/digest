@@ -1550,3 +1550,34 @@ async def test_minimum_segment_token_exhaustion_stays_technical_pending_without_
     assert resumed.summary.stop_reason == "no_runnable_work"
     assert len(resumed.state.articles) == 1 and len(offline.fetches) == 1
     assert state_api.load_state(tmp_path) == resumed.state
+
+
+async def test_server_quota_diagnostic_is_safe_and_separate_from_policy_cooldown(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    import httpx
+
+    from digest.llm import LLMProviderError, provider_failure_diagnostics
+
+    observed = datetime.now(UTC)
+    response = httpx.Response(
+        429, headers={"retry-after": "120", "x-ratelimit-limit-tokens": "8000",
+                      "x-ratelimit-reset-tokens": "2m", "x-private": "SECRET_HEADER"},
+        json={"error": {"code": "rate_limit_exceeded", "message": "SECRET_BODY"}},
+        request=httpx.Request("POST", "https://example.com", headers={"Authorization": "SECRET_KEY"}),
+    )
+    error = httpx.HTTPStatusError("SECRET_EXCEPTION", request=response.request, response=response)
+    diagnostic = provider_failure_diagnostics(error, observed_at=observed)
+    assert diagnostic and diagnostic.retry_after
+    offline.response = lambda call, answer: LLMProviderError("safe provider failure", diagnostic)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    attempt = generation.attempts[0]
+    assert attempt.provider_diagnostics == diagnostic
+    assert attempt.error == "HTTP 429 code=rate_limit_exceeded quota_axis=unknown"
+    assert diagnostic.retry_after.seconds == 120
+    assert generation.blocked_until and attempt.retry_at == generation.blocked_until
+    assert (datetime.fromisoformat(generation.blocked_until)
+            > datetime.fromisoformat(diagnostic.retry_after.server_retry_at))
+    saved = (tmp_path / "state.json").read_text()
+    assert "SECRET" not in saved and state_api.load_state(tmp_path) == result.state

@@ -225,8 +225,12 @@ pending. `--output` is a diagnostic output directory, not a production digest
 archive. Use a runner-temporary directory so reports do not become runtime clutter.
 Complete extracted bodies and versioned progress belong in `.cache/editorial/`.
 The report exposes admission/acquisition/completion, oldest pending work, provider
-attempts and possible repeated-event diagnostics. A completed analysis is not proof
-of editorial usefulness; real-output review remains required.
+attempts and possible repeated-event diagnostics. Failed provider attempts retain
+only allowlisted numeric quota observations and normalized server retry/reset
+boundaries, with their provenance. These are separate from the worker's policy
+cooldown; an unknown quota dimension stays unknown. Raw error prose, request headers
+and credentials are not retained by this diagnostic contract. A completed analysis
+is not proof of editorial usefulness; real-output review remains required.
 
 The complete-source path uses deterministic numbered source spans, resolved by the
 engine to unchanged body offsets. Models reference those IDs rather than transcribe

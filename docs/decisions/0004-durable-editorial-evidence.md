@@ -190,6 +190,52 @@ refinement is part of #55; it does not establish successful editorial quality or
 sustainable processing capacity before real evaluation. Detailed runtime evaluation
 artifacts remain private; public tests use synthetic examples.
 
+## Selection obligation clarification — proposal, not implemented
+
+The original [README](../../README.md#адаптивное-управление-источниками) describes
+source allocation and a learning information diet. The
+[completed product plan](../plans/completed/digest.md#task-3-llm-summarization-with-multi-provider-support) calls for
+selecting significant news and skipping irrelevant items; the later
+[#55 plan](../../plan.md) distinguishes category analysis from selected article
+cards. These sources establish editorial selection, not an obligation to perform
+exhaustive full-text LLM analysis of every fetched RSS entry. Their historical
+fixed item counts do not supersede the owner's subsequent rejection of artificial
+article-count or article-length selection limits.
+
+The initial worker implementation routes every admitted candidate toward complete
+analysis. That is an implementation assumption, not an additional owner requirement.
+A durable queue alone does not make that assumption sustainable: if admitted work
+arrives faster than complete analysis, its age grows indefinitely.
+
+The proposed clarification is to separate a visible candidate inventory from a
+traceable content-based reading decision. Metadata/RSS may support prioritisation,
+obvious topic mismatch or duplicate-event detection, but cannot prove the quality
+or factual content of an unread original. Such a decision must identify its evidence
+basis and uncertainty; it must not masquerade as a completed full-text rejection.
+Sparse descriptions or ambiguous relevance need further source evidence rather than
+an automatic negative verdict. The decision criteria must distinguish relevance and
+significance, novelty relative to already delivered material, and source diversity.
+A shared topic alone is not a duplicate event or evidence that a contrary account
+adds no information. Evaluation must audit missed valuable items as well as selected
+items, including long material and low-volume sources.
+
+Every published substantive card still requires complete source analysis and a
+faithfulness check. No first-K packet, fixed card quota, article-length preference,
+or quota-derived irrelevance label is permitted. A budget delay remains pending;
+it cannot be renamed as content-based exclusion. Selection decisions do not consume
+delivery deduplication and must remain reconsiderable when their evidence or policy
+changes. Existing source-feedback and discovery intent remains relevant, without
+silently implementing their separately queued repairs here.
+
+Before adopting this clarification, review its concrete decision criteria and
+traceability against D-01–D-06, then measure total work: candidate selection, selected
+full-text processing, verification, independent views and external counter-signals.
+Provider-specific request limits and actual wall time must support the observed
+workload within the existing zero-incremental-spend environment. A single feed-date
+snapshot is not a measured arrival rate. Neither more runner time nor a larger
+context window alone establishes sustainable free execution. This section authorizes
+no schedule change or automatic-card rollout by itself.
+
 ## Verification and release gates
 
 - Deterministic tests: complete chunk coverage and boundaries; body/prompt/model hash

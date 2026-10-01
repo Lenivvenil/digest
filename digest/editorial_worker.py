@@ -47,7 +47,7 @@ from digest.editorial_state import (
     store_state,
     utc_now,
 )
-from digest.llm import LLMRole, _extract_json, complete
+from digest.llm import LLMProviderError, LLMRole, _extract_json, complete
 from digest.radar.collector import Article
 from digest.review import _rejected_output_diagnostics
 
@@ -666,6 +666,10 @@ async def _run_task(task: Task, generation: Generation, body: str, state: Editor
         if response_received:
             reason, attempt.rejected_output, _ = _rejected_output_diagnostics(text, exc)
             attempt.error += ": " + (str(exc) if isinstance(exc, EditorialValidationError) else reason)
+        if not response_received and isinstance(exc, LLMProviderError) and exc.diagnostics is not None:
+            attempt.provider_diagnostics = exc.diagnostics
+            attempt.error = (f"HTTP {exc.diagnostics.status_code} code={exc.diagnostics.error_code} "
+                             f"quota_axis={exc.diagnostics.quota_axis}")
         generation.last_error = attempt.error
         cooldown = FAILURE_COOLDOWN_SECONDS
         runtime = getattr(single.llm, "_runtime", None)
