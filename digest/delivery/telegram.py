@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 import httpx
 
+from digest.delivery.supplement import signal_text, split_supplement
+
 logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
@@ -23,18 +25,18 @@ _LABELS = {
         "feedback_enabled": "Feedback is collected on pipeline runs",
         "feedback_disabled": "Feedback collection is disabled",
         "irritator": "Irritator",
-        "challenges": "Challenges",
     },
     "ru": {
         "feedback_enabled": "Реакции собираются при запусках дайджеста",
         "feedback_disabled": "Сбор реакций отключён",
         "irritator": "Раздражатор",
-        "challenges": "Оспаривает",
     },
 }
 _SPLIT_LIMIT = 3800
 _MAX_MESSAGE_LEN = 4096
 _MAX_RETRIES = 3
+# Supplement-only total dispatch cap; primary sender and retry policy stay unchanged.
+_SUPPLEMENT_DISPATCH_SECONDS = 30.0 * _MAX_RETRIES
 
 # Private Use Area sentinels for safe markdown conversion
 _BOLD_OPEN = "\ue000"
@@ -332,38 +334,27 @@ async def send_counter_signals(
     if not ranked_signals:
         if irritator_status is not None:
             prefix = f"💢 {_labels(config)['irritator']}: "
-            status_text = escape_markdownv2(prefix + irritator_status.text)
+            chunks = split_supplement(prefix + irritator_status.text, escape_markdownv2)
             disable_notification = irritator_status.level != "error"
-            async with httpx.AsyncClient() as client:
-                await _send_chunk(
-                    client, api_url, chat_id, status_text,
-                    disable_notification=disable_notification,
-                )
+            async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
+                for chunk in chunks:
+                    await _send_chunk(
+                        client, api_url, chat_id, chunk,
+                        disable_notification=disable_notification,
+                    )
             logger.info("Irritator status sent to Telegram: %s", irritator_status.text)
         return False
 
     labels = _labels(config)
-    header = f"💢🔥 *{labels['irritator'].upper()}* 🔥💢"
-    lines = [f"{header}\n"]
-    for r in ranked_signals:
-        title = escape_markdownv2(r.signal.title)
-        url = r.signal.url.replace("\\", "\\\\").replace(")", "\\)")
-        reasoning = escape_markdownv2(r.reasoning)
-        narrative = escape_markdownv2(r.narrative_claim[:80])
-        lines.append(
-            f"\u26a1 *\\[{r.score}/10\\]* [{title}]({url})\n"
-            f"→ {labels['challenges']}: «{narrative}»\n"
-            f"_{reasoning}_\n"
-        )
+    language = getattr(getattr(config, "radar", None), "language", "en")
+    text = "\n\n".join([
+        f"💢🔥 {labels['irritator'].upper()} 🔥💢",
+        *(signal_text(ranked, language) for ranked in ranked_signals),
+    ])
+    chunks = split_supplement(text, escape_markdownv2)
 
-    text = "\n".join(lines)
-    md2 = to_markdownv2(text)
-    chunks = split_message(md2)
-
-    async with httpx.AsyncClient() as client:
+    async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
         for chunk in chunks:
-            if len(chunk) > _MAX_MESSAGE_LEN:
-                chunk = chunk[: _MAX_MESSAGE_LEN - 1] + "\u2026"
             await _send_chunk(client, api_url, chat_id, chunk)
 
     logger.info("Counter-signals sent to Telegram (%d signals)", len(ranked_signals))

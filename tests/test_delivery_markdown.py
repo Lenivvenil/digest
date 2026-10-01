@@ -58,7 +58,7 @@ class TestBuildCounterSignalsSection:
     def test_single_signal(self) -> None:
         result = _build_counter_signals_section([_make_ranked_signal()])
         assert "Counter-Signals" in result
-        assert "[Counter evidence]" in result
+        assert "Counter evidence" in result
         assert "https://example.com/a" in result
         assert "8/10" in result
 
@@ -71,12 +71,11 @@ class TestBuildCounterSignalsSection:
         assert "Signal A" in result
         assert "Signal B" in result
 
-    def test_narrative_claim_truncated(self) -> None:
-        result = _build_counter_signals_section([_make_ranked_signal()])
-        # narrative_claim is "AI is perfect" * 20 = 260 chars, truncated to 100
-        lines = result.split("\n")
-        narrative_lines = [line for line in lines if "Narrative:" in line]
-        assert len(narrative_lines) == 1
+    def test_full_narrative_claim_preserved(self) -> None:
+        signal = _make_ranked_signal()
+        result = _build_counter_signals_section([signal])
+        assert signal.narrative_claim in result
+        assert signal.reasoning in result
 
 
 # ---------------------------------------------------------------------------
