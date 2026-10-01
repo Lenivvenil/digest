@@ -20,8 +20,11 @@ Markdown and Telegram pipeline. It defaults to false for existing configurations
    versions are retained when available; otherwise the report says unknown.
 5. Validate every selection: known unique evidence ID, bounded reason text,
    controlled confidence label, and a nonempty exact quote from supplied title
-   or excerpt. Invalid entries invalidate the entire response. An empty selection
-   needs an explicit limitation, distinguishing abstention from malformed output.
+   or excerpt. Once the complete response envelope passes validation, invalid
+   entries are rejected individually. Accepted entries may be delivered with
+   `partial` status; malformed envelopes, excessive counts or invalid limitations
+   still reject the whole response. An empty original selection needs an explicit
+   limitation, distinguishing abstention from malformed output.
 6. Compare selected IDs using Jaccard overlap. If both results are valid and
    overlap is below the configured threshold, optionally call a third model on
    the same complete evidence bundle and same prompt, still without prior answers.
@@ -99,7 +102,7 @@ without silently retrying a model or guessing what its first response contained.
 
 Resume keeps the exact saved RSS evidence, verifies its content hash and budgets,
 and does not collect sources or touch production dedup state. Only successful
-`ok`/`abstained` slots whose provider, model, evidence hash and current prompt hash
+`ok`/`partial`/`abstained` slots whose provider, model, evidence hash and current prompt hash
 match are reused. Their selection contract is revalidated before any request.
 Missing or failed slots are attempted once; changed prompts/models invalidate
 reuse. Output must be fresh and cannot replace the original checkpoint. Reports
@@ -113,6 +116,11 @@ When the primary is unavailable or invalid, a successful secondary selection can
 lead the digest. Cards identify the actual provider/model and explicitly mark an
 incomplete independent comparison. A primary's valid abstention is respected;
 it is not silently replaced. Reusing a result never creates another opinion.
+
+Partial cached reviews retain their rejected-item diagnostics and remain incomplete.
+Accepted entries are strictly revalidated, with no typography repair at resume
+time. A partial slot is reused rather than charged again; partial comparisons do
+not produce overlap/disagreement claims or trigger a third model.
 
 The trial CLI is a manual, report-only recovery boundary. The separate
 `digest.review_resume` production command provides prepare/execute phases for the
@@ -136,15 +144,16 @@ Telegram delivery checks and dedup rules still apply. The skipped analysis is
 explicitly logged; the default `false` preserves the existing full pipeline.
 
 This flag changes orchestration only, not the evidence bundle, review prompt,
-prompt hash, or cached-review validity. It reduces model work to the two blind
-slots plus an optional disagreement slot, before configured retries. It does not
-guarantee provider availability or a completed comparison.
+prompt hash, or cached-review validity. It makes one primary request and at most
+one secondary fallback, with no retries, before delivering and archiving. It does
+not guarantee provider availability or a completed comparison.
 
 ## Primary-first runtime with preserved Irritator
 
 The explicit `review.review_led_only: true` mode now delivers the primary
 selection first. It makes one primary request, or one secondary fallback only
-when the primary is unavailable/invalid. A valid abstention is respected. The
+when the primary is unavailable/invalid. Partial validated selections are
+deliverable without fallback; a valid abstention is respected. The
 independent opinion is marked pending, not counted as complete. Original evidence
 and prompts remain the same. The primary command emits `review_checkpoint` to
 GitHub Actions only after confirmed required delivery and state saves succeed.
@@ -179,3 +188,26 @@ and the runtime leaves a 65-second gap before each follow-up phase. Real free-ti
 limits remain account-specific; a quota failure produces an incomplete archive,
 not a paid fallback. Successful primary delivery does not imply successful
 optional analysis; inspect the separate follow-up job reports.
+
+## Partial selection recovery and narrow typography repair
+
+The live-response validator keeps independently valid items when their siblings
+fail. The JSON sidecar records `rejected_items` with the zero-based response index,
+a known evidence ID only when available, and a safe validator reason. A response
+with both accepted and rejected entries is `partial`; one with no accepted entries
+remains `invalid`. The original bounded, credential-redacted response and its
+original SHA-256 are retained for diagnosis. No citation is synthesized.
+
+Quotes remain literal excerpts from the supplied title or RSS text. The only
+allowed live-response repair aligns ASCII `-`, U+2010 HYPHEN and U+2011
+NON-BREAKING HYPHEN, each a single character. The validator retrieves the actual
+source substring at the same indices and stores that exact text, recording
+`typography_normalized: true` on the accepted selection. The 200-character limit
+is checked before any repair. Semantic minus U+2212, dashes, ellipses, case,
+whitespace, paraphrases and Unicode compatibility transformations are not
+normalized. Checkpoint reuse requires the saved quote to match source text exactly.
+
+The captured public-RSS regression fixture in
+`tests/fixtures/partial_review.json` yields four accepted entries (three narrow
+hyphen repairs and one originally exact quote) and rejects one over-budget,
+paraphrased quote. These tests make no model or network calls.
