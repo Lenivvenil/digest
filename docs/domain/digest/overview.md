@@ -1,6 +1,171 @@
 # Bounded Context: Digest
 
-_Discovered: 2026-04-26. Updated: 2026-04-28. Post-interview sections added from code._
+_Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconciliation: 2026-10-01, issue #55._
+
+## Decision and evidence register — 2026-10-01
+
+This is the existing canonical Digest domain page, not a new architecture proposal.
+As of 2026-10-01, the work order is [#91](https://github.com/Lenivvenil/digest/issues/91); editorial
+quality [#55](https://github.com/Lenivvenil/digest/issues/55) is the sole active item.
+Feedback #48 and source contracts #77 remain queued. No code change is approved
+by the existence of this register.
+
+### Product intent comes before the latest implementation
+
+The [README](../../../README.md) remains the product entry point. Its dated setup
+examples are not a reason to discard its product concept:
+
+- **Radar and useful reading:** a personal, category-aware analytical news digest
+  for a technology architect, delivered to Telegram and retained in Obsidian.
+  [Analytical/detailed formats](../../../README.md#формат-дайджеста) include genuinely
+  different Optimist, Skeptic and Realist reasoning for significant topics; the
+  brief style deliberately omits those perspectives. Important cross-cutting
+  trends are part of the analytical intent, not interchangeable vendor headlines.
+- **A learning information diet:** [article votes](../../../README.md#обратная-связь-и-адаптивная-система)
+  change source allocation, and [source discovery](../../../README.md#автоматическое-обнаружение-источников)
+  uses explicit operator approval and trials. Visible buttons without a working
+  influence path violate this concept; they do not redefine it.
+- **Bubble breaking:** the later [Irritator domain](../irritator/overview.md#purpose)
+  extends this concept with external material that challenges, contradicts or
+  complicates dominant narratives. This purpose is documented there and in #53;
+  it is not claimed to appear in the older README's architecture diagram.
+- **Operational setting:** GitHub Actions, a minimal deterministic Python layer,
+  multiple LLM providers, Telegram and a Markdown archive. A recent recovery
+  shortcut must not silently turn this product into a generic RSS card sender.
+
+The October primary-first recovery changes execution order and failure isolation.
+It does **not** establish that category analysis, trends, meaningful perspectives,
+feedback adaptation or counter-signals have ceased to matter. Where the review-led
+path omits an existing capability, record the gap and obtain a deliberate product
+resolution; do not rewrite the README to legitimize the omission.
+
+### How to read authority and status
+
+- **Owner requirement**: an explicit operator direction. The current October
+  directions below supersede conflicting *implementation proposals*, not history.
+- **Historical decision/plan**: a recorded rationale, with its original scope and
+  status. A merged implementation is not evidence that its output met the product goal.
+- **Implementation observation**: behavior verified in the linked commit. It is
+  neither a new requirement nor permission to preserve a defect.
+- **Open/rejected proposal**: must not become an invariant, acceptance criterion,
+  or deployed behavior without the missing decision.
+
+This distinction implements [Principles §2–4](../../principles.md), especially
+operator ownership of the domain and knowledge recoverable from the repository.
+
+### Current owner requirements and acceptance traces
+
+The October owner directions are recorded here as requirements, not as an
+endorsement of any particular queue, chunking method, model, or card quota.
+Their issue-level review surface is #55 and its linked work order #91.
+
+| ID | Owner requirement | Source and rationale | Acceptance / current state |
+|---|---|---|---|
+| D-01 | Remain a zero-incremental-spend experiment; do not depend exclusively on one model vendor | October owner direction; original [project plan](../../plans/completed/digest.md#plan-daily-news-digest) already requires free hosting/no VPS/no payment | Provider availability, rate quota, context size and output allowance are separate operational constraints. No paid fallback is authorized by this requirement. Current blind review is implemented; two valid independent opinions on one real bundle remain unverified (#91). |
+| D-02 | A Russian digest must add a specific non-obvious insight, with evidence, limitations and a reason to read the original | [#55](https://github.com/Lenivvenil/digest/issues/55); historical [PR73](https://github.com/Lenivvenil/digest/pull/73) already targeted information gain rather than headline repetition | The [three-source sample](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922127576) received only provisional positive feedback, [recorded here](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922207102). It is not a final gold standard, a fixed template, or a three-card quota. |
+| D-03 | Full source material must support the analysis; provider limits must not silently turn into editorial rejection of longer articles | October owner rejection of the proposed max-three/shared-input-budget policy, tracked under #55 | No article may be labelled uninteresting merely because it is long or a quota is exhausted. Pending/inaccessible/technically incomplete evidence must be distinguished from a completed editorial rejection. The mechanism is not yet decided or implemented. |
+| D-04 | Preserve the Irritator's genuine external counter-signal function while primary delivery remains independent of optional-stage failure | Owner-approved primary-first recovery; [PR89](https://github.com/Lenivvenil/digest/pull/89); historical [#53](https://github.com/Lenivvenil/digest/issues/53) defines the unmet core value | Search, provenance, ranking and honest incomplete status must survive editorial changes. A successful supplementary API send does not prove a useful contradiction was found. Source repairs remain #77. |
+| D-05 | Telegram is the required primary destination; archived evidence and delivery state must remain truthful and replay-safe | Owner-approved recovery, [PR88](https://github.com/Lenivvenil/digest/pull/88), [PR89](https://github.com/Lenivvenil/digest/pull/89), [PR90](https://github.com/Lenivvenil/digest/pull/90) | Only confirmed card delivery consumes its dedup identity. Footer-only output, an archived report or a green workflow is not proof of a useful delivered digest. |
+| D-06 | Changes must preserve accumulated domain analysis and follow one visible issue at a time | Current owner direction; [Principles §4 and Definition of Done](../../principles.md); [#91](https://github.com/Lenivvenil/digest/issues/91) | Link requirement/source → decision/rationale → issue acceptance → change → verification before resuming implementation. Existing documents and issues are updated, not replaced by parallel sources of truth. |
+
+### Historical decisions that must not be rediscovered
+
+| Record | What it established | Scope, implementation and remaining evidence gap |
+|---|---|---|
+| [Original completed plan](../../plans/completed/digest.md), Tasks 1–3 | Free GitHub Actions, minimal Python dependencies, multiple provider adapters; RSS descriptions capped at 500 characters | This is the original implementation baseline. It did not establish full-article analysis or a permanent editorial rule to prefer short material. Its old model names and quota numbers are historical, not current provider documentation. |
+| [March 21 truncation fix](https://github.com/Lenivvenil/digest/commit/764b771d026e9a7e4407f148644e89e25d2fe39d) | Replaced silent use of Gemini MAX_TOKENS output with an explicit truncation failure | Token constraints and incomplete-output handling were known before this rehabilitation. Raising a context/output setting is not evidence that throughput quotas permit the request. |
+| [#63](https://github.com/Lenivvenil/digest/issues/63) (April 28) | Parallel Lobsters fan-out produced 429s and some 400s; spacing/backoff was a known investigation path | An observed rate failure, not approval to weaken the editorial goal or a verified adapter fix. #77 retains the unresolved contract work. |
+| [#84](https://github.com/Lenivvenil/digest/issues/84), [PR85](https://github.com/Lenivvenil/digest/pull/85) (June 9) | DeepSeek 402, Gemini 429/503 and partial Groq failures caused a cascade; raw-feed fallback produced 61 messages | The raw-card fallback was removed. Free-provider failure was a known system constraint, not a newly discovered reason to send weaker content. |
+| [PR73](https://github.com/Lenivvenil/digest/pull/73), [plan §3–6](../../../plan.md#3-considered-approaches) (April 28) | Chose prompt tightening plus a mechanical two-sentence cap. Deferred cross-category second-pass context because of latency/token cost, explicitly to revisit if tightening was insufficient. Pre-clustering was also deferred | Implemented in [1cf3e545](https://github.com/Lenivvenil/digest/commit/1cf3e545a4a35d06c5ced437d69827633f1cf878). The plan explicitly leaves information gain to empirical evaluation on a real digest; prompt-string and sentence-cap tests do not prove it. Repeating that patch is not a new solution to #55. |
+| [March 26 card change](https://github.com/Lenivvenil/digest/commit/0d70a474a517e8908ab224348d1105f6b295b652), [April 16 usability change](https://github.com/Lenivvenil/digest/commit/9b747ae4338a0d6bde16da5c5659e1d0daf4e2b7) | One article per Telegram post with its own meaningful summary and vote attribution; effective source priorities wired into collection | The aim was readable, actionable intake and a closed feedback loop, not merely successful message transport. Perspectives were deliberately disabled in that runtime change; the README capability is not a mandate to restore them on every card. |
+| [April 13 recovery](https://github.com/Lenivvenil/digest/commit/896a9d869ed4182153918eb8195ae182a003a78a) | Restored v1 features lost in the v2 rewrite: twice-daily schedule, discovery, adaptive feedback/scoring, provider/routing support and observability | Losing accumulated capabilities during a structural rewrite is a documented prior failure mode. The next design must map retained capabilities before changing orchestration. |
+| [#39](https://github.com/Lenivvenil/digest/issues/39) (April 26) | Article lifecycle/replay was missing; action was deferred until replay, filtered-item traceability or cross-run analysis was needed | A parked architectural debt, not an already accepted durable article queue. No such accepted queue design was found in the reviewed public ADRs, plans or issue bodies. |
+| [#66](https://github.com/Lenivvenil/digest/issues/66), [PR67](https://github.com/Lenivvenil/digest/pull/67) | Accepted delayed callback collection with an explicit “next run” note and no new infrastructure | This did not authorize loss of feedback. Current ingestion/selection regression is #48. Immediate acknowledgement and recorded-vote influence are different properties. |
+| [#51](https://github.com/Lenivvenil/digest/issues/51), [#52](https://github.com/Lenivvenil/digest/issues/52) | Topic/narrative adaptation and adjacent-topic exploration are intended extensions | Open proposals; #51 explicitly requires an ADR. They are not current implemented personalization and must not be silently folded into #55. |
+| [ADR0002](../../decisions/0002-engine-instance-split.md), [PR35](https://github.com/Lenivvenil/digest/pull/35); [ADR0003](../../decisions/0003-source-state-split.md), [PR41](https://github.com/Lenivvenil/digest/pull/41) | Engine/runtime separation and static configuration versus mutable source state | Implementations landed, but both ADR headers still say **proposed**. This register does not retroactively declare them accepted. Formal-status reconciliation remains explicit. |
+
+### Dated constraint evidence — do not substitute an assumed quota
+
+Audit date: **2026-10-01**. Scope: public engine README, domain pages, three ADRs,
+completed plans, the retained April #55 plan, issue bodies and relevant commits.
+This is an evidence inventory, not a current pricing/limits specification.
+
+| Constraint | Dated evidence and what is actually established | Verification status |
+|---|---|---|
+| GitHub Actions free execution | The [original plan](../../plans/completed/digest.md) and [architecture limits](../../ARCHITECTURE.md#ограничения-и-известные-особенности) use **2,000 minutes/month** and estimate **two ~3-minute runs/day** | Historical planning assumption. Current account entitlement, actual runtime and remaining allowance are not established by that text. The original zero-cost intent is established. |
+| Gemini output truncation | [2026-03-21 commit](https://github.com/Lenivvenil/digest/commit/1e3fc4486bcb0a7ea4447623ab381e4bb2b7f51f) changed client `maxOutputTokens` **8,192 → 65,536**; the [later same-day fix](https://github.com/Lenivvenil/digest/commit/764b771d026e9a7e4407f148644e89e25d2fe39d) stopped silently accepting partial output | These are configured output ceilings and an observed truncation class, **not** verified requests/minute, tokens/minute, daily allowance, or available context. |
+| Provider availability/credit failure | [#84](https://github.com/Lenivvenil/digest/issues/84), **2026-06-09**: DeepSeek **402**, Gemini **429/503**, partial Groq failure; **61** raw cards escaped through the fallback | The failure cascade is evidenced. Its HTTP statuses do not reveal an exact current provider/account/model quota. |
+| Search-service throughput | [#63](https://github.com/Lenivvenil/digest/issues/63), **2026-04-28**: up to **15 parallel** Lobsters queries, mostly **429**, some **400** | A known external-service constraint. Exact supported endpoint and safe request cadence remained investigation items; neither an inferred cause nor a configured semaphore proves the fix. |
+| Current Groq public free-plan limits | [Official rate-limit table](https://console.groq.com/docs/rate-limits), checked **2026-10-01**, lists `openai/gpt-oss-120b`: **30 RPM, 1,000 RPD, 8,000 TPM, 200,000 TPD** | Current provider documentation, not a recovered historical project decision or verified account allowance. Limits apply at organization level and exceptions may exist. This does not justify an editorial article-count or length cap. |
+| Current Groq model capacity | [Official models table](https://console.groq.com/docs/models), checked **2026-10-01**, lists `openai/gpt-oss-120b` context **131,072 tokens** and maximum completion **65,536 tokens** | Model capacity, not free-tier throughput or a billing entitlement. The adjacent throughput column is explicitly for the Developer plan and must not be substituted for the free-plan table above. |
+| Recent editorial packet limits | **Three articles / 4.5K estimated input tokens** belonged to the unshipped October implementation proposal | **Rejected by the owner.** These are not provider guarantees, recovered historical decisions, or product acceptance criteria. |
+
+The historical project artifacts reviewed did not contain that dated Groq quota
+record or a ready-made durable article-analysis queue. That is a bounded audit finding, not a claim that no
+such discussion ever occurred. Future records should name provider, model, account
+tier, limit dimension, observation date and primary source; never infer TPM from a
+large context window or infer editorial irrelevance from rate exhaustion.
+
+### Current implementation versus intended product
+
+Observation baseline: engine commit
+[`a1beb435`](https://github.com/Lenivvenil/digest/tree/a1beb435c47f988096469e4b7337c77e0733819c).
+
+- PR88–PR90 introduced evidence/review contracts and persisted follow-up state,
+  but no corresponding new accepted ADR is present in the reviewed public decision
+  directory. This is a governance/traceability gap under the existing ADR triggers,
+  not permission to label those contracts architecturally accepted retroactively.
+- The review-led path supplies bounded RSS evidence, not full articles. Literal
+  citation validation and per-item salvage establish provenance only. See
+  [review.py](../../../digest/review.py) and [review protocol](../../BLIND_REVIEW.md).
+- Primary delivery precedes separately persisted, bounded Irritator and missing-slot
+  review work. These checkpoints are implemented; they are not an all-article
+  acquisition/analysis queue.
+- The optional legacy category path still contains three-perspective prose. That
+  format, an external Irritator counter-signal, and an independent second model
+  opinion are three different capabilities; none is proof of either of the others.
+- Feedback ingestion is gated by adaptive enablement, and review-led selection does
+  not consume feedback. This is a documented regression (#48), not a revised domain goal.
+- The collector uses MD5 of `title|link` for article identity and source-configured
+  recency windows. Historical statements below describing SHA-256 of description,
+  a universal 48-hour window, or priority range 1–10 are not current code invariants.
+
+### Rejected proposals and decisions still open
+
+**Rejected during #55:** a permanent maximum of three analyzed articles; fitting
+only short articles into one shared 4.5K estimated-token packet as an editorial
+selection policy; calling truncated windows a full read. These were implementation
+proposals, not requirements. The isolated experimental patch was not deployed.
+
+**Not yet decided:** how complete-source analysis, provider-specific quotas,
+continuation, evidence retention and cross-article comparison should work together.
+A durable queue/chunking proposal is not an accepted architecture merely because it
+was suggested. Any new persistent state or cross-context contract must satisfy the
+existing [ADR triggers](../../principles.md#что-значит-архитектурно-значимо-триггер-для-adr).
+
+The older “full-text storage outside scope” boundary below concerned the original
+RSS/hash implementation. Reading original material and retaining replayable evidence
+are separate decisions. The current quality requirement must be reconciled with that
+boundary explicitly; do not silently delete the boundary or infer a retention policy.
+
+### Verification gate for the next #55 change
+
+1. Record the selected design and rationale against D-01–D-06, including how it
+   preserves long-material eligibility and distinguishes unfinished work from rejection.
+2. Map each acceptance criterion to deterministic tests **and**, where needed, a
+   real-output observation. Reuse existing delivery, provenance and resume regressions.
+3. Evaluate a report-only real-source output for information gain, Russian clarity,
+   factual support, non-repetition and limitations. Include candidate coverage and
+   unresolved work. A fully mocked model response is not this evidence.
+4. Record owner/editorial review and remaining gaps before automatic-card rollout.
+   Keep useful delivery, semantic quality and independent-review success separate.
+
+## Historical domain snapshot — April 2026
+
+The following material records the earlier interview/code-derived model. It remains
+for traceability, not as an override of the reconciliation above. Its lifecycle,
+provider behavior and delivery order must not be treated as current verified facts.
+
 
 ---
 
