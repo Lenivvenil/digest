@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from digest._util import atomic_json_write
+from digest.delivery.supplement import signal_text
+
+if TYPE_CHECKING:
+    from digest.review import BlindReviewReport
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +55,9 @@ def _build_counter_signals_section(ranked_signals: list[Any]) -> str:
         return ""
 
     lines = ["\n\n## \u26a0\ufe0f Counter-Signals\n"]
-    for r in ranked_signals:
+    for ranked in ranked_signals:
         lines.append(
-            f"> [!warning] [{r.signal.title}]({r.signal.url}) "
-            f"\\[{r.score}/10\\]\n"
-            f"> {r.reasoning}\n"
-            f"> *Narrative: {r.narrative_claim[:100]}*\n"
+            "> [!warning]\n" + "\n".join(f"> {line}" for line in signal_text(ranked).split("\n")) + "\n"
         )
     return "\n".join(lines)
 
@@ -64,12 +68,14 @@ def write_digest(
     *,
     top_articles: list[Any] | None = None,
     ranked_signals: list[Any] | None = None,
+    review_report: BlindReviewReport | None = None,
     date: datetime | None = None,
     sources_count: int = 0,
     articles_count: int = 0,
 ) -> Path | None:
     """Write digest markdown file to the configured output directory.
 
+    Same-day runs use numbered files so a retry cannot overwrite earlier output.
     Returns the file path on success, None on error.
     """
     if not config.obsidian.enabled:
@@ -89,12 +95,33 @@ def write_digest(
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)
 
+    if review_report is not None:
+        from digest.review import render_review
+
+        content += render_review(review_report) + "\n"
+
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        file_path = output_dir / f"{date_str}.md"
-        file_path.write_text(content, encoding="utf-8")
-        logger.info("Digest written to %s", file_path)
-        return file_path
+        run_number = 1
+        while True:
+            suffix = "" if run_number == 1 else f"-{run_number}"
+            file_path = output_dir / f"{date_str}{suffix}.md"
+            try:
+                # Exclusive creation preserves previous runs, even during a race.
+                handle = file_path.open("x", encoding="utf-8")
+            except FileExistsError:
+                run_number += 1
+                continue
+            try:
+                with handle:
+                    handle.write(content)
+            except OSError:
+                file_path.unlink(missing_ok=True)
+                raise
+            if review_report is not None:
+                atomic_json_write(file_path.with_suffix(".review.json"), asdict(review_report))
+            logger.info("Digest written to %s", file_path)
+            return file_path
     except OSError as exc:
         logger.error("Failed to write digest file: %s", exc)
         return None

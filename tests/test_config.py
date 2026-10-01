@@ -548,3 +548,43 @@ def test_irritator_config_default_min_signal_score() -> None:
 
     cfg = IrritatorConfig()
     assert cfg.min_signal_score == 5
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("max_concurrent_requests", 0), ("max_concurrent_requests", 21),
+     ("max_retries", -1), ("max_retries", 4),
+     ("min_request_interval_seconds", -1), ("min_request_interval_seconds", float("nan")),
+     ("retry_max_wait_seconds", float("inf")), ("retry_max_wait_seconds", 301)],
+)
+def test_invalid_llm_limits_rejected(key: str, value: object) -> None:
+    from digest.config import _load_llm_limits
+
+    with pytest.raises(ValueError):
+        _load_llm_limits({key: value})
+
+
+def test_llm_limits_preserve_optional_defaults() -> None:
+    from digest.config import _load_llm_limits
+
+    assert _load_llm_limits({}) == {
+        "max_concurrent_requests": 4,
+        "max_retries": 0,
+        "min_request_interval_seconds": 0.0,
+        "retry_max_wait_seconds": 60.0,
+    }
+
+
+@pytest.mark.parametrize("telegram", [{"required": "true"}, {"required": True, "enabled": False}])
+def test_required_telegram_policy_rejects_invalid_config(telegram: dict) -> None:
+    from digest.config import _load_telegram
+
+    with pytest.raises(ValueError):
+        _load_telegram({"telegram": telegram})
+
+
+def test_required_telegram_policy_is_opt_in() -> None:
+    from digest.config import _load_telegram
+
+    assert not _load_telegram({}).required
+    assert _load_telegram({"telegram": {"required": True}}).required

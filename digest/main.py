@@ -26,6 +26,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
+    from digest.radar.collector import Article, SourceFetchMetrics
+    from digest.radar.summarizer import ArticleSummary, CategorySummary
+    from digest.review import BlindReviewReport
     from digest.source_scorer import SourceStats
 
 
@@ -121,6 +124,60 @@ class RunStats:
     sources_demoted: int = 0
     feedback_collected: int = 0
     duration_seconds: float = 0.0
+    required_delivery_failed: bool = False
+    review_status: str = "not_requested"
+    review_checkpoint: str = ""
+
+
+async def _send_status_message(text: str) -> bool:
+    """Send a one-line Telegram status notice. Returns True on success."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return False
+
+    import httpx as _httpx
+
+    from digest.delivery.telegram import _send_chunk, escape_markdownv2
+
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with _httpx.AsyncClient() as client:
+            await _send_chunk(client, api_url, chat_id, escape_markdownv2(text))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to send status message: %s", exc,
+        )
+        return False
+    return True
+
+
+async def _notify_skipped_cards(top_articles: list[Any]) -> None:
+    """Surface a Telegram notice when the LLM picker returned no cards.
+
+    Prevents the perception of a 'skipped digest' when summaries were still
+    written to markdown but no cards landed in Telegram.
+    """
+    if top_articles:
+        return
+    await _send_status_message(
+        "⚠️ Radar: LLM picker returned no top articles "
+        "— cards skipped; summary saved to markdown."
+    )
+
+
+async def _notify_summaries_failed(*, dry_run: bool, telegram_enabled: bool) -> None:
+    """Surface a Telegram notice when all summarization providers failed.
+
+    Prevents a 'silently skipped' digest when the whole pipeline aborted
+    before any markdown or card landed.
+    """
+    if dry_run or not telegram_enabled:
+        return
+    await _send_status_message(
+        "❌ Radar: all LLM providers for role=summarize failed "
+        "— digest not assembled (see workflow logs)."
+    )
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -137,6 +194,7 @@ def _print_stats(stats: RunStats) -> None:
     print(f"Feeds fetched:      {stats.feeds_fetched}")
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
+    print(f"Blind review:       {stats.review_status}")
     if stats.telegram_partial:
         print("Telegram sent:      partial (some chunks failed)")
     else:
@@ -426,6 +484,126 @@ def _process_pending_approvals(
     save_feedback(feedback_store, cache_dir)
 
 
+def _record_source_stats(
+    source_stats: dict[str, SourceStats],
+    fetch_metrics: dict[str, SourceFetchMetrics],
+    articles_by_category: dict[str, list[Article]],
+    delivered_hashes: set[str],
+) -> None:
+    """Combine fetch observations with confirmed output, including failed feeds."""
+    from digest.radar.collector import article_hash
+    from digest.source_scorer import update_stats
+
+    included: dict[str, int] = {}
+    for articles in articles_by_category.values():
+        for article in articles:
+            if article_hash(article.title, article.link) in delivered_hashes:
+                included[article.source] = included.get(article.source, 0) + 1
+    for name, metrics in fetch_metrics.items():
+        update_stats(
+            source_stats, name, metrics.fetch_ok, metrics.articles_found,
+            included.get(name, 0), metrics.avg_description_length,
+        )
+
+
+def _save_failed_run_stats(
+    source_stats: dict[str, SourceStats],
+    fetch_metrics: dict[str, SourceFetchMetrics],
+    cache_dir: str,
+    active_sources: set[str],
+    *,
+    dry_run: bool,
+) -> None:
+    """Retain fetch health on failed runs without consuming article/feedback state."""
+    from digest.source_scorer import save_stats
+
+    if not dry_run:
+        _record_source_stats(source_stats, fetch_metrics, {}, set())
+        save_stats(source_stats, cache_dir, active_sources=active_sources)
+
+
+def _review_status_line(report: BlindReviewReport | None, language: str = "en") -> str:
+    if report is None:
+        return ""
+    russian = language == "ru"
+    statuses = ({"ok": "ответ принят", "partial": "часть карточек принята", "abstained": "нет выбора",
+                 "invalid": "ответ не прошёл проверку", "unavailable": "ответ не получен"} if russian else
+                {"ok": "accepted", "partial": "partially accepted", "abstained": "no selection",
+                 "invalid": "response failed validation", "unavailable": "no response"})
+    details = []
+    for review in report.reviews:
+        pending = review.error == "pending_independent_review"
+        state = (("ожидает отдельного этапа" if russian else "waiting for separate stage")
+                 if pending else statuses[review.status])
+        details.append(f"{review.model}: {state}")
+    complete = report.status == "complete"
+    heading = (("Сравнение моделей завершено" if complete else "Сравнение моделей ещё не завершено") if russian else
+               ("Model comparison complete" if complete else "Model comparison incomplete"))
+    return "\n" + heading + ". " + "; ".join(details)
+
+
+def _review_text(report: BlindReviewReport | None) -> str:
+    from digest.review import render_review
+
+    return render_review(report) if report is not None else ""
+
+
+def _deferred_review_status(language: str) -> str:
+    if language == "ru":
+        return "Независимое сравнение и этап контрсигналов отложены до завершения основной доставки."
+    return "Independent comparison and counter-signal stage postponed until after primary delivery."
+
+
+def _combined_summary(
+    summaries: list[CategorySummary], trends: str | None, review_led_only: bool, language: str,
+) -> str:
+    if review_led_only:
+        return _deferred_review_status(language)
+    return _clean_summary(
+        "\n\n".join(summary.summary_text for summary in summaries) + (f"\n\n{trends}" if trends else "")
+    )
+
+
+def _print_dry_run(
+    combined: str, top_articles: list[ArticleSummary], all_ranked: list[Any],
+    irritator_status: IrritatorStatus, review_report: BlindReviewReport | None,
+) -> None:
+    print(combined)
+    if top_articles:
+        print("\n=== TOP ARTICLES ===\n")
+        for article in top_articles:
+            print(f"[{article.category}] {article.title}")
+            print(f"  {article.summary}\n")
+    for ranked in all_ranked:
+        print(f"[{ranked.score}/10] {ranked.signal.title} — {ranked.signal.url}")
+    print(f"\n💢 Irritator: {irritator_status.text}")
+    print(_review_text(review_report))
+
+
+async def _analyze_articles(
+    articles: dict[str, list[Article]], config: Any,
+) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
+    """Prioritize blind selection before optional category prose consumes quota."""
+    from digest.radar import pick_top_articles, summarize_all
+
+    if getattr(getattr(config, "review", None), "enabled", False):
+        from digest.review import primary_cards, run_blind_review, run_primary_review
+
+        report = await (run_primary_review(articles, config) if config.review.review_led_only
+                        else run_blind_review(articles, config))
+        cards = primary_cards(report, articles, config.radar.language)
+        if config.review.review_led_only:
+            logging.getLogger(__name__).info(
+                "Review-led only: skipping legacy category summaries, trends and counter-signal analysis."
+            )
+            return [], None, cards, report
+        summaries, trends = await summarize_all(articles, config)
+        return summaries, trends, cards, report
+    summaries, trends = await summarize_all(articles, config)
+    cards = await pick_top_articles(articles, config, max_articles=7) if summaries else []
+    return summaries, trends, cards, None
+
+
 async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool
 ) -> RunStats:
@@ -438,7 +616,8 @@ async def run(
         load_feedback,
         save_feedback,
     )
-    from digest.radar import collect, pick_top_articles, save_dedup_cache, summarize_all
+    from digest.radar import AllFeedsFailedError, collect, save_dedup_cache
+    from digest.radar.collector import article_hash
     from digest.source_scorer import (
         apply_trial_decisions_to_cache,
         calculate_effective_priorities,
@@ -452,6 +631,9 @@ async def run(
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
+    review_led_only = bool(
+        getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only
+    )
     logger = logging.getLogger(__name__)
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
@@ -489,7 +671,18 @@ async def run(
         config,
         sources=[s for s in config.sources if s.enabled and not source_state.is_demoted(s.name)],
     )
-    articles_by_category, cache = await collect(run_config, effective_priorities=effective_priorities)
+    fetch_metrics: dict[str, SourceFetchMetrics] = {}
+    try:
+        articles_by_category, cache = await collect(
+            run_config, effective_priorities=effective_priorities, fetch_metrics=fetch_metrics,
+        )
+    except AllFeedsFailedError:
+        _save_failed_run_stats(
+            source_stats, fetch_metrics, cache_dir,
+            {s.name for s in config.enabled_sources}, dry_run=dry_run,
+        )
+        raise
+
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     def _empty_stats(n_articles: int = 0) -> RunStats:
@@ -504,6 +697,7 @@ async def run(
         logger.info("No new articles found. Nothing to summarize.")
         if not dry_run:
             save_dedup_cache(cache)
+            _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
             save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
             save_feedback(feedback_store, cache_dir)
         return _empty_stats()
@@ -512,21 +706,19 @@ async def run(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
-    summaries, trends = await summarize_all(articles_by_category, config)
-    if not summaries:
+    summaries, trends, top_articles, review_report = await _analyze_articles(articles_by_category, config)
+    if not summaries and not top_articles and review_report is None:
         logger.error("All category summarizations failed.")
+        _save_failed_run_stats(
+            source_stats, fetch_metrics, cache_dir,
+            {s.name for s in config.enabled_sources}, dry_run=dry_run,
+        )
+        await _notify_summaries_failed(
+            dry_run=dry_run, telegram_enabled=config.telegram.enabled,
+        )
         return _empty_stats(total_articles)
 
-    combined = _clean_summary(
-        "\n\n".join(s.summary_text for s in summaries)
-        + (f"\n\n{trends}" if trends else "")
-    )
-
-    # Pick top articles for per-article Telegram cards
-    top_articles = await pick_top_articles(articles_by_category, config, max_articles=7)
-
-    if not dry_run:
-        save_dedup_cache(cache)
+    combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
 
     if radar_only:
         print(combined)
@@ -538,19 +730,17 @@ async def run(
         )
 
     # Irritator pipeline
-    _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
+    if review_led_only:
+        from digest.irritator import IrritatorStatus
+
+        all_ranked: list[Any] = []
+        irritator_status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
+    else:
+        _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
 
     # Dry-run output
     if dry_run:
-        print(combined)
-        if top_articles:
-            print("\n=== TOP ARTICLES ===\n")
-            for a in top_articles:
-                print(f"[{a.category}] {a.title}")
-                print(f"  {a.summary}\n")
-        for r in all_ranked:
-            print(f"[{r.score}/10] {r.signal.title} — {r.signal.url}")
-        print(f"\n💢 Irritator: {irritator_status.text}")
+        _print_dry_run(combined, top_articles, all_ranked, irritator_status, review_report)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
             digest_length=len(combined), telegram_sent=False,
@@ -559,12 +749,13 @@ async def run(
         )
 
     # Delivery
-    from digest.delivery import send_article_cards, send_counter_signals, write_digest
+    from digest.delivery import ArticleDeliveryResult, send_article_cards, send_counter_signals, write_digest
 
     md_path = write_digest(
         combined, config,
         top_articles=top_articles or None,
         ranked_signals=all_ranked or None,
+        review_report=review_report,
         sources_count=len(articles_by_category), articles_count=total_articles,
     )
     markdown_saved = md_path is not None
@@ -572,28 +763,36 @@ async def run(
 
     telegram_sent = False
     telegram_partial = False
+    card_delivery = ArticleDeliveryResult()
     if config.telegram.enabled:
         try:
             from digest.delivery.telegram import _send_chunk, escape_markdownv2
 
-            article_source_map = await send_article_cards(
+            card_delivery = await send_article_cards(
                 articles_by_category, config, top_articles=top_articles,
             )
-            if article_source_map:
-                feedback_store.article_source_map.update(article_source_map)
-            telegram_sent = bool(article_source_map)
+            feedback_store.article_source_map.update(card_delivery.article_source_map)
+            telegram_sent = card_delivery.sent > 0 and card_delivery.failed == 0
+            telegram_partial = card_delivery.sent > 0 and card_delivery.failed > 0
             if telegram_sent:
                 feedback_store.last_digest_sources = contributing_sources
                 feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
                     "%Y-%m-%d %H:%M UTC"
                 )
-            await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
+            if not review_led_only:
+                await _notify_skipped_cards(top_articles)
+                await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
 
             # Send nano status footer
             nano_status = _build_nano_status(
-                feeds_count, total_articles, 0, 0,
+                feeds_count, total_articles,
+                sum(m.fetch_ok for m in fetch_metrics.values()),
+                sum(not m.fetch_ok for m in fetch_metrics.values()),
                 source_stats, config, effective_priorities,
             )
+            nano_status += _review_status_line(review_report, config.radar.language)
+            if review_led_only:
+                nano_status += "\n" + irritator_status.text
             token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
             chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
             if token and chat_id:
@@ -609,12 +808,33 @@ async def run(
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 
-    delivery_ok = telegram_sent or markdown_saved
+    delivered_hashes = set(card_delivery.delivered_hashes)
+    telegram_required = getattr(config.telegram, "required", False)
+    if markdown_saved and (not telegram_required or telegram_sent):
+        summarized_categories = {s.category for s in summaries}
+        delivered_hashes.update(
+            article_hash(a.title, a.link)
+            for category, articles in articles_by_category.items()
+            if category in summarized_categories
+            for a in articles
+        )
+        delivered_hashes.update(article_hash(a.title, a.link) for a in top_articles)
+    collected_hashes = {
+        article_hash(a.title, a.link)
+        for articles in articles_by_category.values() for a in articles
+    }
+    # Preserve old entries, but commit new entries only for confirmed output.
+    delivered_cache = {
+        key: timestamp for key, timestamp in cache.items()
+        if key not in collected_hashes or key in delivered_hashes
+    }
+    _record_source_stats(source_stats, fetch_metrics, articles_by_category, delivered_hashes)
+    delivery_ok = card_delivery.sent > 0 or markdown_saved
     sources_promoted = 0
     sources_demoted = 0
 
     if delivery_ok:
-        save_dedup_cache(cache)
+        save_dedup_cache(delivered_cache)
 
         # Process pending approvals BEFORE save_stats so newly approved
         # sources aren't pruned from stats as "unknown"
@@ -656,7 +876,29 @@ async def run(
         markdown_path=markdown_path, sources_promoted=sources_promoted,
         sources_demoted=sources_demoted, feedback_collected=feedback_collected,
         duration_seconds=time.monotonic() - _t_run_start,
+        required_delivery_failed=telegram_required and not telegram_sent,
+        review_status=review_report.status if review_report is not None else "not_requested",
+        review_checkpoint=str(md_path.with_suffix(".review.json")) if md_path and review_report is not None else "",
     )
+
+
+def _publish_review_checkpoint(stats: RunStats) -> None:
+    """Expose a generated local archive only after successful delivery and saves."""
+    output = os.environ.get("GITHUB_OUTPUT")
+    if not output or not stats.markdown_saved or not stats.review_checkpoint:
+        return
+    try:
+        checkpoint = Path(stats.review_checkpoint).resolve(strict=True)
+        expected = Path(stats.markdown_path).resolve(strict=True).with_suffix(".review.json")
+        relative = checkpoint.relative_to(Path.cwd().resolve()).as_posix()
+        if (checkpoint != expected or not checkpoint.is_file()
+                or not re.fullmatch(r"[A-Za-z0-9_./-]+", relative)
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-\d+)?\.review\.json", checkpoint.name)):
+            raise ValueError("Unsafe or non-generated review checkpoint path.")
+        with Path(output).open("a", encoding="utf-8") as handle:
+            handle.write(f"review_checkpoint={relative}\n")
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning("Review checkpoint output unavailable: %s", exc)
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -706,10 +948,14 @@ async def main(argv: list[str] | None = None) -> int:
         stats = await run(args.config, args.dry_run, args.radar_only, args.verbose)
         _print_stats(stats)
 
+        if stats.required_delivery_failed:
+            logging.getLogger(__name__).error("Required Telegram article delivery did not complete.")
+            return 1
         if stats.telegram_partial and not stats.markdown_saved:
             return 1
         if (
             not args.dry_run
+            and not args.radar_only
             and stats.new_articles > 0
             and not (stats.telegram_sent or stats.markdown_saved or stats.telegram_partial)
         ):
@@ -719,6 +965,8 @@ async def main(argv: list[str] | None = None) -> int:
                 stats.new_articles,
             )
             return 1
+        if not args.dry_run and not args.radar_only:
+            _publish_review_checkpoint(stats)
         return 0
     except FileNotFoundError as exc:
         logging.getLogger(__name__).error("Config file not found: %s", exc)
