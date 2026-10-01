@@ -339,3 +339,44 @@ new configuration or that its factual release gate has passed.
   a successful API call or an empty queue alone.
 - Deploy only after that gate; verify primary Telegram API acceptance and saved state,
   preserve separate optional-stage diagnostics, and retain the prior pin for rollback.
+
+
+## Implementation slice — selected-source report enrichment, 2026-10-01
+
+Current #55 implementation scope is a report-only enrichment of an existing saved
+RSS selection. It reuses acquisition, immutable source storage and resumable article
+work; it does not admit every feed item, alter normal delivery, or add an automatic
+factual-approval service. The broader selection strategy above remains a proposal.
+
+A validated primary selection (or the existing secondary fallback) provides candidate
+IDs. The report distinguishes selected IDs, items present in the RSS packet but not
+selected, and items omitted before selection. Neither of the latter groups is a
+full-source editorial rejection. The shortlist coverage gate remains open.
+
+Only selected sources enter the separate enrichment state. An execution allowance
+limits a pass, not article eligibility; unfinished long sources retain their complete
+body and prior work for resume. Full-text acquisition failure cannot fall back to an
+RSS-written substantive card. Existing source qualification references remain attached
+to generated facts. Interpretation, reading advice and extra limitations are optional;
+the schema must not invent them merely to populate fields.
+
+Reports identify generated text as an unverified draft. Automatic factual-verification
+experiments have not passed acceptance; no automatic approver is enabled by this slice.
+Source-reference validation proves provenance integrity, not factual equivalence. A saved experimental claim ledger
+may be replayed offline to inspect provenance and rendering; that replay is not a new
+model evaluation or an approval of its claims. A manually edited reference is labeled
+separately and cannot count as automatic quality evidence.
+
+Following #94, the isolated report entry defaults to English when no publication
+language is configured, and honors an explicitly configured language. Language is
+bound into generation identity to prevent reuse of a draft in a different language.
+This slice does not implement the later optional translation/fallback product flow.
+
+No tokenizer assets are fetched at runtime by this slice. The current conservative
+input estimate remains a technical approximation, recorded as such; exact counters
+need a separate justified dependency/package decision. The approximation must not
+be interpreted as a provider refusal or a reason to reject a long article.
+
+Release still requires independent review of real automatically generated cards and
+selection coverage/capacity evidence. Offline contracts and a useful manually edited
+reference are insufficient to enable automatic publication.

@@ -78,6 +78,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Path
     monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
     config = fixture_config()
+    config.radar.language = "ru"  # This fixture stores Russian draft text and generations.
     config.sources = [SourceConfig("Test", "https://example.com/feed", "Architecture", True)]
     config.telegram.enabled = config.telegram.required = config.obsidian.enabled = True
     config.obsidian.output_dir = "digests"

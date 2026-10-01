@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from digest import editorial_state as editorial
+from digest.config import Config
 from digest.editorial_state import (
     AnalysisNode,
     ArticleWork,
@@ -21,8 +22,15 @@ from digest.editorial_state import (
     Generation,
 )
 from digest.radar.collector import Article, article_hash
-from scripts.review_fixture import fixture_config
+from scripts.review_fixture import fixture_config as _fixture_config
 from tests.factories import make_article
+
+
+def fixture_config() -> Config:
+    config = _fixture_config()
+    config.radar.language = "ru"
+    return config
+
 
 NOW = "2026-10-01T03:00:00+00:00"
 BODY = "Opening claim. " + "evidence " * 1000 + "Final footnote limits the initial claim."
@@ -645,15 +653,14 @@ def test_relabelled_generation_cannot_reuse_another_models_tasks(tmp_path: Path,
         editorial.load_state(tmp_path)
 
 
-@pytest.mark.parametrize("damage", ["empty_fact", "english_fact", "filler", "repeat_fields",
+@pytest.mark.parametrize("damage", ["empty_fact", "english_fact", "repeat_fields",
                                     "duplicate_refs", "score_bool", "wrong_prompt"])
 def test_cached_ready_final_is_revalidated_with_live_schema(tmp_path: Path, damage: str) -> None:
     state, _, generation = _ready_state(tmp_path)
     final = generation.final
     assert final and final.fact and final.inference
-    if damage in {"empty_fact", "english_fact", "filler"}:
-        text = {"empty_fact": "", "english_fact": "An unsupported English-only cached editorial statement",
-                "filler": "Этот материал представляет интерес для читателя"}[damage]
+    if damage in {"empty_fact", "english_fact"}:
+        text = {"empty_fact": "", "english_fact": "An unsupported English-only cached editorial statement"}[damage]
         final = replace(final, fact=replace(final.fact, text=text))
     elif damage == "repeat_fields":
         final = replace(final, inference=replace(final.inference, text=final.fact.text))

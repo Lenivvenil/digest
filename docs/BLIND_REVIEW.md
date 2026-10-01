@@ -218,8 +218,10 @@ The new path is separate from the schema-1 RSS selection experiment above.
 [ADR0004](decisions/0004-durable-editorial-evidence.md) records its decision,
 source-coverage invariants, private evidence storage and release gates.
 
-`python -m digest.editorial_pipeline work` admits every semantically eligible
-collected article before the legacy slot budget and advances saved analysis. The
+**Experimental, not enabled for production:** `python -m digest.editorial_pipeline work`
+admits every collected article that passes the existing freshness/blocklist/dedup
+filters, before the legacy slot budget. Those filters do not establish semantic
+relevance. This all-admit mode has not demonstrated sustainable throughput. The
 execution deadline and request allowance bound a pass; unfinished material remains
 pending. `--output` is a diagnostic output directory, not a production digest
 archive. Use a runner-temporary directory so reports do not become runtime clutter.
@@ -247,7 +249,7 @@ unsplittable segment is an explicit technical block. Optional ranking explanatio
 and topic labels cannot invalidate substantive card content. Additional inference
 may be absent; actual source qualifications cannot be omitted to fill a template.
 
-Production ordering is mandatory:
+If the experimental delivery path is later approved for rollout, its required ordering is:
 
 1. Run `work`; persist its state, including normal bounded partial progress.
 2. Run `repair-archives` to repair receipts whose confirmed delivery outlived an
@@ -277,3 +279,43 @@ The CLI currently enforces the explicitly approved free-route model lineup share
 with the trial guard. That is a release safety guard, not a domain claim that the
 product can only ever use those models. A later approved lineup must update and test
 that operational guard; no paid provider is an automatic fallback.
+
+
+## Current #55 slice: enrich a saved selection without delivery
+
+The isolated `digest.editorial_enrichment` entry reuses a saved RSS review checkpoint
+and the existing durable source worker. It does not recollect feeds or select every
+article. Its output is an **internal, unverified draft**, not a published digest.
+
+Prepare or inspect the selected work without network or model calls:
+
+```sh
+python -m digest.editorial_enrichment --config config.yaml \
+  --checkpoint digests/example.review.json \
+  --state .cache/editorial-enrichment --output /tmp/editorial-enrichment-report
+```
+
+A later explicitly requested acquisition/analysis pass uses the same state and adds
+`--execute`; `--deadline-seconds` and `--max-calls` limit that pass. A subsequent pass
+can omit `--checkpoint` to resume the saved selection. Completed source acquisition
+and compatible intermediate work are reused; unfinished long articles remain pending.
+No command in this entry sends Telegram messages, reserves delivery, runs Irritator,
+or writes the production dedup/source-health state. Keep its state directory separate
+from the experimental all-admit worker and preserve it when progress must survive a
+runner restart. Using a new temporary directory each run does not provide durable
+resume across runners.
+
+The report records each checkpoint's selected IDs, unselected IDs within the RSS
+packet, and the count omitted before model selection. Omitted items remain unreviewed;
+absence from the shortlist is not a full-article editorial rejection. The bounded RSS
+selector's coverage limitation remains open under #55. State may contain only work
+traceable to those saved selections.
+
+English is the entry's default when `radar.language` is absent. An explicit setting
+such as `radar.language: ru` is honored and bound to the analysis generation. This is
+a narrow #94 integration, not the completed configurable translation product flow.
+Facts retain source references and material qualifications; optional interpretation,
+reading advice and extra limitations need not be invented to fill fields. Valid source
+IDs establish provenance, not factual truth. Independent real-output review remains
+the publication gate; a successful offline replay or a manually edited example does
+not pass it.

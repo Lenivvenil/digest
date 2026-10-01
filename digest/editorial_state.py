@@ -22,7 +22,7 @@ from digest.radar.summarizer import ArticleSummary
 
 STATE_VERSION = 2
 CHUNKING_VERSION = "complete-offsets-v1"
-PROMPT_VERSION = "russian-source-ids-v6"
+PROMPT_VERSION = "source-ids-v7-ru"
 MAX_STATE_BYTES = 32 * 1024 * 1024
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MIN_ADAPTIVE_CHARS = 256
@@ -196,8 +196,8 @@ class ReadyEditorialResult:
     completed_chunks: int
     fact: EditorialField
     inference: EditorialField | None
-    limitation: EditorialField
-    why_read: EditorialField
+    limitation: EditorialField | None
+    why_read: EditorialField | None
     independent_complete: bool
     value_score: int
     value_rationale: str
@@ -206,26 +206,53 @@ class ReadyEditorialResult:
     third_review_status: str = "awaiting_comparison"
     independent_disagreement: bool = False
     source_published: str | None = None
+    language: str = "ru"
 
     def to_article_summary(self) -> ArticleSummary:
-        peer = "независимый разбор завершён" if self.independent_complete else "независимый разбор не завершён"
+        english = self.language == "en"
+        peer = (("independent review complete" if self.independent_complete else "independent review incomplete")
+                if english else ("независимый разбор завершён" if self.independent_complete else
+                                 "независимый разбор не завершён"))
         if self.independent_disagreement:
-            third = {"pending": "дополнительный разбор ожидается", "complete": "дополнительный разбор завершён",
-                     "not_configured": "дополнительная модель не настроена"}.get(self.third_review_status, "")
-            peer += f"; решения об отборе различаются; {third}"
+            labels = ({"pending": "additional review pending", "complete": "additional review complete",
+                       "not_configured": "additional model not configured"} if english else
+                      {"pending": "дополнительный разбор ожидается", "complete": "дополнительный разбор завершён",
+                       "not_configured": "дополнительная модель не настроена"})
+            peer += ("; selection decisions differ; " if english else "; решения об отборе различаются; ")
+            peer += labels.get(self.third_review_status, "")
         publication = self.source_published or self.published
-        date_line = f"Опубликовано: {publication.split('T', 1)[0]}. " if publication else ""
-        inference = f"Вывод модели: {self.inference.text}\n" if self.inference else ""
-        text = (f"Факт из источника: {self.fact.text}\nОграничение: {self.limitation.text}\n"
-                f"{inference}Зачем читать: {self.why_read.text}\n"
-                f"{date_line}Мнение {self.provider}/{self.model}; {peer}. "
-                "Обработан весь сохранённый извлечённый текст; недоступные материалы не проверены.")
-        return ArticleSummary(self.title, self.url, self.source, self.category, text)
+        date_label = "Published" if english else "Опубликовано"
+        date_line = f"{date_label}: {publication.split('T', 1)[0]}. " if publication else ""
+        names = ("Source fact", "Qualification", "Interpretation", "Why read") if english else (
+            "Факт из источника", "Ограничение", "Вывод модели", "Зачем читать")
+        lines = [f"{label}: {item.text}" for label, item in zip(
+            names, (self.fact, self.limitation, self.inference, self.why_read), strict=True) if item is not None]
+        attribution = "Review by" if english else "Мнение"
+        coverage = ("The complete stored extracted text was processed; inaccessible material was not checked."
+                    if english else "Обработан весь сохранённый извлечённый текст; недоступные материалы не проверены.")
+        lines.append(f"{date_line}{attribution} {self.provider}/{self.model}; {peer}. {coverage}")
+        return ArticleSummary(self.title, self.url, self.source, self.category, "\n".join(lines))
+
+
+def prompt_version_for(language: str) -> str:
+    if language not in {"ru", "en"}:
+        raise ValueError("Unsupported editorial output language.")
+    return f"source-ids-v7-{language}"
+
+
+def current_prompt_version(version: str) -> bool:
+    return version in {prompt_version_for("ru"), prompt_version_for("en")}
+
+
+def generation_language(generation: Generation) -> str:
+    return generation.prompt_version.rsplit("-", 1)[-1] if current_prompt_version(generation.prompt_version) else "ru"
 
 
 def generation_id(body_sha256: str, provider: str, model: str, *,
-                  chunking_version: str = CHUNKING_VERSION, prompt_version: str = PROMPT_VERSION) -> str:
-    return content_hash([body_sha256, chunking_version, prompt_version, provider, model])
+                  chunking_version: str = CHUNKING_VERSION, prompt_version: str | None = None,
+                  language: str = "ru") -> str:
+    version = prompt_version if prompt_version is not None else prompt_version_for(language)
+    return content_hash([body_sha256, chunking_version, version, provider, model])
 
 
 def make_chunks(body: str) -> tuple[Chunk, ...]:
@@ -481,7 +508,8 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
                         raise ValueError("Reduction converted qualification into a fact.")
     final_chunks = base_chunks if (generation.final and nodes.get(generation.final.root_node_id)
                                    and nodes[generation.final.root_node_id].stage == "source") else generation_chunks
-    _validate_final(generation.final, nodes, final_chunks)
+    _validate_final(generation.final, nodes, final_chunks,
+                    optional_fields=current_prompt_version(generation.prompt_version))
     _validate_task_keys(generation)
     from digest.editorial_worker import validate_cached_prompts
 
@@ -490,6 +518,7 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
 
 def _validate_final(
     final: FinalEditorial | None, nodes: dict[str, AnalysisNode], generation_chunks: tuple[Chunk, ...],
+    *, optional_fields: bool = False,
 ) -> None:
     if final is not None:
         root = nodes.get(final.root_node_id)
@@ -499,17 +528,20 @@ def _validate_final(
         if not 0 <= final.value_score <= 10:
             raise ValueError("Invalid final editorial value.")
         if final.decision == "ready":
+            if final.fact is None or (not optional_fields and (final.limitation is None or final.why_read is None)):
+                raise ValueError("Final editorial field lacks grounded claim references.")
             for item in (final.fact, final.limitation, final.why_read):
-                if item is None or not item.claim_ids or any(identity not in claims for identity in item.claim_ids):
+                if item is not None and (not item.claim_ids
+                                         or any(identity not in claims for identity in item.claim_ids)):
                     raise ValueError("Final editorial field lacks grounded claim references.")
             if final.inference is not None and (not final.inference.claim_ids
                     or any(identity not in claims for identity in final.inference.claim_ids)):
                 raise ValueError("Final inference lacks grounded claim references.")
-            assert final.fact and final.limitation
+            assert final.fact
             if any(claims[key].kind not in {"fact", "source"} for key in final.fact.claim_ids):
                 raise ValueError("Final source fact improperly cites a qualification.")
             qualifications = {key for key, claim in claims.items() if claim.kind == "qualification"}
-            if not qualifications <= set(final.limitation.claim_ids):
+            if not qualifications <= set(final.limitation.claim_ids if final.limitation else ()):
                 raise ValueError("Final limitation lost a source qualification.")
         elif not final.reason.strip():
             raise ValueError("Editorial rejection requires a reason.")
@@ -597,15 +629,17 @@ def store_state(state: EditorialState, state_dir: Path) -> None:
     atomic_json_write(path, payload)
 
 
-def current_generation(article: ArticleWork, provider: str, model: str) -> Generation | None:
+def current_generation(article: ArticleWork, provider: str, model: str, language: str = "ru") -> Generation | None:
     if article.body_sha256 is None:
         return None
-    return article.generations.get(generation_id(article.body_sha256, provider, model))
+    return article.generations.get(generation_id(article.body_sha256, provider, model, language=language))
 
 
 def chosen_generation(article: ArticleWork, config: Config) -> Generation | None:
-    primary = current_generation(article, config.review.primary.provider, config.review.primary.model)
-    secondary = current_generation(article, config.review.secondary.provider, config.review.secondary.model)
+    primary = current_generation(article, config.review.primary.provider, config.review.primary.model,
+                                 config.radar.language)
+    secondary = current_generation(article, config.review.secondary.provider, config.review.secondary.model,
+                                 config.radar.language)
     if primary is not None and primary.final is not None:
         return primary
     if primary is not None and primary.last_error and secondary is not None and secondary.final is not None:
@@ -614,8 +648,10 @@ def chosen_generation(article: ArticleWork, config: Config) -> Generation | None
 
 
 def independent_status(article: ArticleWork, config: Config) -> tuple[bool, str, bool]:
-    primary = current_generation(article, config.review.primary.provider, config.review.primary.model)
-    secondary = current_generation(article, config.review.secondary.provider, config.review.secondary.model)
+    primary = current_generation(article, config.review.primary.provider, config.review.primary.model,
+                                 config.radar.language)
+    secondary = current_generation(article, config.review.secondary.provider, config.review.secondary.model,
+                                 config.radar.language)
     if primary is None or secondary is None or primary.final is None or secondary.final is None:
         return False, "awaiting_comparison", False
     disagreement = primary.final.decision != secondary.final.decision
@@ -624,7 +660,7 @@ def independent_status(article: ArticleWork, config: Config) -> tuple[bool, str,
     if config.review.tie_breaker is None:
         return True, "not_configured", True
     model = config.review.tie_breaker
-    third = current_generation(article, model.provider, model.model)
+    third = current_generation(article, model.provider, model.model, config.radar.language)
     complete = third is not None and third.final is not None
     return complete, "complete" if complete else "pending", True
 
@@ -642,14 +678,14 @@ def ready_results(state: EditorialState, config: Config) -> list[ReadyEditorialR
         nodes = {node.node_id: node for node in generation.nodes.values()}
         root = nodes.get(generation.final.root_node_id)
         final_chunks = article.chunks if root and root.stage == "source" else active_chunks(article.chunks, generation)
-        _validate_final(generation.final, nodes, final_chunks)
+        _validate_final(generation.final, nodes, final_chunks,
+                        optional_fields=current_prompt_version(generation.prompt_version))
         from digest.editorial_worker import validate_cached_final
 
         validate_cached_final(article, generation)
         final = generation.final
-        if not all((final.fact, final.limitation, final.why_read)):
+        if final.fact is None:
             continue
-        assert final.fact and final.limitation and final.why_read
         assert article.body_sha256 and article.final_url and article.fetched_at
         independent_complete, third_status, disagreement = independent_status(article, config)
         result.append(ReadyEditorialResult(
@@ -659,7 +695,7 @@ def ready_results(state: EditorialState, config: Config) -> list[ReadyEditorialR
             final.fact, final.inference, final.limitation, final.why_read,
             independent_complete,
             final.value_score, final.value_rationale, final.event_key, article.admitted_at,
-            third_status, disagreement, article.source_published,
+            third_status, disagreement, article.source_published, generation_language(generation),
         ))
     return result
 

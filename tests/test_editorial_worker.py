@@ -24,8 +24,15 @@ from digest.editorial_fetch import FetchedArticle
 from digest.editorial_state import ArticleWork, Attempt, EditorialState, Generation
 from digest.llm import LLMRole
 from digest.radar.collector import article_hash
-from scripts.review_fixture import fixture_config
+from scripts.review_fixture import fixture_config as _fixture_config
 from tests.factories import make_article
+
+
+def fixture_config() -> Config:
+    config = _fixture_config()
+    config.radar.language = "ru"
+    return config
+
 
 OPENING = "The vendor reports doubled throughput."
 FOOTNOTE = "[1] The reported gain excludes network failures."
