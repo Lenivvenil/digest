@@ -55,6 +55,16 @@ Source acquisition, candidate selection, checking and the possible repair all co
 full-cycle capacity. Fast isolated API responses do not establish sustainable throughput.
 Actual eligibility/arrival observations must be distinguished from one RSS snapshot.
 
+### Optional local tokenizer profiles
+
+The isolated enrichment extra pins tokenizers, tiktoken and Jinja2. Legacy installation
+retains its current dependency set. Tokenizer data is prepared explicitly and cached
+locally with SHA/revision checks; analysis never fetches assets or model weights.
+Profiles are specific to declared provider/model routes. Unsupported profiles and
+missing/mismatched data are technical pending, not relevance decisions. Compare actual
+reported input with the local count and reserved overhead in diagnostics. See
+[asset preparation and third-party licenses](../ENRICHMENT_TOKENIZERS.md).
+
 ### State and release boundary
 
 Older experimental generations remain inspectable but cannot inherit new factual-check
@@ -434,10 +444,10 @@ language is configured, and honors an explicitly configured language. Language i
 bound into generation identity to prevent reuse of a draft in a different language.
 This slice does not implement the later optional translation/fallback product flow.
 
-No tokenizer assets are fetched at runtime by this slice. The current conservative
-input estimate remains a technical approximation, recorded as such; exact counters
-need a separate justified dependency/package decision. The approximation must not
-be interpreted as a provider refusal or a reason to reject a long article.
+The original selected-source slice used a conservative character estimate. The newer
+optional local-profile decision above supersedes that estimator for publication work;
+legacy experimental generations retain their recorded method. No analysis-time asset
+download is introduced, and unknown profiles remain explicit technical pending.
 
 Release still requires independent review of real automatically generated cards and
 selection coverage/capacity evidence. Offline contracts and a useful manually edited
