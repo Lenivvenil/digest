@@ -1,320 +1,249 @@
-# Architecture — Daily News Digest v1.0.0
+# Architecture — Daily News Digest
 
-> Bounded Context docs: [Digest BC](domain/digest/overview.md) · [Irritator BC](domain/irritator/overview.md)
+> Current engine reference, checked against main at `1cd1a97` on 2026-10-01.
+> [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
 
 ## Overview
 
-Персональный генератор ежедневного новостного дайджеста. Работает полностью на GitHub Actions — без VPS, без постоянно запущенных процессов. Состояние между запусками хранится в JSON-файлах, которые коммитятся обратно в репозиторий.
+Digest is a personal information-intake product, not simply an article formatter.
+Radar collects and analyses a chosen source portfolio. Feedback and approved discovery
+adjust that portfolio. Irritator searches for external evidence that challenges or
+complicates the narratives in the operator's reading.
 
----
+The public engine contains Python code and CI. A separate runtime owns configuration,
+credentials, schedules, JSON state and Markdown output. GitHub Actions can execute and
+persist each run without a continuously running service or external database. Persistence
+requires the runtime workflow to save state; writing a local file is not a durable push.
+See [ADR-0002](decisions/0002-engine-instance-split.md) and
+[ADR-0003](decisions/0003-source-state-split.md).
 
-## Data Flow
+The package is 2.0.0. The older architecture document described v1 category summarization
+as the only execution path. The original is retained in git history; current behavior
+has a second, opt-in RSS-review path. Full-source enrichment in
+[draft #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
+not the operating architecture documented below.
 
-Полный путь от cron-триггера до доставки:
+## Data flow
 
 ```mermaid
-sequenceDiagram
-    participant GHA as GitHub Actions (cron)
-    participant main as main.py
-    participant fb as feedback.py
-    participant col as collector.py
-    participant sum as summarizer.py
-    participant tg as telegram.py
-    participant md as delivery/markdown.py
-    participant cache as .cache/ (git)
-
-    GHA->>main: запуск python -m digest
-    main->>cache: load_config(), load_stats(), load_feedback()
-    main->>fb: collect_feedback() — getUpdates polling
-    fb-->>cache: обновить feedback.json (ratings, last_update_id)
-    main->>main: calculate_effective_priorities()
-    main->>col: collect(config, dedup_cache, stats)
-    col->>col: параллельный fetch всех RSS/Atom лент
-    col-->>cache: новые article_hash в seen_articles.json
-    col-->>main: List[Article] + обновлённые stats
-    main->>sum: параллельная суммаризация по категориям
-    sum->>sum: ProviderChain.complete() с fallback
-    sum-->>main: Dict[category, summary_text]
-    main->>sum: build_trends_prompt() — кросс-категорийные тренды
-    sum-->>main: trends_text
-    par доставка
-        main->>tg: send_article_cards() — Telegram с кнопками 👍/👎
-        main->>md: write_digest() — markdown в digests/
-    end
-    main->>cache: save_stats(), save_feedback() — коммит GHA
-    main->>main: evaluate_trial_sources(), apply_trial_decisions()
-    main-->>GHA: exit 0 (или 1 при ошибке доставки)
+flowchart TD
+    RUN[Runtime schedule or manual invocation] --> CFG[Load config and runtime state]
+    CFG --> FB{Adaptive processing enabled?}
+    FB -->|Yes, non-dry run| POLL[Poll Telegram feedback]
+    FB --> COL[Collect RSS, filter, deduplicate, allocate]
+    POLL --> COL
+    COL --> MODE{Review enabled?}
+    MODE -->|No| CAT[Category summaries, perspectives and trends]
+    MODE -->|Yes| REV[Independent RSS selection]
+    REV --> RLO{Review-led only?}
+    RLO -->|No| CAT
+    RLO -->|Yes| PRIMARY[Primary or fallback selection cards]
+    CAT --> SYNC[Synchronous external Irritator unless skipped]
+    SYNC --> DELIVERY[Telegram and Markdown]
+    PRIMARY --> DELIVERY
+    DELIVERY --> RECEIPT[Record delivery outcomes and runtime state]
+    RECEIPT --> OPTIONAL[Separately reserved supplementary stage when configured by runtime]
 ```
 
----
+`--radar-only` prints Radar summary output and returns before normal delivery or
+Irritator. It can still collect/analyse sources; use `--dry-run` as well to suppress
+the normal feedback/state mutation path.
 
-## Модули и ответственности
+In the review-led-only mode, the runtime can run a bounded Irritator process after
+primary delivery from its saved evidence checkpoint. This ordering prevents that
+supplementary process from blocking the already completed primary output. It does not
+prove the primary card is factually correct. Independent model selection is a separate
+experiment, not external counter-evidence or a verified factual consensus.
 
-| Модуль | Ответственность |
-|--------|----------------|
-| `main.py` | Оркестрация всего пайплайна. CLI-флаги (`--config`, `--dry-run`, `--verbose`, `--discover`, `--check`). Логика exit-кода. |
-| `config.py` | Загрузка и валидация `config.yaml`. Строгая проверка всех полей с понятными ошибками. Dataclasses: `Config`, `SourceConfig`, `AdaptiveConfig`, `LLMConfig`. |
-| `collector.py` | Параллельный fetch RSS/Atom лент через `httpx`. Парсинг через `feedparser`. Дедупликация по MD5(title|link). Slot allocation по приоритетам. |
-| `summarizer.py` | Абстракция LLM-провайдеров (Anthropic, Gemini, Groq, Mistral, DeepSeek). `ProviderChain` с автоматическим fallback. Prompt building (категории + тренды). |
-| `telegram.py` | Доставка через Telegram Bot API. Разбивка на карточки по статьям с inline-кнопками 👍/👎. Retry-логика. |
-| `feedback.py` | Polling Telegram getUpdates. Парсинг callback-запросов (`fb:a:g:{hash}`, `fb:a:b:{hash}`). Хранение оценок в `feedback.json`. |
-| `source_scorer.py` | Вычисление quality score по 4 метрикам. `calculate_effective_priorities()`. Обнаружение trending-источников. Trial source evaluation. |
-| `discovery.py` | LLM-генерация кандидатов источников для недопредставленных категорий. Валидация feed URL. Хранение в `pending_sources.json`. Отправка approval-кнопок в Telegram. |
-| `delivery/markdown.py` | Запись дайджеста в `digests/YYYY-MM-DD.md` с YAML front matter для Obsidian. |
-| `_dns_pinning.py` | SSRF-защита: DNS pinning для всех исходящих HTTP-запросов. Блокирует запросы к internal IP ranges (RFC1918). |
-| `_sanitize.py` | Очистка HTML/текста из feed-контента перед передачей в LLM. |
-| `_util.py` | `atomic_json_write()` — атомарная запись JSON через временный файл + rename, предотвращает корруп цию при сбое. |
+## Modules and responsibilities
 
----
+| Module | Responsibility |
+| --- | --- |
+| `main.py` | Main CLI, collection/analysis/delivery orchestration and exit semantics |
+| `config.py` | YAML loading, dataclasses and validation |
+| `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
+| `radar/summarizer.py` | Category, perspective, trend and article prompts |
+| `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
+| `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
+| `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
+| `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
+| `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
+| `delivery/telegram.py` | Telegram article cards, vote buttons and confirmed transport accounting |
+| `delivery/markdown.py` | Markdown archive and review checkpoint output |
+| `feedback.py` | Telegram polling, vote parsing, article/source mapping and bot commands |
+| `source_scorer.py` | Source metrics, effective priorities, trial lifecycle state and bubble diagnostics |
+| `discovery.py` | Proposed feeds, URL validation, approval cards and approved additions to runtime config |
+| `_dns_pinning.py`, `_sanitize.py` | Outbound URL/DNS protection and untrusted feed-text sanitization |
+| `_util.py` | Atomic JSON write and temporary-file utilities |
 
-## Adaptive Priority System
+## Adaptive priority system
 
-Когда `adaptive.enabled: true`, система автоматически корректирует приоритеты источников перед каждым запуском.
+`adaptive.enabled: true` enables the existing priority-adjustment path. Base priority,
+source statistics and available feedback contribute to a bounded effective priority:
 
-### Формула
-
+```text
+base_norm = source.priority / 5.0
+score = calculate_score(source_stats)
+feedback = source_feedback_score if present, otherwise 0.5
+weighted = base_norm * base_weight + score * score_weight + feedback * feedback_weight
+priority = round(min_priority + weighted * (max_priority - min_priority))
+priority += 1 if the source is trending else 0
+priority = clamp(priority, min_priority, max_priority)
 ```
-base_norm = source.priority / 5.0          # нормализованный базовый приоритет [0.0..1.0]
-score     = calculate_score(stats)          # качество источника [0.0..1.0]
-feedback  = feedback_score или 0.5         # пользовательская оценка [0.0..1.0]
-
-weighted = base_norm  * base_weight        # веса из config: base_weight + score_weight + feedback_weight = 1.0
-         + score      * score_weight
-         + feedback   * feedback_weight
-
-effective_priority = round(min_priority + weighted * (max_priority - min_priority))
-if source in trending: effective_priority += 1  # trend bonus
-effective_priority = clamp(min_priority, max_priority)
-```
-
-### Настройка весов (config.yaml)
 
 ```yaml
 adaptive:
   enabled: true
-  feedback_weight: 0.3   # влияние реакций 👍/👎 от пользователя
-  score_weight: 0.5       # влияние автоматических метрик качества
-  base_weight: 0.2        # влияние базового приоритета из config
-  trial_slots: 4          # отдельный бюджет слотов для trial-источников
+  feedback_weight: 0.3
+  score_weight: 0.5
+  base_weight: 0.2
+  trial_slots: 2
   min_priority: 1
   max_priority: 5
 ```
 
----
+This is source allocation, not an article-level measure of novelty, relevance or truth.
+The intended influence of feedback through every current selection path is still an
+acceptance requirement in [#48](https://github.com/Lenivvenil/digest/issues/48).
 
-## Source Quality Scoring
+## Source quality scoring
 
-`calculate_score()` в `source_scorer.py` возвращает float [0.0..1.0] по 4 метрикам:
+`calculate_score()` returns a bounded value from four observations:
 
-| Метрика | Вес | Как считается |
-|---------|-----|--------------|
-| **Reliability** | 0.3 | `successful_fetches / total_fetches` |
-| **Productivity** | 0.3 | `articles_included / articles_found` (по последним 7 дням) |
-| **Description quality** | 0.2 | `avg_description_length / 100` (cap 1.0 при ≥100 символов) |
-| **Recency** | 0.2 | 1.0 если виден ≤3 дня назад, линейно убывает до 0 за 10 дней |
+| Observation | Weight | Current calculation |
+| --- | --- | --- |
+| Reliability | 0.3 | Successful fetches divided by total fetches |
+| Productivity | 0.3 | Included/found articles over the last seven saved snapshots, with cumulative fallback |
+| Description length | 0.2 | Mean description length divided by 100, capped at 1 |
+| Recency | 0.2 | Full score through day 3, decreasing to zero by day 10 since last seen |
 
-Новый источник без истории получает нейтральный score 0.5.
+A source with no fetch history receives 0.5. History retains at most 30 snapshots.
+Snapshots represent recorded dates; same-day runs are merged. Gaps can make seven
+snapshots span more than seven calendar days. Long descriptions and frequent publications do not establish useful
+content. Trending detection compares saved windows and can add a priority bonus.
 
-История ограничена 30 днями (скользящее окно `HISTORY_MAX_DAYS = 30`).
+## Provider execution
 
----
+Roles such as `summarize`, `extract_narratives`, `generate_queries`, `rank_signals` and
+`fallback` assign work to configured providers. Category routing can override the
+normal route. Missing credentials remove unavailable routes. The category mode uses
+async concurrency, subject to `llm.max_concurrent_requests` and configured pacing.
+Provider failure can advance to an eligible fallback; exhaustion is visible failure.
 
-## LLM Provider Chain
+Review slots are pinned to provider/model identities. Their opinions remain independent:
+reusing a first review as a second model's input would break that contract. The leading
+successful primary/secondary slot may supply cards, with incomplete comparison explicit.
+See [BLIND_REVIEW.md](BLIND_REVIEW.md) for evidence limits, retry budgets and semantics.
 
-### Fallback
+Free-only operation requires actual account/model entitlement. Context size does not
+specify TPM, RPM, daily allowance or price. A timeout or empty result must not be reported
+as proof that no interesting articles or counter-signals exist.
 
-```
-ProviderChain([primary, fallback1, fallback2, ...])
-  → пробует primary
-  → при ошибке (HTTP 4xx/5xx, timeout, rate limit) — следующий в цепочке
-  → если все провайдеры отказали — RuntimeError
-```
+## Feedback loop
 
-### Category Routing
+Article cards contain callbacks such as `fb:a:g:{article_hash}` and `fb:a:b:{article_hash}`.
+The article/source mapping connects a later vote to the source. Current main polls
+`getUpdates` during non-dry adaptive runs and acknowledges supported callbacks when
+processed. It does not provide continuous button handling between scheduled runs.
 
-Каждая категория может быть маршрутизирована к конкретному провайдеру:
+The current poller checks webhook state and can request `deleteWebhook`; this is an
+existing behavior requiring care for shared bots, not a recommendation to replace an
+operator's webhook. Webhook preservation and owner-scoped feedback are open acceptance
+items in #48. A configuration with adaptation disabled does not execute this polling
+path. Do not promise that a visible button is already changing the next selection.
 
-```yaml
-llm:
-  providers:                          # цепочка по умолчанию
-    - name: "gemini"
-      model: "gemini-2.5-flash"
-    - name: "groq"
-      model: "llama-3.3-70b-versatile"
-  routing:                            # переопределение для отдельных категорий
-    - categories: ["AI & LLM"]
-      provider: "gemini"
-      model: "gemini-2.5-flash"
-    - categories: ["Architecture & Distributed Systems"]
-      provider: "deepseek"
-      model: "deepseek-chat"
-```
+Source feedback uses a 14-day window; saved ratings older than 30 days are pruned.
+The article/source mapping is bounded to 1,000 retained entries. Existing `/status`
+and `/bubble` commands are handled through this same scheduled poller and restrict
+responses to the configured owner chat. Bubble diagnostics describe saved diversity,
+category mix, feedback and lifecycle state; they do not measure factual accuracy.
 
-Если API-ключ маршрутизированного провайдера отсутствует — используется цепочка по умолчанию.
+## Trial source lifecycle and discovery
 
-Все категории обрабатываются **параллельно** через `asyncio.gather()`.
+1. `--discover` asks a model for feeds in underrepresented categories, validates feed
+   URLs, persists candidates and requests operator approval where Telegram is configured.
+2. Polling records approval/rejection callbacks. Approved additions are written to the
+   **runtime** configuration; rejected candidates are removed from the pending list.
+3. Trial sources receive the configured trial allocation. Trial start, graduation and
+   demotion are runtime state in `source_state.json`, not fields repeatedly written into
+   source configuration by the evaluator.
+4. After `trial_days`, the current evaluator uses its source score threshold to graduate
+   or demote the source. These operational observations are not editorial acceptance.
 
----
+No source-discovery schedule is installed by the engine. The runtime owns its cadence
+and serialized access to the same state as the main digest.
 
-## Feedback Loop
+## Cache architecture
 
-```
-Пользователь нажимает 👍/👎 на статью в Telegram
-    ↓
-Telegram сохраняет callback_query с data="fb:a:g:{article_hash}" или "fb:a:b:{article_hash}"
-    ↓
-collect_feedback() на следующем запуске дайджеста:
-  - deleteWebhook (обеспечивает polling mode)
-  - getUpdates с timeout=10 (long polling)
-  - парсит callback_data → ArticleFeedback(article_hash, source_name, rating=+1/-1)
-  - source_name берётся из article_source_map[article_hash] в feedback.json
-    ↓
-get_source_feedback_score(source_name) → float [0.0..1.0] (скользящее окно 14 дней)
-    ↓
-calculate_effective_priorities() учитывает feedback_score
-    ↓
-источник получает больше/меньше слотов в следующем digest
-```
+| Runtime file | Purpose and retention |
+| --- | --- |
+| `seen_articles.json` | Article identity/timestamps; dedup retention policy in collector |
+| `source_stats.json` | Per-source observations and up to 30 saved history snapshots |
+| `feedback.json` | Votes, last update offset, last-digest metadata and article/source mapping |
+| `source_state.json` | Versioned trial/graduation/demotion state; not automatically pruned as statistics |
+| `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
+| `pending_sources.json` | Proposed sources awaiting decisions |
+| `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
 
-Оценки старше 30 дней автоматически удаляются при `save_feedback()`.
+Atomic temporary-file replacement protects an individual JSON write; it does not make
+several files a transaction or prove remote persistence. The runtime must retain state
+on partial success and avoid overlapping writers. Do not consume undelivered items just
+because they were collected. Review-led required Telegram delivery distinguishes useful
+article cards from a diagnostic footer; a footer alone cannot satisfy that requirement.
+Unknown send outcomes require explicit handling rather than an assumed safe resend.
 
----
+## GitHub Actions and release operations
 
-## Trial Source Lifecycle
+The engine repository's workflow is CI. Daily/discovery schedules and output commits
+belong to the separate runtime, so this repository specifies no universal UTC schedule.
+Pin a reviewed immutable engine commit, serialize jobs sharing `.cache/`, and persist
+confirmed delivery outcomes even if an optional stage fails. A rebase before push alone
+is not a replacement for consistent concurrency and failure ordering.
 
-```
-1. DISCOVERY
-   python -m digest --discover
-   → LLM генерирует кандидатов для категорий с < N источников
-   → валидация feed URL (реальный HTTP-запрос)
-   → сохранение в .cache/pending_sources.json
-   → отправка в Telegram: кнопки [✅ Approve] [❌ Reject]
-
-2. APPROVAL
-   collect_feedback() парсит callback src:ok:{hash} или src:no:{hash}
-   → store.source_decisions[hash] = "approved" | "rejected"
-
-3. ACTIVATION
-   apply_trial_decisions() в конце каждого digest run:
-   → approved → добавляет источник в config.yaml с trial: true, trial_started: сегодня
-   → rejected → удаляет из pending_sources.json
-
-4. TRIAL PERIOD (по умолчанию 7 дней)
-   Источник получает отдельный бюджет слотов (trial_slots из adaptive config)
-   Не конкурирует с основными источниками за обычные слоты
-
-5. EVALUATION (evaluate_trial_sources() после каждого digest)
-   Через trial_days дней:
-   → calculate_score() >= 0.5 → promote: убрать trial: true, сохранить в config
-   → calculate_score() < 0.5  → disable: enabled: false в config
-```
-
----
-
-## Cache Architecture
-
-Все файлы в `.cache/` **коммитятся в git** через GitHub Actions после каждого успешного запуска. Это единственный механизм персистентности — без базы данных, без внешнего хранилища.
-
-| Файл | Содержимое | Очистка |
-|------|-----------|---------|
-| `seen_articles.json` | `{md5_hash: iso_timestamp}` для дедупликации | Записи старше 7 дней удаляются при `save_dedup_cache()` |
-| `source_stats.json` | `SourceStats` per source с daily history | История ограничена 30 снапшотами; неактивные источники pruned |
-| `feedback.json` | `ArticleFeedback[]` + `last_update_id` + `article_source_map` | Оценки старше 30 дней; `article_source_map` ограничен 1000 записями |
-| `source_state.json` | `SourceStateEntry` per source: `trial_started`, `graduated`, `demoted` | Никогда не pruned автоматически; схема версионирована (`schema_version`) |
-| `source_category_map.json` | `{source_name: category}` — снапшот конфига для `/bubble` | Перезаписывается при каждом успешном pipeline-запуске |
-| `pending_sources.json` | Очередь кандидатов на добавление из `--discover` | Очищается после apply_trial_decisions() |
-
-Запись всех файлов — атомарная через `atomic_json_write()` (write tmp → rename), что предотвращает частичную запись при сбое процесса.
-
----
-
-## GitHub Actions Workflows
-
-### digest.yml — ежедневный дайджест
-
-```
-Schedule: 02:00 UTC (07:00 Tashkent) + 13:00 UTC (18:00 Tashkent)
-Concurrency: group=digest, cancel-in-progress=false
-
-Jobs:
-  test:   ruff check → mypy → pytest → validate config
-  digest: (needs: test) → python -m digest → git add digests/ .cache/ config.yaml → git push
-```
-
-После запуска дайджест коммитится обратно в `main` с сообщением `digest: YYYY-MM-DD`. Перед push делается `git pull --rebase` для обработки concurrent writes (например, если discover и digest запустились одновременно).
-
-### discover.yml — еженедельное обнаружение источников
-
-```
-Schedule: Sundays 06:00 UTC
-Concurrency: group=digest, cancel-in-progress=false  (та же группа, что и digest!)
-
-Jobs:
-  test:     ruff check → mypy → pytest
-  discover: (needs: test) → python -m digest --discover → git add .cache/ → git push
-```
-
-Та же concurrency group предотвращает одновременную запись в `.cache/` двумя workflow.
-
----
+For review-led supplementary stages, follow the exact saved-checkpoint and reservation
+procedure in the review runbook. Retain prior engine/config pins for rollback. Do not
+merge experimental full-source code merely because unit tests or transport succeeded.
+The unresolved product gates are tracked in #55; the documentation/onboarding stage of
+#94 is currently active. Neither changes the production runtime by itself.
 
 ## Security
 
-### DNS Pinning (`_dns_pinning.py`)
+RSS/public-source requests use the URL validation and DNS-pinning path to reject private
+and loopback destinations and reduce DNS-rebinding risk. Feed titles/descriptions are
+untrusted content: sanitization removes HTML, decodes entities, normalizes whitespace
+and limits the description supplied to existing RSS prompts. Sanitization does not turn
+an excerpt into a full article or guarantee immunity to all malicious instructions.
 
-Все исходящие HTTP-запросы к RSS-лентам проходят через DNS pinning:
-- Резолюция DNS выполняется один раз, IP кешируется
-- Запросы к RFC1918 адресам (10.x, 172.16.x, 192.168.x) и loopback блокируются
-- Предотвращает SSRF-атаки через вредоносные RSS-ленты с internal URL
+Keep real keys/tokens in runtime environment variables or Actions secrets. The engine
+does not automatically load `.env`. Never commit credentials or source-account details
+in public examples. Runtime artifacts can contain source bodies and model outputs;
+choose access and retention deliberately rather than copying them into the public repo.
 
-### Input Sanitization (`_sanitize.py`)
+## Diagnostics and monitoring
 
-Feed-контент (title, description) очищается перед передачей в LLM:
-- Удаление HTML-тегов
-- Декодирование HTML entities
-- Нормализация пробелов
-- Обрезка до `DESCRIPTION_MAX_CHARS = 500`
+The main run summary reports feed counts, new articles, review status and delivery
+outcomes. Telegram status text may include source successes/errors and adaptive metrics.
+A successful footer is not a successful article delivery, and a completed comparison is
+not a fact-check certificate. Runtime failure notifications depend on its workflow;
+the engine alone does not install an Actions-to-Telegram alert service.
 
-### Secrets
+Python modules use logging. `--verbose` enables DEBUG; routine operation uses INFO.
+Preserve useful failure reasons without exposing credentials or treating unknown quota
+causes as known provider limits.
 
-Все credentials (API ключи, Telegram token) хранятся исключительно в GitHub Secrets и передаются через environment variables. В коде нет хардкодированных ключей.
+<a id="ограничения-и-известные-особенности"></a>
 
----
+## Limitations and known behavior
 
-## Диагностика и мониторинг
-
-### Статус-footer в Telegram
-
-Каждое сообщение дайджеста содержит footer:
-```
-📊 45 src | 10 art | 42 ok / 3 err | gemini, groq
-📈 2 ↑ | 1 ↓ | avg score: 0.74
-```
-
-Строка 1: количество источников, статей, успешных/ошибочных fetches, провайдеры.
-Строка 2: сколько источников повышено/понижено адаптивной системой, средний score.
-
-### /status команда в Telegram
-
-Отправьте `/status` боту — он ответит временем последнего дайджеста и количеством источников.
-
-### /bubble команда в Telegram
-
-Отправьте `/bubble` боту — он ответит снапшотом фильтр-пузыря: диверсификация источников (Shannon entropy 0–100), разбивка по **категориям** за последние 7 дней (если `source_category_map.json` доступен; иначе топ-5 источников), статистика обратной связи за 14 дней, состояние lifecycle источников (graduated/trial/demoted). Ответ формируется из локального кеша (без LLM и сетевых запросов). Доступен только владельцу бота (`TELEGRAM_CHAT_ID`). Требует `adaptive.enabled: true` и хотя бы одного завершённого pipeline-запуска.
-
-### Failure notification
-
-При падении workflow дайджест отправляет уведомление в Telegram с ссылкой на GitHub Actions run.
-
-### Logging
-
-Все модули используют `logging` с `logger = logging.getLogger(__name__)`. В verbose-режиме (`--verbose`) уровень DEBUG. В production (GHA) — INFO.
-
----
-
-## Ограничения и известные особенности
-
-- **GitHub Actions free tier**: 2000 минут/месяц. Два запуска дайджеста в день × ~3 минуты = ~180 минут/месяц. Вписывается в лимит.
-- **Telegram long polling**: `collect_feedback()` использует `timeout=10` в getUpdates. При каждом запуске дайджеста выполняется один poll — без постоянно работающего webhook-сервера.
-- **Race condition между workflow**: если discover и digest запускаются одновременно, concurrency group `digest` ставит один из них в очередь. `git pull --rebase` перед push обрабатывает случаи, когда это не помогло.
-- **Stale stats**: если источник переименован в config.yaml, его stats orphan-запись pruned при следующем `save_stats()` с `active_sources`.
+- Free provider quotas and GitHub Actions minute allowances are account-dependent.
+  Verify actual capacity; multiplying an assumed short run time is not a throughput test.
+- Scheduled Telegram polling delays acknowledgements. Coupling it to adaptation is an
+  open feedback defect, not the desired product contract.
+- RSS selection has bounded excerpt/candidate coverage. Missing candidates are not
+  proven irrelevant; #55 keeps this quality gap explicit.
+- Renaming a configured source affects its statistics identity; inactive statistics may
+  be pruned, while lifecycle ownership follows its separate state contract.
+- External adapter failures in #77 limit counter-evidence coverage. Preserve a visible
+  incomplete result rather than asserting that the world supplied no contrary evidence.
+- Current `radar.language` is direct en/ru generation. Optional canonical-English post
+  translation is planned in #94; it is not implemented by this documentation change.

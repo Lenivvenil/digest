@@ -1224,3 +1224,22 @@ async def test_collect_default_recency_rejects_48h_old(
         result, _ = await collect(config)
 
     assert result.get("Tech", []) == []
+
+
+@pytest.mark.asyncio
+async def test_collect_reports_fetch_metrics_without_mutating_source_stats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.radar.collector import SourceFetchMetrics
+
+    monkeypatch.chdir(tmp_path)
+    config = _make_config(sources=[make_source(name="good"), make_source(name="bad")])
+    article = Article("Title", "https://example.com/a", "description", "good", "Tech", None)
+    metrics: dict[str, SourceFetchMetrics] = {}
+    with patch("digest.radar.collector._fetch_feed", AsyncMock(side_effect=[[article], None])):
+        grouped, _ = await collect(config, fetch_metrics=metrics)
+    assert sum(map(len, grouped.values())) == 1
+    assert metrics == {
+        "good": SourceFetchMetrics(True, 1, 11.0),
+        "bad": SourceFetchMetrics(False, 0, 0.0),
+    }

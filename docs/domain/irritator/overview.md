@@ -2,6 +2,24 @@
 
 _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written against commit `cc974f5`; issue-#53 fixes incorporated)._
 
+## Current status — 2026-10-01
+
+This page preserves the April domain model and observations below. The current
+[Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
+distinguishes those observations from owner requirements and later implementation.
+Documentation and onboarding [#94](https://github.com/Lenivvenil/digest/issues/94)
+is the sole active item; editorial quality
+[#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
+This documentation work makes no production change.
+
+Irritator's product purpose remains genuine external counter-evidence. An
+independent model opinion or a Skeptic paragraph is not an external counter-signal.
+The primary-first delivery recovery isolates optional-stage failures without
+removing that purpose. Statements below that the pipeline is wholly transient
+or that nothing is persisted describe the April snapshot, not the later
+follow-up checkpoints; source-contract repairs remain queued under
+[#77](https://github.com/Lenivvenil/digest/issues/77).
+
 ---
 
 ## Purpose
@@ -26,7 +44,7 @@ The Irritator BC owns the problem of breaking the operator's filter bubble. Give
 
 ## Events (Event Storming)
 
-**Orange — что произошло:**
+**Orange — what happened:**
 
 | Event | Aggregate owner | Stage |
 |-------|----------------|-------|
@@ -39,7 +57,7 @@ The Irritator BC owns the problem of breaking the operator's filter bubble. Give
 | IrritatorEmptied | — (process event, nothing survived) | Orchestrator |
 | IrritatorFailed | — (stage raised exception) | Orchestrator |
 
-**Blue — команды:**
+**Blue — commands:**
 
 | Command | Handler |
 |---------|---------|
@@ -49,61 +67,61 @@ The Irritator BC owns the problem of breaking the operator's filter bubble. Give
 | ValidateSignals | `validator.validate_signals_async()` |
 | RankSignals | `ranker.rank_signals()` |
 
-**Lilac — политики:**
+**Lilac — policies:**
 
-- Когда `NarrativeExtracted` → `GenerateQueries` per narrative, параллельно.
-- Когда `QueryGenerated` → `SearchAllSources` (fan-out: каждый запрос × все configured sources).
-- Когда `SignalFound` → `ValidateSignals` (dedup by URL + blocklist + optional HEAD liveness check).
-- Когда `ValidatedSignal` → `RankSignals` per narrative (ALL validated signals ranked against EACH narrative — hot spot: provenance dropped).
-- Когда `RankedSignal.score < min_signal_score` → отброшен.
+- When `NarrativeExtracted` → `GenerateQueries` per narrative, in parallel.
+- When `QueryGenerated` → `SearchAllSources` (fan-out: each query × all configured sources).
+- When `SignalFound` → `ValidateSignals` (dedup by URL + blocklist + optional HEAD liveness check).
+- When `ValidatedSignal` → `RankSignals` per narrative (ALL validated signals ranked against EACH narrative — hot spot: provenance dropped).
+- When `RankedSignal.score < min_signal_score` → discarded.
 
-**Yellow — агрегаты:**
+**Yellow — aggregates:**
 
-Нет персистируемых агрегатов. Весь pipeline transient — данные живут только в памяти одного запуска.
+There are no persisted aggregates. The entire pipeline is transient: data exists only in memory for one run.
 
 **Green — read models:**
 
-- `IrritatorStatus` — оператору: funnel counters (`N narratives, M signals, K valid, J passed ranking`), level = ok/empty/error.
+- `IrritatorStatus` — for the operator: funnel counters (`N narratives, M signals, K valid, J passed ranking`), level = ok/empty/error.
 
-**Red — горячие точки:**
+**Red — hotspots:**
 
-1. **Provenance dropped at search**: `search_all_sources()` флатенит результаты всех запросов в один `list[Signal]`. Связь `Signal → SearchQuery → Narrative` теряется. Ranking работает по принципу all-pairs: каждый нарратив ранжируется против всего пула сигналов.
-2. **Narrative без dominance/confidence**: `Narrative` не несёт доказательств консенсуса. Один абзац одной статьи неотличим от утверждения, повторяемого 12 источниками.
-3. **Нет bubble fingerprint**: Irritator не знает об операторе ничего, кроме сегодняшних сводок. Каждый запуск стартует холодно.
-4. **Source-narrative fit unmodelled**: все sources получают одинаковые запросы; нет SourceProfile.
-5. **"empty" без кода причины**: `IrritatorStatus.level == "empty"` покрывает три разных ситуации: off-topic signals, on-topic но ниже порога, нет сигналов вообще.
+1. **Provenance dropped at search**: `search_all_sources()` flattens all query results into one `list[Signal]`. The `Signal → SearchQuery → Narrative` link is lost. Ranking uses all pairs: each narrative is ranked against the entire signal pool.
+2. **Narrative lacks dominance/confidence**: `Narrative` carries no evidence of consensus. One paragraph in one article is indistinguishable from a claim repeated by 12 sources.
+3. **No bubble fingerprint**: Irritator knows nothing about the operator beyond today's summaries. Every run starts cold.
+4. **Source-narrative fit unmodelled**: all sources receive the same queries; there is no SourceProfile.
+5. **"empty" without a reason code**: `IrritatorStatus.level == "empty"` covers three different situations: off-topic signals, on-topic signals below the threshold, and no signals at all.
 
 ---
 
 ## Boundary
 
-**В scope:**
-- Извлечение доминирующих нарративов из `CategorySummary`-набора
-- Генерация adversarial search queries для каждого нарратива
-- Поиск сигналов по внешним платформам
-- Валидация (dedup by URL, blocklist, опциональный liveness check)
-- Ранжирование сигналов по силе противоречия нарративу
+**In scope:**
+- Extracting dominant narratives from a set of `CategorySummary` objects
+- Generating adversarial search queries for each narrative
+- Searching external platforms for signals
+- Validation (dedup by URL, blocklist, optional liveness check)
+- Ranking signals by the strength of their contradiction of a narrative
 
-**Намеренно вне scope:**
-- Персистенция нарративов или сигналов между запусками
-- Форматирование и доставка результатов (Delivery's concern)
-- Учёт feedback от оператора (Delivery/Feedback hot spot #3 из Digest BC)
-- Профилирование информационной диеты оператора
+**Deliberately outside scope:**
+- Persisting narratives or signals between runs
+- Formatting and delivering results (Delivery's concern)
+- Incorporating operator feedback (Delivery/Feedback hot spot #3 in the Digest BC)
+- Profiling the operator's information diet
 
-**Термин, меняющий смысл на границе:**
-`Signal` — на стороне внешних платформ это search hit с popularity score (HN points, Reddit upvotes и т.д.). После пересечения в `rank_signals()` `Signal` оценивается по `contradiction_score` (1–10) — противоположная семантика. Тот же тип данных, разные системы координат.
+**Term whose meaning changes at the boundary:**
+`Signal` — on external platforms, this is a search hit with a popularity score (HN points, Reddit upvotes, etc.). On entering `rank_signals()`, a `Signal` is assessed by `contradiction_score` (1–10), with the opposite semantics. The same data type, different frames of reference.
 
 ---
 
 ## Aggregate Root
 
-Irritator не имеет персистируемых агрегатов. Границы инвариантов — на уровне одного pipeline-запуска:
+Irritator has no persisted aggregates. Invariants are bounded by a single pipeline run:
 
-- `Narrative` должен содержать `claim`, `category`, `implicit_assumptions[]`, `why_worth_challenging` — иначе LLM ответ отброшен парсером.
-- `Signal` дедуплицируется по lower-cased, trailing-slash-stripped URL. First wins.
-- Blocklist match — case-insensitive substring по `title + snippet`.
-- `RankedSignal` принимается только если `score ≥ min_signal_score` (default = 5).
-- `IrritatorStatus.level = "error"` только если stage raised exception; пустые результаты → `"empty"`, не `"error"`.
+- `Narrative` must contain `claim`, `category`, `implicit_assumptions[]`, and `why_worth_challenging`; otherwise, the parser discards the LLM response.
+- `Signal` is deduplicated by a lower-cased URL with its trailing slash stripped. First wins.
+- Blocklist matching uses a case-insensitive substring of `title + snippet`.
+- `RankedSignal` is accepted only if `score ≥ min_signal_score` (default = 5).
+- `IrritatorStatus.level = "error"` only if a stage raised an exception; empty results → `"empty"`, not `"error"`.
 
 ---
 
@@ -111,12 +129,12 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | Trigger | Action |
 |---------|--------|
-| Все stages завершились, `all_ranked` непустой | `IrritatorStatus(level="ok")` |
-| Любой stage вернул пустой список | `IrritatorStatus(level="empty")` |
-| Stage raised exception | Ошибка логируется; если это Stage 1–2 — early return; если Stage 5 — ranking для этого narrative пропускается |
-| `RankedSignal.score < min_signal_score` | Сигнал отброшен |
-| URL уже видели в текущем запуске | `SignalFiltered` (dedup) |
-| Title/snippet содержит blocklist keyword | `SignalFiltered` |
+| All stages completed; `all_ranked` is nonempty | `IrritatorStatus(level="ok")` |
+| Any stage returned an empty list | `IrritatorStatus(level="empty")` |
+| Stage raised exception | Log the error; for Stages 1–2, return early; for Stage 5, skip ranking for that narrative |
+| `RankedSignal.score < min_signal_score` | Discard the signal |
+| URL already seen in the current run | `SignalFiltered` (dedup) |
+| Title/snippet contains a blocklist keyword | `SignalFiltered` |
 
 ---
 
@@ -124,93 +142,101 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | System | Pattern | Notes |
 |--------|---------|-------|
-| Radar BC | **Conformist** | Irritator потребляет `CategorySummary` напрямую, без ACL. Radar меняет контракт — Irritator молча ломается. Irritator не имеет влияния на upstream. |
-| LLM Providers | **Conformist** | Используем их API; prompt engineering на нашей стороне |
-| HN / Reddit / arXiv / dev.to / Lobsters | **Conformist** | Публичные API без контракта; breakage возможен |
-| Delivery BC | **Customer-Supplier** | Irritator upstream supplier; Delivery downstream customer. Контракт: `(list[Narrative], list[RankedSignal], IrritatorStatus)` |
+| Radar BC | **Conformist** | Irritator consumes `CategorySummary` directly, with no ACL. If Radar changes the contract, Irritator breaks silently. Irritator has no influence over the upstream. |
+| LLM Providers | **Conformist** | We use their API; prompt engineering is on our side |
+| HN / Reddit / arXiv / dev.to / Lobsters | **Conformist** | Public APIs without a contract; breakage is possible |
+| Delivery BC | **Customer-Supplier** | Irritator is the upstream supplier; Delivery is the downstream customer. Contract: `(list[Narrative], list[RankedSignal], IrritatorStatus)` |
 
 ---
 
 ## Use Cases
 
-### UC-1: Полный Irritator pipeline (happy path)
+<a id="uc-1-полный-irritator-pipeline-happy-path"></a>
 
-**Actor:** Digest main pipeline (программный вызов `run_irritator()`)
-**Preconditions:** `summaries: list[CategorySummary]` непустой; LLM API доступен; хотя бы один source в `IrritatorConfig.sources`.
+### UC-1: Full Irritator pipeline (happy path)
+
+**Actor:** Digest main pipeline (programmatic `run_irritator()` call)
+**Preconditions:** `summaries: list[CategorySummary]` is nonempty; the LLM API is available; `IrritatorConfig.sources` contains at least one source.
 **Main scenario:**
-1. `extract_narratives(summaries, config)` → LLM возвращает ≤ `max_narratives` нарративов с полями `claim`, `category`, `implicit_assumptions`, `why_worth_challenging`.
-2. `generate_queries(narratives, config)` → для каждого нарратива параллельно генерируется `queries_per_narrative` adversarial SearchQuery с explicit negation/failure phrasing.
-3. `search_all_sources(all_queries, config, client)` → fan-out: каждый query × все configured sources; результаты флатенятся в `list[Signal]`.
-4. `validate_signals_async(signals, blocklist, client, check_liveness)` → dedup by URL + blocklist filter + optional HEAD liveness. Остаток: `list[Signal]`.
-5. Для каждого нарратива: `rank_signals(narrative, signals, config)` → LLM оценивает каждый сигнал по single criterion ("насколько сильно это ПРОТИВОРЕЧИТ нарративу?") с calibration anchors 9-10/7-8/5-6/1-4. Сигналы с `score < min_signal_score` отброшены; топ `top_signals` возвращаются как `list[RankedSignal]`.
-6. `IrritatorStatus(level="ok")` с funnel counters.
+1. `extract_narratives(summaries, config)` → the LLM returns ≤ `max_narratives` narratives with `claim`, `category`, `implicit_assumptions`, and `why_worth_challenging` fields.
+2. `generate_queries(narratives, config)` → generate `queries_per_narrative` adversarial SearchQuery objects for each narrative, in parallel, with explicit negation/failure phrasing.
+3. `search_all_sources(all_queries, config, client)` → fan-out: each query × all configured sources; flatten the results into `list[Signal]`.
+4. `validate_signals_async(signals, blocklist, client, check_liveness)` → dedup by URL + blocklist filter + optional HEAD liveness check. Remaining output: `list[Signal]`.
+5. For each narrative: `rank_signals(narrative, signals, config)` → the LLM assesses each signal against a single criterion ("how strongly does this CONTRADICT the narrative?") with calibration anchors 9–10/7–8/5–6/1–4. Discard signals with `score < min_signal_score`; return the top `top_signals` as `list[RankedSignal]`.
+6. `IrritatorStatus(level="ok")` with funnel counters.
 
 **Alternatives:**
-- 1a: LLM не вернул ни одного нарратива → `IrritatorStatus(level="empty", text="0 narratives from N summaries")`.
-- 3a: Все sources вернули пустые результаты → `IrritatorStatus(level="empty")`.
-- 4a: Все сигналы отфильтрованы (dedup/blocklist) → `IrritatorStatus(level="empty")`.
-- 5a: Все сигналы ниже `min_signal_score` → `IrritatorStatus(level="empty")`.
-- 5b: Ranking упал для одного нарратива → ошибка логируется, остальные нарративы продолжают.
+- 1a: The LLM returned no narratives → `IrritatorStatus(level="empty", text="0 narratives from N summaries")`.
+- 3a: All sources returned empty results → `IrritatorStatus(level="empty")`.
+- 4a: All signals were filtered out (dedup/blocklist) → `IrritatorStatus(level="empty")`.
+- 5a: All signals are below `min_signal_score` → `IrritatorStatus(level="empty")`.
+- 5b: Ranking failed for one narrative → log the error; continue with the other narratives.
 
-**Postconditions:** Возвращается `(list[Narrative], list[RankedSignal], IrritatorStatus)`. Ничего не персистируется.
+**Postconditions:** Return `(list[Narrative], list[RankedSignal], IrritatorStatus)`. Nothing is persisted.
 
 ---
 
-### UC-2: Все сигналы ниже порога
+<a id="uc-2-все-сигналы-ниже-порога"></a>
+
+### UC-2: All signals below the threshold
 
 **Actor:** Digest pipeline
-**Preconditions:** Pipeline прошёл stages 1–4 успешно; `valid_signals` непустой.
+**Preconditions:** The pipeline completed Stages 1–4 successfully; `valid_signals` is nonempty.
 **Main scenario:**
-1. `rank_signals()` отрабатывает для каждого нарратива.
-2. Все `RankedSignal.score < min_signal_score`.
-3. `all_ranked` остаётся пустым.
+1. `rank_signals()` runs for each narrative.
+2. All `RankedSignal.score < min_signal_score`.
+3. `all_ranked` remains empty.
 4. `IrritatorStatus(level="empty", text="N narratives, M signals, K valid, 0 passed ranking")`.
 
-**Postconditions:** Delivery получает пустой список сигналов + `IrritatorStatus.level="empty"`. Delivery не отправляет counter-signals post.
+**Postconditions:** Delivery receives an empty signal list + `IrritatorStatus.level="empty"`. Delivery sends no counter-signals post.
 
 ---
 
-### UC-3: Stage падает с исключением
+<a id="uc-3-stage-падает-с-исключением"></a>
+
+### UC-3: A stage raises an exception
 
 **Actor:** Digest pipeline
-**Preconditions:** LLM API недоступен или внешний source вернул неожиданный формат.
+**Preconditions:** The LLM API is unavailable or an external source returned an unexpected format.
 **Main scenario:**
-1. Stage 1 (extract_narratives) поднимает исключение.
-2. Исключение поймано в orchestrator: `IrritatorStatus(level="error", text="narrative extraction failed: <exc>")`.
+1. Stage 1 (extract_narratives) raises an exception.
+2. The orchestrator catches the exception: `IrritatorStatus(level="error", text="narrative extraction failed: <exc>")`.
 3. Early return: `([], [], status)`.
 
 **Alternatives:**
-- Stage 3 (search) падает → возвращаются уже извлечённые нарративы: `(narratives, [], status)`.
-- Stage 5 (rank) падает для одного нарратива → логируется, остальные продолжают.
+- Stage 3 (search) fails → return the narratives already extracted: `(narratives, [], status)`.
+- Stage 5 (rank) fails for one narrative → log the error; continue with the others.
 
-**Postconditions:** Delivery получает `IrritatorStatus.level="error"`; counter-signals не отправляются.
+**Postconditions:** Delivery receives `IrritatorStatus.level="error"`; counter-signals are not sent.
 
 ---
 
 ### UC-4: Blocklist filtering
 
-**Actor:** Digest pipeline (автоматически в validator)
-**Preconditions:** `config.filters.blocklist_keywords` содержит ключевые слова.
+**Actor:** Digest pipeline (automatically in the validator)
+**Preconditions:** `config.filters.blocklist_keywords` contains keywords.
 **Main scenario:**
-1. После `search_all_sources()` получен `list[Signal]`.
-2. `validate_signals_async()` проверяет каждый сигнал: `title + snippet` содержит blocklist keyword (case-insensitive substring) → `SignalFiltered`.
-3. Дополнительно: dedup по URL (lower-cased, trailing slash stripped); optional HEAD request для liveness check.
+1. `search_all_sources()` produces `list[Signal]`.
+2. `validate_signals_async()` checks each signal: `title + snippet` contains a blocklist keyword (case-insensitive substring) → `SignalFiltered`.
+3. Additional checks: dedup by URL (lower-cased, trailing slash stripped); optional HEAD request for liveness.
 
-**Postconditions:** Оставшиеся сигналы не содержат blocklist keywords и уникальны по URL.
+**Postconditions:** Remaining signals contain no blocklist keywords and have unique URLs.
 
 ---
 
-### UC-5: dev.to полнотекстовый поиск (post-issue-#53)
+<a id="uc-5-devto-полнотекстовый-поиск-post-issue-53"></a>
+
+### UC-5: dev.to full-text search (post-issue-#53)
 
 **Actor:** Irritator (sources/devto.py)
-**Preconditions:** `devto` в `IrritatorConfig.sources`.
+**Preconditions:** `IrritatorConfig.sources` contains `devto`.
 **Main scenario:**
-1. `SearchQuery.query` передаётся как полный текст в `?q=<query>` (не первое слово как тег).
-2. dev.to возвращает статьи по полнотекстовому совпадению.
+1. Pass the full `SearchQuery.query` text to `?q=<query>` (not the first word as a tag).
+2. dev.to returns articles matching the full text.
 
-> **Контекст:** до issue-#53 адаптер использовал `params={"tag": query.split()[0].lower()}` — tag-listing call, возвращавший хайп-контент, противоположный counter-signal.
+> **Context:** before issue-#53, the adapter used `params={"tag": query.split()[0].lower()}` — a tag-listing call that returned hype content, the opposite of a counter-signal.
 
-**Postconditions:** Сигналы из dev.to релевантны полному запросу, а не первому слову.
+**Postconditions:** dev.to signals are relevant to the full query, not its first word.
 
 ---
 
@@ -218,12 +244,12 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | Term | Business definition | Aliases to avoid |
 |------|---------------------|------------------|
-| **Narrative** | Доминирующее утверждение, которое сегодняшнее информационное пространство подаёт как само собой разумеющееся — извлечённое из группы `CategorySummary` одного pipeline-запуска. Не персистируется. | Topic, Theme, Consensus |
-| **Signal** | Внешний контент (статья, обсуждение, препринт) из одной из поисковых платформ (HN, Reddit, arXiv, dev.to, Lobsters), полученный по adversarial-запросу. На этом этапе — кандидат, не доказательство. `Signal.score` = **popularity** (upvotes, points) — мера консенсуса платформы, НЕ contradiction score. | Hit, Result, Item |
-| **RankedSignal** | Signal, прошедший LLM-ранжирование. `RankedSignal.score` [1–10] = **contradiction score** — насколько сильно этот контент противоречит или осложняет конкретный Narrative. Семантика противоположна `Signal.score`. | Verified signal |
-| **CounterSignal** | Продуктовый концепт: то, что BC обещает оператору — контент, который разрушает пузырь. В коде не существует отдельного типа `CounterSignal`; им является `RankedSignal` с `score ≥ min_signal_score`. Термин используется в промптах и логах, но не в типах данных. | Counter-narrative, Alternative |
-| **SearchQuery** | Adversarial поисковый запрос для конкретного Narrative с явными negation/failure keywords. Отличается от обычного поиска намеренным противоречием. `intent` — свободная строка, таксономия contradiction-видов не определена (red hotspot). | Query, Search |
-| **IrritatorStatus** | Операторский трейс одного запуска: funnel counters + level (ok/empty/error). `level="empty"` = pipeline отработал корректно, но ничего не выжило. Не различает причины пустоты (red hotspot). | Status, Report |
+| **Narrative** | A dominant claim presented as self-evident in today's information environment, extracted from a group of `CategorySummary` objects in one pipeline run. Not persisted. | Topic, Theme, Consensus |
+| **Signal** | External content (article, discussion, preprint) from a search platform (HN, Reddit, arXiv, dev.to, Lobsters), retrieved through an adversarial query. At this stage, a candidate, not evidence. `Signal.score` = **popularity** (upvotes, points), a measure of platform consensus, NOT a contradiction score. | Hit, Result, Item |
+| **RankedSignal** | A Signal that has passed LLM ranking. `RankedSignal.score` [1–10] = **contradiction score**: how strongly this content contradicts or complicates a specific Narrative. Its semantics are opposite to `Signal.score`. | Verified signal |
+| **CounterSignal** | A product concept: what the BC promises the operator, content that breaks the bubble. There is no separate `CounterSignal` type in the code; it is a `RankedSignal` with `score ≥ min_signal_score`. The term appears in prompts and logs, not data types. | Counter-narrative, Alternative |
+| **SearchQuery** | An adversarial search query for a specific Narrative, with explicit negation/failure keywords. Deliberate contradiction distinguishes it from an ordinary search. `intent` is a free-form string; no taxonomy of contradiction types is defined (red hotspot). | Query, Search |
+| **IrritatorStatus** | An operator-facing trace of one run: funnel counters + level (ok/empty/error). `level="empty"` = the pipeline ran correctly, but nothing survived. It does not distinguish reasons for emptiness (red hotspot). | Status, Report |
 
 ---
 
@@ -233,54 +259,54 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
-| `claim` | str | непустой; формулировка консенсусного утверждения |
-| `category` | str | соответствует категории из `CategorySummary` |
+| `claim` | str | nonempty; a statement of the consensus claim |
+| `category` | str | matches the category in `CategorySummary` |
 | `implicit_assumptions` | `list[str]` | ≥ 1 |
-| `why_worth_challenging` | str | непустой |
+| `why_worth_challenging` | str | nonempty |
 
-Не персистируется. Transient: существует только в памяти одного запуска.
+Not persisted. Transient: exists only in memory for one run.
 
-**Известные ограничения модели:** не несёт `dominance` (кол-во источников, повторивших claim) и `confidence` (уверенность LLM, что это консенсус, а не парафраз одного абзаца). Один абзац и 12 статей типизируются одинаково.
+**Known model limitations:** carries neither `dominance` (number of sources repeating the claim) nor `confidence` (the LLM's confidence that this is a consensus rather than a paraphrase of one paragraph). One paragraph and 12 articles have the same type.
 
 ### SearchQuery
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
 | `query` | str | adversarial phrasing (failure/criticism/limitations keywords) |
-| `intent` | str | freeform description (нет taxonomy — red hotspot) |
+| `intent` | str | freeform description (no taxonomy — red hotspot) |
 
 ### Signal
 
 | Attribute | Type | Notes |
 |-----------|------|-------|
-| `url` | str | identity для dedup |
+| `url` | str | identity for dedup |
 | `title` | str | |
 | `snippet` | str | |
-| `source_name` | str | имя платформы |
+| `source_name` | str | platform name |
 | `published` | `str \| None` | |
-| `score` | float | **popularity** (HN points, Reddit upvotes, etc.) — НЕ contradiction score; семантически противоположен `RankedSignal.score` |
+| `score` | float | **popularity** (HN points, Reddit upvotes, etc.), NOT a contradiction score; semantically opposite to `RankedSignal.score` |
 
-**Lifecycle states:** `raw` (из source adapter) → `validated` (dedup + blocklist + liveness) → implicit `ranked` (участвует в `rank_signals()`). Нет типов для разных состояний — один dataclass проходит все стадии.
+**Lifecycle states:** `raw` (from the source adapter) → `validated` (dedup + blocklist + liveness) → implicit `ranked` (participates in `rank_signals()`). No separate types for different states: one dataclass passes through all stages.
 
 ### RankedSignal
 
 | Attribute | Type | Invariants |
 |-----------|------|------------|
 | `signal` | `Signal` | |
-| `score` | int | [1..10]; **contradiction score** (НЕ popularity); `score ≥ min_signal_score` для сохранения |
-| `reasoning` | str | объяснение от LLM |
-| `narrative_claim` | str | денормализованная копия `Narrative.claim` |
+| `score` | int | [1..10]; **contradiction score** (NOT popularity); `score ≥ min_signal_score` to be retained |
+| `reasoning` | str | explanation from the LLM |
+| `narrative_claim` | str | denormalized copy of `Narrative.claim` |
 
-**Примечание:** `narrative_claim` — строковая копия, не ссылка на агрегат. Провенанс к SearchQuery и исходному Narrative не сохраняется.
+**Note:** `narrative_claim` is a string copy, not a reference to an aggregate. Provenance to SearchQuery and the original Narrative is not retained.
 
 ### IrritatorStatus
 
 | Attribute | Type | Values |
 |-----------|------|--------|
 | `text` | str | funnel counters: `"N narratives, M signals, K valid, J passed ranking"` |
-| `level` | `"ok" \| "empty" \| "error"` | `ok` = ranked signals существуют; `empty` = pipeline отработал, ничего не выжило; `error` = stage raised |
+| `level` | `"ok" \| "empty" \| "error"` | `ok` = ranked signals exist; `empty` = the pipeline ran, nothing survived; `error` = a stage raised an exception |
 
-**Ограничение:** `level="empty"` не различает: (a) сигналы off-topic, (b) on-topic но ниже порога, (c) сигналов вообще не найдено. Оператор не может диагностировать причину по одному level.
+**Limitation:** `level="empty"` does not distinguish (a) off-topic signals, (b) on-topic signals below the threshold, or (c) no signals found at all. The operator cannot diagnose the cause from the level alone.
 
 ---
 
@@ -288,29 +314,29 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | Interface | Direction | Protocol | Operations | Handled failures | Unhandled failures |
 |-----------|-----------|----------|-----------|------------------|--------------------|
-| Radar BC (CategorySummary input) | inbound | in-process call | `run_irritator(summaries, config, client)` | пустой список summaries → early return empty | изменение схемы CategorySummary — нет ACL |
-| LLM Providers (narrative extraction) | outbound | HTTPS REST | chat completion, role=EXTRACT_NARRATIVES, temp=0.5 | exception → IrritatorStatus level=error | плохой JSON в ответе LLM — парсер падает |
-| LLM Providers (query generation) | outbound | HTTPS REST | chat completion per narrative, параллельно | exception → IrritatorStatus level=error | |
+| Radar BC (CategorySummary input) | inbound | in-process call | `run_irritator(summaries, config, client)` | empty summaries list → early empty return | CategorySummary schema change — no ACL |
+| LLM Providers (narrative extraction) | outbound | HTTPS REST | chat completion, role=EXTRACT_NARRATIVES, temp=0.5 | exception → IrritatorStatus level=error | malformed JSON in LLM response — parser fails |
+| LLM Providers (query generation) | outbound | HTTPS REST | chat completion per narrative, in parallel | exception → IrritatorStatus level=error | |
 | LLM Providers (ranking) | outbound | HTTPS REST | chat completion per narrative | exception per narrative → logged, narrative skipped | |
 | HN Algolia API | outbound | HTTPS REST | `search?query=...&tags=story` | exception caught per-source | API schema change |
 | Reddit JSON API | outbound | HTTPS REST | `r/{sub}/search.json?q=...` | exception caught per-source | API auth change, subreddit ban |
 | arXiv API | outbound | HTTPS REST + XML | `search_query=...` | exception caught per-source | XML schema change |
 | dev.to API | outbound | HTTPS REST | `?q=<full_query>` | exception caught per-source | |
 | Lobsters API | outbound | HTTPS REST | `search?q=...` | exception caught per-source | |
-| Delivery BC (output) | outbound | in-process return | `(list[Narrative], list[RankedSignal], IrritatorStatus)` | — | Delivery форматирует по своим правилам |
+| Delivery BC (output) | outbound | in-process return | `(list[Narrative], list[RankedSignal], IrritatorStatus)` | — | Delivery applies its own formatting rules |
 
 ---
 
 ## NFR
 
-Только механически-проверяемые ограничения:
+Mechanically verifiable constraints only:
 
 | Constraint | Enforcement | Artifact |
 |------------|-------------|----------|
-| HTTP-запросы к sources идут через `httpx.AsyncClient` с semaphore=10 | `asyncio.Semaphore(10)` в `sources/__init__.py` | `digest/irritator/sources/__init__.py` |
-| Signal dedup по URL выполняется до ranking | `validate_signals_async()` вызывается перед `rank_signals()` | `digest/irritator/__init__.py` |
-| Blocklist применяется до ranking | тот же порядок в orchestrator | `digest/irritator/__init__.py` |
-| Calibration anchors в ranker prompt зафиксированы | текст промпта в `ranker.py` | `digest/irritator/ranker.py` |
+| HTTP requests to sources use `httpx.AsyncClient` with semaphore=10 | `asyncio.Semaphore(10)` in `sources/__init__.py` | `digest/irritator/sources/__init__.py` |
+| Signal dedup by URL runs before ranking | `validate_signals_async()` is called before `rank_signals()` | `digest/irritator/__init__.py` |
+| Blocklist runs before ranking | same order in the orchestrator | `digest/irritator/__init__.py` |
+| Calibration anchors are fixed in the ranker prompt | prompt text in `ranker.py` | `digest/irritator/ranker.py` |
 
 ---
 
@@ -318,19 +344,19 @@ Irritator не имеет персистируемых агрегатов. Гр�
 
 | Norm | Enforcement type | Artifact | Honor-system gap? |
 |------|-----------------|----------|-------------------|
-| Type hints на всех функциях | mypy strict | CI | No |
-| Нет неиспользуемых импортов | ruff F401 | pre-commit + CI | No |
-| async/await для всех I/O | mypy + review | — | Yes |
-| Нет реального HTTP в тестах | pytest convention | `tests/test_sources_*.py` | Yes — нет network isolation в CI |
-| Per-stage exception isolation | code review | orchestrator паттерн | Yes |
+| Type hints on all functions | mypy strict | CI | No |
+| No unused imports | ruff F401 | pre-commit + CI | No |
+| async/await for all I/O | mypy + review | — | Yes |
+| No real HTTP in tests | pytest convention | `tests/test_sources_*.py` | Yes — no network isolation in CI |
+| Per-stage exception isolation | code review | orchestrator pattern | Yes |
 
 ---
 
 ## Red Hotspots
 
-1. **Provenance edge отсутствует**: Signal не помнит, каким SearchQuery и Narrative он был порождён. All-pairs ranking не может ответить: "для нарратива N мы вообще нашли что-нибудь?"
-2. **Narrative dominance/confidence не моделируются**: один абзац и 12 источников — один тип.
-3. **Нет bubble fingerprint как explicit BC input**: Irritator не знает об информационной диете оператора вне одного запуска.
-4. **Source-narrative fit unmodelled**: нет SourceProfile; arXiv и HN получают одинаковые запросы.
-5. **`IrritatorStatus.level="empty"` без reason code**: оператор не может диагностировать причину.
-6. **Нет feedback loop**: operator votes не доходят до Irritator; система не обучается на том, кликали ли на counter-signals.
+1. **Missing provenance edge**: Signal does not retain the SearchQuery and Narrative that produced it. All-pairs ranking cannot answer: "did we find anything at all for narrative N?"
+2. **Narrative dominance/confidence are not modelled**: one paragraph and 12 sources have the same type.
+3. **No bubble fingerprint as an explicit BC input**: Irritator knows nothing about the operator's information diet beyond one run.
+4. **Source-narrative fit unmodelled**: no SourceProfile; arXiv and HN receive the same queries.
+5. **`IrritatorStatus.level="empty"` without a reason code**: the operator cannot diagnose the cause.
+6. **No feedback loop**: operator votes do not reach Irritator; the system does not learn from whether counter-signals were clicked.
