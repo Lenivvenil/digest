@@ -21,6 +21,7 @@ import httpx
 
 from digest._util import atomic_json_write
 from digest.config import Config, load_config
+from digest.delivery.supplement import signal_text, split_supplement
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_resume import _safe_path
 from digest.review_trial import _ALLOWED_MODELS
@@ -28,6 +29,8 @@ from digest.review_trial import _ALLOWED_MODELS
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
 
+
+_SUPPLEMENT_DISPATCH_SECONDS = 30.0
 
 def _paths(checkpoint: Path) -> tuple[Path, Path, Path]:
     if not checkpoint.name.endswith('.review.json'):
@@ -84,10 +87,10 @@ def _render_result(result: EvidenceIrritatorResult) -> str:
     lines = ['# Irritator: bounded post-delivery supplement', f'Status: {result.status}',
              f'Original evidence bundle: {result.bundle_id}',
              'Limited coverage: at most one narrative; RSS excerpts are not full-article verification.']
+    for narrative in result.narratives:
+        lines.append(f'\nNarrative checked: {narrative.claim}')
     for ranked in result.ranked_signals:
-        lines.extend([f'\n## {ranked.signal.title}', ranked.signal.url,
-                      f'Challenges or complicates: {ranked.narrative_claim}',
-                      f'Score: {ranked.score}/10. {ranked.reasoning}'])
+        lines.append('\n' + signal_text(ranked))
     lines.append('\n## Stage diagnostics\n' + json.dumps(asdict(result), ensure_ascii=False, indent=2))
     return '\n'.join(lines) + '\n'
 
@@ -109,24 +112,20 @@ async def _send_supplement(result: EvidenceIrritatorResult, config: Config) -> s
              else 'Limited coverage; RSS excerpts, not full articles.']
     if result.narratives:
         label = "Проверяем: " if russian else "Narrative checked: "
-        lines.append(label + result.narratives[0].claim[:350])
-    for ranked in result.ranked_signals[:2]:
-        candidate = [ranked.signal.title[:180], ranked.signal.url,
-                     ranked.reasoning[:400]]
-        if len(escape_markdownv2('\n'.join(lines + candidate))) > 3600:
-            break
-        lines.extend(candidate)
-    text = escape_markdownv2('\n'.join(lines))
+        lines.extend(label + narrative.claim for narrative in result.narratives)
+    lines.extend(signal_text(ranked, config.radar.language) for ranked in result.ranked_signals)
+    chunks = split_supplement('\n\n'.join(lines), escape_markdownv2)
     # Never retry an uncertain POST: Telegram has no idempotency key for sendMessage.
-    async with httpx.AsyncClient() as client:
-        response = await client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
-            'chat_id': chat, 'text': text, 'parse_mode': 'MarkdownV2',
-            'disable_notification': True,
-        }, timeout=30.0)
-        response.raise_for_status()
-        body = response.json()
-        if not isinstance(body, dict) or body.get('ok') is not True:
-            raise ValueError('Telegram did not confirm the supplement.')
+    async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
+        for text in chunks:
+            response = await client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
+                'chat_id': chat, 'text': text, 'parse_mode': 'MarkdownV2',
+                'disable_notification': True,
+            }, timeout=30.0)
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or body.get('ok') is not True:
+                raise ValueError('Telegram did not confirm the supplement.')
     return 'sent'
 
 

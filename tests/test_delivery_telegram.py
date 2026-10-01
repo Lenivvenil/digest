@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -12,7 +13,6 @@ import pytest
 import respx
 
 from digest.delivery.telegram import (
-    _ASYNC_FEEDBACK_NOTE,
     _MAX_RETRIES,
     ArticleDeliveryResult,
     _send_chunk,
@@ -103,6 +103,14 @@ class TestSplitMessage:
         result = split_message(text, max_len=4000)
         assert len(result) >= 2
         assert all(len(c) <= 4000 for c in result)
+
+    def test_prior_paragraph_not_repeated_before_oversized_paragraph(self) -> None:
+        prefix = "old"
+        long_paragraph = "x" * 30
+        chunks = split_message(prefix + "\n\n" + long_paragraph, max_len=10)
+        assert chunks[0] == prefix
+        assert "".join(chunks[1:]) == long_paragraph
+        assert all(len(chunk) <= 10 for chunk in chunks)
 
     def test_empty_returns_list(self) -> None:
         result = split_message("")
@@ -204,6 +212,33 @@ class TestSendCounterSignals:
             result = await send_counter_signals(signals, _make_config())
 
         assert result is True
+
+    @pytest.mark.parametrize("language,name,challenge", [
+        ("en", "Irritator", "Challenges or complicates"),
+        ("ru", "Раздражатор", "Оспаривает или уточняет"),
+    ])
+    async def test_static_labels_follow_canonical_language(
+        self, monkeypatch: pytest.MonkeyPatch, language: str, name: str, challenge: str,
+    ) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+        config = _make_config()
+        config.radar = SimpleNamespace(language=language)
+        config.translation = SimpleNamespace(target_language="ru" if language == "en" else "en")
+        signal = _make_ranked_signal()
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            await send_counter_signals([signal], config)
+            await send_counter_signals([], config, IrritatorStatus("0 signals", "empty"))
+        populated, empty = [json.loads(call.request.content) for call in route.calls]
+        assert name.upper() in populated["text"]
+        assert challenge + ":" in populated["text"]
+        assert signal.reasoning in populated["text"]
+        assert escape_markdownv2(signal.signal.url) in populated["text"]
+        assert name + ": 0 signals" in empty["text"]
+        assert empty["disable_notification"] is True
 
     async def test_missing_token_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
@@ -429,7 +464,15 @@ class TestSendArticleCards:
         assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
         assert route.call_count == 1
 
-    async def test_card_includes_async_feedback_note(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("language,enabled,note", [
+        ("en", True, "Feedback is collected on pipeline runs"),
+        ("en", False, "Feedback collection is disabled"),
+        ("ru", True, "Реакции собираются при запусках дайджеста"),
+        ("ru", False, "Сбор реакций отключён"),
+    ])
+    async def test_card_includes_async_feedback_note(
+        self, monkeypatch: pytest.MonkeyPatch, language: str, enabled: bool, note: str,
+    ) -> None:
         """Each card must carry the italicised async-feedback note."""
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -437,16 +480,25 @@ class TestSendArticleCards:
         articles = {"tech": [_make_article()]}
         top = [_make_top()]
 
+        config = _make_config()
+        config.radar = SimpleNamespace(language=language)
+        config.adaptive = SimpleNamespace(enabled=enabled)
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
             )
-            await send_article_cards(articles, _make_config(), top_articles=top)
+            await send_article_cards(articles, config, top_articles=top)
 
         assert route.call_count == 1
         payload = json.loads(route.calls[0].request.content)
         text: str = payload["text"]
-        assert f"_{escape_markdownv2(_ASYNC_FEEDBACK_NOTE)}_" in text
+        assert f"_{escape_markdownv2(note)}_" in text
+
+        hash8 = article_hash(top[0].title, top[0].link)[:8]
+        assert payload["reply_markup"]["inline_keyboard"] == [[
+            {"text": "👍", "callback_data": f"fb:a:g:{hash8}"},
+            {"text": "👎", "callback_data": f"fb:a:b:{hash8}"},
+        ]]
 
     async def test_skips_send_when_top_articles_empty(
         self, monkeypatch: pytest.MonkeyPatch,
