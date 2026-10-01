@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from digest._util import atomic_json_write
+from digest.delivery.supplement import signal_text
 
 if TYPE_CHECKING:
     from digest.review import BlindReviewReport
@@ -54,12 +55,9 @@ def _build_counter_signals_section(ranked_signals: list[Any]) -> str:
         return ""
 
     lines = ["\n\n## \u26a0\ufe0f Counter-Signals\n"]
-    for r in ranked_signals:
+    for ranked in ranked_signals:
         lines.append(
-            f"> [!warning] [{r.signal.title}]({r.signal.url}) "
-            f"\\[{r.score}/10\\]\n"
-            f"> {r.reasoning}\n"
-            f"> *Narrative: {r.narrative_claim[:100]}*\n"
+            "> [!warning]\n" + "\n".join(f"> {line}" for line in signal_text(ranked).split("\n")) + "\n"
         )
     return "\n".join(lines)
 

@@ -206,8 +206,8 @@ class TestSendCounterSignals:
         assert result is True
 
     @pytest.mark.parametrize("language,name,challenge", [
-        ("en", "Irritator", "Challenges"),
-        ("ru", "Раздражатор", "Оспаривает"),
+        ("en", "Irritator", "Challenges or complicates"),
+        ("ru", "Раздражатор", "Оспаривает или уточняет"),
     ])
     async def test_static_labels_follow_canonical_language(
         self, monkeypatch: pytest.MonkeyPatch, language: str, name: str, challenge: str,
@@ -228,7 +228,7 @@ class TestSendCounterSignals:
         assert name.upper() in populated["text"]
         assert challenge + ":" in populated["text"]
         assert signal.reasoning in populated["text"]
-        assert signal.signal.url in populated["text"]
+        assert escape_markdownv2(signal.signal.url) in populated["text"]
         assert name + ": 0 signals" in empty["text"]
         assert empty["disable_notification"] is True
 
