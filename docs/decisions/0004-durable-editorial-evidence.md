@@ -77,6 +77,22 @@ reported input with the local count and reserved overhead in diagnostics. See
 
 ### State and release boundary
 
+#### Offline scope-check prototype, pending evaluation
+
+A proposed verifier revision records per-claim actor/population, time/availability
+and material-condition checks, plus source IDs for relevant qualifications. Explicit
+narrowing footnotes take precedence over broad or ambiguous source statements. A
+`supported` verdict with missing checks, reported broadening/uncertainty, or uncited
+qualification IDs is structurally invalid and held. No second summary or model stage
+is added; the writer and exact-text renderer remain unchanged.
+
+These checks establish only completeness and consistency of the **reported assessment**.
+The model can still overlook a qualification or falsely report preserved scope; listing
+restrictions is not proof of source coverage or entailment. Real-output and held-out
+evaluation remain required. The new prompt version cannot reuse prior approvals;
+archived v2 request/result hashes remain readable and validated under their original
+representation. This offline prototype is not approval for automatic delivery.
+
 Older experimental generations remain inspectable but cannot inherit new factual-check
 status. New publication attempts use a versioned binding and durable one-correction
 limit. The entry writes internal model-checked drafts and explicit incomplete outcomes,

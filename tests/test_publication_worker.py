@@ -14,7 +14,7 @@ from digest.config import EnrichmentConfig, ReviewModelConfig
 from digest.editorial_state import EditorialState, admit_articles, load_state, make_chunks, save_body, store_state
 from digest.enrichment_tokens import InputCount
 from digest.llm import LLMProviderError, ProviderResponseDiagnostics
-from digest.publication_contract import render_card
+from digest.publication_contract import parse_claims, parse_verdicts, render_card
 from digest.publication_worker import current_work, run_publication_pass
 from scripts.review_fixture import fixture_config
 from tests.factories import make_article
@@ -50,7 +50,12 @@ def writer(text: str) -> str:
 
 def verdict(text: str, status: str = "supported") -> str:
     return json.dumps({"verdicts": [{"candidate_id": "A", "claim_id": "C1", "verdict": status,
-                                    "reason": "Source states preview", "source_ids": ["S0"]}]})
+                                    "reason": "Source states preview", "source_ids": ["S0"],
+                                    "scope_checks": {
+                                        "actor_population": "preserved",
+                                        "time_availability": "preserved" if status == "supported" else "broadened",
+                                        "material_conditions": "preserved", "qualification_source_ids": ["S0"],
+                                    }}]})
 
 
 @pytest.mark.asyncio
@@ -164,8 +169,20 @@ async def test_cached_verdict_mutation_is_rejected_and_input_delta_can_be_negati
     cached = payload["articles"][identity]["publications"][work.binding]
     cached["audits"][0]["verdicts"][0]["verdict"] = "supported"
     path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError):
+        load_state(directory)
+    cached["audits"][0]["verdicts"][0]["verdict"] = "unsupported"
+    cached["audits"][0]["verdicts"][0]["reason"] = "Changed without a new provider result"
+    path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="matching successful bound request"):
         load_state(directory)
+    cached['prompt_version'] = 'unrecognized-version'
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match='Unsupported publication prompt version'):
+        load_state(directory)
+    with pytest.raises(ValueError, match='Unsupported publication prompt version'):
+        render_card(work.drafts[-1], work.audits[-1], source='Fixture', title='Fixture',
+                    url='https://example.com', prompt_version='unrecognized-version')
     assert complete.await_count == 2
 
 
@@ -235,3 +252,32 @@ async def test_one_correction_transport_retry_requires_cooldown_and_never_repeat
     monkeypatch.setattr("digest.publication_worker.time.time", lambda: now + 7202)
     await run_publication_pass(config, directory, max_calls=2)
     assert complete.await_count == count
+
+
+def test_scope_fixture_checks_reported_constraints_but_cannot_prove_model_judgment() -> None:
+    # Generic source fixture: a network has 100 members; a footnote limits the
+    # vendor offering to enrolled customers. References do not settle entailment.
+    ids = {'S0', 'S1'}
+    claims = parse_claims(writer('The vendor service is available to all 100 network members.'), ids)
+    raw = json.loads(verdict(''))
+    item = raw['verdicts'][0]
+    item['source_ids'] = ['S0', 'S1']
+    checks = item['scope_checks']
+    checks.update(actor_population='broadened', qualification_source_ids=['S1'])
+    with pytest.raises(ValueError, match='contradicts its scope'):
+        parse_verdicts(json.dumps(raw), claims, ids)
+    checks['actor_population'] = 'unknown'
+    with pytest.raises(ValueError):
+        parse_verdicts(json.dumps(raw), claims, ids)
+    checks['actor_population'] = 'preserved'
+    item['source_ids'] = ['S0']
+    with pytest.raises(ValueError, match='qualifications must be included'):
+        parse_verdicts(json.dumps(raw), claims, ids)
+    item['source_ids'] = ['S0', 'S1']
+    item.pop('scope_checks')
+    with pytest.raises(ValueError):
+        parse_verdicts(json.dumps(raw), claims, ids)
+    item['scope_checks'] = checks
+    # A model can still falsely report preserved. The deterministic validator
+    # must not be described as an independent semantic truth/coverage checker.
+    assert parse_verdicts(json.dumps(raw), claims, ids)[0].verdict == 'supported'

@@ -18,8 +18,19 @@ from digest._util import atomic_json_write
 from digest.config import Config
 from digest.enrichment_tokens import InputCount
 from digest.llm import ProviderResponseDiagnostics, validate_response_diagnostics
+from digest.publication_contract import (
+    LEGACY_PROMPT_VERSION,
+    FactualAudit,
+    FactualVerdict,
+    PublicationDraft,
+    audit_complete,
+    audit_record,
+    messages,
+    scope_allows_support,
+    text_hash,
+    verdict_record,
+)
 from digest.publication_contract import PROMPT_VERSION as PUBLICATION_PROMPT_VERSION
-from digest.publication_contract import FactualAudit, PublicationDraft, audit_complete, messages, text_hash
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 
@@ -461,9 +472,9 @@ def _decode(value: Any, expected: Any, depth: int = 0) -> Any:
         names = {item.name for item in fields(expected)}
         if (not isinstance(value, dict) or set(value) - names
                 or (names - set(value) and not (
-                    expected is Attempt and names - set(value) <= {
+                    (expected is Attempt and names - set(value) <= {
                         "provider_diagnostics", "input_count", "parsed_result_sha256",
-                    }))):
+                    }) or (expected is FactualVerdict and names - set(value) == {'scope_checks'})))):
             raise ValueError("Unknown editorial dataclass fields.")
         hints = get_type_hints(expected)
         values = {}
@@ -604,6 +615,8 @@ def publication_draft_id(draft: PublicationDraft) -> str:
 
 
 def _validate_publication(work: PublicationWork, body: str) -> None:
+    if work.prompt_version not in {PUBLICATION_PROMPT_VERSION, LEGACY_PROMPT_VERSION}:
+        raise ValueError('Unsupported publication prompt version')
     expected = publication_binding(work.body_sha256, work.prompt_version, work.language,
                                    work.writer_provider, work.writer_model, work.verifier_provider, work.verifier_model)
     if (work.binding != expected or work.language not in {"en", "ru"} or work.repair_round not in {0, 1}
@@ -637,11 +650,18 @@ def _validate_publication(work: PublicationWork, body: str) -> None:
                or (item.verdict in {"supported", "contradicted"} and not item.source_ids)
                for item in audit.verdicts):
             raise ValueError("Factual verdict is not bound to exact source-backed text")
+        if work.prompt_version == PUBLICATION_PROMPT_VERSION and any(
+            item.scope_checks is None
+            or not set(item.scope_checks.qualification_source_ids) <= set(item.source_ids)
+            or (item.verdict == 'supported' and not scope_allows_support(item))
+            for item in audit.verdicts
+        ):
+            raise ValueError('Factual verdict lacks consistent explicit scope checks')
     if work.repair_round:
         if (not work.drafts or not work.audits or not audit_complete(work.drafts[0], work.audits[0])
                 or not any(item.verdict in {"unsupported", "contradicted"} for item in work.audits[0].verdicts)
                 or work.repair_binding != content_hash([
-                    work.binding, work.drafts[0].draft_id, asdict(work.audits[0]), 1])):
+                    work.binding, work.drafts[0].draft_id, audit_record(work.audits[0], work.prompt_version), 1])):
             raise ValueError("Repair reservation is not bound to its original draft/check")
         repairs = [attempt for attempt in work.attempts if attempt.stage == "repair"]
         if (not 1 <= len(repairs) <= 2 or (len(repairs) == 2 and (
@@ -653,13 +673,16 @@ def _validate_publication(work: PublicationWork, body: str) -> None:
             raise ValueError("Invalid bounded correction transport retry")
     elif work.repair_binding is not None:
         raise ValueError("Unreserved publication repair")
-    if work.prompt_version == PUBLICATION_PROMPT_VERSION:
+    if work.prompt_version in {PUBLICATION_PROMPT_VERSION, LEGACY_PROMPT_VERSION}:
         table = [{"source_id": f"S{i}", "text": span.quote}
                  for i, span in enumerate(source_spans(make_chunks(body), body))]
         for index, draft in enumerate(work.drafts):
-            expected_prompt = messages(table, language=work.language) if index == 0 else messages(
+            expected_prompt = messages(
+                table, language=work.language, prompt_version=work.prompt_version,
+            ) if index == 0 else messages(
                 table, language=work.language, repair=work.drafts[0],
                 feedback=[item for item in work.audits[0].verdicts if item.verdict != "supported"],
+                prompt_version=work.prompt_version,
             )
             if draft.prompt_hash != content_hash(expected_prompt) or not any(
                 attempt.status == "success" and attempt.stage == ("draft" if index == 0 else "repair")
@@ -672,8 +695,9 @@ def _validate_publication(work: PublicationWork, body: str) -> None:
             draft = work.drafts[index]
             for batch in audit.batches[:audit.completed_batches]:
                 checked = tuple(claim for claim in draft.claims if claim.claim_id in batch)
-                prompt_hash = content_hash(messages(table, checked))
-                parsed_hash = content_hash([asdict(item) for item in audit.verdicts if item.claim_id in batch])
+                prompt_hash = content_hash(messages(table, checked, prompt_version=work.prompt_version))
+                parsed_hash = content_hash([verdict_record(item, work.prompt_version)
+                                            for item in audit.verdicts if item.claim_id in batch])
                 if not any(attempt.status == "success" and attempt.stage == "check"
                            and attempt.prompt_hash == prompt_hash and attempt.response_sha256
                            and attempt.parsed_result_sha256 == parsed_hash
@@ -683,7 +707,7 @@ def _validate_publication(work: PublicationWork, body: str) -> None:
         from digest.publication_contract import render_card
         if not work.drafts or not work.audits:
             raise ValueError("Checked publication lacks a draft/audit")
-        render_card(work.drafts[-1], work.audits[-1], source="", title="", url="")
+        render_card(work.drafts[-1], work.audits[-1], source="", title="", url="", prompt_version=work.prompt_version)
 
 
 def validate_state(state: EditorialState, state_dir: Path) -> None:

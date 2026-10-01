@@ -32,9 +32,11 @@ from digest.publication_contract import (
     PublicationClaim,
     PublicationDraft,
     audit_complete,
+    audit_record,
     messages,
     parse_claims,
     parse_verdicts,
+    verdict_record,
 )
 from digest.publication_pacing import next_request_time, timestamp
 
@@ -202,7 +204,7 @@ async def _request(work: PublicationWork, stage: str, table: list[dict[str, str]
             raise ValueError("A publication permits at most one correction")
         if not work.repair_round:
             work.repair_round = 1
-            work.repair_binding = content_hash([work.binding, work.drafts[0].draft_id, asdict(work.audits[0]), 1])
+            work.repair_binding = content_hash([work.binding, work.drafts[0].draft_id, audit_record(work.audits[0]), 1])
     attempt = Attempt(content_hash([key, len(work.attempts)]), stage, key, prompt_hash, utc_now(), input_count=count)
     work.attempts.append(attempt)
     attempted.add(key)
@@ -239,7 +241,7 @@ async def _request(work: PublicationWork, stage: str, table: list[dict[str, str]
             work.drafts.append(replace(draft, draft_id=publication_draft_id(draft)))
         else:
             verdicts = parse_verdicts(text, checked, ids)
-            attempt.parsed_result_sha256 = content_hash([asdict(item) for item in verdicts])
+            attempt.parsed_result_sha256 = content_hash([verdict_record(item) for item in verdicts])
             work.audits[-1].verdicts.extend(verdicts)
             work.audits[-1].completed_batches += 1
         attempt.status = "success"
