@@ -22,7 +22,7 @@ from digest.editorial_state import (
     save_body,
     store_state,
 )
-from digest.editorial_worker import next_task, parse_final, parse_node
+from digest.editorial_worker import next_task, parse_final, source_node
 from digest.radar.collector import Article, _load_cache, article_hash
 from scripts.review_fixture import fixture_config
 
@@ -30,7 +30,7 @@ from scripts.review_fixture import fixture_config
 def ready_state(directory: Path, config: Config, count: int = 1) -> list[str]:
     state = EditorialState()
     identities = []
-    body = "A synthetic system removes a coordination step. The result excludes network partitions."
+    body = "A synthetic system removes a coordination step.\n\nThe result excludes network partitions."
     for index in range(count):
         original = Article(f"Source {index}", f"https://example.com/{index}", "Original RSS description", "Test",
                            "Architecture", datetime.now(UTC))
@@ -47,16 +47,12 @@ def ready_state(directory: Path, config: Config, count: int = 1) -> list[str]:
         gid = generation_id(article.body_sha256, model.provider, model.model)
         generation = Generation(gid, model.provider, model.model, article.body_sha256)
         task = next_task(article, generation, body)
-        assert task is not None and task.stage == "chunk"
-        raw_node = {"claims": [
-            {"kind": "fact", "text": "Система убирает дополнительный этап координации.", "quote": body[:46]},
-            {"kind": "qualification", "text": "Эксперимент не проверяет сетевые разделения.", "quote": body[47:]},
-        ], "empty_reason": ""}
-        node = parse_node(task, json.dumps(raw_node), body, {})
+        assert task is not None and task.stage == "source"
+        node = source_node(article, generation, body)
         generation.nodes[task.task_key] = node
         final_task = next_task(article, generation, body)
         assert final_task is not None and final_task.stage == "final"
-        fact_id, limit_id = (claim.claim_id for claim in node.claims)
+        fact_id = limit_id = "S0"
         raw_final = {
             "decision": "ready", "reason": "", "value_score": 8,
             "value_rationale": "Конкретный архитектурный выбор и границы результата.",

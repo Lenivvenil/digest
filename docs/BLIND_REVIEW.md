@@ -228,6 +228,17 @@ The report exposes admission/acquisition/completion, oldest pending work, provid
 attempts and possible repeated-event diagnostics. A completed analysis is not proof
 of editorial usefulness; real-output review remains required.
 
+The complete-source path uses deterministic numbered source spans, resolved by the
+engine to unchanged body offsets. Models reference those IDs rather than transcribe
+quotations. A fitting whole body goes directly to editorial synthesis; larger bodies
+retain complete chunk coverage and reduce findings only when needed. Raw source
+nodes are explicitly unclassified, and valid references alone do not prove semantic
+entailment. Qualifiers, audience boundaries and quantifiers remain quality checks.
+A changed prompt creates a new analysis generation; prior acquisition is reusable,
+but earlier model opinions are not silently relabelled under the new contract.
+Explicit provider output exhaustion remains failed/incomplete work, even if its
+partial response happens to be parseable JSON.
+
 Production ordering is mandatory:
 
 1. Run `work`; persist its state, including normal bounded partial progress.

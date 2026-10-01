@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable
 from copy import deepcopy
@@ -43,21 +44,34 @@ def source_body(chunks: int = 1) -> str:
 
 
 def stage_of(payload: Any) -> str:
-    return "reduce" if isinstance(payload, list) else "chunk" if "text" in payload else "final"
+    return "reduce" if isinstance(payload, list) else "chunk" if "chunk_id" in payload else "final"
+
+
+def source_findings(payload: dict[str, Any], marker: str) -> list[dict[str, Any]]:
+    """Extract actual fixture statements; padding does not become a made-up fact."""
+    findings = []
+    for span in payload["source_spans"]:
+        text = span["text"]
+        if OPENING in text:
+            findings.append({"kind": "fact", "text": "Поставщик сообщает удвоение пропускной способности. " + marker,
+                             "source_ids": [span["source_id"]]})
+        for number, latency in re.findall(r"Measurement (\d+) reports latency of (\d+) milliseconds\.", text):
+            findings.append({"kind": "fact",
+                             "text": f"Измерение {number} сообщает задержку обработки пакета {latency} мс. " + marker,
+                             "source_ids": [span["source_id"]]})
+        if FOOTNOTE in text:
+            findings.append({"kind": "qualification", "text": "Сноска исключает сетевые сбои из испытания. " + marker,
+                             "source_ids": [span["source_id"]]})
+    return findings
 
 
 def synthetic_response(payload: Any, marker: str) -> dict[str, Any]:
     """Use only this call's source/findings, including every supplied support ID."""
     stage = stage_of(payload)
     if stage == "chunk":
-        segment = payload["text"]
-        quote = OPENING if OPENING in segment else segment[:60]
-        claims = [{"kind": "fact", "text": "Источник сообщает результаты испытания системы. " + marker,
-                   "quote": quote, "start": payload["start"] + segment.index(quote)}]
-        if FOOTNOTE in segment:
-            claims.append({"kind": "qualification", "text": "Сноска исключает сетевые сбои из испытания. " + marker,
-                           "quote": FOOTNOTE, "start": payload["start"] + segment.index(FOOTNOTE)})
-        return {"claims": claims, "empty_reason": ""}
+        claims = source_findings(payload, marker)
+        return {"claims": claims, "empty_reason": "" if claims else
+                "Сегмент содержит только техническое заполнение без проверяемых утверждений."}
     if stage == "reduce":
         supplied = [claim for node in payload for claim in node["claims"]]
         claims = []
@@ -67,8 +81,15 @@ def synthetic_response(payload: Any, marker: str) -> dict[str, Any]:
                 claims.append({"kind": kind, "text": matches[0]["text"],
                                "supports": [claim["claim_id"] for claim in matches]})
         return {"claims": claims, "empty_reason": "" if claims else "Сегменты не содержат проверяемых утверждений."}
-    facts = [claim["claim_id"] for claim in payload["findings"] if claim["kind"] == "fact"]
-    qualifications = [claim["claim_id"] for claim in payload["findings"] if claim["kind"] == "qualification"]
+    if "source_spans" in payload:
+        findings = source_findings(payload, marker)
+        facts = list(dict.fromkeys(ref for claim in findings if claim["kind"] == "fact"
+                                   for ref in claim["source_ids"]))
+        qualifications = list(dict.fromkeys(ref for claim in findings if claim["kind"] == "qualification"
+                                            for ref in claim["source_ids"]))
+    else:
+        facts = [claim["claim_id"] for claim in payload["findings"] if claim["kind"] == "fact"]
+        qualifications = [claim["claim_id"] for claim in payload["findings"] if claim["kind"] == "qualification"]
     return {
         "decision": "ready", "reason": "",
         "fact": {"text": "Поставщик сообщил об увеличении пропускной способности. " + marker, "claim_ids": facts},
@@ -77,7 +98,7 @@ def synthetic_response(payload: Any, marker: str) -> dict[str, Any]:
         "limitation": {"text": "Финальная сноска исключает поведение при сетевых сбоях. " + marker,
                        "claim_ids": qualifications or facts},
         "why_read": {"text": "Оригинал позволяет проверить условия испытания и границы результата. " + marker,
-                     "claim_ids": facts + qualifications},
+                     "claim_ids": list(dict.fromkeys(facts + qualifications))},
         "value_score": 8, "value_rationale": "Указано конкретное измерение и ограничение применимости.",
         "event_key": "Изменение результатов испытания пропускной способности",
     }
@@ -145,12 +166,12 @@ def primary_generation(state: EditorialState, config: Config) -> Generation:
     return generation
 
 
-async def test_final_requires_every_chunk_and_every_reduction_before_readiness(
+async def test_long_source_waits_for_every_chunk_then_finalizes_all_findings_without_reduction(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
     article = make_article()
     offline.bodies[article.link] = source_body(5)
-    for allowance in range(1, 10):
+    for allowance in range(1, 6):
         result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
         generation = primary_generation(result.state, offline.config)
         assert len(offline.calls) == allowance
@@ -158,10 +179,10 @@ async def test_final_requires_every_chunk_and_every_reduction_before_readiness(
         assert state_api.ready_results(result.state, offline.config) == []
         assert result.summary.pending == 1 and result.summary.fully_analysed == 0
         assert result.summary.stop_reason == "request_allowance"
-        assert result.summary.completed_chunks == min(allowance, 5)
-    assert [call["stage"] for call in offline.calls] == ["chunk"] * 5 + ["reduce"] * 4
+        assert result.summary.completed_chunks == allowance
+    assert [call["stage"] for call in offline.calls] == ["chunk"] * 5
     final = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=1)
-    assert offline.calls[-1]["stage"] == "final"
+    assert [call["stage"] for call in offline.calls] == ["chunk"] * 5 + ["final"]
     assert final.summary.ready == final.summary.fully_analysed == 1
     assert final.summary.pending == 0
     assert final.summary.total_chunks == final.summary.completed_chunks == 5
@@ -171,7 +192,8 @@ async def test_final_requires_every_chunk_and_every_reduction_before_readiness(
     assert generation.final is not None
     root = next(node for node in generation.nodes.values() if node.node_id == generation.final.root_node_id)
     assert root.chunk_ids == tuple(chunk.chunk_id for chunk in work.chunks)
-    assert len(generation.nodes) == 9
+    assert root.stage == "collect"
+    assert not root.usage
     assert state_api.load_state(tmp_path) == final.state
 
 
@@ -239,7 +261,7 @@ async def test_primary_ready_without_peer_and_independent_uses_same_source_blind
     primary = deepcopy(primary_generation(first.state, offline.config))
     second = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=20)
     peer_calls = offline.calls[len(primary_calls):]
-    assert len(peer_calls) == len(primary_calls) == 6
+    assert len(peer_calls) == len(primary_calls) == 4
     assert {call["provider"] for call in peer_calls} == {offline.config.review.secondary.provider}
     assert [call["messages"] for call in primary_calls if call["stage"] == "chunk"] == [
         call["messages"] for call in peer_calls if call["stage"] == "chunk"
@@ -297,7 +319,6 @@ async def test_technical_primary_failure_can_complete_explicitly_attributed_fall
                                                  offline.config.review.secondary.model)
     assert ready[0].provider in ready[0].to_article_summary().summary
     assert [call["provider"] for call in offline.calls] == [offline.config.review.primary.provider,
-                                                            offline.config.review.secondary.provider,
                                                             offline.config.review.secondary.provider]
     assert offline.calls[0]["messages"] == offline.calls[1]["messages"]
     assert only_article(result.state).delivery_state == "pending"
@@ -310,8 +331,10 @@ async def test_technical_primary_failure_can_complete_explicitly_attributed_fall
 async def test_malformed_or_partial_chunk_output_remains_pending(
     tmp_path: Path, offline: OfflineProvider, invalid: Any,
 ) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
     offline.response = lambda call, answer: invalid
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
     generation = primary_generation(result.state, offline.config)
     assert generation.final is None and not generation.nodes
     assert generation.attempts[0].status == "failed"
@@ -320,26 +343,31 @@ async def test_malformed_or_partial_chunk_output_remains_pending(
     assert state_api.load_state(tmp_path) == result.state
 
 
-@pytest.mark.parametrize("damage", ["fabricated_quote", "wrong_chunk", "extra_key", "english"])
-async def test_chunk_claims_require_exact_in_bounds_source_evidence_and_russian(
+@pytest.mark.parametrize("damage", ["unknown_id", "duplicate_id", "empty_ids", "extra_key", "english"])
+async def test_chunk_claims_require_known_unique_source_ids_and_russian(
     tmp_path: Path, offline: OfflineProvider, damage: str,
 ) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+
     def corrupt(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
         claim = answer["claims"][0]
-        if damage == "fabricated_quote":
-            claim["quote"] = "Fabricated assertion not in source."
-        elif damage == "wrong_chunk":
-            claim["quote"] = "This text occurs in a different source chunk only."
-            claim["start"] = call["payload"]["end"]
+        if damage == "unknown_id":
+            claim["source_ids"] = ["S999999"]
+        elif damage == "duplicate_id":
+            claim["source_ids"] *= 2
+        elif damage == "empty_ids":
+            claim["source_ids"] = []
         elif damage == "extra_key":
-            claim["unsupported"] = "extra"
+            claim["quote"] = OPENING
         else:
             claim["text"] = "This English language assertion must not pass Russian validation."
         return answer
     offline.response = corrupt
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
     generation = primary_generation(result.state, offline.config)
     assert not generation.nodes and generation.final is None
+    assert generation.attempts[-1].status == "failed"
     assert result.summary.pending == 1 and result.summary.rejected == 0
 
 
@@ -349,26 +377,24 @@ async def test_reduction_cannot_lose_duplicate_invent_or_upgrade_claim_lineage(
 ) -> None:
     article = make_article()
     offline.bodies[article.link] = source_body(2)
-
-    def corrupt(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
-        if call["stage"] != "reduce":
-            return answer
-        if damage == "dropped_claim":
-            answer["claims"][0]["supports"].pop()
-        elif damage == "duplicate_claim":
-            answer["claims"][0]["supports"] *= 2
-        elif damage == "unknown_claim":
-            answer["claims"][0]["supports"].append("invented-claim")
-        else:
-            answer["claims"][-1]["kind"] = "fact"
-        return answer
-    offline.response = corrupt
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=3)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=2)
     generation = primary_generation(result.state, offline.config)
-    assert len(generation.nodes) == 2 and all(node.stage == "chunk" for node in generation.nodes.values())
-    assert generation.final is None and generation.attempts[-1].status == "failed"
-    assert result.summary.pending == 1 and result.summary.completed_chunks == 2
-    assert result.summary.ready == result.summary.rejected == 0
+    children = tuple(node for node in generation.nodes.values() if node.stage == "chunk")
+    assert len(children) == 2
+    messages = worker._reduce_messages(children)
+    task = worker.Task("reduce", "synthetic-reduction", messages, children=children)
+    answer = synthetic_response(json.loads(messages[1]["content"]), PRIMARY_MARKER)
+    if damage == "dropped_claim":
+        answer["claims"].pop()
+    elif damage == "duplicate_claim":
+        answer["claims"][0]["supports"] *= 2
+    elif damage == "unknown_claim":
+        answer["claims"][0]["supports"].append("invented-claim")
+    else:
+        answer["claims"][-1]["kind"] = "fact"
+    with pytest.raises(ValueError):
+        worker.parse_node(task, json.dumps(answer, ensure_ascii=False), offline.bodies[article.link], USAGE)
+    assert generation.final is None and result.summary.pending == 1
 
 
 @pytest.mark.parametrize("damage", ["missing_qualification", "fact_cites_qualification", "unknown_claim",
@@ -376,6 +402,9 @@ async def test_reduction_cannot_lose_duplicate_invent_or_upgrade_claim_lineage(
 async def test_final_requires_complete_grounded_distinct_fields_without_technical_rejection(
     tmp_path: Path, offline: OfflineProvider, damage: str,
 ) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+
     def corrupt(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
         if call["stage"] != "final":
             return answer
@@ -397,14 +426,15 @@ async def test_final_requires_complete_grounded_distinct_fields_without_technica
                 answer[name] = None
         return answer
     offline.response = corrupt
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=2)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=3)
     generation = primary_generation(result.state, offline.config)
-    assert len(generation.nodes) == 1 and generation.final is None
+    assert sum(node.stage == "chunk" for node in generation.nodes.values()) == 2
+    assert generation.final is None
     assert generation.attempts[-1].stage == "final" and generation.attempts[-1].status == "failed"
     assert result.summary.pending == 1 and result.summary.ready == result.summary.rejected == 0
 
 
-async def test_opening_claim_and_last_footnote_survive_all_reductions_with_exact_final_spans(
+async def test_opening_claim_and_last_footnote_survive_complete_processing_with_exact_final_spans(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
     article = make_article()
@@ -430,13 +460,13 @@ async def test_opening_claim_and_last_footnote_survive_all_reductions_with_exact
             assert qualifications and "сноска" in qualifications[0].text.lower()
             spans = [span for claim in qualifications
                      for span in state_api.resolve_claim_spans(generation, claim.claim_id)]
-            assert any(span.quote == FOOTNOTE for span in spans)
+            assert any(FOOTNOTE in span.quote for span in spans)
     fact_spans = [span for ref in final.fact.claim_ids for span in state_api.resolve_claim_spans(generation, ref)]
     limitation_spans = [span for ref in final.limitation.claim_ids
                         for span in state_api.resolve_claim_spans(generation, ref)]
-    assert any(span.start == 0 and span.quote == OPENING for span in fact_spans)
+    assert any(span.start == 0 and OPENING in span.quote for span in fact_spans)
     assert len(limitation_spans) == 1
-    assert limitation_spans[0].quote == FOOTNOTE and limitation_spans[0].end == len(body)
+    assert FOOTNOTE in limitation_spans[0].quote and limitation_spans[0].end == len(body)
     assert limitation_spans[0].chunk_id == footnote_chunk
     for final_field in (final.fact, final.inference, final.limitation, final.why_read):
         spans = [span for ref in final_field.claim_ids for span in state_api.resolve_claim_spans(generation, ref)]
@@ -547,6 +577,8 @@ async def test_interrupted_started_attempts_become_unknown_before_any_new_call(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
     article = make_article()
+    offline.bodies[article.link] = source_body(2)
+    article = make_article()
     first = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
     work = only_article(first.state)
     generation = primary_generation(first.state, offline.config)
@@ -576,8 +608,10 @@ async def test_interrupted_started_attempts_become_unknown_before_any_new_call(
 async def test_usage_is_sanitized_persisted_and_counted_even_for_rejected_outputs(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
     offline.usage = {**USAGE, "total_tokens": 100, "secret": "never persist", "other": True}
-    first = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    first = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
     generation = primary_generation(first.state, offline.config)
     assert generation.attempts[0].usage == USAGE
     assert next(iter(generation.nodes.values())).usage == USAGE
@@ -619,7 +653,7 @@ async def test_worker_never_mutates_existing_delivery_fields_or_consumes_dedup(
     assert (resumed.delivery_state, resumed.delivery_attempt_id) == (delivery_state, "transport-attempt-must-survive")
     assert result.summary.delivered == int(delivery_state == "delivered")
     assert result.summary.unknown_delivery == int(delivery_state == "unknown")
-    assert len(offline.calls) == (2 if delivery_state in {"pending", "confirmed_failed"} else 1)
+    assert len(offline.calls) == 1
     assert not (tmp_path / "seen_articles.json").exists()
 
 
@@ -642,7 +676,7 @@ async def test_editorial_rejection_requires_completed_coverage_and_does_not_cons
     assert result.summary.completed_chunks == 2
     assert only_article(result.state).delivery_state == "pending"
     assert only_article(result.state).delivery_attempt_id is None
-    assert len(offline.calls) == 4
+    assert len(offline.calls) == 3
 
 
 async def test_acquisition_failure_stays_pending_without_rss_substitution_or_editorial_rejection(
@@ -672,7 +706,9 @@ async def test_single_provider_call_uses_explicit_model_and_bounded_output_witho
     assert call["role"] == LLMRole.REVIEW_EVIDENCE
     assert call["model"] == offline.config.review.primary.model
     assert call["config"].llm.max_retries == call["config"].llm.min_request_interval_seconds == 0
-    assert call["kwargs"]["max_output_tokens"] == worker.MAX_OUTPUT_TOKENS
+    assert call["kwargs"]["max_output_tokens"] == (
+        worker.REQUEST_TOKEN_ENVELOPE - worker.estimate_input_tokens(call["messages"]) - worker.REQUEST_TOKEN_RESERVE
+    )
     assert call["kwargs"]["provider_override"].role == ["review_evidence"]
     assert offline.config.llm.max_retries == 5
     assert worker.estimate_input_tokens(call["messages"]) <= worker.MAX_INPUT_ESTIMATE
@@ -707,7 +743,9 @@ async def test_invalid_worker_budget_or_mode_fails_before_io(
 async def test_provider_pacing_leaves_pending_progress_when_wait_exceeds_deadline(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
-    first = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+    first = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
     first.state.provider_next_eligible[offline.config.review.primary.provider] = (
         datetime.now(UTC) + timedelta(hours=1)).isoformat()
     state_api.store_state(first.state, tmp_path)
@@ -718,98 +756,17 @@ async def test_provider_pacing_leaves_pending_progress_when_wait_exceeds_deadlin
     assert only_article(result.state).generations == only_article(first.state).generations
 
 
-@pytest.mark.parametrize("hint", [None, 0, True])
-async def test_quote_only_later_chunk_and_wrong_hints_resolve_unique_exact_offsets(
-    tmp_path: Path, offline: OfflineProvider, hint: Any,
-) -> None:
-    article = make_article()
-    body = source_body(2)
-    offline.bodies[article.link] = body
-
-    def quote_only(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
-        if call["stage"] == "chunk":
-            if call["payload"]["start"] > 0:
-                answer["claims"] = [answer["claims"][-1]]
-            for claim in answer["claims"]:
-                claim.pop("start")
-                if hint is not None:
-                    claim["start"] = hint
-        return answer
-    offline.response = quote_only
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=10)
-    assert result.summary.ready == 1
-    generation = primary_generation(result.state, offline.config)
-    leaf = next(node for node in generation.nodes.values()
-                if node.stage == "chunk" and node.chunk_ids == (only_article(result.state).chunks[-1].chunk_id,))
-    span = leaf.claims[0].spans[0]
-    assert span.start == body.index(FOOTNOTE) and span.end == len(body) and span.quote == FOOTNOTE
-    assert span.offset_recovered is (hint is not None)
-    assert not span.typography_normalized
-    assert state_api.load_state(tmp_path) == result.state
-
-
-@pytest.mark.parametrize("valid_hint", [False, True])
-async def test_repeated_quote_is_rejected_unless_exact_valid_hint_disambiguates(
-    tmp_path: Path, offline: OfflineProvider, valid_hint: bool,
-) -> None:
-    article = make_article()
-    body = f"{OPENING} {OPENING} {FOOTNOTE}"
-    offline.bodies[article.link] = body
-
-    def repeat_quote(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
-        if call["stage"] == "chunk":
-            if valid_hint:
-                answer["claims"][0]["start"] = len(OPENING) + 1
-            else:
-                answer["claims"][0].pop("start")
-        return answer
-    offline.response = repeat_quote
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
-    generation = primary_generation(result.state, offline.config)
-    assert bool(generation.nodes) is valid_hint
-    if valid_hint:
-        span = next(iter(generation.nodes.values())).claims[0].spans[0]
-        assert span.start == len(OPENING) + 1 and span.quote == OPENING
-        assert not span.offset_recovered
-    else:
-        assert generation.attempts[-1].status == "failed"
-        assert generation.attempts[-1].error.startswith("ValueError")
-        assert result.summary.pending == 1
-
-
-async def test_hyphen_typography_normalization_preserves_literal_saved_source(
-    tmp_path: Path, offline: OfflineProvider,
-) -> None:
-    article = make_article()
-    quote = "A peer\u2011reviewed experiment reports a measurable change."
-    offline.bodies[article.link] = quote + " " + FOOTNOTE
-
-    def normalize_hyphen(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
-        if call["stage"] == "chunk":
-            answer["claims"][0]["quote"] = quote.replace("\u2011", "-")
-            answer["claims"][0].pop("start")
-        return answer
-    offline.response = normalize_hyphen
-    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=2)
-    assert result.summary.ready == 1
-    generation = primary_generation(result.state, offline.config)
-    span = next(iter(generation.nodes.values())).claims[0].spans[0]
-    assert span.quote == quote and span.start == 0 and span.end == len(quote)
-    assert span.typography_normalized and not span.offset_recovered
-    assert state_api.load_state(tmp_path) == result.state
-
-
-async def test_small_request_budget_finishes_one_card_before_every_candidate_first_chunk(
+async def test_small_request_budget_completes_one_short_card_per_provider_call(
     tmp_path: Path, offline: OfflineProvider,
 ) -> None:
     articles = [make_article(title=f"Small article {index}", link=f"https://example.com/{index}") for index in range(8)]
     result = await worker.run_editorial_pass(offline.config, tmp_path, articles, max_calls=2)
     assert result.summary.admitted == 8
-    assert result.summary.ready == 1 and result.summary.pending == 7
+    assert result.summary.ready == 2 and result.summary.pending == 6
     assert result.summary.calls_this_pass == 2
-    assert [call["stage"] for call in offline.calls] == ["chunk", "final"]
-    assert [call["payload"]["title"] for call in offline.calls] == [articles[0].title, articles[0].title]
-    assert result.summary.completed_chunks == 1
+    assert [call["stage"] for call in offline.calls] == ["final", "final"]
+    assert [call["payload"]["title"] for call in offline.calls] == [article.title for article in articles[:2]]
+    assert result.summary.completed_chunks == 2
 
 
 @pytest.mark.parametrize("stage", ["acquire", "provider"])
@@ -913,7 +870,7 @@ async def test_malformed_article_does_not_quarantine_healthy_primary_on_other_ar
     offline.response = one_invalid
     result = await worker.run_editorial_pass(offline.config, tmp_path, articles, max_calls=10, deadline_seconds=1)
     second = [call for call in offline.calls if call["payload"].get("title") == articles[1].title]
-    assert [call["provider"] for call in second] == [offline.config.review.primary.provider] * 2
+    assert [call["provider"] for call in second] == [offline.config.review.primary.provider]
     ready = {item.title: item for item in state_api.ready_results(result.state, offline.config)}
     assert ready[articles[1].title].provider == offline.config.review.primary.provider
     assert ready[articles[0].title].provider == offline.config.review.secondary.provider
@@ -924,6 +881,8 @@ async def test_ordinary_provider_pacing_does_not_switch_articles_to_fallback(
 ) -> None:
     articles = [make_article(title=f"Paced article {index}", link=f"https://example.com/paced-{index}")
                 for index in range(2)]
+    for article in articles:
+        offline.bodies[article.link] = source_body(2)
     first = await worker.run_editorial_pass(offline.config, tmp_path, articles, max_calls=1)
     first.state.provider_next_eligible[offline.config.review.primary.provider] = (
         datetime.now(UTC) + timedelta(hours=1)).isoformat()
@@ -953,7 +912,7 @@ async def test_empty_chunks_are_processed_before_whole_article_editorial_rejecti
     result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=20)
     assert result.summary.rejected == result.summary.fully_analysed == 1
     assert result.summary.completed_chunks == 3
-    assert [call["stage"] for call in offline.calls] == ["chunk"] * 3 + ["reduce"] * 2 + ["final"]
+    assert [call["stage"] for call in offline.calls] == ["chunk"] * 3 + ["final"]
     generation = primary_generation(result.state, offline.config)
     assert all(not node.claims and node.empty_reason for node in generation.nodes.values())
 
@@ -1014,7 +973,7 @@ async def test_disagreement_triggers_bounded_third_opinion_on_same_source_withou
     primary = deepcopy(primary_generation(primary_result.state, offline.config))
     assert primary_result.summary.ready == 1
     assert state_api.ready_results(primary_result.state, offline.config)[0].third_review_status == "awaiting_comparison"
-    compared = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=4)
+    compared = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=3)
     ready = state_api.ready_results(compared.state, offline.config)[0]
     assert ready.third_review_status == "pending" and ready.independent_disagreement
     assert not ready.independent_complete and ready.provider == offline.config.review.primary.provider
@@ -1028,7 +987,7 @@ async def test_disagreement_triggers_bounded_third_opinion_on_same_source_withou
     finished = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=10)
     third_calls = [call for call in offline.calls if call["model"] == third.model]
     primary_calls = [call for call in offline.calls if call["model"] == offline.config.review.primary.model]
-    assert len(third_calls) == len(primary_calls) == 4
+    assert len(third_calls) == len(primary_calls) == 3
     assert [call["messages"] for call in third_calls if call["stage"] == "chunk"] == [
         call["messages"] for call in primary_calls if call["stage"] == "chunk"
     ]
@@ -1051,14 +1010,14 @@ async def test_two_ready_judgments_never_invoke_configured_third_model(
     result = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=10)
     third = offline.config.review.tie_breaker
     assert third is not None
-    assert len(offline.calls) == 4 and all(call["model"] != third.model for call in offline.calls)
+    assert len(offline.calls) == 2 and all(call["model"] != third.model for call in offline.calls)
     ready = state_api.ready_results(result.state, offline.config)[0]
     assert ready.independent_complete and not ready.independent_disagreement
     assert ready.third_review_status == "not_required"
     assert result.summary.third_pending == result.summary.independent_disagreements == 0
     assert result.summary.independent_complete == 1
     again = await worker.run_editorial_pass(offline.config, tmp_path, [], mode="independent", max_calls=10)
-    assert again.summary.calls_this_pass == 0 and len(offline.calls) == 4
+    assert again.summary.calls_this_pass == 0 and len(offline.calls) == 2
 
 
 async def test_disagreement_without_third_configuration_is_explicit_and_keeps_primary_ready(
@@ -1075,7 +1034,7 @@ async def test_disagreement_without_third_configuration_is_explicit_and_keeps_pr
     assert result.summary.independent_disagreements == result.summary.ready == 1
     assert result.summary.third_pending == 0
     assert primary_generation(result.state, offline.config) == primary
-    assert len(only_article(result.state).generations) == 2 and len(offline.calls) == 4
+    assert len(only_article(result.state).generations) == 2 and len(offline.calls) == 2
     assert state_api.independent_status(only_article(result.state), offline.config) == (True, "not_configured", True)
 
 
@@ -1085,7 +1044,7 @@ async def test_disagreement_without_third_configuration_is_explicit_and_keeps_pr
     ("2026-10-01T03:00:00+00:00", None),
     (None, None),
 ])
-async def test_chunk_and_final_preserve_both_dates_and_prefer_original_source_publication(
+async def test_direct_final_preserves_both_dates_and_prefers_original_source_publication(
     tmp_path: Path, offline: OfflineProvider, monkeypatch: pytest.MonkeyPatch,
     feed_published: str | None, source_published: str | None,
 ) -> None:
@@ -1098,7 +1057,7 @@ async def test_chunk_and_final_preserve_both_dates_and_prefer_original_source_pu
     monkeypatch.setattr(worker, "fetch_article", dated_source)
     result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=2)
     assert result.summary.ready == 1
-    assert [call["stage"] for call in offline.calls] == ["chunk", "final"]
+    assert [call["stage"] for call in offline.calls] == ["final"]
     for call in offline.calls:
         payload = call["payload"]
         assert payload["category"] == article.category
@@ -1146,8 +1105,142 @@ async def test_permanent_runtime_unavailability_persists_finite_cooldown_and_all
     ready = state_api.ready_results(result.state, offline.config)
     assert len(ready) == 1 and ready[0].provider == offline.config.review.secondary.provider
     assert not ready[0].independent_complete
-    assert result.summary.ready == 1 and result.summary.calls_this_pass == 3
+    assert result.summary.ready == 1 and result.summary.calls_this_pass == 2
     assert [call["provider"] for call in offline.calls] == [primary.provider,
-                                                           offline.config.review.secondary.provider,
                                                            offline.config.review.secondary.provider]
+    assert state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("body", [
+    f"{OPENING}\n{FOOTNOTE}",
+    "Повторяющийся текст.\n" * 800 + FOOTNOTE,
+    source_body(3),
+])
+def test_source_spans_cover_exact_body_without_gaps_overlap_or_typography_changes(body: str) -> None:
+    chunks = state_api.make_chunks(body)
+    spans = worker.source_spans(chunks, body)
+    assert spans == worker.source_spans(chunks, body)
+    assert spans[0].start == 0 and spans[-1].end == len(body)
+    assert "".join(span.quote for span in spans) == body
+    assert all(left.end == right.start for left, right in zip(spans, spans[1:], strict=False))
+    by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    for span in spans:
+        chunk = by_id[span.chunk_id]
+        assert chunk.start <= span.start < span.end <= chunk.end
+        assert body[span.start:span.end] == span.quote
+        assert not span.typography_normalized and not span.offset_recovered
+
+
+async def test_short_body_direct_final_reads_all_source_once_with_canonical_saved_refs(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    article = make_article()
+    body = source_body()
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
+    assert result.summary.ready == result.summary.fully_analysed == result.summary.calls_this_pass == 1
+    assert len(offline.calls) == 1 and offline.calls[0]["stage"] == "final"
+    call = offline.calls[0]
+    spans = call["payload"]["source_spans"]
+    assert [span["source_id"] for span in spans] == [f"S{index}" for index in range(len(spans))]
+    assert "".join(span["text"] for span in spans) == body
+    assert "findings" not in call["payload"]
+    assert worker.estimate_input_tokens(call["messages"]) <= 4500
+    generation = primary_generation(result.state, offline.config)
+    assert len(generation.nodes) == 1
+    root = next(iter(generation.nodes.values()))
+    assert root.stage == "source" and all(claim.kind == "source" for claim in root.claims)
+    assert not root.usage and not root.response_sha256 and len(generation.attempts) == 1
+    assert generation.final is not None and generation.final.limitation is not None
+    refs = generation.final.limitation.claim_ids
+    assert all(ref in {claim.claim_id for claim in root.claims} for ref in refs)
+    resolved = [span for ref in refs for span in state_api.resolve_claim_spans(generation, ref)]
+    assert any(FOOTNOTE in span.quote and span.end == len(body) for span in resolved)
+    assert state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("damage", ["unknown", "duplicate"])
+async def test_direct_final_rejects_unknown_or_duplicate_source_ids(
+    tmp_path: Path, offline: OfflineProvider, damage: str,
+) -> None:
+    def corrupt(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        assert call["stage"] == "final" and "source_spans" in call["payload"]
+        answer["fact"]["claim_ids"] = ["S999999"] if damage == "unknown" else ["S0", "S0"]
+        return answer
+    offline.response = corrupt
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert result.summary.pending == 1 and result.summary.completed_chunks == 0
+    assert result.summary.ready == result.summary.rejected == 0
+
+
+def measurement_body(chunks: int, per_chunk: int) -> str:
+    segments = []
+    for index in range(chunks):
+        facts = "\n".join(f"Measurement {index * per_chunk + number:03d} reports latency of {number + 1} milliseconds."
+                          for number in range(per_chunk))
+        prefix = (OPENING + "\n" if index == 0 else "") + facts + "\n"
+        suffix = "\n" + FOOTNOTE if index == chunks - 1 else "\n"
+        segments.append(prefix + "x" * (state_api.CHUNK_WEIGHT - len(prefix) - len(suffix)) + suffix)
+    return "".join(segments)
+
+
+async def test_atomic_extraction_preserves_more_than_three_findings(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    article = make_article()
+    offline.bodies[article.link] = measurement_body(2, 5)
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    node = next(iter(generation.nodes.values()))
+    assert node.stage == "chunk" and len(node.claims) == 6
+    assert all(claim.spans for claim in node.claims)
+    assert {f"{index:03d}" for index in range(5)} <= {
+        match for claim in node.claims for match in re.findall(r"\d{3}", claim.text)
+    }
+    assert result.summary.completed_chunks == 1 and result.summary.pending == 1
+    assert state_api.load_state(tmp_path) == result.state
+
+
+async def test_hierarchy_is_used_only_when_all_extracted_findings_exceed_final_input_allowance(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    article = make_article()
+    body = measurement_body(5, 8)
+    offline.bodies[article.link] = body
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=30)
+    assert result.summary.ready == 1 and result.summary.completed_chunks == 5
+    stages = [call["stage"] for call in offline.calls]
+    assert stages[:5] == ["chunk"] * 5 and "reduce" in stages and stages[-1] == "final"
+    assert all(worker.estimate_input_tokens(call["messages"]) <= worker.MAX_INPUT_ESTIMATE
+               for call in offline.calls)
+    generation = primary_generation(result.state, offline.config)
+    nodes = {node.node_id: node for node in generation.nodes.values()}
+    for node in generation.nodes.values():
+        if node.stage not in {"reduce", "collect"}:
+            continue
+        children = [nodes[identity] for identity in node.input_node_ids]
+        expected = [claim.claim_id for child in children for claim in child.claims]
+        refs = [ref for claim in node.claims for ref in claim.supports]
+        assert set(refs) == set(expected) and len(refs) == len(expected)
+        assert node.chunk_ids == tuple(key for child in children for key in child.chunk_ids)
+    final = generation.final
+    assert final is not None and final.limitation is not None
+    spans = [span for ref in final.limitation.claim_ids for span in state_api.resolve_claim_spans(generation, ref)]
+    assert any(FOOTNOTE in span.quote and span.end == len(body) for span in spans)
+    assert state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS"])
+async def test_output_token_limit_rejects_even_parseable_valid_editorial_json(
+    tmp_path: Path, offline: OfflineProvider, finish_reason: str,
+) -> None:
+    offline.usage = {**USAGE, "finish_reason": finish_reason}
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert len(offline.calls) == 1 and offline.calls[0]["stage"] == "final"
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert generation.attempts[-1].usage == USAGE
+    assert result.summary.ready == result.summary.rejected == result.summary.fully_analysed == 0
+    assert result.summary.pending == 1 and result.summary.completed_chunks == 0
     assert state_api.load_state(tmp_path) == result.state

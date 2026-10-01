@@ -21,7 +21,7 @@ from digest.radar.summarizer import ArticleSummary
 
 STATE_VERSION = 1
 CHUNKING_VERSION = "complete-offsets-v1"
-PROMPT_VERSION = "russian-claims-v4"
+PROMPT_VERSION = "russian-source-ids-v5"
 MAX_STATE_BYTES = 32 * 1024 * 1024
 MAX_BODY_BYTES = 2 * 1024 * 1024
 CHUNK_WEIGHT = 7500  # ASCII = 1, other characters = 3; complete coverage, not an article cap.
@@ -59,7 +59,7 @@ class Span:
 @dataclass(frozen=True)
 class Claim:
     claim_id: str
-    kind: Literal["fact", "qualification"]
+    kind: Literal["fact", "qualification", "source"]
     text: str
     spans: tuple[Span, ...] = ()
     supports: tuple[str, ...] = ()
@@ -69,7 +69,7 @@ class Claim:
 class AnalysisNode:
     node_id: str
     task_key: str
-    stage: Literal["chunk", "reduce"]
+    stage: Literal["chunk", "reduce", "source", "collect"]
     input_node_ids: tuple[str, ...]
     chunk_ids: tuple[str, ...]
     claims: tuple[Claim, ...]
@@ -367,7 +367,8 @@ def node_hash(node: AnalysisNode) -> str:
 
 def _validate_task_keys(generation: Generation) -> None:
     for node in generation.nodes.values():
-        source = node.chunk_ids[0] if node.stage == "chunk" else list(node.input_node_ids)
+        source: str | list[str] = (node.chunk_ids[0] if node.stage == "chunk" else
+                                    list(node.chunk_ids) if node.stage == "source" else list(node.input_node_ids))
         expected = content_hash([generation.generation_id, node.stage, source])
         if node.task_key != expected:
             raise ValueError("Editorial task is not bound to its analysis generation.")
@@ -387,20 +388,23 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
             raise ValueError("Editorial node identity mismatch.")
         if any(identity not in chunks for identity in node.chunk_ids):
             raise ValueError("Editorial node has unknown source coverage.")
-        if node.stage == "chunk":
-            if node.input_node_ids or len(node.chunk_ids) != 1:
+        if node.stage in {"chunk", "source"}:
+            if node.input_node_ids or (node.stage == "chunk" and len(node.chunk_ids) != 1):
                 raise ValueError("Invalid chunk node lineage.")
         else:
-            if (len(node.input_node_ids) != 2 or len(set(node.input_node_ids)) != 2
+            if ((len(node.input_node_ids) != 2 if node.stage == "reduce" else len(node.input_node_ids) < 2)
+                    or len(set(node.input_node_ids)) != len(node.input_node_ids)
                     or any(identity not in nodes for identity in node.input_node_ids)):
                 raise ValueError("Invalid reduction node lineage.")
             children = [nodes[identity] for identity in node.input_node_ids]
             if tuple(identity for child in children for identity in child.chunk_ids) != node.chunk_ids:
                 raise ValueError("Reduction omitted or reordered source coverage.")
+        if any((claim.kind == "source") != (node.stage == "source") for claim in node.claims):
+            raise ValueError("Raw source spans cannot masquerade as classified model findings.")
         if len({claim.claim_id for claim in node.claims}) != len(node.claims):
             raise ValueError("Duplicate editorial claim identities.")
         for claim in node.claims:
-            if not claim.claim_id.startswith(task_key + ":") or not claim.text.strip():
+            if not claim.claim_id.startswith(task_key + ":") or (not claim.text.strip() and node.stage != "source"):
                 raise ValueError("Invalid editorial claim identity.")
             for span in claim.spans:
                 chunk = chunks.get(span.chunk_id)
@@ -408,9 +412,9 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
                         or not chunk.start <= span.start < span.end <= chunk.end
                         or body[span.start:span.end] != span.quote):
                     raise ValueError("Editorial claim does not match its exact source span.")
-            if node.stage == "chunk" and (not claim.spans or claim.supports):
+            if node.stage in {"chunk", "source"} and (not claim.spans or claim.supports):
                 raise ValueError("Chunk claims require source spans only.")
-        if node.stage == "reduce":
+        if node.stage in {"reduce", "collect"}:
             child_claims = {claim.claim_id: claim for identity in node.input_node_ids
                             for claim in nodes[identity].claims}
             covered = [identity for claim in node.claims for identity in claim.supports]
@@ -444,7 +448,7 @@ def _validate_final(
                 if item is None or not item.claim_ids or any(identity not in claims for identity in item.claim_ids):
                     raise ValueError("Final editorial field lacks grounded claim references.")
             assert final.fact and final.limitation
-            if any(claims[key].kind != "fact" for key in final.fact.claim_ids):
+            if any(claims[key].kind not in {"fact", "source"} for key in final.fact.claim_ids):
                 raise ValueError("Final source fact improperly cites a qualification.")
             qualifications = {key for key, claim in claims.items() if claim.kind == "qualification"}
             if not qualifications <= set(final.limitation.claim_ids):

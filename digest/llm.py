@@ -77,6 +77,8 @@ async def _openai_compat_call(
     if not text:
         raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
     usage: dict[str, Any] = dict(data.get("usage", {}))
+    if isinstance(choices[0].get("finish_reason"), str):
+        usage["finish_reason"] = choices[0]["finish_reason"]
     if isinstance(data.get("model"), str):
         usage["resolved_model"] = data["model"]
     return text, usage
@@ -131,6 +133,8 @@ async def _gemini_call(
         "prompt_tokens": usage_meta.get("promptTokenCount", 0),
         "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
     }
+    if isinstance(candidates[0].get("finishReason"), str):
+        usage["finish_reason"] = candidates[0]["finishReason"]
     if isinstance(data.get("modelVersion"), str):
         usage["resolved_model"] = data["modelVersion"]
     return text, usage

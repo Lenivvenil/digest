@@ -65,7 +65,15 @@ def _hashed_node(node: AnalysisNode) -> AnalysisNode:
 
 def _ready_state(state_dir: Path, *, prompt_version: str = editorial.PROMPT_VERSION
                  ) -> tuple[EditorialState, ArticleWork, Generation]:
-    from digest.editorial_worker import next_task, parse_final, parse_node
+    from digest.editorial_worker import (
+        Task,
+        _chunk_messages,
+        _final_messages,
+        _reduce_messages,
+        parse_final,
+        parse_node,
+        source_spans,
+    )
 
     state, work = _acquired_state(state_dir)
     assert work.body_sha256 is not None
@@ -73,26 +81,31 @@ def _ready_state(state_dir: Path, *, prompt_version: str = editorial.PROMPT_VERS
     provider, model = config.review.primary.provider, config.review.primary.model
     identity = editorial.generation_id(work.body_sha256, provider, model, prompt_version=prompt_version)
     generation = Generation(identity, provider, model, work.body_sha256, prompt_version=prompt_version)
-    while True:
-        task = next_task(work, generation, BODY)
-        assert task is not None
-        if task.stage == "final":
-            break
-        if task.stage == "chunk":
-            assert task.chunk is not None
-            first = task.chunk.index == 0
-            raw = {"claims": [{
-                "kind": "fact" if first else "qualification",
-                "text": "Источник сообщает начальное утверждение о результатах испытания" if first else
-                        "Заключительная оговорка ограничивает применимость исходного утверждения",
-                "quote": "Opening claim." if first else "Final footnote limits the initial claim.",
-            }], "empty_reason": ""}
-        else:
-            raw = {"claims": [{"kind": child.claims[0].kind, "text": child.claims[0].text,
-                               "supports": [child.claims[0].claim_id]} for child in task.children],
-                   "empty_reason": ""}
+    leaves = []
+    for chunk in work.chunks:
+        key = editorial.content_hash([identity, "chunk", chunk.chunk_id])
+        task = Task("chunk", key, _chunk_messages(work, chunk, BODY), chunk=chunk)
+        first = chunk.index == 0
+        needle = "Opening claim." if first else "Final footnote limits the initial claim."
+        refs = [f"S{index}" for index, span in enumerate(source_spans((chunk,), BODY)) if needle in span.quote]
+        raw = {"claims": [{
+            "kind": "fact" if first else "qualification",
+            "text": "Источник сообщает начальное утверждение о результатах испытания" if first else
+                    "Заключительная оговорка ограничивает применимость исходного утверждения",
+            "source_ids": refs,
+        }], "empty_reason": ""}
         node = parse_node(task, json.dumps(raw), BODY, {"prompt_tokens": 17, "completion_tokens": 11})
         generation.nodes[task.task_key] = node
+        leaves.append(node)
+    children = tuple(leaves)
+    key = editorial.content_hash([identity, "reduce", [child.node_id for child in children]])
+    task = Task("reduce", key, _reduce_messages(children), children=children)
+    raw = {"claims": [{"kind": child.claims[0].kind, "text": child.claims[0].text,
+                       "supports": [child.claims[0].claim_id]} for child in children], "empty_reason": ""}
+    node = parse_node(task, json.dumps(raw), BODY, {})
+    generation.nodes[key] = node
+    key = editorial.content_hash([identity, "final", node.node_id])
+    task = Task("final", key, _final_messages(work, node, generation), children=(node,))
     root = task.children[0]
     fact_id, limit_id = (claim.claim_id for claim in root.claims)
     raw_final = {
@@ -330,7 +343,8 @@ def test_complete_analysis_roundtrips_without_duplicating_body(tmp_path: Path) -
     limitation = generation.final.limitation if generation.final else None
     assert limitation is not None
     spans = editorial.resolve_claim_spans(generation, limitation.claim_ids[0])
-    assert [span.quote for span in spans] == ["Final footnote limits the initial claim."]
+    assert any("Final footnote limits the initial claim." in span.quote for span in spans)
+    assert all(BODY[span.start:span.end] == span.quote for span in spans)
     assert spans[0].chunk_id == work.chunks[-1].chunk_id
 
 
@@ -682,3 +696,88 @@ def test_historical_prompt_generation_roundtrips_without_becoming_reusable(tmp_p
     assert editorial.current_generation(loaded.articles[article.article_id], config.review.primary.provider,
                                         config.review.primary.model) is None
     assert editorial.ready_results(loaded, config) == []
+
+
+def _direct_source_state(state_dir: Path) -> tuple[EditorialState, ArticleWork, Generation]:
+    from digest.editorial_worker import Task, _final_messages, parse_final, source_node
+
+    state, article, generation = _ready_state(state_dir)
+    assert generation.final
+    payload = asdict(generation.final)
+    names = ("decision", "fact", "inference", "limitation", "why_read", "reason",
+             "value_score", "value_rationale", "event_key")
+    payload = {name: payload[name] for name in names}
+    root = source_node(article, generation, BODY)
+    for name in ("fact", "inference", "why_read"):
+        payload[name]["claim_ids"] = ["S0"]
+    payload["limitation"]["claim_ids"] = [f"S{len(root.claims) - 1}"]
+    task = Task("final", editorial.content_hash([generation.generation_id, "final", root.node_id]),
+                _final_messages(article, root), children=(root,))
+    generation.nodes = {root.task_key: root}
+    generation.final = parse_final(task, json.dumps(payload), {})
+    return state, article, generation
+
+
+def test_direct_source_root_is_unclassified_complete_and_roundtrips(tmp_path: Path) -> None:
+    state, article, generation = _direct_source_state(tmp_path)
+    root = next(iter(generation.nodes.values()))
+    assert root.stage == "source" and all(claim.kind == "source" for claim in root.claims)
+    assert "".join(claim.text for claim in root.claims) == BODY
+    assert root.chunk_ids == tuple(chunk.chunk_id for chunk in article.chunks)
+    assert not root.usage and not root.prompt_hash and not root.response_sha256
+    editorial.store_state(state, tmp_path)
+    loaded = editorial.load_state(tmp_path)
+    assert loaded == state
+    assert len(editorial.ready_results(loaded, fixture_config())) == 1
+    assert generation.final and generation.final.limitation
+    spans = editorial.resolve_claim_spans(generation, generation.final.limitation.claim_ids[0])
+    assert spans[-1].end == len(BODY) and "Final footnote" in spans[-1].quote
+
+
+@pytest.mark.parametrize("damage", ["drop_span", "alter_text", "classify_as_fact"])
+def test_source_root_cannot_omit_or_reinterpret_source(tmp_path: Path, damage: str) -> None:
+    state, _, generation = _direct_source_state(tmp_path)
+    root = next(iter(generation.nodes.values()))
+    if damage == "drop_span":
+        changed = replace(root, claims=root.claims[:-1])
+    else:
+        claim = root.claims[0]
+        claim = (replace(claim, text="Invented source content") if damage == "alter_text"
+                 else replace(claim, kind="fact"))
+        changed = replace(root, claims=(claim,) + root.claims[1:])
+    _replace_node(generation, changed)
+    with pytest.raises(ValueError):
+        editorial.store_state(state, tmp_path)
+
+
+def test_deterministic_collection_preserves_every_leaf_claim_without_model_usage(tmp_path: Path) -> None:
+    from digest.editorial_worker import collection_node
+
+    _, _, generation = _ready_state(tmp_path)
+    children = tuple(node for node in generation.nodes.values() if node.stage == "chunk")
+    root = collection_node(generation, children)
+    assert root.stage == "collect"
+    originals = [claim for child in children for claim in child.claims]
+    assert [(claim.text, claim.kind, claim.supports) for claim in root.claims] == [
+        (claim.text, claim.kind, (claim.claim_id,)) for claim in originals
+    ]
+    assert root.chunk_ids == tuple(key for child in children for key in child.chunk_ids)
+    assert not root.usage and not root.prompt_hash and not root.response_sha256
+
+
+def test_long_final_preserves_original_qualification_spans_within_request_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest import editorial_worker as worker
+
+    _, article, generation = _ready_state(tmp_path)
+    root = _root_node(generation)
+    messages = worker._final_messages(article, root, generation)
+    evidence = json.loads(messages[1]["content"])["qualification_sources"]
+    qualification = next(claim for claim in root.claims if claim.kind == "qualification")
+    spans = editorial.resolve_claim_spans(generation, qualification.claim_id)
+    assert [item["text"] for item in evidence] == [span.quote for span in spans]
+    assert all(item["qualification_claim_ids"] == [qualification.claim_id] for item in evidence)
+    monkeypatch.setattr(worker, "MAX_INPUT_ESTIMATE", worker.estimate_input_tokens(messages) - 1)
+    with pytest.raises(ValueError, match="input allowance"):
+        worker._final_messages(article, root, generation)

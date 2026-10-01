@@ -112,7 +112,7 @@ def test_providers_for_role_empty_when_no_match() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_complete_openai_compat_success() -> None:
+async def test_complete_openai_compat_preserves_text_usage_and_stop_status() -> None:
     config = _make_config([
         {"name": "groq", "model": "llama-3.3-70b", "role": ["summarize"]},
     ])
@@ -120,7 +120,7 @@ async def test_complete_openai_compat_success() -> None:
         return_value=httpx.Response(
             200,
             json={
-                "choices": [{"message": {"content": "Hello from Groq"}}],
+                "choices": [{"message": {"content": "Hello from Groq"}, "finish_reason": "length"}],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
             },
         )
@@ -130,6 +130,7 @@ async def test_complete_openai_compat_success() -> None:
         text, usage = await complete(LLMRole.SUMMARIZE, messages, config)
     assert text == "Hello from Groq"
     assert usage["completion_tokens"] == 5
+    assert usage["finish_reason"] == "length"
 
 
 @pytest.mark.asyncio
@@ -184,7 +185,7 @@ async def test_complete_raises_when_no_providers_for_role() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_complete_gemini_success() -> None:
+async def test_complete_gemini_preserves_text_usage_and_stop_status() -> None:
     config = _make_config([
         {"name": "gemini", "model": "gemini-2.5-flash", "role": ["generate_queries"]},
     ])
@@ -195,7 +196,7 @@ async def test_complete_gemini_success() -> None:
             200,
             json={
                 "candidates": [
-                    {"content": {"parts": [{"text": "Gemini response"}]}}
+                    {"content": {"parts": [{"text": "Gemini response"}]}, "finishReason": "MAX_TOKENS"}
                 ],
                 "usageMetadata": {
                     "promptTokenCount": 20,
@@ -209,6 +210,7 @@ async def test_complete_gemini_success() -> None:
         text, usage = await complete(LLMRole.GENERATE_QUERIES, messages, config)
     assert text == "Gemini response"
     assert usage["completion_tokens"] == 10
+    assert usage["finish_reason"] == "MAX_TOKENS"
 
 
 @pytest.mark.asyncio

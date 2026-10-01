@@ -55,7 +55,7 @@ reasons and no claim that the material was read or judged irrelevant.
 3. **Analysing:** a deterministic chunk manifest covers the entire body in order.
    A chunk has body hash, index, offsets and its own hash. Whitespace normalization
    happens once before hashing. There are no omitted windows. Chunk extraction records
-   source claims, limitations and exact quotations; it does not reject the article
+   source claims, limitations and deterministic references to unchanged source spans; it does not reject the article
    because a particular chunk lacks news value.
 4. **Ready or editorially rejected:** only after every chunk has valid analysis,
    synthesize the article's concrete change, significance and limitations. The result
@@ -70,6 +70,9 @@ reasons and no claim that the material was read or judged irrelevant.
    confirmed failed and unknown outcomes separately: unknown Telegram outcomes are
    held for reconciliation and are never automatically resent.
 
+When the complete body fits the measured per-request allowance, analyse it directly
+with source-backed final fields. Do not force it through a lossy intermediate summary.
+Otherwise process every chunk, preserving atomic findings and material qualifications.
 If all chunk findings cannot fit one synthesis request, reduce them hierarchically
 in bounded groups. Every reduction node records the complete ordered set of input
 node hashes and covered source chunk IDs. No first-K truncation is permitted. The
@@ -149,6 +152,34 @@ remain in the engine repository.
   editorial value from execution capacity and reuses existing atomic state/receipt
   patterns. It adds real state complexity and may create backlog; neither cost is
   hidden by claiming a fixed number of cards is sufficient.
+
+## Citation and synthesis interface refinement (2026-10-01)
+
+Use deterministic numbered source spans instead of asking the model to reproduce
+quotations. Each span resolves to immutable body offsets and text; unknown references
+are rejected. Compound factual statements must cite the relevant source spans. The
+model must preserve the scope and quantifiers of those spans, and the real-output
+review must verify that it did so. This removes transcription and quotation-length
+failure modes without relaxing factual grounding. A source reference alone cannot
+establish that a factual statement follows from the cited text.
+
+For example, a synthetic claim about a protocol's potential network reach does not
+establish that a particular deployment serves that entire network. An unquantified
+source statement cannot establish a majority. Such entailment errors require a
+semantic quality check even when references are syntactically valid.
+
+A fixed three-finding limit per chunk/reduction is not an editorial requirement and
+must not erase source qualifications. Output exhaustion remains explicit incomplete
+work, never a completed extraction. Direct whole-body analysis and conditional
+hierarchical synthesis reduce unnecessary calls and avoid summarizing a summary when
+all original evidence fits. Changed analysis contracts use a new prompt generation;
+unchanged acquired bodies remain reusable, while earlier model opinions are retained
+as history rather than silently treated as verified under the new contract.
+
+Expected conclusions belong in the evaluator, not the model's source prompt. This
+refinement is part of #55; it does not establish successful editorial quality or
+sustainable processing capacity before real evaluation. Detailed runtime evaluation
+artifacts remain private; public tests use synthetic examples.
 
 ## Verification and release gates
 
