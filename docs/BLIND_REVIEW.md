@@ -3,8 +3,11 @@
 This runbook describes the RSS-review code available on main. Full-source enrichment
 in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93) is not installed by these
 instructions. Editorial quality remains open in [#55](https://github.com/Lenivvenil/digest/issues/55).
-The English documentation/onboarding slice of [#94](https://github.com/Lenivvenil/digest/issues/94)
-is currently active; optional post translation is not yet a separate implemented setting.
+Optional primary presentation translation is documented in
+[README](../README.md#language-and-optional-primary-post-translation) and
+[ADR-0005](decisions/0005-optional-presentation-translation.md). Its translation-fidelity
+checks are separate from #55's proposed editorial pipeline. Current work order is
+tracked in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 `review.enabled` adds provider-neutral independent selection to the existing RSS,
 Markdown and Telegram pipeline. It defaults to false for existing configurations.

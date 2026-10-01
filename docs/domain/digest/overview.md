@@ -5,8 +5,9 @@ _Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconcil
 ## Decision and evidence register — 2026-10-01
 
 This is the existing canonical Digest domain page, not a new architecture proposal.
-As of 2026-10-01, documentation and onboarding
-[#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active item. Editorial
+As of 2026-10-01, productization
+[#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active item. English
+documentation/onboarding #95 is merged; optional primary-post translation is under review. Editorial
 quality [#55](https://github.com/Lenivvenil/digest/issues/55), tracked in work order
 [#91](https://github.com/Lenivvenil/digest/issues/91), awaits real-output verification
 and is not complete. Feedback #48 and source contracts #77 remain queued. This

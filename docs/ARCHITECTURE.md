@@ -245,5 +245,7 @@ causes as known provider limits.
   be pruned, while lifecycle ownership follows its separate state contract.
 - External adapter failures in #77 limit counter-evidence coverage. Preserve a visible
   incomplete result rather than asserting that the world supplied no contrary evidence.
-- Current `radar.language` is direct en/ru generation. Optional canonical-English post
-  translation is planned in #94; it is not implemented by this documentation change.
+- `radar.language` controls direct en/ru generation. Optional presentation translation
+  requires canonical English and leaves source evidence and analysis language unchanged;
+  see [ADR-0005](decisions/0005-optional-presentation-translation.md). Its generated-text
+  scope and unverified semantic-fidelity boundary are documented explicitly.

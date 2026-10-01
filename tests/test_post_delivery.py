@@ -495,3 +495,49 @@ async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
     assert "LATE CONDITION" in _markdown(checkpoint).read_text()
     assert json.loads(_result(checkpoint).read_text()) == asdict(result)
     assert json.loads(_marker(checkpoint).read_text())["supplement_status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_optional_presentation_archives_canonical_before_translation_and_keeps_dispatch_reserve(
+    tmp_path: Path,
+) -> None:
+    import time
+    from dataclasses import replace
+
+    from digest.config import TranslationConfig
+    from digest.translation import TranslationResult
+
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    canonical = _stage_result(payload["evidence"]["bundle_id"])
+    cfg = fixture_config()
+    cfg.translation = TranslationConfig(enabled=True, provider="groq", model="test-model")
+    presented = replace(canonical, status="empty")
+    started = time.monotonic()
+
+    async def translate(actual, actual_config, cache, *, deadline):
+        assert actual is canonical
+        assert json.loads(_result(checkpoint).read_text()) == asdict(canonical)
+        assert actual_config.translation.timeout_seconds == 90
+        assert started + 224 <= deadline <= time.monotonic() + 225
+        return presented, TranslationResult({}, "translated")
+
+    async def send(actual, actual_config, *, notice):
+        assert actual is presented and actual_config.radar.language == "ru"
+        assert "not independently verified" in notice
+        text = _markdown(checkpoint).read_text()
+        assert "Status: empty" in text and notice in text
+        assert json.loads(text.split("## Stage diagnostics\n", 1)[1]) == asdict(canonical)
+        return "sent"
+
+    with (
+        patch("digest.post_delivery._config", return_value=cfg),
+        patch("httpx.AsyncClient", return_value=_client_context()),
+        patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=canonical)),
+        patch("digest.translation.translate_supplement_presentation", side_effect=translate),
+        patch("digest.post_delivery._send_supplement", side_effect=send),
+    ):
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 0
+    assert json.loads(_result(checkpoint).read_text()) == asdict(canonical)
+    assert json.loads(_marker(checkpoint).read_text())["translation_status"] == "translated"

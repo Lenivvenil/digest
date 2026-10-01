@@ -650,3 +650,24 @@ def test_one_bad_citation_rejects_whole_narrative_after_an_allowed_repair() -> N
                        bundle.items[1].evidence_id: "Invented evidence"}
     with pytest.raises(ValueError, match="not in original evidence"):
         _parse_narrative(json.dumps(response), bundle)
+
+
+@pytest.mark.asyncio
+async def test_opt_in_translation_observes_the_stage_runtime_pacing() -> None:
+    from digest.config import TranslationConfig
+    from digest.llm import _request_state
+
+    config = fixture_config()
+    config.translation = TranslationConfig(enabled=True)
+    shared = _request_state(config)
+
+    async def stages(bundle, bounded, client, result):
+        assert _request_state(bounded) is shared
+        assert bounded.llm.min_request_interval_seconds == 65
+        shared.next_request_at = 195.0
+        result.status = "empty"
+
+    with patch("digest.irritator.evidence_stage._run_stages", side_effect=stages):
+        async with httpx.AsyncClient() as client:
+            result = await run_evidence_irritator(_bundle(config), config, client)
+    assert result.status == "empty" and _request_state(config).next_request_at == 195.0
