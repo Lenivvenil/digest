@@ -441,6 +441,136 @@ async def test_review_output_budget_reaches_all_provider_transports() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model,effort,include", [
+    ("openai/gpt-oss-120b", "high", True),
+    ("openai/gpt-oss-20b", "low", False),
+    ("openai/gpt-oss-20b", "medium", None),
+    ("openai/gpt-oss-120b", None, False),
+])
+@respx.mock
+async def test_explicit_groq_reasoning_options_preserve_completion_budget(
+    model: str, effort: str | None, include: bool | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import json
+
+    from digest.config import ProviderConfig
+
+    config = _make_config([{"name": "deepseek", "model": "unused", "role": ["fallback"]}])
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(200, json={
+        "choices": [{"message": {
+            "content": "Visible answer", "reasoning": "SECRET_REASONING", "reasoning_content": "SECRET_REASONING",
+        }, "finish_reason": "stop"}],
+        "usage": {"completion_tokens": 2100, "completion_tokens_details": {"reasoning_tokens": 1800}},
+    })
+    with patch.dict("os.environ", {"GROQ_API_KEY": "synthetic"}):
+        text, usage = await complete(
+            LLMRole.REVIEW_EVIDENCE, [], config,
+            provider_override=ProviderConfig("groq", model), max_output_tokens=2200,
+            reasoning_effort=effort, include_reasoning=include,
+        )
+    body = json.loads(route.calls.last.request.content)
+    expected: dict[str, Any] = {"model": model, "messages": [], "temperature": 0.3, "max_completion_tokens": 2200}
+    if effort is not None:
+        expected["reasoning_effort"] = effort
+    if include is not None:
+        expected["include_reasoning"] = include
+    assert body == expected  # No reasoning_format or hidden enlargement of the budget.
+    assert route.call_count == 1
+    assert text == "Visible answer"
+    assert usage["completion_tokens"] == 2100
+    assert usage["reasoning_tokens"] == 1800
+    assert "SECRET_REASONING" not in repr(usage) + caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_override", [False, True])
+@respx.mock
+async def test_default_calls_do_not_send_reasoning_options(explicit_override: bool) -> None:
+    import json
+
+    from digest.config import ProviderConfig
+
+    config = _make_config([{"name": "groq", "model": "openai/gpt-oss-120b", "role": ["summarize"]}])
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(
+        200, json={"choices": [{"message": {"content": "ok"}}]},
+    )
+    override = ProviderConfig("groq", "openai/gpt-oss-120b") if explicit_override else None
+    with patch.dict("os.environ", {"GROQ_API_KEY": "synthetic"}):
+        await complete(LLMRole.SUMMARIZE, [], config, provider_override=override, max_output_tokens=2200)
+    assert json.loads(route.calls.last.request.content) == {
+        "model": "openai/gpt-oss-120b", "messages": [], "temperature": 0.3, "max_completion_tokens": 2200,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,model,options", [
+    (None, None, {"reasoning_effort": "low"}),
+    (None, None, {"include_reasoning": False}),
+    ("deepseek", "openai/gpt-oss-120b", {"reasoning_effort": "low"}),
+    ("groq", "llama-3.3-70b", {"include_reasoning": False}),
+    ("groq", "openai/gpt-oss-120b", {"reasoning_effort": "minimal"}),
+    ("groq", "openai/gpt-oss-120b", {"reasoning_effort": True}),
+    ("groq", "openai/gpt-oss-120b", {"include_reasoning": "false"}),
+    ("groq", "openai/gpt-oss-120b", {"include_reasoning": 0}),
+])
+async def test_invalid_reasoning_options_fail_before_http(
+    provider: str | None, model: str | None, options: dict[str, Any],
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from digest.config import ProviderConfig
+
+    config = _make_config([{"name": "groq", "model": "openai/gpt-oss-120b", "role": ["summarize"]}])
+    override = ProviderConfig(provider, model) if provider is not None and model is not None else None
+    with (
+        patch("digest.llm.httpx.AsyncClient.post", new_callable=AsyncMock) as post,
+        patch.dict("os.environ", {"GROQ_API_KEY": "synthetic", "DEEPSEEK_API_KEY": "synthetic"}),
+    ):
+        with pytest.raises(ValueError):
+            await complete(LLMRole.SUMMARIZE, [], config, provider_override=override, **options)
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("details,expected", [
+    (None, None),
+    ([], None),
+    ({}, None),
+    ({"reasoning_tokens": -1}, None),
+    ({"reasoning_tokens": True}, None),
+    ({"reasoning_tokens": "42"}, None),
+    ({"reasoning_tokens": 42.0}, None),
+    ({"reasoning_tokens": 0}, 0),
+    ({"reasoning_tokens": 42}, 42),
+])
+@respx.mock
+async def test_reasoning_usage_requires_explicit_nonnegative_integer_count(
+    details: Any, expected: int | None,
+) -> None:
+    from digest.llm import _openai_compat_call
+
+    # A nonzero completion total and a top-level value must never stand in for
+    # the documented nested provider counter.
+    provider_usage = {"completion_tokens": 2200, "reasoning_tokens": 999}
+    if details is not None:
+        provider_usage["completion_tokens_details"] = details
+    respx.post("https://api.groq.com/openai/v1/chat/completions").respond(200, json={
+        "choices": [{"message": {"content": "ok"}}], "usage": provider_usage,
+    })
+    async with httpx.AsyncClient() as client:
+        _, usage = await _openai_compat_call(
+            client, "https://api.groq.com/openai/v1", "synthetic", "openai/gpt-oss-120b", [], 0.3,
+        )
+    assert usage["completion_tokens"] == 2200
+    if expected is None:
+        assert "reasoning_tokens" not in usage
+    else:
+        assert usage["reasoning_tokens"] == expected
+        assert type(usage["reasoning_tokens"]) is int
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["groq", "gemini"])
 @pytest.mark.parametrize("empty_content", ["", None])
 @respx.mock

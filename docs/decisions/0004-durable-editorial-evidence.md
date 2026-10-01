@@ -236,6 +236,38 @@ snapshot is not a measured arrival rate. Neither more runner time nor a larger
 context window alone establishes sustainable free execution. This section authorizes
 no schedule change or automatic-card rollout by itself.
 
+## Release-gate status — 2026-10-01
+
+**Not met.** Mechanical evidence integrity and successful workflow execution do not
+establish faithful editorial output. A writer plus a verifier is still an unproven
+execution path; an incomplete verifier response supplies no verdict. Work remains
+under #55, and this ADR does not authorize treating the draft as a restored product.
+
+The all-admitted-candidates processing strategy is not acceptable for rollout without
+a sustainable workload/capacity result. Persisting a growing backlog does not resolve
+that failure. The selection clarification above remains a proposal; it must not be
+implemented as the old slot budget or an article-length limit under a new name.
+
+The next bounded investigation is model-specific reasoning/output controls and
+numeric token accounting, followed by a source-faithfulness check. Effort controls,
+reasoning visibility and total completion limits are different API concepts; supported
+values must be checked against current provider documentation. A missing numeric
+breakdown is unknown, not evidence that all output tokens were reasoning. Do not
+increase limits blindly or retain private reasoning text to diagnose the budget.
+Detailed evaluation artifacts remain in the private verification environment.
+
+## Publication language clarification — 2026-10-01
+
+Owner direction recorded in #94 makes English the product default and post translation
+an explicit setting with a target language. Earlier Russian wording in this ADR records
+the deployment and verification cohort used when the decision was drafted; it is not
+a universal editorial invariant. Source evidence remains unchanged by publication
+language. The current deployment keeps Russian through configuration. Language changes
+must preserve factual scope and material qualifications; optional translation failure
+may fall back to the verified canonical English card with a visible degraded status.
+This clarification does not claim that the draft implementation already supports the
+new configuration or that its factual release gate has passed.
+
 ## Verification and release gates
 
 - Deterministic tests: complete chunk coverage and boundaries; body/prompt/model hash
@@ -247,7 +279,7 @@ no schedule change or automatic-card rollout by itself.
   incomplete extraction, and no RSS fallback.
 - Full lint/type/test checks and independent code review before publishing a release.
 - A controlled report-only run using real sources must show completed coverage and
-  useful Russian analysis, with a read-only editorial review against #55. Synthetic
+  useful analysis in the configured publication language, with a read-only editorial review against #55. Synthetic
   model fixtures prove contracts only, not usefulness. Do not mark #55 done on tests,
   a successful API call or an empty queue alone.
 - Deploy only after that gate; verify primary Telegram API acceptance and saved state,

@@ -370,8 +370,8 @@ def _envelope(text: str, keys: set[str], optional: set[str] | None = None) -> di
 
 
 def _usage(raw: dict[str, Any]) -> dict[str, int]:
-    return {key: value for key, value in raw.items() if key in {"prompt_tokens", "completion_tokens"}
-            and type(value) is int and value >= 0}
+    keys = {"prompt_tokens", "completion_tokens", "reasoning_tokens"}
+    return {key: value for key, value in raw.items() if key in keys and type(value) is int and value >= 0}
 
 
 def parse_node(task: Task, text: str, body: str, usage: dict[str, int]) -> AnalysisNode:

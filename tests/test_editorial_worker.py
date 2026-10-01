@@ -1609,3 +1609,17 @@ async def test_successful_http_quota_observation_persists_before_card_validation
     assert attempt.usage == USAGE
     assert "SECRET" not in (tmp_path / "state.json").read_text()
     assert state_api.load_state(tmp_path) == result.state
+
+
+async def test_reported_reasoning_tokens_persist_as_numeric_usage_only(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    offline.usage.update({"reasoning_tokens": 17, "reasoning": "PRIVATE_REASONING_TEXT"})
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert generation.final and generation.final.usage == {**USAGE, "reasoning_tokens": 17}
+    assert generation.attempts[0].usage == {**USAGE, "reasoning_tokens": 17}
+    assert "PRIVATE_REASONING_TEXT" not in (tmp_path / "state.json").read_text()
+    assert state_api.load_state(tmp_path) == result.state
+    assert worker._usage({"completion_tokens": 2200}) == {"completion_tokens": 2200}
+    assert worker._usage({"reasoning_tokens": True}) == {}

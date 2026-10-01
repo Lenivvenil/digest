@@ -50,6 +50,27 @@ class LLMRole(str, enum.Enum):
     REVIEW_EVIDENCE = "review_evidence"
 
 
+_GROQ_REASONING_MODELS = frozenset({"openai/gpt-oss-20b", "openai/gpt-oss-120b"})
+
+
+def _reasoning_options(provider: Any, model: Any, reasoning_effort: str | None,
+                       include_reasoning: bool | None) -> dict[str, Any]:
+    if reasoning_effort is None and include_reasoning is None:
+        return {}
+    if provider != "groq" or not isinstance(model, str) or model not in _GROQ_REASONING_MODELS:
+        raise ValueError("Reasoning options require an explicit supported Groq GPT-OSS model override.")
+    if reasoning_effort is not None and reasoning_effort not in ("low", "medium", "high"):
+        raise ValueError("Groq GPT-OSS reasoning_effort must be low, medium or high.")
+    if include_reasoning is not None and type(include_reasoning) is not bool:
+        raise ValueError("include_reasoning must be a boolean when specified.")
+    options: dict[str, Any] = {}
+    if reasoning_effort is not None:
+        options["reasoning_effort"] = reasoning_effort
+    if include_reasoning is not None:
+        options["include_reasoning"] = include_reasoning
+    return options
+
+
 async def _openai_compat_call(
     client: httpx.AsyncClient,
     base_url: str,
@@ -58,9 +79,16 @@ async def _openai_compat_call(
     messages: list[dict[str, str]],
     temperature: float,
     max_output_tokens: int | None = None,
+    *,
+    reasoning_effort: str | None = None,
+    include_reasoning: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Single call to an OpenAI-compatible chat/completions endpoint."""
-    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
+    options = _reasoning_options(
+        "groq" if base_url == _OPENAI_COMPAT["groq"]["base_url"] else None,
+        model, reasoning_effort, include_reasoning,
+    )
+    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, **options}
     if max_output_tokens is not None:
         token_field = "max_completion_tokens" if "api.groq.com" in base_url else "max_tokens"
         body[token_field] = max_output_tokens
@@ -74,12 +102,23 @@ async def _openai_compat_call(
     data = resp.json()
     choices = data.get("choices", [])
     if not choices:
-        raise ValueError(f"OpenAI-compat returned no choices: {str(data)[:200]}")
+        raise ValueError("OpenAI-compat returned no choices.")
     raw_text = choices[0].get("message", {}).get("content")
     text: str = raw_text if isinstance(raw_text, str) else ""
     if not text and choices[0].get("finish_reason") != "length":
-        raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
-    usage: dict[str, Any] = dict(data.get("usage", {}))
+        raise ValueError("OpenAI-compat returned empty content.")
+    raw_usage = data.get("usage", {})
+    raw_usage = raw_usage if isinstance(raw_usage, dict) else {}
+    numeric_keys = {"prompt_tokens", "completion_tokens", "total_tokens", "prompt_time", "completion_time",
+                    "queue_time", "total_time"}
+    usage: dict[str, Any] = {
+        key: value for key, value in raw_usage.items() if key in numeric_keys and
+        (type(value) is int and value >= 0 or type(value) is float and math.isfinite(value) and value >= 0)
+    }
+    details = raw_usage.get("completion_tokens_details")
+    reasoning_tokens = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    if type(reasoning_tokens) is int and reasoning_tokens >= 0:
+        usage["reasoning_tokens"] = reasoning_tokens
     if isinstance(choices[0].get("finish_reason"), str):
         usage["finish_reason"] = choices[0]["finish_reason"]
     if isinstance(data.get("model"), str):
@@ -458,7 +497,9 @@ async def _pace_request(state: _RequestState, interval: float) -> None:
 async def _call_provider(
     client: httpx.AsyncClient, provider: Any,
     messages: list[dict[str, str]], temperature: float, max_output_tokens: int | None = None,
+    *, reasoning_effort: str | None = None, include_reasoning: bool | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
+    options = _reasoning_options(provider.name, provider.model, reasoning_effort, include_reasoning)
     if provider.name == "anthropic":
         env_name = "ANTHROPIC_API_KEY"
     elif provider.name == "gemini":
@@ -478,7 +519,7 @@ async def _call_provider(
         return await _gemini_call(client, api_key, provider.model, messages, temperature, max_output_tokens)
     return await _openai_compat_call(
         client, _OPENAI_COMPAT[provider.name]["base_url"], api_key,
-        provider.model, messages, temperature, max_output_tokens,
+        provider.model, messages, temperature, max_output_tokens, **options,
     )
 
 
@@ -535,8 +576,12 @@ async def complete(
     category: str | None = None,
     provider_override: Any | None = None,
     max_output_tokens: int | None = None,
+    reasoning_effort: str | None = None,
+    include_reasoning: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Bounded LLM calls. Explicit model slots never silently fall back."""
+    options = _reasoning_options(getattr(provider_override, "name", None),
+                                 getattr(provider_override, "model", None), reasoning_effort, include_reasoning)
     providers = ([provider_override] if provider_override is not None
                  else _resolve_routed_providers(role, category, config))
     if not providers:
@@ -563,7 +608,7 @@ async def complete(
                 t0 = time.monotonic()
                 state.failure_diagnostics.pop((provider.name, provider.model), None)
                 try:
-                    result = await _call_provider(client, provider, messages, temperature, max_output_tokens)
+                    result = await _call_provider(client, provider, messages, temperature, max_output_tokens, **options)
                     if result is None:
                         break
                     text, usage = result
