@@ -73,8 +73,9 @@ async def _openai_compat_call(
     choices = data.get("choices", [])
     if not choices:
         raise ValueError(f"OpenAI-compat returned no choices: {str(data)[:200]}")
-    text: str = choices[0].get("message", {}).get("content", "")
-    if not text:
+    raw_text = choices[0].get("message", {}).get("content")
+    text: str = raw_text if isinstance(raw_text, str) else ""
+    if not text and choices[0].get("finish_reason") != "length":
         raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
     usage: dict[str, Any] = dict(data.get("usage", {}))
     if isinstance(choices[0].get("finish_reason"), str):
@@ -125,9 +126,10 @@ async def _gemini_call(
     if not candidates:
         raise ValueError(f"Gemini returned no candidates: {str(data)[:200]}")
     parts = candidates[0].get("content", {}).get("parts", [])
-    if not parts or not parts[0].get("text"):
+    raw_text = parts[0].get("text") if parts else None
+    text: str = raw_text if isinstance(raw_text, str) else ""
+    if not text and candidates[0].get("finishReason") != "MAX_TOKENS":
         raise ValueError(f"Gemini returned empty response: {str(data)[:200]}")
-    text: str = parts[0]["text"]
     usage_meta = data.get("usageMetadata", {})
     usage: dict[str, Any] = {
         "prompt_tokens": usage_meta.get("promptTokenCount", 0),
@@ -393,6 +395,8 @@ async def complete(
                     if result is None:
                         break
                     text, usage = result
+                    if not text and role != LLMRole.REVIEW_EVIDENCE:
+                        raise ValueError("Provider exhausted output before producing visible text.")
                     logger.info(
                         "LLM %s/%s role=%s tokens=%s latency=%.1fs",
                         provider.name, provider.model, role.value,

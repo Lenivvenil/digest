@@ -438,3 +438,31 @@ async def test_review_output_budget_reaches_all_provider_transports() -> None:
     assert json.loads(groq.calls.last.request.content)["max_completion_tokens"] == 2048
     assert json.loads(gemini.calls.last.request.content)["generationConfig"]["maxOutputTokens"] == 2048
     assert json.loads(anthropic.calls.last.request.content)["max_tokens"] == 2048
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["groq", "gemini"])
+@pytest.mark.parametrize("empty_content", ["", None])
+@respx.mock
+async def test_review_retains_empty_output_exhaustion_for_resumable_processing(
+    provider: str, empty_content: str | None,
+) -> None:
+    config = _make_config([{"name": provider, "model": "fixture", "role": ["review_evidence"]}])
+    if provider == "groq":
+        response = {"choices": [{"message": {"content": empty_content}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens": 2000}}
+        respx.post("https://api.groq.com/openai/v1/chat/completions").respond(200, json=response)
+    else:
+        response = {"candidates": [{"content": {"parts": [{"text": None}] if empty_content is None else []},
+                                    "finishReason": "MAX_TOKENS"}],
+                    "usageMetadata": {"candidatesTokenCount": 2000}}
+        respx.post(url__startswith="https://generativelanguage.googleapis.com").respond(200, json=response)
+    legacy = _make_config([{"name": provider, "model": "fixture", "role": ["summarize"]}])
+    legacy.llm.max_retries = 0
+    with patch.dict("os.environ", {"GROQ_API_KEY": "synthetic", "GEMINI_API_KEY": "synthetic"}):
+        text, usage = await complete(LLMRole.REVIEW_EVIDENCE, [], config)
+        with pytest.raises(RuntimeError, match="All providers failed"):
+            await complete(LLMRole.SUMMARIZE, [], legacy)
+    assert text == ""
+    assert usage["finish_reason"] in {"length", "MAX_TOKENS"}
+    assert usage["completion_tokens"] == 2000

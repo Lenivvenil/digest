@@ -30,6 +30,7 @@ from digest.editorial_state import (
     FinalEditorial,
     Generation,
     Span,
+    active_chunks,
     admit_articles,
     chosen_generation,
     content_hash,
@@ -42,6 +43,7 @@ from digest.editorial_state import (
     read_body,
     ready_results,
     save_body,
+    split_chunk,
     store_state,
     utc_now,
 )
@@ -56,6 +58,8 @@ SOURCE_SPAN_CHARS = 1500
 FAILURE_COOLDOWN_SECONDS = 3600
 PERMANENT_FAILURE_COOLDOWN_SECONDS = 24 * 3600
 GROQ_SPACING_SECONDS = 65
+TERMINAL_SEGMENT_ERROR = "OutputExhaustedMinimumSegment"
+OUTPUT_EXHAUSTION = "Provider output stopped at token limit; analysis is incomplete."
 
 
 @dataclass(frozen=True)
@@ -216,18 +220,22 @@ def _final_messages(article: ArticleWork, root: AnalysisNode,
         "Prefer source_published to feed_published; a fresh feed update does not prove article novelty. "
         "Do not force a banking angle. Relevance and value depend on concrete novelty, applicability and tradeoffs, "
         "NEVER length, quota, source popularity or ease of processing. Preserve quantities and scope: "
-        "many is not most, "
-        "and network reach is not offering availability. Return JSON with exactly decision (ready or "
+        "many is not most, and network reach is not offering availability. Every number must identify exactly the "
+        "population counted. Preserve actors, scope and conditions, and distinguish a historical problem from "
+        "current implemented behavior. Do not invent cost, performance or scaling effects. Use inference=null "
+        "when such an interpretation is unsupported. Return JSON with exactly decision (ready or "
         "rejected), fact, inference, limitation, why_read, reason, value_score (integer 0..10), "
         "value_rationale, event_key. "
-        "For ready, each of fact/inference/limitation/why_read is {text,claim_ids}: "
+        "For ready, fact/limitation/why_read and any non-null inference are {text,claim_ids}: "
         "substantive Russian text <=500 chars "
         "and nonempty supplied claim IDs. fact may reference only fact-kind findings; limitation MUST reference every "
         "qualification-kind finding. State specific missing knowledge, not generic caveats. inference is explicitly "
-        "conditional interpretation; why_read states what specific question the original can answer. reason=''. "
+        "conditional interpretation, or null when no grounded useful inference follows. Do not invent benefits "
+        "to fill inference. why_read states what specific question the original can answer. reason=''. "
         "For rejected, those four fields are null and reason is a concrete Russian editorial reason, not a technical "
-        "failure or length/quota objection. value_rationale is Russian <=350 chars. event_key is a concise Russian "
-        "event/topic phrase <=120 chars for cross-article duplicate diagnostics, not a deletion instruction."
+        "failure or length/quota objection. value_rationale and event_key are optional ordinary-string metadata, "
+        "not card prose; they need not be translated. event_key describes the event/topic for duplicate diagnostics, "
+        "not a deletion instruction."
     )
     payload: dict[str, Any] = {"title": article.title, "source": article.source, "category": article.category,
                                "published": article.source_published or article.published,
@@ -295,7 +303,8 @@ def next_task(article: ArticleWork, generation: Generation, body: str) -> Task |
             return Task("source", source.task_key, [])
         return direct
     leaves = []
-    for chunk in article.chunks:
+    segments = active_chunks(article.chunks, generation)
+    for chunk in segments:
         key = content_hash([generation.generation_id, "chunk", chunk.chunk_id])
         messages = _chunk_messages(article, chunk, body)
         node = generation.nodes.get(key)
@@ -330,7 +339,7 @@ def next_task(article: ArticleWork, generation: Generation, body: str) -> Task |
             reduced.append(node)
         leaves = reduced
     root = leaves[0]
-    if root.chunk_ids != tuple(chunk.chunk_id for chunk in article.chunks):
+    if root.chunk_ids != tuple(chunk.chunk_id for chunk in segments):
         raise ValueError("Final synthesis requires every source chunk in order.")
     return _final_task(article, generation, root)
 
@@ -351,11 +360,11 @@ def _russian(text: Any, budget: int) -> str:
     return text.strip()
 
 
-def _envelope(text: str, keys: set[str]) -> dict[str, Any]:
+def _envelope(text: str, keys: set[str], optional: set[str] | None = None) -> dict[str, Any]:
     if len(text) > 32000:
         raise EditorialValidationError("Editorial output exceeds validation allowance.")
     raw = _extract_json(text)
-    if not isinstance(raw, dict) or set(raw) != keys:
+    if not isinstance(raw, dict) or not keys <= set(raw) or set(raw) - keys - (optional or set()):
         raise EditorialValidationError("Invalid editorial response schema.")
     return raw
 
@@ -422,16 +431,21 @@ def _field(value: Any, claims: dict[str, Claim]) -> EditorialField:
     return EditorialField(_russian(value["text"], 500), tuple(claims[ref].claim_id for ref in refs))
 
 
+def _metadata_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[\x00-\x1f\x7f]", " ", value).strip()
+
+
 def parse_final(task: Task, text: str, usage: dict[str, int]) -> FinalEditorial:
-    keys = {"decision", "fact", "inference", "limitation", "why_read", "reason",
-            "value_score", "value_rationale", "event_key"}
-    raw = _envelope(text, keys)
+    keys = {"decision", "fact", "inference", "limitation", "why_read", "reason", "value_score"}
+    raw = _envelope(text, keys, {"value_rationale", "event_key"})
     if raw["decision"] not in {"ready", "rejected"} or type(raw["value_score"]) is not int:
         raise EditorialValidationError("Invalid final editorial decision.")
     if not 0 <= raw["value_score"] <= 10:
         raise EditorialValidationError("Invalid editorial value score.")
-    rationale = _russian(raw["value_rationale"], 350)
-    event_key = _russian(raw["event_key"], 120)
+    rationale = _metadata_text(raw.get("value_rationale"))
+    event_key = _metadata_text(raw.get("event_key"))
     fields_out: list[EditorialField | None] = []
     claims = {claim.claim_id: claim for claim in task.children[0].claims}
     exposed_claims = ({f"S{index}": claim for index, claim in enumerate(task.children[0].claims)}
@@ -439,14 +453,15 @@ def parse_final(task: Task, text: str, usage: dict[str, int]) -> FinalEditorial:
     if raw["decision"] == "ready":
         if raw["reason"] != "":
             raise EditorialValidationError("Ready analysis cannot contain a rejection reason.")
-        fields_out = [_field(raw[key], exposed_claims) for key in ("fact", "inference", "limitation", "why_read")]
+        fields_out = [None if key == "inference" and raw[key] is None else _field(raw[key], exposed_claims)
+                      for key in ("fact", "inference", "limitation", "why_read")]
         fact, _, limitation, _ = fields_out
         assert fact is not None and limitation is not None
         if any(claims[ref].kind not in {"fact", "source"} for ref in fact.claim_ids):
             raise EditorialValidationError("A qualification cannot become the final source fact.")
         if not {key for key, claim in claims.items() if claim.kind == "qualification"} <= set(limitation.claim_ids):
             raise EditorialValidationError("Final limitation omitted a source qualification.")
-        if len({item.text for item in fields_out if item}) != 4:
+        if len({item.text for item in fields_out if item}) != sum(item is not None for item in fields_out):
             raise EditorialValidationError("Final editorial fields repeat the same statement.")
         reason = ""
     else:
@@ -495,7 +510,7 @@ def validate_cached_prompts(article: ArticleWork, generation: Generation, body: 
     if generation.prompt_version != PROMPT_VERSION or generation.chunking_version != CHUNKING_VERSION:
         return
     snapshot = replace(article, body_sha256=generation.body_sha256, chunks=make_chunks(body))
-    chunks = {chunk.chunk_id: chunk for chunk in snapshot.chunks}
+    chunks = {chunk.chunk_id: chunk for chunk in active_chunks(snapshot.chunks, generation)}
     nodes = {node.node_id: node for node in generation.nodes.values()}
     for node in generation.nodes.values():
         if node.stage == "source":
@@ -543,7 +558,8 @@ def _select_generation(
     if mode == "primary":
         if article.delivery_state in {"reserved", "unknown", "delivered"} or primary.final is not None:
             return None
-        if primary.last_error and _timestamp(primary.blocked_until) > time.time():
+        if primary.last_error == TERMINAL_SEGMENT_ERROR or (primary.last_error
+                and _timestamp(primary.blocked_until) > time.time()):
             fallback = _generation(article, config.review.secondary)
             return fallback if fallback.final is None else None
         return primary
@@ -637,7 +653,7 @@ async def _run_task(task: Task, generation: Generation, body: str, state: Editor
         attempt.usage = _usage(usage)
         attempt.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
         if usage.get("finish_reason") in {"length", "MAX_TOKENS"}:
-            raise EditorialValidationError("Provider output stopped at token limit; analysis is incomplete.")
+            raise EditorialValidationError(OUTPUT_EXHAUSTION)
         if task.stage == "final":
             generation.final = parse_final(task, text, attempt.usage)
         else:
@@ -665,7 +681,48 @@ async def _run_task(task: Task, generation: Generation, body: str, state: Editor
         attempt.retry_at = generation.blocked_until = _after(cooldown)
         if not response_received:
             state.provider_unavailable_until[generation.provider] = generation.blocked_until
+        elif isinstance(exc, EditorialValidationError) and str(exc) == OUTPUT_EXHAUSTION and task.chunk is not None:
+            children = split_chunk(task.chunk, body)
+            if children:
+                generation.split_chunks[task.chunk.chunk_id] = children
+            else:
+                generation.last_error = TERMINAL_SEGMENT_ERROR
+            # The same failed input is never retried. New smaller work respects provider pacing.
+            generation.blocked_until = None
+            attempt.retry_at = None
     store_state(state, state_dir)
+
+
+def _carry_forward_truncation_hint(article: ArticleWork, generation: Generation, body: str) -> bool:
+    """Reuse only a matching failed request's size evidence, never its model opinion."""
+    changed = False
+    for chunk in active_chunks(article.chunks, generation):
+        key = content_hash([generation.generation_id, "chunk", chunk.chunk_id])
+        if key in generation.nodes:
+            continue
+        prompt_hash = _prompt_hash(_chunk_messages(article, chunk, body))
+        for previous in article.generations.values():
+            if (previous is generation or previous.body_sha256 != generation.body_sha256
+                    or (previous.provider, previous.model, previous.chunking_version) !=
+                    (generation.provider, generation.model, generation.chunking_version)):
+                continue
+            previous_key = content_hash([previous.generation_id, "chunk", chunk.chunk_id])
+            if previous_key in previous.nodes:
+                continue
+            if not any(attempt.stage == "chunk" and attempt.task_key == previous_key
+                       and attempt.status == "failed" and attempt.error == "ValueError: " + OUTPUT_EXHAUSTION
+                       and attempt.prompt_hash == prompt_hash and attempt.response_sha256 is not None
+                       for attempt in previous.attempts):
+                continue
+            children = split_chunk(chunk, body)
+            if children:
+                generation.split_chunks[chunk.chunk_id] = children
+            else:
+                generation.last_error = TERMINAL_SEGMENT_ERROR
+            # The original failed attempt remains untouched in its historical generation.
+            changed = True
+            break
+    return changed
 
 
 async def _advance(article: ArticleWork, state: EditorialState, state_dir: Path, config: Config,
@@ -679,7 +736,7 @@ async def _advance(article: ArticleWork, state: EditorialState, state_dir: Path,
         await _acquire(article, state, state_dir, remaining)
         return True, False, None
     generation = _select_generation(article, config, mode, state)
-    if generation is None:
+    if generation is None or generation.last_error == TERMINAL_SEGMENT_ERROR:
         return False, False, None
     eligible = max(_timestamp(generation.blocked_until),
                    _timestamp(state.provider_unavailable_until.get(generation.provider)),
@@ -688,6 +745,10 @@ async def _advance(article: ArticleWork, state: EditorialState, state_dir: Path,
         return False, False, eligible
     body = read_body(state_dir, article.body_sha256)
     try:
+        if _carry_forward_truncation_hint(article, generation, body):
+            store_state(state, state_dir)
+            if generation.last_error == TERMINAL_SEGMENT_ERROR:
+                return True, False, None
         task = next_task(article, generation, body)
     except ValueError as exc:
         generation.last_error = type(exc).__name__ + ": per_request_budget_or_generation_mismatch"
@@ -718,7 +779,6 @@ def summarize_state(state: EditorialState, config: Config, *, calls: int = 0,
         for existing_generation in article.generations.values():
             attempts.extend(existing_generation.attempts)
         acquired += article.body_sha256 is not None
-        total_chunks += len(article.chunks)
         chosen = chosen_generation(article, config)
         primary = current_generation(article, config.review.primary.provider, config.review.primary.model)
         secondary = current_generation(article, config.review.secondary.provider, config.review.secondary.model)
@@ -735,6 +795,7 @@ def summarize_state(state: EditorialState, config: Config, *, calls: int = 0,
         completed = sum(node.stage == "chunk" for node in generation.nodes.values()) if generation else 0
         if generation and generation.final and any(node.stage == "source" for node in generation.nodes.values()):
             completed = len(article.chunks)
+        total_chunks += len(active_chunks(article.chunks, generation)) if generation else len(article.chunks)
         completed_chunks += completed
         if chosen is not None and chosen.final is not None:
             fully += 1
@@ -760,7 +821,7 @@ def _completion_candidates(state: EditorialState, config: Config, mode: str) -> 
         if article.body_sha256 is None:
             continue
         generation = _select_generation(article, config, mode, state)
-        if generation is None or generation.final is not None:
+        if generation is None or generation.final is not None or generation.last_error == TERMINAL_SEGMENT_ERROR:
             continue
         if max(_timestamp(generation.blocked_until),
                _timestamp(state.provider_unavailable_until.get(generation.provider)),
@@ -768,7 +829,7 @@ def _completion_candidates(state: EditorialState, config: Config, mode: str) -> 
             continue
         covered = {key for node in generation.nodes.values() if node.stage in {"chunk", "source"}
                    for key in node.chunk_ids}
-        if covered == {chunk.chunk_id for chunk in article.chunks}:
+        if covered == {chunk.chunk_id for chunk in active_chunks(article.chunks, generation)}:
             ready.add(identity)
     return ready
 

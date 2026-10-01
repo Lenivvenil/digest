@@ -19,11 +19,12 @@ from digest.config import Config
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 CHUNKING_VERSION = "complete-offsets-v1"
-PROMPT_VERSION = "russian-source-ids-v5"
+PROMPT_VERSION = "russian-source-ids-v6"
 MAX_STATE_BYTES = 32 * 1024 * 1024
 MAX_BODY_BYTES = 2 * 1024 * 1024
+MIN_ADAPTIVE_CHARS = 256
 CHUNK_WEIGHT = 7500  # ASCII = 1, other characters = 3; complete coverage, not an article cap.
 _HEX = re.compile(r"[0-9a-f]{64}")
 
@@ -132,6 +133,7 @@ class Generation:
     attempts: list[Attempt] = field(default_factory=list)
     blocked_until: str | None = None
     last_error: str = ""
+    split_chunks: dict[str, tuple[Chunk, ...]] = field(default_factory=dict)
 
 
 @dataclass
@@ -191,7 +193,7 @@ class ReadyEditorialResult:
     fetched_at: str
     completed_chunks: int
     fact: EditorialField
-    inference: EditorialField
+    inference: EditorialField | None
     limitation: EditorialField
     why_read: EditorialField
     independent_complete: bool
@@ -210,10 +212,11 @@ class ReadyEditorialResult:
                      "not_configured": "дополнительная модель не настроена"}.get(self.third_review_status, "")
             peer += f"; решения об отборе различаются; {third}"
         publication = self.source_published or self.published
-        date_label = publication.split("T", 1)[0] if publication else "дата не указана"
+        date_line = f"Опубликовано: {publication.split('T', 1)[0]}. " if publication else ""
+        inference = f"Вывод модели: {self.inference.text}\n" if self.inference else ""
         text = (f"Факт из источника: {self.fact.text}\nОграничение: {self.limitation.text}\n"
-                f"Вывод модели: {self.inference.text}\nЗачем читать: {self.why_read.text}\n"
-                f"Опубликовано: {date_label}. Мнение {self.provider}/{self.model}; {peer}. "
+                f"{inference}Зачем читать: {self.why_read.text}\n"
+                f"{date_line}Мнение {self.provider}/{self.model}; {peer}. "
                 "Обработан весь сохранённый извлечённый текст; недоступные материалы не проверены.")
         return ArticleSummary(self.title, self.url, self.source, self.category, text)
 
@@ -242,6 +245,45 @@ def make_chunks(body: str) -> tuple[Chunk, ...]:
     identity = content_hash([body_sha, CHUNKING_VERSION, len(result), start, len(body), text_sha])
     result.append(Chunk(identity, len(result), start, len(body), text_sha))
     return tuple(result)
+
+
+def split_chunk(chunk: Chunk, body: str) -> tuple[Chunk, ...]:
+    """A failed segment may shrink, but its full original interval is retained."""
+    if chunk.end - chunk.start < 2 * MIN_ADAPTIVE_CHARS:
+        return ()
+    middle = (chunk.start + chunk.end) // 2
+    children = []
+    for start, end in ((chunk.start, middle), (middle, chunk.end)):
+        text_sha = hashlib.sha256(body[start:end].encode()).hexdigest()
+        identity = content_hash(["adaptive-split-v1", chunk.chunk_id, start, end, text_sha])
+        children.append(Chunk(identity, chunk.index, start, end, text_sha))
+    return tuple(children)
+
+
+def active_chunks(base: tuple[Chunk, ...], generation: Generation) -> tuple[Chunk, ...]:
+    """Resolve a generation-local split tree while preserving original order."""
+    leaves: list[Chunk] = []
+    used: set[str] = set()
+    pending = list(reversed(base))
+    while pending:
+        parent = pending.pop()
+        children = generation.split_chunks.get(parent.chunk_id)
+        if children is None:
+            leaves.append(parent)
+            continue
+        if (parent.chunk_id in used or len(children) != 2
+                or children[0].start != parent.start or children[-1].end != parent.end
+                or children[0].end != children[1].start
+                or any(child.end - child.start < MIN_ADAPTIVE_CHARS for child in children)
+                or len({child.chunk_id for child in children}) != 2):
+            raise ValueError("Invalid complete-segment split manifest.")
+        used.add(parent.chunk_id)
+        if content_hash([generation.generation_id, "chunk", parent.chunk_id]) in generation.nodes:
+            raise ValueError("A successful segment cannot be replaced by a split.")
+        pending.extend(reversed(children))
+    if used != set(generation.split_chunks):
+        raise ValueError("Split manifest references an unknown source segment.")
+    return tuple(leaves)
 
 
 def _safe_directory(state_dir: Path) -> Path:
@@ -379,8 +421,14 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
                              chunking_version=generation.chunking_version, prompt_version=generation.prompt_version)
     if generation.generation_id != expected:
         raise ValueError("Editorial generation identity mismatch.")
-    generation_chunks = make_chunks(body)
-    chunks = {chunk.chunk_id: chunk for chunk in generation_chunks}
+    base_chunks = make_chunks(body)
+    generation_chunks = active_chunks(base_chunks, generation)
+    chunks = {chunk.chunk_id: chunk for chunk in base_chunks + generation_chunks}
+    for split_children in generation.split_chunks.values():
+        chunks.update({chunk.chunk_id: chunk for chunk in split_children})
+    for parent_id, split_children in generation.split_chunks.items():
+        if split_chunk(chunks[parent_id], body) != split_children:
+            raise ValueError("Split segment identity or source content mismatch.")
     nodes = {node.node_id: node for node in generation.nodes.values()}
     for task_key, node in generation.nodes.items():
         if (task_key != node.task_key or node_hash(node) != node.node_id or not node.chunk_ids
@@ -426,7 +474,9 @@ def _validate_generation(article: ArticleWork, generation: Generation, body: str
                 if any(child_claims[identity].kind == "qualification" for identity in claim.supports):
                     if claim.kind != "qualification":
                         raise ValueError("Reduction converted qualification into a fact.")
-    _validate_final(generation.final, nodes, generation_chunks)
+    final_chunks = base_chunks if (generation.final and nodes.get(generation.final.root_node_id)
+                                   and nodes[generation.final.root_node_id].stage == "source") else generation_chunks
+    _validate_final(generation.final, nodes, final_chunks)
     _validate_task_keys(generation)
     from digest.editorial_worker import validate_cached_prompts
 
@@ -444,9 +494,12 @@ def _validate_final(
         if not 0 <= final.value_score <= 10:
             raise ValueError("Invalid final editorial value.")
         if final.decision == "ready":
-            for item in (final.fact, final.inference, final.limitation, final.why_read):
+            for item in (final.fact, final.limitation, final.why_read):
                 if item is None or not item.claim_ids or any(identity not in claims for identity in item.claim_ids):
                     raise ValueError("Final editorial field lacks grounded claim references.")
+            if final.inference is not None and (not final.inference.claim_ids
+                    or any(identity not in claims for identity in final.inference.claim_ids)):
+                raise ValueError("Final inference lacks grounded claim references.")
             assert final.fact and final.limitation
             if any(claims[key].kind not in {"fact", "source"} for key in final.fact.claim_ids):
                 raise ValueError("Final source fact improperly cites a qualification.")
@@ -501,6 +554,20 @@ def load_state(state_dir: Path) -> EditorialState:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict) or not {"schema_version", "articles", "order", "cursor"} <= set(raw):
             raise ValueError("Incomplete persisted editorial state envelope.")
+        if type(raw.get("schema_version")) is int and raw["schema_version"] == 1:
+            # One explicit additive migration; delivery state and existing evidence stay unchanged.
+            if not isinstance(raw.get("articles"), dict):
+                raise ValueError("Invalid legacy editorial articles.")
+            for article in raw["articles"].values():
+                if not isinstance(article, dict) or not isinstance(article.get("generations"), dict):
+                    raise ValueError("Invalid legacy editorial generations.")
+                for generation in article["generations"].values():
+                    if not isinstance(generation, dict):
+                        raise ValueError("Invalid legacy editorial generation.")
+                    if "split_chunks" in generation:
+                        raise ValueError("Unversioned adaptive split manifest.")
+                    generation["split_chunks"] = {}
+            raw["schema_version"] = STATE_VERSION
         state: EditorialState = _decode(raw, EditorialState)
         validate_state(state, state_dir)
         return state
@@ -562,20 +629,23 @@ def ready_results(state: EditorialState, config: Config) -> list[ReadyEditorialR
         if generation is None or generation.final is None or generation.final.decision != "ready":
             continue
         _validate_task_keys(generation)
-        _validate_final(generation.final, {node.node_id: node for node in generation.nodes.values()}, article.chunks)
+        nodes = {node.node_id: node for node in generation.nodes.values()}
+        root = nodes.get(generation.final.root_node_id)
+        final_chunks = article.chunks if root and root.stage == "source" else active_chunks(article.chunks, generation)
+        _validate_final(generation.final, nodes, final_chunks)
         from digest.editorial_worker import validate_cached_final
 
         validate_cached_final(article, generation)
         final = generation.final
-        if not all((final.fact, final.inference, final.limitation, final.why_read)):
+        if not all((final.fact, final.limitation, final.why_read)):
             continue
-        assert final.fact and final.inference and final.limitation and final.why_read
+        assert final.fact and final.limitation and final.why_read
         assert article.body_sha256 and article.final_url and article.fetched_at
         independent_complete, third_status, disagreement = independent_status(article, config)
         result.append(ReadyEditorialResult(
             identity, article.title, article.url, article.source, article.category, article.published,
             generation.provider, generation.model, generation.generation_id, final.root_node_id,
-            article.body_sha256, article.final_url, article.fetched_at, len(article.chunks),
+            article.body_sha256, article.final_url, article.fetched_at, len(final_chunks),
             final.fact, final.inference, final.limitation, final.why_read,
             independent_complete,
             final.value_score, final.value_rationale, final.event_key, article.admitted_at,

@@ -1244,3 +1244,309 @@ async def test_output_token_limit_rejects_even_parseable_valid_editorial_json(
     assert result.summary.ready == result.summary.rejected == result.summary.fully_analysed == 0
     assert result.summary.pending == 1 and result.summary.completed_chunks == 0
     assert state_api.load_state(tmp_path) == result.state
+
+
+async def test_optional_diagnostic_metadata_accepts_long_english_without_gating_ready_card(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    rationale = "The source reports a concrete measurement and its test conditions. " * 12
+    event_key = "Throughput benchmark covering a specific vendor workload and environment " * 5
+
+    def metadata(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        answer.update(value_rationale="  " + rationale + "  ", event_key="\n" + event_key + "\n")
+        return answer
+
+    offline.response = metadata
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    final = primary_generation(result.state, offline.config).final
+    assert final is not None and final.value_score == 8
+    assert final.value_rationale == rationale.strip() and len(final.value_rationale) > 350
+    assert final.event_key == event_key.strip() and len(final.event_key) > 120
+    assert result.summary.ready == 1 and result.summary.pending == 0
+    reloaded = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=1)
+    assert primary_generation(reloaded.state, offline.config).final == final
+    assert reloaded.summary.calls_this_pass == 0 and len(offline.calls) == 1
+
+
+@pytest.mark.parametrize("field_name,metadata", [
+    ("value_rationale", None), ("event_key", {"text": "diagnostic"}),
+    ("value_rationale", True), ("event_key", " \n\t "),
+])
+async def test_malformed_optional_diagnostic_metadata_becomes_empty(
+    tmp_path: Path, offline: OfflineProvider, field_name: str, metadata: Any,
+) -> None:
+    def alter(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        answer[field_name] = metadata
+        return answer
+
+    offline.response = alter
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    final = primary_generation(result.state, offline.config).final
+    assert final is not None and getattr(final, field_name) == ""
+    assert result.summary.ready == 1 and result.summary.pending == 0
+    assert state_api.load_state(tmp_path) == result.state
+
+
+async def test_missing_optional_diagnostic_metadata_becomes_empty(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    def omit(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        del answer["value_rationale"]
+        del answer["event_key"]
+        return answer
+
+    offline.response = omit
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    final = primary_generation(result.state, offline.config).final
+    assert final is not None and final.value_rationale == final.event_key == ""
+    assert result.summary.ready == 1 and state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("decision", ["ready", "rejected"])
+async def test_optional_diagnostic_metadata_is_sanitized_for_each_editorial_decision(
+    tmp_path: Path, offline: OfflineProvider, decision: str,
+) -> None:
+    def metadata(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        answer.update(value_rationale="  diagnostic\x00value\t\n", event_key="\x7fevent\rkey ")
+        if decision == "rejected":
+            answer.update(decision=decision, reason="Измерение повторяет известный результат без новых условий.")
+            for name in ("fact", "inference", "limitation", "why_read"):
+                answer[name] = None
+        return answer
+
+    offline.response = metadata
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    final = primary_generation(result.state, offline.config).final
+    assert final is not None and final.decision == decision
+    assert final.value_rationale == "diagnostic value" and final.event_key == "event key"
+    assert result.summary.fully_analysed == 1 and result.summary.pending == 0
+    assert state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("score", [-1, 11, True, "8"])
+async def test_optional_metadata_does_not_relax_value_score_contract(
+    tmp_path: Path, offline: OfflineProvider, score: Any,
+) -> None:
+    def invalid_score(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        del answer["value_rationale"]
+        del answer["event_key"]
+        answer["value_score"] = score
+        return answer
+
+    offline.response = invalid_score
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert result.summary.pending == 1 and result.summary.ready == result.summary.rejected == 0
+
+
+@pytest.mark.parametrize("field_name", ["fact", "value_score"])
+async def test_optional_metadata_does_not_make_required_card_fields_optional(
+    tmp_path: Path, offline: OfflineProvider, field_name: str,
+) -> None:
+    def omit(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        del answer["value_rationale"]
+        del answer["event_key"]
+        del answer[field_name]
+        return answer
+
+    offline.response = omit
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert result.summary.pending == 1 and result.summary.ready == result.summary.rejected == 0
+
+
+@pytest.mark.parametrize("field_name,damage", [
+    ("fact", "english"), ("inference", "too_long"), ("limitation", "unknown_source"), ("why_read", "english"),
+])
+async def test_optional_metadata_keeps_present_card_text_and_source_references_strict(
+    tmp_path: Path, offline: OfflineProvider, field_name: str, damage: str,
+) -> None:
+    def corrupt(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        del answer["value_rationale"]
+        del answer["event_key"]
+        if damage == "english":
+            answer[field_name]["text"] = "This substantive English sentence is not a Russian editorial field."
+        elif damage == "unknown_source":
+            answer[field_name]["claim_ids"] = ["S999999"]
+        else:
+            answer[field_name]["text"] = "Проверяемое утверждение об условиях измерения. " * 20
+        return answer
+
+    offline.response = corrupt
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    generation = primary_generation(result.state, offline.config)
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert result.summary.pending == 1 and result.summary.ready == result.summary.rejected == 0
+
+
+@pytest.mark.parametrize("chunks", [1, 2])
+async def test_nullable_inference_preserves_ready_card_and_omits_model_conclusion_in_rendering(
+    tmp_path: Path, offline: OfflineProvider, chunks: int,
+) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(chunks)
+
+    def no_inference(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        if call["stage"] == "final":
+            answer["inference"] = None
+        return answer
+
+    offline.response = no_inference
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=10)
+    final = primary_generation(result.state, offline.config).final
+    assert final is not None and final.inference is None
+    assert final.fact is not None and final.limitation is not None and final.why_read is not None
+    ready = state_api.ready_results(result.state, offline.config)
+    assert len(ready) == 1 and ready[0].inference is None
+    rendered = ready[0].to_article_summary().summary
+    assert "Вывод модели:" not in rendered and "None" not in rendered
+    assert "Ограничение:" in rendered and "Зачем читать:" in rendered
+    assert state_api.load_state(tmp_path) == result.state
+    resumed = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=1)
+    assert resumed.summary.ready == 1 and resumed.summary.calls_this_pass == 0
+
+
+async def test_nullable_inference_never_allows_omitting_known_qualification(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+
+    def omit_qualification(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        if call["stage"] == "final":
+            answer.update(inference=None, limitation=None)
+        return answer
+
+    offline.response = omit_qualification
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=3)
+    generation = primary_generation(result.state, offline.config)
+    assert any(claim.kind == "qualification" for node in generation.nodes.values() for claim in node.claims)
+    assert generation.final is None and generation.attempts[-1].status == "failed"
+    assert result.summary.pending == 1 and result.summary.ready == result.summary.rejected == 0
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS"])
+async def test_truncated_segment_splits_and_resumes_without_repeating_completed_siblings(
+    tmp_path: Path, offline: OfflineProvider, finish_reason: str,
+) -> None:
+    article = make_article()
+    body = source_body(3)
+    offline.bodies[article.link] = body
+
+    def truncate_parent(call: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+        payload = call["payload"]
+        truncated = call["stage"] == "chunk" and payload["start"] == state_api.CHUNK_WEIGHT and (
+            payload["end"] - payload["start"] == state_api.CHUNK_WEIGHT)
+        offline.usage = {**USAGE, "finish_reason": finish_reason if truncated else "stop"}
+        return answer
+
+    offline.response = truncate_parent
+    failed = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=2)
+    work = only_article(failed.state)
+    generation = primary_generation(failed.state, offline.config)
+    completed = deepcopy(generation.nodes)
+    assert len(completed) == 1 and generation.final is None
+    failed_attempt = deepcopy(generation.attempts[-1])
+    assert failed_attempt.status == "failed" and failed_attempt.retry_at is None
+    parent = work.chunks[1]
+    children = generation.split_chunks[parent.chunk_id]
+    assert len(children) == 2 and children[0].start == parent.start and children[-1].end == parent.end
+    assert children[0].end == children[1].start
+    assert abs((children[0].end - children[0].start) - (children[1].end - children[1].start)) <= 1
+    assert len({parent.chunk_id, *(chunk.chunk_id for chunk in children)}) == 3
+    assert all(chunk.text_sha256 == hashlib.sha256(body[chunk.start:chunk.end].encode()).hexdigest()
+               for chunk in children)
+    assert all(chunk.chunk_id == state_api.content_hash([
+        "adaptive-split-v1", parent.chunk_id, chunk.start, chunk.end, chunk.text_sha256,
+    ]) for chunk in children)
+    active = state_api.active_chunks(work.chunks, generation)
+    assert active == (work.chunks[0], *children, work.chunks[2])
+    assert failed.summary.completed_chunks == 1 and failed.summary.total_chunks == 4
+    assert failed.summary.pending == 1 and failed.summary.stop_reason == "request_allowance"
+    assert state_api.load_state(tmp_path) == failed.state
+
+    for completed_count in (2, 3, 4):
+        partial = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=1)
+        generation = primary_generation(partial.state, offline.config)
+        assert all(generation.nodes[key] == node for key, node in completed.items())
+        assert generation.attempts[1] == failed_attempt
+        assert generation.split_chunks[parent.chunk_id] == children
+        assert generation.final is None and partial.summary.ready == 0
+        assert partial.summary.pending == 1 and partial.summary.calls_this_pass == 1
+        assert partial.summary.completed_chunks == completed_count and partial.summary.total_chunks == 4
+        assert partial.summary.stop_reason == "request_allowance"
+        assert state_api.load_state(tmp_path) == partial.state
+
+    assert [call["stage"] for call in offline.calls] == ["chunk"] * 5
+    child_calls = offline.calls[2:4]
+    assert [call["payload"]["chunk_id"] for call in child_calls] == [chunk.chunk_id for chunk in children]
+    assert all(call["messages"] != offline.calls[1]["messages"] for call in child_calls)
+    assert len({attempt.task_key for attempt in generation.attempts}) == 5
+    assert len({attempt.prompt_hash for attempt in generation.attempts}) == 5
+    assert all(worker.estimate_input_tokens(call["messages"]) <= worker.MAX_INPUT_ESTIMATE for call in offline.calls)
+
+    finished = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=1)
+    generation = primary_generation(finished.state, offline.config)
+    assert generation.final is not None and finished.summary.ready == finished.summary.fully_analysed == 1
+    assert finished.summary.completed_chunks == finished.summary.total_chunks == 4
+    assert finished.summary.pending == 0 and len(offline.fetches) == 1
+    root = next(node for node in generation.nodes.values() if node.node_id == generation.final.root_node_id)
+    assert root.chunk_ids == tuple(chunk.chunk_id for chunk in active)
+    assert "".join(body[chunk.start:chunk.end] for chunk in active) == body
+    assert all(generation.nodes[key] == node for key, node in completed.items())
+    assert generation.final.limitation is not None
+    spans = [span for ref in generation.final.limitation.claim_ids
+             for span in state_api.resolve_claim_spans(generation, ref)]
+    assert any(FOOTNOTE in span.quote and span.end == len(body) for span in spans)
+    assert state_api.load_state(tmp_path) == finished.state
+
+
+async def test_adaptive_children_obey_persisted_provider_pacing(
+    tmp_path: Path, offline: OfflineProvider,
+) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+    offline.usage = {**USAGE, "finish_reason": "length"}
+    offline.config.llm.min_request_interval_seconds = 60
+    first = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=1)
+    generation = primary_generation(first.state, offline.config)
+    assert generation.split_chunks and generation.attempts[-1].retry_at is None
+    saved = deepcopy(generation)
+    offline.usage = dict(USAGE)
+    paced = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=10, deadline_seconds=0.05)
+    assert paced.summary.calls_this_pass == 0 and paced.summary.stop_reason == "cooldown"
+    assert primary_generation(paced.state, offline.config) == saved
+    assert len(only_article(paced.state).generations) == 1 and len(offline.calls) == 1
+
+
+async def test_minimum_segment_token_exhaustion_stays_technical_pending_without_hourly_retry(
+    tmp_path: Path, offline: OfflineProvider, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    article = make_article()
+    offline.bodies[article.link] = source_body(2)
+    offline.usage = {**USAGE, "finish_reason": "MAX_TOKENS"}
+    exhausted = await worker.run_editorial_pass(offline.config, tmp_path, [article], max_calls=30)
+    work = only_article(exhausted.state)
+    primary = primary_generation(exhausted.state, offline.config)
+    assert primary.last_error == "OutputExhaustedMinimumSegment"
+    assert primary.final is None and primary.blocked_until is None
+    assert primary.attempts[-1].status == "failed" and primary.attempts[-1].retry_at is None
+    last_primary = [call for call in offline.calls if call["provider"] == primary.provider][-1]
+    payload = last_primary["payload"]
+    assert payload["end"] - payload["start"] <= 2 * state_api.MIN_ADAPTIVE_CHARS
+    assert payload["chunk_id"] not in primary.split_chunks
+    assert all(generation.final is None for generation in work.generations.values())
+    assert exhausted.summary.pending == 1 and exhausted.summary.ready == exhausted.summary.rejected == 0
+    assert exhausted.summary.fully_analysed == 0 and not state_api.ready_results(exhausted.state, offline.config)
+    assert exhausted.summary.stop_reason == "no_runnable_work"
+    saved = deepcopy(work.generations)
+    before_calls = deepcopy(offline.calls)
+    monkeypatch.setattr(worker, "time", SimpleNamespace(time=lambda: time.time() + 7200, monotonic=time.monotonic))
+    resumed = await worker.run_editorial_pass(offline.config, tmp_path, [], max_calls=30)
+    assert offline.calls == before_calls and only_article(resumed.state).generations == saved
+    assert resumed.summary.calls_this_pass == 0 and resumed.summary.pending == 1
+    assert resumed.summary.stop_reason == "no_runnable_work"
+    assert len(resumed.state.articles) == 1 and len(offline.fetches) == 1
+    assert state_api.load_state(tmp_path) == resumed.state

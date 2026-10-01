@@ -237,7 +237,11 @@ entailment. Qualifiers, audience boundaries and quantifiers remain quality check
 A changed prompt creates a new analysis generation; prior acquisition is reusable,
 but earlier model opinions are not silently relabelled under the new contract.
 Explicit provider output exhaustion remains failed/incomplete work, even if its
-partial response happens to be parseable JSON.
+partial response happens to be parseable JSON. A truncated chunk is subdivided with
+a generation-local manifest; successful sibling work is retained. Exhaustion of an
+unsplittable segment is an explicit technical block. Optional ranking explanations
+and topic labels cannot invalidate substantive card content. Additional inference
+may be absent; actual source qualifications cannot be omitted to fill a template.
 
 Production ordering is mandatory:
 

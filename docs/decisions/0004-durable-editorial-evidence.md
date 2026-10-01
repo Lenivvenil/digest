@@ -60,7 +60,10 @@ reasons and no claim that the material was read or judged irrelevant.
 4. **Ready or editorially rejected:** only after every chunk has valid analysis,
    synthesize the article's concrete change, significance and limitations. The result
    separates source fact, inference, unknowns and why the original is worth reading,
-   in Russian. Every final quote resolves to the stored body. A completed, unhelpful
+   in Russian. Additional inference is optional: omit it when it would merely invent
+   benefits or restate the source. Actual material source qualifications remain
+   mandatory; a specific unknown may be reported honestly instead of inventing a
+   counterargument. Every final reference resolves to the stored body. A completed, unhelpful
    article may be rejected with a reason; a failed/unfinished one cannot. Preserve
    final claim-to-chunk/span references. Later qualifications or retractions must be
    reconciled with opening claims, not lost because the headline is more attractive.
@@ -104,7 +107,13 @@ rather than hide backlog by dropping old work. Publication dates remain visible 
 when completion is delayed. There is no automatic age-out of unfinished work.
 
 A provider failure is an explicit blocked attempt with retry eligibility, not a
-completed empty answer. Persist each successful local result atomically. The workflow
+completed empty answer. Provider-reported output exhaustion of a chunk divides only
+that failed segment into smaller contiguous work units, with a generation-local
+manifest and complete ordered coverage. Successful sibling work remains reusable;
+retrying the same oversized request is not progress. A segment that cannot be split
+further remains explicitly technically blocked. Auxiliary ranking explanations and
+topic labels are optional metadata; their length or language cannot invalidate
+otherwise validated substantive card fields. Persist each successful local result atomically. The workflow
 must persist worker state before launching delivery and must save bounded partial
 progress on a normal deadline exit. Worker failure cannot revoke an already committed
 primary delivery. A hard runner loss before git persistence may repeat model work;

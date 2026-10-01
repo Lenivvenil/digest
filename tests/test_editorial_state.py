@@ -646,7 +646,7 @@ def test_relabelled_generation_cannot_reuse_another_models_tasks(tmp_path: Path,
 
 
 @pytest.mark.parametrize("damage", ["empty_fact", "english_fact", "filler", "repeat_fields",
-                                    "duplicate_refs", "score_bool", "missing_rationale", "wrong_prompt"])
+                                    "duplicate_refs", "score_bool", "wrong_prompt"])
 def test_cached_ready_final_is_revalidated_with_live_schema(tmp_path: Path, damage: str) -> None:
     state, _, generation = _ready_state(tmp_path)
     final = generation.final
@@ -661,8 +661,6 @@ def test_cached_ready_final_is_revalidated_with_live_schema(tmp_path: Path, dama
         final = replace(final, fact=replace(final.fact, claim_ids=final.fact.claim_ids * 2))
     elif damage == "score_bool":
         final = replace(final, value_score=True)
-    elif damage == "missing_rationale":
-        final = replace(final, value_rationale="")
     else:
         final = replace(final, prompt_hash="wrong-final-prompt")
     generation.final = final
@@ -781,3 +779,117 @@ def test_long_final_preserves_original_qualification_spans_within_request_budget
     monkeypatch.setattr(worker, "MAX_INPUT_ESTIMATE", worker.estimate_input_tokens(messages) - 1)
     with pytest.raises(ValueError, match="input allowance"):
         worker._final_messages(article, root, generation)
+
+
+def test_schema_one_migrates_split_manifest_without_mutating_saved_evidence(tmp_path: Path) -> None:
+    state, article, _ = _ready_state(tmp_path, prompt_version="russian-source-ids-v5")
+    article.delivery_state = "unknown"
+    article.delivery_attempt_id = "preserved-delivery-attempt"
+    payload = asdict(state)
+    payload["schema_version"] = 1
+    for saved_article in payload["articles"].values():
+        for generation in saved_article["generations"].values():
+            del generation["split_chunks"]
+    path = _write_payload(tmp_path, payload)
+    before = path.read_bytes()
+    loaded = editorial.load_state(tmp_path)
+    assert loaded == state and loaded.schema_version == 2
+    assert path.read_bytes() == before
+    assert editorial.ready_results(loaded, fixture_config()) == []
+
+
+@pytest.mark.parametrize("damage", ["gap", "hash", "unknown_parent", "successful_parent"])
+def test_invalid_adaptive_manifest_fails_closed(tmp_path: Path, damage: str) -> None:
+    state, article = _acquired_state(tmp_path)
+    assert article.body_sha256
+    model = fixture_config().review.primary
+    gid = editorial.generation_id(article.body_sha256, model.provider, model.model)
+    generation = Generation(gid, model.provider, model.model, article.body_sha256)
+    article.generations[gid] = generation
+    parent = article.chunks[0]
+    children = editorial.split_chunk(parent, BODY)
+    assert len(children) == 2
+    if damage == "gap":
+        children = (replace(children[0], end=children[0].end - 1), children[1])
+    elif damage == "hash":
+        children = (replace(children[0], text_sha256="0" * 64), children[1])
+    elif damage == "successful_parent":
+        complete, _, completed_generation = _ready_state(tmp_path)
+        state, generation = complete, completed_generation
+    generation.split_chunks["unknown" if damage == "unknown_parent" else parent.chunk_id] = children
+    with pytest.raises(ValueError):
+        editorial.store_state(state, tmp_path)
+
+
+def test_nested_adaptive_splits_keep_every_character_and_roundtrip(tmp_path: Path) -> None:
+    state, article = _acquired_state(tmp_path)
+    assert article.body_sha256
+    model = fixture_config().review.primary
+    gid = editorial.generation_id(article.body_sha256, model.provider, model.model)
+    generation = Generation(gid, model.provider, model.model, article.body_sha256)
+    article.generations[gid] = generation
+    parent = article.chunks[0]
+    children = editorial.split_chunk(parent, BODY)
+    generation.split_chunks[parent.chunk_id] = children
+    generation.split_chunks[children[1].chunk_id] = editorial.split_chunk(children[1], BODY)
+    leaves = editorial.active_chunks(article.chunks, generation)
+    assert "".join(BODY[chunk.start:chunk.end] for chunk in leaves) == BODY
+    assert leaves[-1] == article.chunks[-1]
+    assert len({chunk.chunk_id for chunk in leaves}) == len(leaves)
+    editorial.store_state(state, tmp_path)
+    assert editorial.load_state(tmp_path) == state
+
+
+def test_missing_inference_and_missing_publication_metadata_are_omitted_from_card(tmp_path: Path) -> None:
+    state, _, generation = _direct_source_state(tmp_path)
+    assert generation.final
+    generation.final = replace(generation.final, inference=None)
+    editorial.store_state(state, tmp_path)
+    result = editorial.ready_results(editorial.load_state(tmp_path), fixture_config())[0]
+    summary = replace(result, published=None, source_published=None).to_article_summary().summary
+    assert "Вывод модели:" not in summary
+    assert "Опубликовано:" not in summary and "дата не указана" not in summary
+    assert "Факт из источника:" in summary and "Ограничение:" in summary and "Зачем читать:" in summary
+
+
+def test_matching_historical_truncation_can_seed_split_without_reusing_opinion(tmp_path: Path) -> None:
+    from digest import editorial_worker as worker
+
+    state, article = _acquired_state(tmp_path)
+    assert article.body_sha256
+    model = fixture_config().review.primary
+    old_id = editorial.generation_id(article.body_sha256, model.provider, model.model,
+                                     prompt_version="russian-source-ids-v5")
+    previous = Generation(old_id, model.provider, model.model, article.body_sha256,
+                          prompt_version="russian-source-ids-v5")
+    chunk = article.chunks[0]
+    key = editorial.content_hash([old_id, "chunk", chunk.chunk_id])
+    prompt_hash = worker._prompt_hash(worker._chunk_messages(article, chunk, BODY))
+    previous.attempts.append(Attempt("historical-failure", "chunk", key, prompt_hash, NOW, "failed",
+                                    "ValueError: " + worker.OUTPUT_EXHAUSTION, response_sha256="a" * 64))
+    current_id = editorial.generation_id(article.body_sha256, model.provider, model.model)
+    current = Generation(current_id, model.provider, model.model, article.body_sha256)
+    article.generations = {old_id: previous, current_id: current}
+    original = deepcopy(previous)
+    for field, value in (("prompt_hash", "wrong-prompt"), ("error", "ValueError: Invalid editorial response schema.")):
+        previous.attempts[0] = replace(original.attempts[0], **{field: value})
+        assert not worker._carry_forward_truncation_hint(article, current, BODY)
+        assert not current.split_chunks
+    previous.attempts[0] = original.attempts[0]
+    previous.model = "another-model"
+    assert not worker._carry_forward_truncation_hint(article, current, BODY)
+    previous.model = model.model
+    assert worker._carry_forward_truncation_hint(article, current, BODY)
+    assert current.split_chunks[chunk.chunk_id] == editorial.split_chunk(chunk, BODY)
+    assert previous == original and not current.attempts and not current.nodes and current.final is None
+    editorial.store_state(state, tmp_path)
+    assert editorial.load_state(tmp_path) == state
+
+
+def test_empty_optional_metadata_remains_valid_in_completed_cache(tmp_path: Path) -> None:
+    state, _, generation = _direct_source_state(tmp_path)
+    assert generation.final
+    generation.final = replace(generation.final, value_rationale="", event_key="")
+    editorial.store_state(state, tmp_path)
+    result = editorial.ready_results(editorial.load_state(tmp_path), fixture_config())[0]
+    assert result.value_rationale == result.event_key == ""
