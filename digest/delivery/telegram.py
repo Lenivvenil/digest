@@ -141,6 +141,7 @@ def split_message(text: str, max_len: int = _SPLIT_LIMIT) -> list[str]:
         else:
             if current:
                 chunks.append(current)
+                current = ""
             # If single paragraph too long, split by newlines
             if len(paragraph) > max_len:
                 for line in paragraph.split("\n"):
