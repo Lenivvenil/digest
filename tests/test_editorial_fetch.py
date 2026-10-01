@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import socket
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -35,6 +36,9 @@ def _offline_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kwargs: [
         (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
     ])
+    # Inject a synthetic trusted bootstrap; public fixtures contain no publisher body or vendored runtime.
+    monkeypatch.setattr("digest.editorial_fetch._REACT_STREAM_BOOTSTRAP_HASHES",
+                        frozenset({hashlib.sha256(_TEST_STREAM_BOOTSTRAP.encode()).hexdigest()}))
 
 
 @contextmanager
@@ -261,6 +265,179 @@ def test_short_complete_semantic_article_is_not_rejected_by_editorial_length() -
 def test_noncritical_hidden_visuals_do_not_create_false_coverage_holds() -> None:
     result = extract_html(_html(content=f'<p>{PARAGRAPH}</p><svg aria-hidden="true"><path/></svg>'))
     assert result.text == PARAGRAPH
+
+
+_TEST_STREAM_BOOTSTRAP = '$RC=function(a,b){/* synthetic trusted fixture helper */};'
+
+
+def _streamed(content: str, *, call: str = '$RC("B:0","S:0")') -> str:
+    return ('<html><body><main><!--$?--><template id="B:0"></template><p>Loading</p><!--/$--></main>'
+            f'<div hidden id="S:0">{content}</div><script>{_TEST_STREAM_BOOTSTRAP}{call}</script></body></html>')
+
+
+def test_completed_stream_restores_source_without_unhiding_unrelated_content() -> None:
+    text = f'<article><p>{PARAGRAPH}</p><footer><p>FINAL SOURCE CONDITION.</p></footer></article>'
+    html = _streamed(text).replace('</body>', '<div hidden>PRIVATE HIDDEN CONTENT</div></body>')
+    result = extract_html(html)
+    assert result.extraction_status == "article"
+    assert result.text == PARAGRAPH + "\n\nFINAL SOURCE CONDITION."
+    assert "Loading" not in result.text and "PRIVATE HIDDEN CONTENT" not in result.text
+
+
+@pytest.mark.parametrize("damage", ["missing_call", "wrong_call", "duplicate_source", "clipped_source",
+                                    "missing_boundary", "duplicate_call", "quoted_call"])
+def test_unresolved_or_ambiguous_streams_remain_incomplete(damage: str) -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    if damage == "missing_call":
+        html = html.replace('$RC("B:0","S:0")', '')
+    elif damage == "wrong_call":
+        html = html.replace('$RC("B:0","S:0")', '$RC("B:0","S:1")')
+    elif damage == "duplicate_source":
+        html = html.replace('</body>', '<div hidden id="S:0">Duplicate</div></body>')
+    elif damage == "clipped_source":
+        html = html.replace('</article></div>', '</article>')
+    elif damage == "missing_boundary":
+        html = html.replace('<!--/$-->', '')
+    elif damage == "duplicate_call":
+        html = html.replace('</body>', '<script>$RC("B:0","S:0")</script></body>')
+    else:
+        html = html.replace('$RC("B:0","S:0")', 'console.log(\'$RC("B:0","S:0")\')')
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+def test_dominant_main_prose_is_not_replaced_by_recommendation_article_cards() -> None:
+    paragraphs = ''.join(f'<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>' for index in range(12))
+    cards = ''.join(f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>'
+                    f'{"Unrelated preview " * 9}</p></article>' for index in range(3))
+    result = extract_html(_streamed(paragraphs + cards))
+    assert result.extraction_status == "main"
+    assert all(f"PRIMARY SECTION {index}." in result.text for index in range(12))
+    assert "Linked teaser" not in result.text and "Unrelated preview" not in result.text
+
+
+def test_article_listing_without_dominant_main_prose_remains_ambiguous() -> None:
+    cards = ''.join(f'<article><p>{index}. {PARAGRAPH}</p></article>' for index in range(3))
+    with pytest.raises(ValueError, match="multiple_article_regions"):
+        extract_html(_streamed(cards))
+
+
+@pytest.mark.parametrize("script_attrs", [
+    'type="application/json"', 'src="/external.js"', 'type="module"', 'nomodule', 'language="vbscript"',
+    'type="application/json" type="text/javascript"',
+])
+def test_inactive_or_external_script_cannot_complete_stream(script_attrs: str) -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>').replace('<script>', f'<script {script_attrs}>')
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+@pytest.mark.parametrize("script", [
+    '$RC("B:0","S:0")',
+    '$RC=function(a,b){}; //;$RC("B:0","S:0")',
+    _TEST_STREAM_BOOTSTRAP + '//;$RC("B:0","S:0")',
+    _TEST_STREAM_BOOTSTRAP + '/*;$RC("B:0","S:0")',
+])
+def test_undefined_unknown_or_commented_replacement_is_not_executed(script: str) -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = html.replace(_TEST_STREAM_BOOTSTRAP + '$RC("B:0","S:0")', script)
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+@pytest.mark.parametrize("wrapper", ["template", "noscript"])
+def test_inert_stream_container_is_not_a_live_dom_target(wrapper: str) -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = html.replace('<div hidden id="S:0">', f'<{wrapper}><div hidden id="S:0">')
+    html = html.replace('</article></div>', f'</article></div></{wrapper}>')
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+def test_standalone_replacement_requires_prior_exact_active_bootstrap() -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = html.replace(_TEST_STREAM_BOOTSTRAP, _TEST_STREAM_BOOTSTRAP + '</script><script>')
+    assert extract_html(html).text == PARAGRAPH
+    html = html.replace('</script><script>', '</script><script>unknownRuntime()</script><script>')
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+def test_replacement_before_its_dom_targets_exist_remains_incomplete() -> None:
+    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    script = f'<script>{_TEST_STREAM_BOOTSTRAP}$RC("B:0","S:0")</script>'
+    html = html.replace(script, '').replace('<body>', '<body>' + script)
+    with pytest.raises(ValueError, match="unresolved_streamed_content"):
+        extract_html(html)
+
+
+def test_removed_recommendation_cannot_supply_a_missing_source_footnote() -> None:
+    paragraphs = ''.join(f'<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>' for index in range(12))
+    paragraphs += '<sup><a role="doc-noteref" href="#fn1">1</a></sup>'
+    cards = ''.join(f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>'
+                    f'{"Unrelated preview " * 9}</p>'
+                    + ('<p id="fn1">Required source limitation omitted with this card.</p>' if index == 0 else '')
+                    + '</article>' for index in range(3))
+    with pytest.raises(ValueError, match="removed_footnote_target"):
+        extract_html(_streamed(paragraphs + cards))
+
+
+@pytest.mark.parametrize("visual", [
+    '<svg style="display: none;"><path/></svg>',
+    '<svg style="visibility: hidden;"><path/></svg>',
+    '<a role="button"><svg width="16" height="16" role="presentation" class="figure"><path/></svg></a>',
+    '<div id="author-link"><a href="/author"><svg width="16" height="16"><path/></svg></a></div>',
+    '<a aria-label="Share this article"><svg width="24" height="24"><path/></svg></a>',
+    '<a class="group/button"><span><svg width="1em" height="1em"><path/></svg></span></a>',
+])
+def test_hidden_or_identified_decorative_svg_does_not_block_text(visual: str) -> None:
+    assert extract_html(_html(content=f'<p>{PARAGRAPH}</p>{visual}')).text == PARAGRAPH
+
+
+def test_static_image_text_alternative_is_preserved_without_claiming_pixel_review() -> None:
+    description = "The client connects directly to the service over an encrypted connection."
+    result = extract_html(_html(content=f'<p>{PARAGRAPH}</p><figure><img alt="{description}">'
+                               '<figcaption>Architecture illustration.</figcaption></figure>'))
+    assert f"Image description: {description}" in result.text
+    assert "Architecture illustration." in result.text
+    assert any("textual content only" in note for note in result.coverage_notes)
+
+
+def test_descriptive_alt_does_not_automatically_resolve_unread_diagram_coverage() -> None:
+    html = _html(content=f'<p>{PARAGRAPH}</p><img alt="A benchmark chart shows separate experimental results.">')
+    with pytest.raises(ValueError, match="unread_critical_media"):
+        extract_html(html)
+
+
+def test_separate_generated_summary_widget_is_not_authored_evidence() -> None:
+    html = _html(content='<details class="publisher-ai-summary"><p>Unverified generated claim.</p>'
+                         f'</details><p>{PARAGRAPH}</p>')
+    assert extract_html(html).text == PARAGRAPH
+
+
+@pytest.mark.parametrize("label,contents", [
+    ('aria-label="Benchmark chart"', '<path/>'),
+    ('class="diagram"', '<path/>'),
+    ('', '<title>Benchmark graph</title><path/>'),
+])
+def test_small_control_context_cannot_hide_meaningful_svg(label: str, contents: str) -> None:
+    html = _html(content=f'<p>{PARAGRAPH}</p><a aria-label="Share this article">'
+                         f'<svg width="16" height="16" {label}>{contents}</svg></a>')
+    with pytest.raises(ValueError, match="unread_critical_media"):
+        extract_html(html)
+
+
+@pytest.mark.parametrize("width,height,contents", [
+    ("800", "600", '<path/>'),
+    ("16", "16", '<text>Failed requests: 97%</text>'),
+    ("16", "16", '<text><tspan>Failed requests: 97%</tspan></text>'),
+    ("16", "16", '<desc>Failed requests: 97%</desc>'),
+])
+def test_author_or_presentation_marker_does_not_hide_source_evidence(width: str, height: str, contents: str) -> None:
+    html = _html(content=f'<p>{PARAGRAPH}</p><div id="author-link"><a href="/author">'
+                         f'<svg width="{width}" height="{height}" role="presentation">{contents}</svg></a></div>')
+    with pytest.raises(ValueError, match="unread_critical_media"):
+        extract_html(html)
 
 
 @pytest.mark.asyncio

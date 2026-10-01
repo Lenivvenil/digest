@@ -236,6 +236,30 @@ snapshot is not a measured arrival rate. Neither more runner time nor a larger
 context window alone establishes sustainable free execution. This section authorizes
 no schedule change or automatic-card rollout by itself.
 
+## Candidate reading decisions — proposal, not implemented
+
+The smallest extension uses the existing candidate record and review evidence IDs,
+not another queue or service. Each actually reviewed candidate needs one explicit
+outcome: `read`, `needs_source`, `outside_scope`, or `already_covered`. `outside_scope`
+requires positive evidence of a mismatch with configured interests. `already_covered`
+requires a confirmed delivered reference and evidence that the development adds no
+material change, qualification or contrary account. Shared topics, sparse RSS, source
+scores, article length and exhausted execution budgets are not exclusion grounds.
+
+Record evidence fingerprint, policy version, reason and any covered-delivery reference.
+Reconsider when source evidence, relevant delivered context or policy changes. Unchanged
+uncertain RSS should proceed to the existing source-reading path, rather than repeated
+metadata-only model calls. Failed acquisition and unprocessed IDs remain pending.
+Request batches are technical boundaries, not editorial quotas. Source/category
+alternation improves access to processing, not processing capacity.
+
+Before using decisions to exclude work, a report-only evaluation must account for every
+supplied ID, distinguish omitted IDs from decisions, and check missed valuable items
+among sparse descriptions, long articles, low-volume sources and contrary accounts.
+Measure triage cost and accepted-work cost as well as coverage. No observed selection
+rate currently establishes sustainability. Full-source claims still require complete
+reading and factual verification; metadata relevance is not proof of article quality.
+
 ## Release-gate status — 2026-10-01
 
 **Not met.** Mechanical evidence integrity and successful workflow execution do not
@@ -255,6 +279,37 @@ values must be checked against current provider documentation. A missing numeric
 breakdown is unknown, not evidence that all output tokens were reasoning. Do not
 increase limits blindly or retain private reasoning text to diagnose the budget.
 Detailed evaluation artifacts remain in the private verification environment.
+
+## Claim-level publication contract — proposal, not implemented
+
+The current final prose fields can each contain several independently falsifiable
+statements. Resolving their source IDs does not establish that every statement was
+checked. A verifier that rewrites the prose while checking it can silently omit the
+very qualifier that needs verification. Its self-reported coverage is insufficient.
+
+A smaller publication surface should consist of identified source-backed assertions,
+with optional interpretation rather than mandatory benefit, caveat or reading advice.
+Each assertion keeps its exact publication text, source references and explicit scope:
+subject, predicate/object, quantities or population, time/status, and applicable
+conditions. Unknown components remain unknown; the schema must not force inventions.
+Source-reported assertions remain attributed. A condition needed to make a claim true
+belongs with that claim, not in optional decorative prose elsewhere.
+
+Verification must return one result for every exact assertion ID and input-text hash,
+without substituting a paraphrase. The engine can deterministically verify complete
+ID coverage, unchanged input hashes, valid source references and non-passing unresolved
+results. It cannot mechanically prove semantic equivalence, atomicity or discovery of
+all relevant source qualifications. A factual check therefore retains the complete
+available source context and tests actor, scope, quantity, timing and necessary
+conditions; its judgment remains fallible and must pass independent real-output
+assessment and negative controls before becoming a release gate.
+
+Rendering should introduce no new model-written title, summary, benefit or explanation
+outside the checked assertion set. Optional interpretation is also checked if published.
+Translation changes the publication text and must preserve the same proposition and
+qualifiers; a verdict bound to different text is not reusable as proof of the translation.
+This proposal changes neither production delivery nor the configured models. It is a
+bounded experimental contract, not another implemented verifier framework.
 
 ## Publication language clarification — 2026-10-01
 
