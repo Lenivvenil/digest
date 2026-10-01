@@ -220,3 +220,21 @@ The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
 hyphen repairs and one originally exact quote) and rejects one over-budget,
 paraphrased quote. These tests make no model or network calls.
+
+
+### Literal-quote failure diagnostics
+
+The bounded Irritator narrative stage keeps literal quotes in the source language;
+only generated claims, assumptions, explanation and limitations use the configured
+output language. A literal mismatch still stops that stage before external search.
+The matcher is not relaxed into paraphrase or semantic equivalence.
+
+For a known evidence ID and a quote within the existing 200-character allowance,
+the private Irritator archive can retain the rejected quote, evidence ID and immutable
+bundle ID alongside existing prompt/response hashes. This permits comparison against
+the original checkpoint to distinguish formatting from unsupported text. It does not
+retain a whole provider response, and the rejected text is not logged or delivered
+as a counter-signal. Unknown IDs and oversized fields do not enter this diagnostic.
+Keep these runtime artifacts private; public issue updates should summarize outcomes.
+A mismatch alone does not establish hallucination or a translation cause. Source
+adapter availability and useful external evidence remain separate #77 acceptance gates.

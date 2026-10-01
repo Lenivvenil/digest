@@ -65,6 +65,21 @@ class EvidenceRankedSignal(RankedSignal):
     typography_normalized: bool = False
 
 
+@dataclass(frozen=True)
+class RejectedEvidenceQuote:
+    """Bounded private diagnostic, linked to the already validated source bundle."""
+
+    bundle_id: str
+    evidence_id: str
+    quote: str
+
+
+class NarrativeQuoteMismatch(ValueError):
+    def __init__(self, rejection: RejectedEvidenceQuote) -> None:
+        super().__init__("Narrative quote is not in original evidence.")
+        self.rejection = rejection
+
+
 @dataclass
 class StageDiagnostic:
     stage: str
@@ -80,6 +95,7 @@ class StageDiagnostic:
     prompt_sha256: str | None = None
     response_sha256: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    rejected_quote: RejectedEvidenceQuote | None = None
 
 
 @dataclass
@@ -181,7 +197,7 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
                     quote, evidence.title, evidence.excerpt,
                 )
             except ValueError as exc:
-                raise ValueError("Narrative quote is not in original evidence.") from exc
+                raise NarrativeQuoteMismatch(RejectedEvidenceQuote(bundle.bundle_id, identity, quote)) from exc
             if normalized:
                 typography_normalized.append(identity)
         if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 3:
@@ -391,7 +407,9 @@ async def _run_stages(
         '(an exact cited category), implicit_assumptions (1-3 strings <=300 chars each), why_worth_challenging '
         '(<=600 chars), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
         'exact nonempty substring of its title/excerpt <=200 chars). No other fields. At most 5 limitations '
-        '(<=400 chars each); explain any empty list. Use the requested language.'
+        '(<=400 chars each); explain any empty list. Use the requested language only for claim, '
+        'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
+        'supplied evidence unchanged, in their original language; never translate a literal quote.'
     ), {"evidence": asdict(bundle), "language": config.radar.language, "coverage": COVERAGE}, config)
     result.narratives, limitations = _parse_narrative(text, bundle)
     result.limitations.extend(limitations)
@@ -509,6 +527,10 @@ async def run_evidence_irritator(
         if current is not None:
             current.status, current.error = "error", type(exc).__name__
             current.error_detail = _safe_error_detail(exc)
-        # No response bodies, prompts, HTTP headers or credentials in error records.
+            if isinstance(exc, NarrativeQuoteMismatch):
+                current.rejected_quote = exc.rejection
+        # No full provider responses, prompts, HTTP headers or credentials are retained.
+        # Only a <=200-character quote tied to a validated evidence ID may be saved
+        # in the private result archive; exception text/logging remains fixed.
         result.status = "incomplete" if result.narratives else "error"
     return result

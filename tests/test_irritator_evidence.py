@@ -519,7 +519,9 @@ async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
 
 
 @pytest.mark.asyncio
-async def test_parser_failure_retains_only_known_safe_contract_reason() -> None:
+async def test_quote_failure_preserves_bounded_private_evidence_but_no_raw_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     config = fixture_config()
     bundle = _bundle(config)
     narrative = _narrative(bundle)
@@ -528,9 +530,24 @@ async def test_parser_failure_retains_only_known_safe_contract_reason() -> None:
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client)
     diagnostic = next(item for item in result.diagnostics if item.stage == "narrative")
-    assert diagnostic.error == "ValueError"
+    assert diagnostic.error == "NarrativeQuoteMismatch"
     assert diagnostic.error_detail == "Narrative quote is not in original evidence."
-    assert "Fabricated source quotation" not in json.dumps(asdict(result))
+    assert asdict(diagnostic.rejected_quote) == {
+        "bundle_id": bundle.bundle_id, "evidence_id": bundle.items[0].evidence_id,
+        "quote": "Fabricated source quotation",
+    }
+    assert result.status == "error" and not result.narratives and not result.source_attempts
+    assert "Fabricated source quotation" not in caplog.text
+    assert "raw_response" not in asdict(diagnostic) and diagnostic.response_sha256
+    # Unknown IDs and overlong fields are rejected before a quote diagnostic exists.
+    for identity, quote in (("unknown-source", "Synthetic quote"), (bundle.items[0].evidence_id, "x" * 201)):
+        rejected = _narrative(bundle)
+        rejected["narratives"][0]["evidence_ids"] = [identity]
+        rejected["narratives"][0]["quotes"] = {identity: quote}
+        with patch("digest.irritator.evidence_stage.complete", AsyncMock(return_value=(json.dumps(rejected), {}))):
+            async with _offline_client() as client:
+                failed = await run_evidence_irritator(bundle, config, client)
+        assert all(item.rejected_quote is None for item in failed.diagnostics)
 
 
 @pytest.mark.asyncio
