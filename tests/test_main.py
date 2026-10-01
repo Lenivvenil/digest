@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass, field
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from digest.delivery import ArticleDeliveryResult
+from digest.feedback import FeedbackStore
 from digest.irritator import IrritatorStatus
 from digest.main import RunStats, _clean_summary, check_config, main, run
+from digest.radar.collector import SourceFetchMetrics, article_hash
+from digest.radar.summarizer import ArticleSummary
 
 
 @dataclass
@@ -61,6 +67,7 @@ class _FiltersCfg:
 @dataclass
 class _TelegramCfg:
     enabled: bool = False
+    required: bool = False
     split_messages: bool = True
     max_messages: int = 10
 
@@ -377,8 +384,8 @@ class TestRunFullPipeline:
         mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(return_value=[])
-        mock_write = AsyncMock(return_value=None)
-        mock_send_cards = AsyncMock(return_value={"abc12345": "TechCrunch"})
+        mock_write = MagicMock(return_value=None)
+        mock_send_cards = AsyncMock(return_value=ArticleDeliveryResult())
 
         cfg = _mock_config()
         cfg.telegram.enabled = True
@@ -405,7 +412,7 @@ class TestRunFullPipeline:
         mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
         mock_extract = AsyncMock(side_effect=RuntimeError("LLM exploded"))
-        mock_write = AsyncMock(return_value=None)
+        mock_write = MagicMock(return_value=None)
 
         with (
             patch("digest.config.load_config", return_value=_mock_config()),
@@ -454,3 +461,187 @@ class TestMain:
             result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml"])
         assert result == 0
         mock_run.assert_called_once_with("alt.yaml", True, True, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sent", "failed", "markdown", "expected_titles"),
+    [
+        (0, 2, False, set()),
+        (1, 1, False, {"One"}),
+        (2, 0, False, {"One", "Two"}),
+        (0, 2, True, {"One", "Two"}),
+    ],
+)
+@pytest.mark.parametrize("required", [False, True])
+async def test_delivery_commits_only_confirmed_articles(
+    sent: int, failed: int, markdown: bool, expected_titles: set[str], required: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    articles = [_Article(title="One", link="https://example.com/1"),
+                _Article(title="Two", link="https://example.com/2")]
+    hashes = [article_hash(a.title, a.link) for a in articles]
+    cache = {"existing": "old", **dict.fromkeys(hashes, "new")}
+    top_articles = [ArticleSummary(a.title, a.link, a.source, "tech", "Summary") for a in articles]
+    delivery = ArticleDeliveryResult(
+        attempted=2, sent=sent, failed=failed,
+        article_source_map={h[:8]: "test" for h in hashes[:sent]},
+        delivered_hashes=set(hashes[:sent]),
+    )
+    save_cache = MagicMock()
+    source_stats: dict = {}
+    feedback = FeedbackStore()
+    cfg = _mock_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.required = required
+    if required and (sent == 0 or failed > 0):
+        expected_titles = {a.title for a in articles[:sent]}
+
+    async def collect_stub(*args: object, **kwargs: object) -> tuple:
+        metrics = kwargs["fetch_metrics"]
+        assert isinstance(metrics, dict)
+        metrics["test"] = SourceFetchMetrics(True, 2, 30.0)
+        metrics["broken"] = SourceFetchMetrics(False, 0, 0.0)
+        return {"tech": articles}, cache
+
+    async def send_stub(*args: object, **kwargs: object) -> ArticleDeliveryResult:
+        save_cache.assert_not_called()  # No eager cache commit before Telegram responds.
+        return delivery
+
+    with ExitStack() as stack:
+        replacements = {
+            "digest.config.load_config": MagicMock(return_value=cfg),
+            "digest.radar.collect": AsyncMock(side_effect=collect_stub),
+            "digest.radar.summarize_all": AsyncMock(return_value=([_CategorySummary()], "")),
+            "digest.radar.pick_top_articles": AsyncMock(return_value=top_articles),
+            "digest.radar.save_dedup_cache": save_cache,
+            "digest.main._run_irritator": AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty"))),
+            "digest.delivery.write_digest": MagicMock(return_value=Path("digest.md") if markdown else None),
+            "digest.delivery.send_article_cards": AsyncMock(side_effect=send_stub),
+            "digest.delivery.send_counter_signals": AsyncMock(),
+            "digest.main._process_pending_approvals": MagicMock(),
+            "digest.feedback.load_feedback": MagicMock(return_value=feedback),
+            "digest.source_scorer.load_stats": MagicMock(return_value=source_stats),
+            "digest.source_scorer.save_stats": MagicMock(),
+        }
+        for target, replacement in replacements.items():
+            stack.enter_context(patch(target, replacement))
+        result = await run("config.yaml", False, False, False)
+    expected_hashes = {article_hash(a.title, a.link) for a in articles if a.title in expected_titles}
+    if expected_hashes:
+        save_cache.assert_called_once_with({"existing": "old", **dict.fromkeys(expected_hashes, "new")})
+    elif markdown:
+        save_cache.assert_called_once_with({"existing": "old"})
+    else:
+        save_cache.assert_not_called()
+    assert result.telegram_sent is (sent > 0 and failed == 0)
+    assert result.telegram_partial is (sent > 0 and failed > 0)
+    assert result.required_delivery_failed is (required and not result.telegram_sent)
+    assert source_stats["test"].total_fetches == 1
+    assert source_stats["test"].articles_included_in_digest == len(expected_hashes)
+    assert source_stats["broken"].successful_fetches == 0
+    assert source_stats["broken"].total_fetches == 1
+    assert feedback.article_source_map == delivery.article_source_map
+
+
+@pytest.mark.asyncio
+async def test_failed_category_remains_retryable_in_markdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    good = _Article(title="Good")
+    failed = _Article(title="Failed", link="https://example.com/failed")
+    good_hash = article_hash(good.title, good.link)
+    failed_hash = article_hash(failed.title, failed.link)
+    save_cache = MagicMock()
+    with (
+        patch("digest.config.load_config", return_value=_mock_config()),
+        patch("digest.radar.collect", AsyncMock(return_value=(
+            {"tech": [good], "failed": [failed]}, {good_hash: "new", failed_hash: "new"},
+        ))),
+        patch("digest.radar.summarize_all", AsyncMock(return_value=([_CategorySummary()], ""))),
+        patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+        patch("digest.radar.save_dedup_cache", save_cache),
+        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.delivery.write_digest", return_value=Path("digest.md")),
+        patch("digest.main._process_pending_approvals"),
+    ):
+        await run("config.yaml", False, False, False)
+    save_cache.assert_called_once_with({good_hash: "new"})
+
+
+@pytest.mark.asyncio
+async def test_radar_only_does_not_consume_articles_and_cli_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    save_cache = MagicMock()
+    with (
+        patch("digest.config.load_config", return_value=_mock_config()),
+        patch("digest.radar.collect", AsyncMock(return_value=({"tech": [_Article()]}, {"hash": "new"}))),
+        patch("digest.radar.summarize_all", AsyncMock(return_value=([_CategorySummary()], ""))),
+        patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
+        patch("digest.radar.save_dedup_cache", save_cache),
+    ):
+        assert await main(["--radar-only"]) == 0
+    save_cache.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("feed_failure", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_failed_runs_record_fetch_health_without_consuming_articles(
+    feed_failure: bool, dry_run: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.radar import AllFeedsFailedError
+
+    monkeypatch.chdir(tmp_path)
+    source_stats: dict = {}
+    save_stats = MagicMock()
+    save_cache = MagicMock()
+
+    async def collect_stub(*args: object, **kwargs: object) -> tuple:
+        metrics = kwargs["fetch_metrics"]
+        assert isinstance(metrics, dict)
+        metrics["test"] = SourceFetchMetrics(not feed_failure, 0 if feed_failure else 1, 10.0)
+        if feed_failure:
+            raise AllFeedsFailedError("all feeds unavailable")
+        return {"tech": [_Article()]}, {"hash": "new"}
+
+    with (
+        patch("digest.config.load_config", return_value=_mock_config()),
+        patch("digest.radar.collect", AsyncMock(side_effect=collect_stub)),
+        patch("digest.radar.summarize_all", AsyncMock(return_value=([], ""))),
+        patch("digest.radar.save_dedup_cache", save_cache),
+        patch("digest.source_scorer.load_stats", return_value=source_stats),
+        patch("digest.source_scorer.save_stats", save_stats),
+        patch("digest.main._notify_summaries_failed", AsyncMock()),
+    ):
+        if feed_failure:
+            with pytest.raises(AllFeedsFailedError):
+                await run("config.yaml", dry_run, False, False)
+        else:
+            await run("config.yaml", dry_run, False, False)
+    save_cache.assert_not_called()
+    if dry_run:
+        assert source_stats == {}
+        save_stats.assert_not_called()
+    else:
+        save_stats.assert_called_once()
+        assert source_stats["test"].total_fetches == 1
+        assert source_stats["test"].successful_fetches == int(not feed_failure)
+        assert source_stats["test"].articles_included_in_digest == 0
+
+
+@pytest.mark.asyncio
+async def test_required_telegram_failure_is_red_even_when_markdown_exists() -> None:
+    stats = RunStats(
+        feeds_fetched=1, new_articles=1, digest_length=100,
+        telegram_sent=False, telegram_partial=False,
+        markdown_saved=True, markdown_path="digest.md", required_delivery_failed=True,
+    )
+    with patch("digest.main.run", AsyncMock(return_value=stats)):
+        assert await main([]) == 1

@@ -1,0 +1,47 @@
+# Safe configuration example: no enabled sources, external delivery or real credentials.
+# Replace the model/feed placeholders and enable a source for an intentional live run.
+llm:
+  providers:
+    - name: gemini
+      model: YOUR_GEMINI_MODEL_ID
+      role: [summarize, rank_signals, fallback]
+  max_concurrent_requests: 1
+  max_retries: 0
+
+radar:
+  language: en
+  summary_style: analytical
+  perspectives: true
+  max_articles_per_category: 5
+
+sources:
+  - name: Example feed
+    url: https://example.com/feed.xml
+    category: Architecture
+    enabled: false
+    priority: 3
+    recency_hours: 24
+
+filters:
+  blocklist_keywords: []
+
+irritator:
+  max_narratives: 3
+  queries_per_narrative: 2
+  top_signals: 3
+  min_signal_score: 7
+  sources: [hackernews, arxiv]
+
+adaptive:
+  enabled: false
+
+review:
+  enabled: false
+
+telegram:
+  enabled: false
+  required: false
+
+obsidian:
+  enabled: false
+  output_dir: digests

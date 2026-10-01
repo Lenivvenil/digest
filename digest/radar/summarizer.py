@@ -356,7 +356,11 @@ def _parse_article_summaries(
         # Try to find JSON array in the response
         match = re.search(r"\[.*\]", cleaned, re.DOTALL)
         if match:
-            items = json.loads(match.group())
+            try:
+                items = json.loads(match.group())
+            except json.JSONDecodeError:
+                logger.error("Failed to parse article summaries JSON for '%s'", category)
+                return []
         else:
             logger.error("Failed to parse article summaries JSON for '%s'", category)
             return []
@@ -372,7 +376,15 @@ def _parse_article_summaries(
         link = item.get("link", "")
         source = item.get("source", "")
         summary = item.get("summary", "")
-        if title and link and summary:
+        if (
+            isinstance(title, str)
+            and isinstance(link, str)
+            and isinstance(source, str)
+            and isinstance(summary, str)
+            and title.strip()
+            and link.strip()
+            and summary.strip()
+        ):
             result.append(ArticleSummary(
                 title=title, link=link, source=source,
                 category=category, summary=summary,
@@ -528,24 +540,33 @@ async def pick_top_articles(
     messages = build_per_article_prompt(articles_by_category, config, max_articles)
     try:
         text, _ = await complete(LLMRole.SUMMARIZE, messages, config)
+        parsed = _parse_article_summaries(text, "all")
     except Exception as exc:
         logger.error("Failed to pick top articles: %s", exc)
         return []
 
-    parsed = _parse_article_summaries(text, "all")
     if not parsed:
         logger.warning("LLM returned no parseable article summaries")
     else:
         logger.info("LLM picked %d top articles", len(parsed))
 
-    # Assign correct categories from the original articles and enforce sentence cap
-    link_to_category: dict[str, str] = {}
+    # The LLM chooses links and writes summaries; feed data owns article identity.
+    # In particular, sanitized or paraphrased titles must not change dedup hashes.
+    articles_by_link: dict[str, tuple[Article, str]] = {}
     for category, articles in articles_by_category.items():
         for art in articles:
-            link_to_category[art.link] = category
+            articles_by_link.setdefault(art.link, (art, category))
+    selected: list[ArticleSummary] = []
+    seen_links: set[str] = set()
     for a in parsed:
-        if a.category == "all":
-            a.category = link_to_category.get(a.link, "")
-        a.summary = _cap_sentences(a.summary, 2)
+        original = articles_by_link.get(a.link)
+        if original is None or a.link in seen_links:
+            continue
+        article, category = original
+        seen_links.add(a.link)
+        selected.append(ArticleSummary(
+            title=article.title, link=article.link, source=article.source,
+            category=category, summary=_cap_sentences(a.summary, 2),
+        ))
 
-    return parsed[:max_articles]
+    return selected[:max_articles]

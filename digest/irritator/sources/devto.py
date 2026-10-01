@@ -1,16 +1,19 @@
-"""DEV.to public API adapter."""
+"""DEV.to adapter retained for configuration compatibility.
+
+The documented /api/articles endpoint lists articles; it does not support
+full-text `q` searches. Do not present its popular feed as counter-evidence.
+"""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
 from digest.irritator.sources import Signal, _register
 
-_BASE_URL = "https://dev.to/api/articles"
-_TIMEOUT = 10.0
-_MAX_RESULTS = 10
+logger = logging.getLogger(__name__)
 
 
 @_register("devto")
@@ -19,25 +22,10 @@ async def search_devto(
     config: Any,
     client: httpx.AsyncClient,
 ) -> list[Signal]:
-    """Search DEV.to via the public API using full-text search."""
-    resp = await client.get(
-        _BASE_URL,
-        params={"q": query, "per_page": _MAX_RESULTS},
-        timeout=_TIMEOUT,
+    """Skip unsupported search rather than return unrelated popular articles."""
+    logger.warning(
+        "DEV.to search is disabled: /api/articles has no documented full-text "
+        "query parameter. Remove devto from irritator.sources until a supported "
+        "search adapter is available. See https://developers.forem.com/api/v1"
     )
-    resp.raise_for_status()
-    data = resp.json()
-
-    signals: list[Signal] = []
-    for article in data if isinstance(data, list) else []:
-        signals.append(
-            Signal(
-                url=article.get("url", ""),
-                title=article.get("title", ""),
-                snippet=article.get("description", "")[:500],
-                source_name="devto",
-                published=article.get("published_at", ""),
-                score=float(article.get("positive_reactions_count", 0)),
-            )
-        )
-    return signals
+    return []
