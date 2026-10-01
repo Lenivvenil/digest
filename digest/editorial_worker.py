@@ -47,7 +47,7 @@ from digest.editorial_state import (
     store_state,
     utc_now,
 )
-from digest.llm import LLMProviderError, LLMRole, _extract_json, complete
+from digest.llm import LLMProviderError, LLMRole, ProviderResponseDiagnostics, _extract_json, complete
 from digest.radar.collector import Article
 from digest.review import _rejected_output_diagnostics
 
@@ -651,6 +651,9 @@ async def _run_task(task: Task, generation: Generation, body: str, state: Editor
         ), timeout=remaining)
         response_received = True
         attempt.usage = _usage(usage)
+        observation = usage.get("provider_diagnostics")
+        if isinstance(observation, ProviderResponseDiagnostics):
+            attempt.provider_diagnostics = observation
         attempt.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
         if usage.get("finish_reason") in {"length", "MAX_TOKENS"}:
             raise EditorialValidationError(OUTPUT_EXHAUSTION)

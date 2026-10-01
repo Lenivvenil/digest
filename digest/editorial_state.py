@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from digest._util import atomic_json_write
 from digest.config import Config
-from digest.llm import ProviderFailureDiagnostics, validate_failure_diagnostics
+from digest.llm import ProviderResponseDiagnostics, validate_response_diagnostics
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 
@@ -119,7 +119,7 @@ class Attempt:
     usage: dict[str, int] = field(default_factory=dict)
     response_sha256: str | None = None
     rejected_output: str | None = None
-    provider_diagnostics: ProviderFailureDiagnostics | None = None
+    provider_diagnostics: ProviderResponseDiagnostics | None = None
 
 
 @dataclass
@@ -526,7 +526,7 @@ def validate_state(state: EditorialState, state_dir: Path) -> None:
                                                     for attempt in generation.attempts]
         for attempt in attempts:
             if attempt.provider_diagnostics is not None:
-                validate_failure_diagnostics(attempt.provider_diagnostics)
+                validate_response_diagnostics(attempt.provider_diagnostics)
         if article.body_sha256 is None:
             if article.chunks or article.generations:
                 raise ValueError("Unacquired article contains analysis.")

@@ -84,6 +84,7 @@ async def _openai_compat_call(
         usage["finish_reason"] = choices[0]["finish_reason"]
     if isinstance(data.get("model"), str):
         usage["resolved_model"] = data["model"]
+    usage["provider_diagnostics"] = provider_response_diagnostics(resp)
     return text, usage
 
 
@@ -141,6 +142,7 @@ async def _gemini_call(
         usage["finish_reason"] = candidates[0]["finishReason"]
     if isinstance(data.get("modelVersion"), str):
         usage["resolved_model"] = data["modelVersion"]
+    usage["provider_diagnostics"] = provider_response_diagnostics(resp)
     return text, usage
 
 
@@ -190,6 +192,7 @@ async def _anthropic_call(
     }
     if isinstance(data.get("model"), str):
         usage["resolved_model"] = data["model"]
+    usage["provider_diagnostics"] = provider_response_diagnostics(resp)
     return text, usage
 
 
@@ -271,7 +274,9 @@ class RetryTiming:
 
 
 @dataclass(frozen=True)
-class ProviderFailureDiagnostics:
+class ProviderResponseDiagnostics:
+    """Allowlisted transport observations, independent of editorial success or failure."""
+
     status_code: int
     error_code: str
     quota_axis: QuotaAxis
@@ -280,6 +285,10 @@ class ProviderFailureDiagnostics:
     numeric_headers: dict[str, float] = field(default_factory=dict)
     retry_after: RetryTiming | None = None
     reset_headers: dict[str, RetryTiming] = field(default_factory=dict)
+
+
+# Existing checkpoints serialize fields, not this Python name. Keep old imports compatible.
+ProviderFailureDiagnostics = ProviderResponseDiagnostics
 
 
 class LLMProviderError(RuntimeError):
@@ -351,15 +360,12 @@ def _machine_code(error: dict[str, Any]) -> str:
     return "unknown"
 
 
-def provider_failure_diagnostics(
-    exc: Exception, observed_at: datetime | None = None,
-) -> ProviderFailureDiagnostics | None:
-    """Allowlisted observations only; they do not change retry policy."""
-    if not isinstance(exc, httpx.HTTPStatusError):
-        return None
+def provider_response_diagnostics(
+    response: httpx.Response, observed_at: datetime | None = None,
+) -> ProviderResponseDiagnostics:
+    """The same observation whitelist on every HTTP response; no retry-policy effects."""
     observed = (observed_at or datetime.now(UTC)).astimezone(UTC)
-    response = exc.response
-    error = _machine_error(response)
+    error = _machine_error(response) if response.is_error else {}
     axis: QuotaAxis = "unknown"
     source: QuotaAxisSource = "unknown"
     for name, provenance in (("quota_axis", "error_quota_axis"), ("type", "error_type")):
@@ -378,13 +384,22 @@ def provider_failure_diagnostics(
         timing = _header_timing(response.headers.get(name, ""), observed, allow_duration=True)
         if timing is not None:
             resets[name] = timing
-    return ProviderFailureDiagnostics(
+    return ProviderResponseDiagnostics(
         response.status_code, _machine_code(error), axis, source, observed.isoformat(), numbers,
         _header_timing(response.headers.get("retry-after", ""), observed, allow_duration=False), resets,
     )
 
 
-def validate_failure_diagnostics(diagnostic: ProviderFailureDiagnostics) -> None:
+def provider_failure_diagnostics(
+    exc: Exception, observed_at: datetime | None = None,
+) -> ProviderResponseDiagnostics | None:
+    """Preserve the existing exception path using the shared response observer."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    return provider_response_diagnostics(exc.response, observed_at)
+
+
+def validate_response_diagnostics(diagnostic: ProviderResponseDiagnostics) -> None:
     """Keep loaded checkpoints within the same finite, non-secret vocabulary."""
     if (not 100 <= diagnostic.status_code <= 599 or diagnostic.error_code not in _KNOWN_ERROR_CODES | {"unknown"}
             or diagnostic.quota_axis not in set(_QUOTA_AXES.values()) | {"unknown"}
@@ -404,6 +419,9 @@ def validate_failure_diagnostics(diagnostic: ProviderFailureDiagnostics) -> None
                 or timing.format not in {"seconds", "duration", "http_date"}
                 or datetime.fromisoformat(timing.server_retry_at).tzinfo is None):
             raise ValueError("Invalid normalized provider retry timing.")
+
+
+validate_failure_diagnostics = validate_response_diagnostics
 
 
 @dataclass

@@ -469,14 +469,107 @@ async def test_review_retains_empty_output_exhaustion_for_resumable_processing(
 
 
 # ---------------------------------------------------------------------------
-# Bounded, synthetic provider-failure observability regressions
+# Bounded, synthetic provider-response observability regressions
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["groq", "gemini", "anthropic"])
+@respx.mock
+async def test_success_diagnostics_are_typed_normalized_and_redacted(provider: str) -> None:
+    import json
+    from dataclasses import asdict
+    from datetime import datetime, timedelta
+    from unittest.mock import AsyncMock
+
+    from digest.llm import ProviderResponseDiagnostics
+
+    config = _make_config([{"name": provider, "model": "fixture", "role": ["summarize"]}])
+    response_text = "SECRET_RESPONSE_BODY"
+    if provider == "groq":
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload: dict[str, Any] = {
+            "choices": [{"message": {"content": response_text}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+        }
+    elif provider == "gemini":
+        url = "https://generativelanguage.googleapis.com/v1beta/models/fixture:generateContent"
+        payload = {
+            "candidates": [{"content": {"parts": [{"text": response_text}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 10},
+        }
+    else:
+        url = "https://api.anthropic.com/v1/messages"
+        payload = {"content": [{"text": response_text}], "usage": {"input_tokens": 20, "output_tokens": 10}}
+    # A generic body field on a successful response is not a provider failure.
+    payload["error"] = {
+        "code": "rate_limit_exceeded", "quota_axis": "tokens_per_day", "message": "SECRET_ERROR_BODY",
+    }
+    route = respx.post(url).respond(200, json=payload, headers={
+        "X-RateLimit-Limit-Requests": "30",
+        "X-RateLimit-Remaining-Requests": "29",
+        "X-RateLimit-Remaining-Tokens": "125.5",
+        "X-RateLimit-Limit-Tokens": "NaN",
+        "Retry-After": "12.5",
+        "X-RateLimit-Reset-Requests": "1m30s",
+        "X-RateLimit-Reset-Tokens": "120",
+        "X-Request-Id": "SECRET_ARBITRARY_HEADER",
+        "Authorization": "SECRET_RESPONSE_HEADER",
+    })
+    with (
+        patch.dict("os.environ", {
+            "GROQ_API_KEY": "SECRET_API_KEY", "GEMINI_API_KEY": "SECRET_API_KEY",
+            "ANTHROPIC_API_KEY": "SECRET_API_KEY",
+        }),
+        patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
+    ):
+        text, usage = await complete(LLMRole.SUMMARIZE, [{"role": "user", "content": "SECRET_PROMPT"}], config)
+    assert route.call_count == 1
+    sleep.assert_not_awaited()
+    assert text == response_text
+    assert usage["prompt_tokens"] == 20
+    assert usage["completion_tokens"] == 10
+    diagnostics = usage["provider_diagnostics"]
+    assert isinstance(diagnostics, ProviderResponseDiagnostics)
+    assert diagnostics.status_code == 200
+    assert diagnostics.error_code == "unknown"
+    assert diagnostics.quota_axis == "unknown"
+    assert diagnostics.quota_axis_source == "unknown"
+    observed = datetime.fromisoformat(diagnostics.observed_at)
+    assert observed.utcoffset() == timedelta(0)
+    assert diagnostics.numeric_headers == {
+        "x-ratelimit-limit-requests": 30.0,
+        "x-ratelimit-remaining-requests": 29.0,
+        "x-ratelimit-remaining-tokens": 125.5,
+    }
+    assert diagnostics.retry_after is not None
+    assert diagnostics.retry_after.seconds == 12.5
+    assert diagnostics.retry_after.format == "seconds"
+    assert datetime.fromisoformat(diagnostics.retry_after.server_retry_at) == observed + timedelta(seconds=12.5)
+    assert set(diagnostics.reset_headers) == {"x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"}
+    for name, seconds, timing_format in [
+        ("x-ratelimit-reset-requests", 90.0, "duration"),
+        ("x-ratelimit-reset-tokens", 120.0, "seconds"),
+    ]:
+        timing = diagnostics.reset_headers[name]
+        assert timing.seconds == seconds
+        assert timing.format == timing_format
+        assert datetime.fromisoformat(timing.server_retry_at) == observed + timedelta(seconds=seconds)
+    serialized = json.dumps(asdict(diagnostics), allow_nan=False)
+    assert "SECRET" not in serialized
+    assert "rate_limit_exceeded" not in serialized
+    assert "tokens_per_day" not in serialized
 
 
 def test_failure_diagnostics_parse_finite_headers_and_duration_resets() -> None:
     from datetime import UTC, datetime, timedelta
 
-    from digest.llm import provider_failure_diagnostics
+    from digest.llm import (
+        ProviderFailureDiagnostics,
+        ProviderResponseDiagnostics,
+        provider_failure_diagnostics,
+        provider_response_diagnostics,
+    )
 
     observed = datetime(2026, 10, 1, 5, tzinfo=UTC)
     response = httpx.Response(429, headers={
@@ -493,6 +586,8 @@ def test_failure_diagnostics_parse_finite_headers_and_duration_resets() -> None:
     error = httpx.HTTPStatusError("limited", request=response.request, response=response)
     diagnostics = provider_failure_diagnostics(error, observed_at=observed)
     assert diagnostics is not None
+    assert ProviderFailureDiagnostics is ProviderResponseDiagnostics
+    assert diagnostics == provider_response_diagnostics(response, observed_at=observed)
     assert diagnostics.status_code == 429
     assert diagnostics.error_code == "rate_limit_exceeded"
     assert diagnostics.quota_axis == "unknown"

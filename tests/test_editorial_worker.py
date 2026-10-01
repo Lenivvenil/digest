@@ -1581,3 +1581,31 @@ async def test_server_quota_diagnostic_is_safe_and_separate_from_policy_cooldown
             > datetime.fromisoformat(diagnostic.retry_after.server_retry_at))
     saved = (tmp_path / "state.json").read_text()
     assert "SECRET" not in saved and state_api.load_state(tmp_path) == result.state
+
+
+@pytest.mark.parametrize("valid_card", [True, False])
+async def test_successful_http_quota_observation_persists_before_card_validation(
+    tmp_path: Path, offline: OfflineProvider, valid_card: bool,
+) -> None:
+    import httpx
+
+    from digest.llm import provider_response_diagnostics
+
+    response = httpx.Response(200, headers={
+        "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "6450",
+        "x-ratelimit-reset-tokens": "1m30s", "x-request-id": "SECRET_RESPONSE_HEADER",
+    }, json={"unrelated": "SECRET_RESPONSE_BODY"})
+    diagnostic = provider_response_diagnostics(response)
+    offline.usage["provider_diagnostics"] = diagnostic
+    if not valid_card:
+        offline.response = lambda call, answer: "Not valid editorial JSON"
+    result = await worker.run_editorial_pass(offline.config, tmp_path, [make_article()], max_calls=1)
+    attempt = primary_generation(result.state, offline.config).attempts[0]
+    assert attempt.provider_diagnostics == diagnostic and diagnostic.status_code == 200
+    assert diagnostic.error_code == diagnostic.quota_axis == "unknown"
+    assert diagnostic.numeric_headers["x-ratelimit-remaining-tokens"] == 6450.0
+    assert diagnostic.reset_headers["x-ratelimit-reset-tokens"].seconds == 90.0
+    assert attempt.status == ("success" if valid_card else "failed")
+    assert attempt.usage == USAGE
+    assert "SECRET" not in (tmp_path / "state.json").read_text()
+    assert state_api.load_state(tmp_path) == result.state
