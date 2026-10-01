@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from copy import deepcopy
@@ -449,3 +450,48 @@ async def test_telegram_timeout_is_never_retried_within_supplement_dispatch(
         with pytest.raises(httpx.ReadTimeout):
             await _send_supplement(_stage_result("bundle"), config)
     client.post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["http_timeout", "overall_deadline"])
+async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from tests.factories import make_ranked_signal
+
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    prepare_post_delivery(Path("config.yaml"), checkpoint)
+    result = _stage_result(payload["evidence"]["bundle_id"])
+    result.ranked_signals = [make_ranked_signal(reasoning="Long evidence " * 800 + "LATE CONDITION")]
+    config = fixture_config()
+    config.telegram.enabled = True
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
+    client = _client_context()
+    calls = 0
+
+    async def post(*args: Any, **kwargs: Any) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", "https://example.com"))
+        if failure == "overall_deadline":
+            await asyncio.Event().wait()
+        raise httpx.ReadTimeout("Uncertain second chunk")
+
+    client.post = AsyncMock(side_effect=post)
+    monkeypatch.setattr("digest.post_delivery._SUPPLEMENT_DISPATCH_SECONDS", 0.02)
+    with (
+        patch("digest.post_delivery.load_config", return_value=config),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)) as stage,
+    ):
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        with pytest.raises(ValueError):
+            await execute_post_delivery(Path("config.yaml"), checkpoint)
+    assert client.post.await_count == 2
+    stage.assert_awaited_once()
+    assert "LATE CONDITION" in _markdown(checkpoint).read_text()
+    assert json.loads(_result(checkpoint).read_text()) == asdict(result)
+    assert json.loads(_marker(checkpoint).read_text())["supplement_status"] == "unknown"

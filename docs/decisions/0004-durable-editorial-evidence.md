@@ -6,6 +6,68 @@
 * Decision authority: operator-directed autonomous rehabilitation; no new spending, credentials or audience
 * Review baseline: [Digest domain register](../domain/digest/overview.md), D-01–D-06
 
+## Current implementation decision — selected publication drafts, 2026-10-01
+
+This section supersedes earlier all-admitted rollout and unverified final-prose proposals
+for the selected report-only entry. Historical reasoning below remains a record, not a
+second active implementation path. The active work is #55; #94 translation follows it.
+
+- Preserve the saved selection manifest, omitted/unreviewed counts, safe acquisition,
+  immutable body/offset provenance, resumable work and strict technical-pending states.
+  Do not change normal delivery or admit the whole feed pool through this entry.
+- Configure **writer** and **verifier** explicitly for enrichment. Never inherit an
+  untested pair from RSS review primary/secondary roles. Roles remain provider-neutral;
+  supporting an adapter does not establish free entitlement or semantic suitability.
+- A writer returns ordered atomic publication claims with exact text, source references,
+  scope annotations and optional interpretation. Each text retains its own material
+  qualifications. The renderer uses every checked text in order with source attribution
+  and a source link; annotations, a separate summary or manual editing cannot repair
+  an inaccurate published sentence.
+- A draft-aware factual checker is **not** a blind independent opinion. Store and display
+  these separately; factual-check success never changes `independent_complete`.
+- Reserve and persist each stage before inference. Bind draft, source, prompts, language,
+  routes and checks by hashes. A changed text requires a fresh check of the whole revised
+  candidate. Join verdicts against the exact canonical IDs sent to the checker; preserve
+  the writer-ID mapping and text hashes instead of normalizing verdicts after the fact.
+- Permit at most one correction after a completed nonpassing check. The writer receives
+  the complete source, its exact draft and only nonpassing feedback on its own claims.
+  It receives no controls, expected labels or prior supported verdicts. A new stateless
+  check sees the complete revised draft and source, without prior judgments. A second
+  failure leaves an explicit rejected/pending result; no unbounded repair loop.
+- Execution allowance governs progress, not editorial eligibility. Missing source text,
+  unavailable media, quota exhaustion or a request envelope that cannot yet be verified
+  remain technical pending. Preserve existing long-source progress; do not call a lossy
+  reduction fully verified or silently remove an article because it is long.
+
+### Scoped pacing and quota accounting
+
+Enrichment may explicitly select `provider_aware` pacing; legacy calls keep their
+existing behavior. The operator's `llm.min_request_interval_seconds` remains a floor.
+Only fresh, validated telemetry associated with the observed provider/model may reduce
+the enrichment path's additional conservative fallback wait. Reserve estimated input,
+maximum output and safety overhead before dispatch, then reconcile measured token use.
+Account for RPM separately from RPD/TPM headers, honor server retry/cooldown boundaries,
+and do not infer independent organization budgets from different API keys or model names.
+Missing, stale or ambiguous telemetry falls back conservatively. No new free allowance,
+runtime timeout, recurring schedule or paid fallback is implied.
+
+Source acquisition, candidate selection, checking and the possible repair all count in
+full-cycle capacity. Fast isolated API responses do not establish sustainable throughput.
+Actual eligibility/arrival observations must be distinguished from one RSS snapshot.
+
+### State and release boundary
+
+Older experimental generations remain inspectable but cannot inherit new factual-check
+status. New publication attempts use a versioned binding and durable one-correction
+limit. The entry writes internal model-checked drafts and explicit incomplete outcomes,
+not delivery authorization. Normal primary-first delivery, separate external Irritator,
+feedback behavior and production model configuration remain untouched.
+
+Before any rollout: independently review automatically acquired real-source output,
+verify complete claim coverage and recoverability, measure full-cycle quota/runtime
+capacity and candidate coverage, and preserve a state-safe rollback. No empirical
+result from a manually assessed source or a development example alone closes these gates.
+
 ## Problem and recovered context
 
 The product is a personal information-intake and learning loop: relevant reading,
