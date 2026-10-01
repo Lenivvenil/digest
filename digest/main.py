@@ -628,6 +628,21 @@ async def _primary_presentation(
     return await translate_primary_presentation(combined, cards, config, cache)
 
 
+async def _publication_presentation(
+    combined: str, cards: list[ArticleSummary], ranked: list[Any], config: Any, cache: Path, dry_run: bool,
+) -> tuple[str, list[ArticleSummary], list[Any]]:
+    if not getattr(getattr(config, "translation", None), "enabled", False):
+        return combined, cards, ranked
+    from digest.translation import translate_publication_presentation
+
+    if dry_run:
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory(prefix="digest-translation-preview-") as temporary:
+            return await translate_publication_presentation(combined, cards, ranked, config, Path(temporary))
+    return await translate_publication_presentation(combined, cards, ranked, config, cache)
+
+
 async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool
 ) -> RunStats:
@@ -765,8 +780,8 @@ async def run(
     else:
         _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
 
-    combined, top_articles = await _primary_presentation(
-        combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
+    combined, top_articles, all_ranked = await _publication_presentation(
+        combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
     )
 
     # Dry-run output

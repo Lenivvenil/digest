@@ -58,9 +58,10 @@ The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
 [draft #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
-[#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open and owner-deferred.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
-optional post translation. This documentation change does not enable a new pipeline.
+optional post translation. Presentation changes preserve the existing publication
+policy and do not enable the proposed editorial pipeline.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -303,7 +304,7 @@ Do not delete state as a retry mechanism. Distinguish confirmed failure from unk
 Telegram outcomes; a retry must not assume an uncertain send was safe to repeat.
 Optional supplementary failures must remain visible and must not erase primary receipts.
 
-## Language and optional primary-post translation
+## Language and optional post translation
 
 An absent `translation` section preserves the legacy direct-generation behavior:
 `radar.language` accepts `en` or `ru`, and its omitted-field default remains `ru`.
@@ -319,15 +320,15 @@ translation:
   target_language: ru
   provider: gemini             # Must already exist in llm.providers
   model: YOUR_GEMINI_MODEL_ID  # Must match that configured provider/model
-  max_calls: 1                # Per primary presentation pass, without HTTP retries
+  max_calls: 1                # Per presentation pass, without HTTP retries
   timeout_seconds: 90         # Explicit total budget; accommodates a 65-second shared interval
   max_output_tokens: 2048
   max_input_chars: 12000
 ```
 
-Only generated primary card summaries and category-summary prose are translated.
-**Original titles, source metadata, literal quotations, raw reviews and the separate
-Irritator supplement remain canonical.** Translation targets do not change analysis,
+Generated card summaries, category-summary prose and published Irritator narratives
+and reasoning are translated. **Original titles, source metadata, literal quotations
+and raw reviews/evidence remain canonical.** Translation targets do not change analysis,
 review evidence or external-search queries. Enabling translation with explicit
 `radar.language: ru` is an error: either retain legacy direct Russian generation with
 translation absent, or explicitly migrate generation to English and enable translation.
@@ -340,11 +341,20 @@ configuration alone cannot prove that calls are free. Allowances limit optional
 translation work, not article selection. Too-large text or exhausted allowance keeps
 the original canonical publication with a visible status.
 
-The default total timeout is 30 seconds; explicit values up to 180 seconds are accepted.
+The default total timeout is 90 seconds; explicit values up to 180 seconds are accepted.
 If the shared provider interval is 65 seconds, choose a budget that includes that wait
 and the HTTP request, as in the example. A known wait beyond the remaining budget
 creates no attempt record and no request, so later eligible processing can continue.
-Nothing automatically increases the runtime budget.
+Explicit timeout values are respected, including an existing 30-second setting.
+The separate post-delivery process shares analysis pacing and has an overall processing
+allowance of 180 + min(translation timeout, 45) seconds, then the existing 30-second
+dispatch allowance. Translation is clipped to both its configured deadline and that
+shared deadline. This leaves room for a short translation after a normally paced
+three-call analysis, but does not guarantee it; exhausted time retains canonical text.
+Workflow/job timeouts and schedules are unchanged. The process saves original analysis
+before translating, in its canonical `.irritator.json` archive; translated Markdown
+retains those original stage diagnostics. Supplement translation records live beside
+that archive in `.translations/` and must be persisted for reuse across runners.
 
 Preview primary presentation without running Irritator:
 
@@ -367,7 +377,8 @@ checks preserve field IDs, numeric literals, URLs and recognized quotation/code 
 they cannot prove that every qualifier or meaning survived. Machine-translated text
 is labelled accordingly, and incomplete translation falls back to canonical English.
 A draft does not become fact-verified through translation. Representative real-output
-review remains required before rollout; #94 and #55 are not closed by these checks.
+translation-fidelity review remains required before rollout. This presentation feature
+does not require completing the separate #55 redesign, and does not claim to solve it.
 See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 
 ## Development
@@ -411,6 +422,7 @@ Use the package version, immutable commit and [changelog](CHANGELOG.md) together
 upgrading; a historical release entry is not proof that every current quality gate has
 passed. Keep the previous engine pin and compatible runtime state for rollback.
 
-**License unresolved:** this repository currently contains no LICENSE file or declared
-package license. An owner-confirmed license is an outstanding release decision; this
-document does not grant additional reuse or distribution rights.
+**No software license grant is currently supplied.** This repository contains no
+LICENSE file or declared package license. Selecting one remains an owner release
+decision; this documentation does not assign a license or grant reuse/distribution
+rights.

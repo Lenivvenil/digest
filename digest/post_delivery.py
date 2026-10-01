@@ -12,7 +12,8 @@ import asyncio
 import hashlib
 import json
 import os
-from dataclasses import asdict
+import time
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -83,7 +84,9 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
     return marker
 
 
-def _render_result(result: EvidenceIrritatorResult) -> str:
+def _render_result(
+    result: EvidenceIrritatorResult, *, canonical: EvidenceIrritatorResult | None = None, notice: str = "",
+) -> str:
     lines = ['# Irritator: bounded post-delivery supplement', f'Status: {result.status}',
              f'Original evidence bundle: {result.bundle_id}',
              'Limited coverage: at most one narrative; RSS excerpts are not full-article verification.']
@@ -91,11 +94,13 @@ def _render_result(result: EvidenceIrritatorResult) -> str:
         lines.append(f'\nNarrative checked: {narrative.claim}')
     for ranked in result.ranked_signals:
         lines.append('\n' + signal_text(ranked))
-    lines.append('\n## Stage diagnostics\n' + json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    if notice:
+        lines.append('\n' + notice)
+    lines.append('\n## Stage diagnostics\n' + json.dumps(asdict(canonical or result), ensure_ascii=False, indent=2))
     return '\n'.join(lines) + '\n'
 
 
-async def _send_supplement(result: EvidenceIrritatorResult, config: Config) -> str:
+async def _send_supplement(result: EvidenceIrritatorResult, config: Config, *, notice: str = "") -> str:
     from digest.delivery.telegram import escape_markdownv2
 
     token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
@@ -114,6 +119,8 @@ async def _send_supplement(result: EvidenceIrritatorResult, config: Config) -> s
         label = "Проверяем: " if russian else "Narrative checked: "
         lines.extend(label + narrative.claim for narrative in result.narratives)
     lines.extend(signal_text(ranked, config.radar.language) for ranked in result.ranked_signals)
+    if notice:
+        lines.append(notice)
     chunks = split_supplement('\n\n'.join(lines), escape_markdownv2)
     # Never retry an uncertain POST: Telegram has no idempotency key for sendMessage.
     async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
@@ -130,7 +137,7 @@ async def _send_supplement(result: EvidenceIrritatorResult, config: Config) -> s
 
 
 async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int:
-    from digest.irritator.evidence_stage import run_evidence_irritator
+    from digest.irritator.evidence_stage import MAX_SECONDS, run_evidence_irritator
 
     checkpoint = _safe_path(checkpoint_path)
     marker, output, markdown = _paths(checkpoint)
@@ -152,6 +159,9 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
         raise ValueError('Invalid, changed or already executed post-delivery checkpoint.')
     record['execute_started'] = datetime.now(UTC).isoformat()
     atomic_json_write(marker, record)
+    translation_enabled = config.translation.enabled and config.translation.target_language != 'en'
+    extra = min(config.translation.timeout_seconds, 45.0) if translation_enabled else 0.0
+    processing_deadline = time.monotonic() + MAX_SECONDS + extra
     try:
         async with httpx.AsyncClient() as client:
             result = await run_evidence_irritator(bundle, config, client)
@@ -164,13 +174,34 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
         record['stage_status'] = 'error'
         atomic_json_write(marker, record)
         return 2
+    # Persist original analysis before optional presentation. Translation never
+    # replaces source evidence or the original stage result.
     atomic_json_write(output, asdict(result))
-    markdown.write_text(_render_result(result), encoding='utf-8')
+    presented, presentation_config, notice = result, config, ""
+    if translation_enabled:
+        from digest.translation import TranslationResult, translate_supplement_presentation
+
+        try:
+            presented, translation = await translate_supplement_presentation(
+                result, config, checkpoint.parent / '.translations', deadline=processing_deadline,
+            )
+        except Exception as exc:
+            translation = TranslationResult({}, 'fallback', reasons=[type(exc).__name__])
+        notice = translation.notice
+        record['translation_status'] = translation.status
+        record['translation_reasons'] = translation.reasons
+        if translation.status == 'translated':
+            presentation_config = replace(config, radar=replace(config.radar,
+                                          language=config.translation.target_language))
+    markdown.write_text(_render_result(presented, canonical=result, notice=notice), encoding='utf-8')
     record['stage_status'] = result.status
     record['supplement_status'] = 'dispatching'
     atomic_json_write(marker, record)
     try:
-        record['supplement_status'] = await _send_supplement(result, config)
+        if translation_enabled:
+            record['supplement_status'] = await _send_supplement(presented, presentation_config, notice=notice)
+        else:
+            record['supplement_status'] = await _send_supplement(result, config)
     except Exception as exc:
         record['supplement_status'] = 'unknown'
         record['send_error'] = type(exc).__name__

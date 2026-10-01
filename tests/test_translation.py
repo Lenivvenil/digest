@@ -42,6 +42,9 @@ def test_configuration_opt_in_and_legacy_language_compatibility(tmp_path: Path) 
     enabled = write_config(tmp_path, "\ntranslation:\n  enabled: true\n  provider: groq\n"
                            "  model: llama-3.3-70b-versatile\n  target_language: ru\n")
     assert enabled.radar.language == "en" and enabled.translation.enabled
+    assert enabled.translation.timeout_seconds == 90
+    explicit_timeout = write_config(tmp_path, "\ntranslation: {enabled: false, timeout_seconds: 30}\n")
+    assert explicit_timeout.translation.timeout_seconds == 30
     with pytest.raises(ValueError, match="canonical"):
         write_config(tmp_path, "\nradar: {language: ru}\ntranslation: {enabled: true}\n")
     with pytest.raises(ValueError, match="already present"):
@@ -216,6 +219,7 @@ async def test_pacing_over_budget_is_not_reserved_and_can_run_when_eligible(tmp_
 
     cfg = config()
     cfg.llm.min_request_interval_seconds = 65
+    cfg.translation = replace(cfg.translation, timeout_seconds=30)
     state = _request_state(cfg)
     state.next_request_at = time.monotonic() + 65
     fields = {"a": "Only participating clients."}
@@ -300,3 +304,74 @@ async def test_conflicting_article_identity_keeps_each_original_before_any_model
         "Canonical summary.", [first, second], cfg, tmp_path,
     )
     assert original_summary == "Canonical summary." and untouched == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadline(tmp_path: Path) -> None:
+    import time
+
+    from digest.irritator.evidence_stage import EvidenceIrritatorResult, EvidenceNarrative, EvidenceRankedSignal
+    from digest.irritator.sources import Signal
+    from digest.llm import _request_state
+    from digest.translation import translate_supplement_presentation
+
+    cfg = config()
+    source = Signal("https://example.com/source", "Literal title", "Unchanged excerpt.", "hn", "", 0)
+    narrative = EvidenceNarrative("Only enrolled clients.", "Category", [], "Reason.", ["S1"],
+                                  {"S1": "Literal evidence."})
+    ranked = EvidenceRankedSignal(source, 7, "Only the preview was measured.", "Only enrolled clients.",
+                                  "complicates", "Literal evidence.")
+    canonical = EvidenceIrritatorResult(1, "bundle", "complete", narratives=[narrative], ranked_signals=[ranked])
+    original = asdict(canonical)
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": x["id"], "text": "Перевод: " + x["text"]}
+                                             for x in fields]}), {"finish_reason": "stop"}
+
+    state = _request_state(cfg)
+    state.next_request_at = time.monotonic() + 65
+    with patch("digest.translation.complete", side_effect=answer) as call:
+        held, result = await translate_supplement_presentation(
+            canonical, cfg, tmp_path / "held", deadline=time.monotonic() + 45,
+        )
+        assert result.status == "fallback" and asdict(held) == original
+        assert result.reasons == ["provider_wait_exceeds_time_allowance"]
+        assert not list((tmp_path / "held").glob("*.json"))
+        call.assert_not_called()
+        state.next_request_at = 0
+        presented, result = await translate_supplement_presentation(
+            canonical, cfg, tmp_path / "ready", deadline=time.monotonic() + 90,
+        )
+    assert result.status == "translated" and asdict(canonical) == original
+    assert presented.narratives[0].claim.startswith("Перевод:")
+    assert presented.narratives[0].quotes == narrative.quotes
+    assert presented.ranked_signals[0].signal is source
+    assert presented.ranked_signals[0].quote == ranked.quote
+    assert presented.ranked_signals[0].reasoning.startswith("Перевод:")
+    call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_legacy_primary_and_supplement_use_one_translation_budget(tmp_path: Path) -> None:
+    from digest.irritator.ranker import RankedSignal
+    from digest.irritator.sources import Signal
+    from digest.translation import translate_publication_presentation
+
+    cfg = config()
+    item = RankedSignal(Signal("https://example.com/source", "Title", "Excerpt", "hn", "", 0),
+                        7, "Only a preview.", "Only enrolled clients.")
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        assert {field["id"] for field in fields} == {
+            "category_digest", "signal:0:narrative_claim", "signal:0:reasoning",
+        }
+        return json.dumps({"translations": [{"id": x["id"], "text": "Перевод: " + x["text"]}
+                                             for x in fields]}), {"finish_reason": "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer) as call:
+        summary, _, ranked = await translate_publication_presentation("Only a preview.", [], [item], cfg, tmp_path)
+    assert summary.startswith("Перевод:") and ranked[0].reasoning.startswith("Перевод:")
+    assert ranked[0].signal is item.signal and item.reasoning == "Only a preview."
+    call.assert_awaited_once()

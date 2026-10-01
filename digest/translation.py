@@ -15,7 +15,7 @@ import re
 import time
 from collections import Counter
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +25,8 @@ from digest.config import Config, ProviderConfig
 from digest.llm import LLMRole, _extract_json, _request_state, complete
 
 if TYPE_CHECKING:
+    from digest.irritator.evidence_stage import EvidenceIrritatorResult
+    from digest.irritator.ranker import RankedSignal
     from digest.radar.summarizer import ArticleSummary
 
 logger = logging.getLogger(__name__)
@@ -57,10 +59,10 @@ class TranslationResult:
         if self.status == "disabled":
             return ""
         if self.status == "translated":
-            return ("Machine-translated primary text; semantic fidelity is not independently verified. "
-                    "Source titles, quotations, raw reviews and Irritator remain canonical.")
-        return ("Primary translation incomplete or unavailable; canonical English text retained. "
-                "Source titles, quotations, raw reviews and Irritator remain canonical.")
+            return ("Machine-translated generated text; semantic fidelity is not independently verified. "
+                    "Source titles, quotations and raw evidence remain canonical.")
+        return ("Translation incomplete or unavailable; canonical English text retained. "
+                "Source titles, quotations and raw evidence remain canonical.")
 
 
 def _digest(value: object) -> str:
@@ -130,7 +132,9 @@ def _batches(fields: dict[str, str], max_input_chars: int) -> tuple[list[dict[st
     return batches, reasons
 
 
-async def translate_fields(fields: dict[str, str], config: Config, cache_dir: Path) -> TranslationResult:
+async def translate_fields(
+    fields: dict[str, str], config: Config, cache_dir: Path, *, deadline: float | None = None,
+) -> TranslationResult:
     settings = config.translation
     result = TranslationResult(dict(fields), "disabled")
     if not settings.enabled:
@@ -140,7 +144,8 @@ async def translate_fields(fields: dict[str, str], config: Config, cache_dir: Pa
     if settings.target_language == "en":
         return result
     result.status = "translated"
-    deadline = time.monotonic() + settings.timeout_seconds
+    own_deadline = time.monotonic() + settings.timeout_seconds
+    deadline = own_deadline if deadline is None else min(deadline, own_deadline)
     route = ProviderConfig(settings.provider, settings.model)
     # Preserve shared pacing/cooldowns, but never use the caller's retry/fallback policy.
     shared_state = _request_state(config)
@@ -242,32 +247,65 @@ async def translate_fields(fields: dict[str, str], config: Config, cache_dir: Pa
     return result
 
 
-async def translate_primary_presentation(
-    summary: str, cards: list["ArticleSummary"], config: Config, cache_dir: Path,
-) -> tuple[str, list["ArticleSummary"]]:
-    """Translate generated primary prose, preserving every identity-bearing field."""
-    from dataclasses import replace
+def _ranked_fields(ranked: list["RankedSignal"]) -> dict[str, str]:
+    return {f"signal:{index}:{name}": getattr(item, name)
+            for index, item in enumerate(ranked) for name in ("narrative_claim", "reasoning")}
 
+
+def _ranked_view(ranked: list["RankedSignal"], result: TranslationResult) -> list["RankedSignal"]:
+    return [replace(item, narrative_claim=result.fields[f"signal:{index}:narrative_claim"],
+                    reasoning=result.fields[f"signal:{index}:reasoning"] + "\n\n" + result.notice)
+            for index, item in enumerate(ranked)]
+
+
+async def translate_publication_presentation(
+    summary: str, cards: list["ArticleSummary"], ranked: list["RankedSignal"], config: Config, cache_dir: Path,
+) -> tuple[str, list["ArticleSummary"], list["RankedSignal"]]:
+    """One presentation budget for all generated legacy publication prose."""
     from digest.radar.collector import article_hash
 
     if not config.translation.enabled or config.translation.target_language == "en":
-        return summary, cards
+        return summary, cards, ranked
     fields = {"category_digest": summary} if summary.strip() else {}
+    fields.update(_ranked_fields(ranked))
     for card in cards:
         identity = f"article:{article_hash(card.title, card.link)}"
         if identity in fields and fields[identity] != card.summary:
             notice = TranslationResult({}, "fallback", reasons=["conflicting_article_identity"]).notice
             return (summary + "\n\n" + notice,
-                    [replace(item, summary=item.summary + "\n\n" + notice) for item in cards])
+                    [replace(item, summary=item.summary + "\n\n" + notice) for item in cards],
+                    [replace(item, reasoning=item.reasoning + "\n\n" + notice) for item in ranked])
         fields[identity] = card.summary
     result = await translate_fields(fields, config, cache_dir)
     if result.status == "disabled":
-        return summary, cards
+        return summary, cards, ranked
     presented = result.fields.get("category_digest", summary)
-    if presented:
-        presented += "\n\n" + result.notice
-    else:
-        presented = result.notice
+    presented = presented + "\n\n" + result.notice if presented else result.notice
     output = [replace(card, summary=result.fields[f"article:{article_hash(card.title, card.link)}"]
                       + "\n\n" + result.notice) for card in cards]
+    return presented, output, _ranked_view(ranked, result)
+
+
+async def translate_primary_presentation(
+    summary: str, cards: list["ArticleSummary"], config: Config, cache_dir: Path,
+) -> tuple[str, list["ArticleSummary"]]:
+    presented, output, _ = await translate_publication_presentation(summary, cards, [], config, cache_dir)
     return presented, output
+
+
+async def translate_supplement_presentation(
+    canonical: "EvidenceIrritatorResult", config: Config, cache_dir: Path, *, deadline: float,
+) -> tuple["EvidenceIrritatorResult", TranslationResult]:
+    """Translate copies of published prose only; evidence and canonical archive stay intact."""
+    fields = _ranked_fields(list(canonical.ranked_signals))
+    fields.update({f"narrative:{index}": item.claim for index, item in enumerate(canonical.narratives)})
+    result = await translate_fields(fields, config, cache_dir, deadline=deadline)
+    if result.status == "disabled":
+        return canonical, result
+    narratives = [replace(item, claim=result.fields[f"narrative:{index}"])
+                  for index, item in enumerate(canonical.narratives)]
+    # Preserve concrete subclasses (including their source evidence fields).
+    ranked = [replace(item, narrative_claim=result.fields[f"signal:{index}:narrative_claim"],
+                      reasoning=result.fields[f"signal:{index}:reasoning"])
+              for index, item in enumerate(canonical.ranked_signals)]
+    return replace(canonical, narratives=narratives, ranked_signals=ranked), result

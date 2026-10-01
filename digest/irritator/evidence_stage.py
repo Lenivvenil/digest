@@ -495,6 +495,12 @@ async def run_evidence_irritator(
     bounded_config = replace(config, llm=replace(
         config.llm, max_retries=0, max_concurrent_requests=1, min_request_interval_seconds=65.0,
     ))
+    if config.translation.enabled:
+        from digest.llm import _request_state
+
+        # Dataclass replacement otherwise drops this dynamic runtime. Preserve the
+        # actual pacing/cooldown observed by analysis for optional presentation.
+        bounded_config.llm.__dict__["_runtime"] = _request_state(config)
     try:
         async with asyncio.timeout(min(timeout_seconds, MAX_SECONDS)):
             await _run_stages(bundle, bounded_config, client, result)

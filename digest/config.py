@@ -161,7 +161,7 @@ class TranslationConfig:
     model: str = ""
     max_calls: int = 1
     max_output_tokens: int = 2048
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 90.0
     max_input_chars: int = 12000
 
 
@@ -730,7 +730,7 @@ def _load_translation(data: dict[str, Any], llm: LLMConfig, radar: RadarConfig) 
         if type(value) is not int or not lower <= value <= upper:
             raise ValueError(f"translation.{key} must be an integer between {lower} and {upper}.")
         values[key] = value
-    timeout = section.get("timeout_seconds", 30.0)
+    timeout = section.get("timeout_seconds", 90.0)
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 180:
         raise ValueError("translation.timeout_seconds must be finite and within (0, 180].")
     # A new explicit presentation contract defaults to canonical English, while old

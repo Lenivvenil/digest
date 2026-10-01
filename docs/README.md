@@ -35,14 +35,15 @@ issues and PR discussions are not translated or erased.
 
 ## Current work boundary — 2026-10-01
 
-[#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active implementation
-item. English documentation/onboarding #95 is merged; optional primary-post translation
-is the current bounded implementation slice. [#55](https://github.com/Lenivvenil/digest/issues/55)
-awaits real-output verification, not completion. [Draft #93](https://github.com/Lenivvenil/digest/pull/93)
+English documentation/onboarding #95 is merged. Optional post translation is tracked in
+[#94](https://github.com/Lenivvenil/digest/issues/94), with its own compatibility and
+fidelity checks. [#55](https://github.com/Lenivvenil/digest/issues/55) is deferred by the
+owner, remains open, and does not block unrelated presentation work. [Draft #93](https://github.com/Lenivvenil/digest/pull/93)
 contains experimental selected-source enrichment; its commands are not advertised as
 available on main. The ordered backlog lives in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 An absent translation section preserves direct `radar.language` generation. The optional
-primary-post presentation setting is documented in README and ADR-0005; supplementary
-Irritator translation and real-output review remain pending. Licensing
-remains an owner release decision until a LICENSE file is explicitly chosen.
+post-presentation setting is documented in README and ADR-0005, including generated
+Irritator prose. Real-output translation review remains pending. Licensing
+remains an owner release decision. No software license grant is currently supplied by
+this repository; the documentation does not choose one on the owner's behalf.
