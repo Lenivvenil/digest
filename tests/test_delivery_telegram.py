@@ -104,6 +104,14 @@ class TestSplitMessage:
         assert len(result) >= 2
         assert all(len(c) <= 4000 for c in result)
 
+    def test_prior_paragraph_not_repeated_before_oversized_paragraph(self) -> None:
+        prefix = "old"
+        long_paragraph = "x" * 30
+        chunks = split_message(prefix + "\n\n" + long_paragraph, max_len=10)
+        assert chunks[0] == prefix
+        assert "".join(chunks[1:]) == long_paragraph
+        assert all(len(chunk) <= 10 for chunk in chunks)
+
     def test_empty_returns_list(self) -> None:
         result = split_message("")
         assert result == [""]
