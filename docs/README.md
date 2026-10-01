@@ -36,11 +36,13 @@ issues and PR discussions are not translated or erased.
 ## Current work boundary — 2026-10-01
 
 [#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active implementation
-item for English documentation/onboarding. [#55](https://github.com/Lenivvenil/digest/issues/55)
+item. English documentation/onboarding #95 is merged; optional primary-post translation
+is the current bounded implementation slice. [#55](https://github.com/Lenivvenil/digest/issues/55)
 awaits real-output verification, not completion. [Draft #93](https://github.com/Lenivvenil/digest/pull/93)
 contains experimental selected-source enrichment; its commands are not advertised as
 available on main. The ordered backlog lives in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
-Current code still uses `radar.language` directly. English examples do not silently
-change the legacy omitted-field default or enable optional post translation. Licensing
+An absent translation section preserves direct `radar.language` generation. The optional
+primary-post presentation setting is documented in README and ADR-0005; supplementary
+Irritator translation and real-output review remain pending. Licensing
 remains an owner release decision until a LICENSE file is explicitly chosen.

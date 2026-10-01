@@ -45,3 +45,9 @@ telegram:
 obsidian:
   enabled: false
   output_dir: digests
+
+# Optional presentation translation is off. It never translates sources or changes
+# review/search prompts. See README before choosing an existing entitled model.
+translation:
+  enabled: false
+  target_language: ru

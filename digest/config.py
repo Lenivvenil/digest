@@ -151,6 +151,20 @@ class ReviewConfig:
     review_led_only: bool = False
 
 
+@dataclass(frozen=True)
+class TranslationConfig:
+    """Optional presentation-only translation; never an implicit provider fallback."""
+
+    enabled: bool = False
+    target_language: str = "ru"
+    provider: str = ""
+    model: str = ""
+    max_calls: int = 1
+    max_output_tokens: int = 2048
+    timeout_seconds: float = 30.0
+    max_input_chars: int = 12000
+
+
 @dataclass
 class Config:
     llm: LLMConfig
@@ -164,6 +178,7 @@ class Config:
         default_factory=lambda: AdaptiveConfig(enabled=False)
     )
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    translation: TranslationConfig = field(default_factory=TranslationConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -689,6 +704,50 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     )
 
 
+def _load_translation(data: dict[str, Any], llm: LLMConfig, radar: RadarConfig) -> TranslationConfig:
+    if "translation" not in data:
+        return TranslationConfig()  # Legacy generation language and call count are unchanged.
+    section = data["translation"]
+    if not isinstance(section, dict):
+        raise ValueError("translation must be a mapping.")
+    known = {"enabled", "target_language", "provider", "model", "max_calls", "max_output_tokens",
+             "timeout_seconds", "max_input_chars"}
+    if set(section) - known:
+        raise ValueError("Unknown translation setting.")
+    enabled = section.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("translation.enabled must be a boolean.")
+    target = section.get("target_language", "ru")
+    if not isinstance(target, str) or target not in VALID_LANGUAGES:
+        raise ValueError("translation.target_language must be en or ru.")
+    provider, model = section.get("provider", ""), section.get("model", "")
+    if not isinstance(provider, str) or not isinstance(model, str):
+        raise ValueError("translation.provider and model must be strings.")
+    values: dict[str, int] = {}
+    for key, default, lower, upper in (("max_calls", 1, 1, 10), ("max_output_tokens", 2048, 256, 4096),
+                                       ("max_input_chars", 12000, 256, 32000)):
+        value = section.get(key, default)
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError(f"translation.{key} must be an integer between {lower} and {upper}.")
+        values[key] = value
+    timeout = section.get("timeout_seconds", 30.0)
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 180:
+        raise ValueError("translation.timeout_seconds must be finite and within (0, 180].")
+    # A new explicit presentation contract defaults to canonical English, while old
+    # configs without the section and explicit language settings retain their behavior.
+    radar_section = data.get("radar") or {}
+    if "language" not in radar_section:
+        radar.language = "en"
+    if enabled:
+        if radar.language != "en":
+            raise ValueError("Translation requires radar.language: en canonical text. "
+                             "Keep translation absent for legacy direct Russian generation.")
+        if not provider or not model or not any(p.name == provider and p.model == model for p in llm.providers):
+            raise ValueError("Translation requires an explicit provider/model already present in llm.providers.")
+    return TranslationConfig(enabled=enabled, target_language=target, provider=provider, model=model,
+                             timeout_seconds=float(timeout), **values)
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -719,6 +778,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     obsidian = _load_obsidian(data)
     adaptive = _load_adaptive(data)
     review = _load_review(data)
+    translation = _load_translation(data, llm, radar)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -737,4 +797,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         obsidian=obsidian,
         adaptive=adaptive,
         review=review,
+        translation=translation,
     )

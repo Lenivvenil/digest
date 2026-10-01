@@ -20,3 +20,6 @@ which is not merged into main. Its existence in a draft is not a release approva
 Choose the next unused sequence number after checking open PRs. If the local claude-mini
 skill package is installed, its `next_adr_number.sh` helper can assist; that private tool
 installation is not required to read, configure or run Digest.
+
+[0005](0005-optional-presentation-translation.md) records the opt-in primary-presentation
+translation slice under #94; its real-output release gate remains pending.

@@ -604,6 +604,30 @@ async def _analyze_articles(
     return summaries, trends, cards, None
 
 
+def _print_radar_presentation(combined: str, cards: list[ArticleSummary], config: Any) -> None:
+    print(combined)
+    if getattr(getattr(config, "translation", None), "enabled", False):
+        for card in cards:
+            print(f"\n{card.title}\n{card.link}\n{card.summary}")
+
+
+async def _primary_presentation(
+    combined: str, cards: list[ArticleSummary], config: Any, cache: Path, dry_run: bool,
+) -> tuple[str, list[ArticleSummary]]:
+    """Optional rendering only; source evidence and supplementary work stay canonical."""
+    translation = getattr(config, "translation", None)
+    if translation is None or not translation.enabled:
+        return combined, cards
+    from digest.translation import translate_primary_presentation
+
+    if dry_run:
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory(prefix="digest-translation-preview-") as temporary:
+            return await translate_primary_presentation(combined, cards, config, Path(temporary))
+    return await translate_primary_presentation(combined, cards, config, cache)
+
+
 async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool
 ) -> RunStats:
@@ -721,7 +745,10 @@ async def run(
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
 
     if radar_only:
-        print(combined)
+        combined, top_articles = await _primary_presentation(
+            combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
+        )
+        _print_radar_presentation(combined, top_articles, config)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
             digest_length=len(combined), telegram_sent=False,
@@ -737,6 +764,10 @@ async def run(
         irritator_status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
     else:
         _, all_ranked, irritator_status = await _run_irritator(summaries, config, verbose)
+
+    combined, top_articles = await _primary_presentation(
+        combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
+    )
 
     # Dry-run output
     if dry_run:

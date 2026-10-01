@@ -7,10 +7,11 @@ _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written a
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
 distinguishes those observations from owner requirements and later implementation.
-Documentation and onboarding [#94](https://github.com/Lenivvenil/digest/issues/94)
-is the sole active item; editorial quality
+Productization [#94](https://github.com/Lenivvenil/digest/issues/94)
+is the sole active item. English documentation/onboarding #95 is merged; primary-post
+translation is under review while supplementary translation remains pending. Editorial quality
 [#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
-This documentation work makes no production change.
+These scoped changes do not alter the production runtime or the external-search contract.
 
 Irritator's product purpose remains genuine external counter-evidence. An
 independent model opinion or a Skeptic paragraph is not an external counter-signal.

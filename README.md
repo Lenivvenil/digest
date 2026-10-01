@@ -303,13 +303,72 @@ Do not delete state as a retry mechanism. Distinguish confirmed failure from unk
 Telegram outcomes; a retry must not assume an uncertain send was safe to repeat.
 Optional supplementary failures must remain visible and must not erase primary receipts.
 
-## Language and translation status
+## Language and optional primary-post translation
 
-This documentation and the new example are English. Current main supports
-`radar.language: en` or `ru`; its legacy omitted-field default remains `ru`. Set the
-language explicitly. Optional post translation is planned in #94 and is **not yet a
-separate implemented setting**. Existing Russian runtimes must retain their explicit
-configuration during migration. Original evidence is never translated in place.
+An absent `translation` section preserves the legacy direct-generation behavior:
+`radar.language` accepts `en` or `ru`, and its omitted-field default remains `ru`.
+Existing Russian runtimes gain no additional model calls simply by upgrading.
+
+For a new explicit presentation configuration, use canonical English and opt in:
+
+```yaml
+radar:
+  language: en
+translation:
+  enabled: true
+  target_language: ru
+  provider: gemini             # Must already exist in llm.providers
+  model: YOUR_GEMINI_MODEL_ID  # Must match that configured provider/model
+  max_calls: 1                # Per primary presentation pass, without HTTP retries
+  timeout_seconds: 90         # Explicit total budget; accommodates a 65-second shared interval
+  max_output_tokens: 2048
+  max_input_chars: 12000
+```
+
+Only generated primary card summaries and category-summary prose are translated.
+**Original titles, source metadata, literal quotations, raw reviews and the separate
+Irritator supplement remain canonical.** Translation targets do not change analysis,
+review evidence or external-search queries. Enabling translation with explicit
+`radar.language: ru` is an error: either retain legacy direct Russian generation with
+translation absent, or explicitly migrate generation to English and enable translation.
+A new explicit translation section with no generation-language setting uses English;
+changing the target does not change that generation language.
+
+The route is pinned to the configured provider/model, with no automatic fallback to
+another provider or retry. Check its account entitlement before enabling live use;
+configuration alone cannot prove that calls are free. Allowances limit optional
+translation work, not article selection. Too-large text or exhausted allowance keeps
+the original canonical publication with a visible status.
+
+The default total timeout is 30 seconds; explicit values up to 180 seconds are accepted.
+If the shared provider interval is 65 seconds, choose a budget that includes that wait
+and the HTTP request, as in the example. A known wait beyond the remaining budget
+creates no attempt record and no request, so later eligible processing can continue.
+Nothing automatically increases the runtime budget.
+
+Preview primary presentation without running Irritator:
+
+```sh
+python -m digest --config config.yaml --dry-run --radar-only
+```
+
+This may consume source/model quotas; it is not an offline command.
+
+Compatible translated batches are cached in runtime `.cache/translations/`. Keep this
+state private and persist it with the runtime if reuse across runners is required.
+Completed batches can be reused while later batches finish. A failed or interrupted model attempt ends translation for that canonical version: the
+English fallback may already have been delivered, so it is not automatically replaced
+or resent. Inspect the record before choosing an explicit retry. New canonical text,
+target, model or prompt uses a separate key; the feature is not disabled globally. Do not delete delivery state to retry
+translation. Dry-run uses temporary translation storage and can consume model quota.
+
+Both Telegram and Markdown receive the same generated-text presentation. Structural
+checks preserve field IDs, numeric literals, URLs and recognized quotation/code spans;
+they cannot prove that every qualifier or meaning survived. Machine-translated text
+is labelled accordingly, and incomplete translation falls back to canonical English.
+A draft does not become fact-verified through translation. Representative real-output
+review remains required before rollout; #94 and #55 are not closed by these checks.
+See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 
 ## Development
 
