@@ -6,7 +6,7 @@ import json
 import re
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -15,9 +15,12 @@ import respx
 from digest.delivery.telegram import (
     _MAX_RETRIES,
     ArticleDeliveryResult,
+    IssueDeliveryResult,
+    _render_compact_issue,
     _send_chunk,
     escape_markdownv2,
     send_article_cards,
+    send_compact_issue,
     send_counter_signals,
     split_message,
     to_markdownv2,
@@ -529,3 +532,213 @@ class TestSendArticleCards:
         assert route.call_count == 0
         assert result_none == ArticleDeliveryResult()
         assert result_empty == ArticleDeliveryResult()
+
+
+# ---------------------------------------------------------------------------
+# compact issue: lossless preparation, one-attempt dispatch, confirmed coverage
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestSendCompactIssue:
+    @pytest.fixture(autouse=True)
+    def credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+    @staticmethod
+    def config() -> Any:
+        config = _make_config()
+        config.telegram.bot_username = "example_digest_bot"
+        return config
+
+    async def test_lossless_shared_and_spanning_chunks_with_indexed_votes(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 240)
+        long_url = "https://example.com/" + "path_" * 24 + "?a=1&b=2"
+        top = [
+            _make_top(title="One", link="https://a.test/1", summary="First.", source="A"),
+            _make_top(title="Two", link="https://a.test/2", summary="Second.", source="B"),
+            _make_top(title="Three 🚀 [complete]", link=long_url, summary="🧭_detail " * 90, source="C"),
+        ]
+        notice = "Review: complete. Translation: original."
+        config = self.config()
+        chunks, ranges = _render_compact_issue(top, config, notice)
+        callback = Mock()
+
+        def accepted(request: httpx.Request) -> httpx.Response:
+            callback.assert_called_once_with()
+            return httpx.Response(200, json={"ok": True})
+
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                side_effect=accepted,
+            )
+            result = await send_compact_issue(top, config, notice=notice, before_send=callback)
+
+        texts = [json.loads(call.request.content)["text"] for call in route.calls]
+        recovered = re.sub(r"\\(.)", r"\1", "".join(texts))
+        expected = "\n\n".join(
+            f"{index}. {article.title}\n{article.summary}\n{article.source}\n{article.link}"
+            for index, article in enumerate(top, 1)
+        )
+        assert recovered == expected + "\n\n" + notice + "\n" + (
+            "Tap a vote button, then Start to send it. "
+            "Processed on the next digest run; private owner chat only."
+        )
+        assert all(len(text.encode("utf-16-le")) // 2 <= 240 for text in texts)
+        assert sum(escape_markdownv2(long_url) in text for text in texts) == 1
+        assert ranges[0].covering_chunks == ranges[1].covering_chunks == (0,)
+        assert len(ranges[2].covering_chunks) > 1
+        for index, (article, article_range) in enumerate(zip(top, ranges, strict=True), 1):
+            rows = [
+                (chunk_index, row) for chunk_index, chunk in enumerate(chunks)
+                if chunk.reply_markup for row in chunk.reply_markup["inline_keyboard"]
+                if row[0]["text"] == f"{index}👍"
+            ]
+            full_hash = article_hash(article.title, article.link)
+            assert rows == [(article_range.covering_chunks[-1], [
+                {"text": f"{index}👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash[:8]}"},
+                {"text": f"{index}👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash[:8]}"},
+            ])]
+        assert result.complete and result.outcome == "sent"
+        assert (result.attempted, result.sent, result.failed) == (3, 3, 0)
+        assert result.total_chunks == result.attempted_chunks == result.confirmed_chunks == len(texts)
+        assert result.delivered_hashes == {article_hash(article.title, article.link) for article in top}
+        assert result.article_source_map == {
+            article_hash(article.title, article.link)[:8]: article.source for article in top
+        }
+        callback.assert_called_once_with()
+
+    @pytest.mark.parametrize("second_response,outcome", [
+        (httpx.Response(429, headers={"Retry-After": "0"}), "failed"),
+        (httpx.Response(200, json={"ok": False}), "failed"),
+        (httpx.ReadTimeout("uncertain receipt"), "unknown"),
+        (httpx.Response(200, text="invalid receipt"), "unknown"),
+        (httpx.Response(200, json={"result": {}}), "unknown"),
+    ])
+    async def test_stops_without_retry_and_keeps_only_confirmed_article_coverage(
+        self, monkeypatch: pytest.MonkeyPatch,
+        second_response: httpx.Response | Exception, outcome: str,
+    ) -> None:
+        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 200)
+        top = [
+            _make_top(title="First", link="https://a.test/1", summary="Accepted", source="A"),
+            _make_top(title="Spanning", link="https://a.test/2", summary="x" * 800, source="B"),
+            _make_top(title="Unattempted", link="https://a.test/3", summary="Later", source="C"),
+        ]
+        callback = Mock()
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=[
+                httpx.Response(200, json={"ok": True}), second_response,
+            ])
+            result = await send_compact_issue(top, self.config(), before_send=callback)
+
+        full_hash = article_hash(top[0].title, top[0].link)
+        assert route.call_count == result.attempted_chunks == 2
+        assert result.confirmed_chunks == 1
+        assert result.total_chunks > 2
+        assert result.outcome == outcome and not result.complete
+        assert (result.attempted, result.sent, result.failed) == (2, 1, 1)
+        assert result.delivered_hashes == {full_hash}
+        assert result.article_source_map == {full_hash[:8]: "A"}
+        callback.assert_called_once_with()
+
+    async def test_final_notice_failure_does_not_complete_issue(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 200)
+        top = [_make_top(title="Article", link="https://a.test/1", summary="Complete", source="A")]
+        config = self.config()
+        notice = "n" * 300
+        chunks, ranges = _render_compact_issue(top, config, notice)
+        assert ranges[0].covering_chunks[-1] < len(chunks) - 1
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=[
+                *[httpx.Response(200, json={"ok": True}) for _ in chunks[:-1]],
+                httpx.Response(403, json={"ok": False}),
+            ])
+            result = await send_compact_issue(top, config, notice=notice)
+
+        assert route.call_count == len(chunks)
+        assert result.sent == 1 and result.failed == 0
+        assert result.outcome == "failed" and not result.complete
+        assert result.confirmed_chunks == result.total_chunks - 1
+
+    async def test_impossible_url_fails_preflight_before_callback_or_post(self) -> None:
+        callback = Mock()
+        top = [_make_top(link="https://example.com/" + "x" * 4000)]
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org"))
+            result = await send_compact_issue(top, self.config(), before_send=callback)
+        assert result == IssueDeliveryResult(outcome="failed")
+        assert not route.called
+        callback.assert_not_called()
+
+    async def test_callback_exception_prevents_first_post(self) -> None:
+        callback = Mock(side_effect=RuntimeError("reservation unavailable"))
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org"))
+            with pytest.raises(RuntimeError, match="reservation unavailable"):
+                await send_compact_issue([_make_top()], self.config(), before_send=callback)
+        assert not route.called
+        callback.assert_called_once_with()
+
+    async def test_total_dispatch_timeout_stops_without_retry(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio
+
+        monkeypatch.setattr("digest.delivery.telegram._COMPACT_DISPATCH_SECONDS", 0.01)
+        attempted = 0
+
+        async def delayed_response(request: httpx.Request) -> httpx.Response:
+            nonlocal attempted
+            attempted += 1
+            await asyncio.Event().wait()
+            raise AssertionError("The bounded dispatch should have cancelled this request")
+
+        with respx.mock:
+            respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=delayed_response)
+            result = await send_compact_issue([_make_top(summary="x" * 8000)], self.config())
+        assert attempted == result.attempted_chunks == 1
+        assert result.outcome == "unknown" and result.confirmed_chunks == 0
+        assert result.delivered_hashes == set()
+
+    async def test_missing_credentials_and_empty_issue_skip_callback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        callback = Mock()
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org"))
+            assert await send_compact_issue([], self.config(), before_send=callback) == IssueDeliveryResult()
+            monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+            assert await send_compact_issue([_make_top()], self.config(), before_send=callback) == IssueDeliveryResult()
+        assert not route.called
+        callback.assert_not_called()
+
+    async def test_notice_without_articles_skips_callback_and_post(self) -> None:
+        callback = Mock()
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org"))
+            result = await send_compact_issue(
+                [], self.config(), notice="No selected articles.", before_send=callback,
+            )
+        assert result == IssueDeliveryResult()
+        assert not result.complete and not route.called
+        callback.assert_not_called()
+        assert not IssueDeliveryResult(outcome="sent", total_chunks=1, confirmed_chunks=1).complete
+
+    async def test_global_command_fallback(self) -> None:
+        top = [_make_top()]
+        with respx.mock:
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                return_value=httpx.Response(200, json={"ok": True}),
+            )
+            article_result = await send_compact_issue(top, _make_config())
+        assert route.call_count == 1
+        article_payload = json.loads(route.calls[0].request.content)
+        assert article_result.complete
+        assert "reply_markup" not in article_payload
+        assert article_hash(top[0].title, top[0].link)[:8] in article_payload["text"]
+        assert article_payload["text"].count("/vote g HASH") == 1

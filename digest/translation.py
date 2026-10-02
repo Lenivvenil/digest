@@ -268,6 +268,7 @@ async def translate_publication_presentation(
 
     if not config.translation.enabled or config.translation.target_language == "en":
         return summary, cards, ranked
+    compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
     fields = {"category_digest": summary} if summary.strip() else {}
     fields.update(_ranked_fields(ranked))
     for card in cards:
@@ -275,7 +276,8 @@ async def translate_publication_presentation(
         if identity in fields and fields[identity] != card.summary:
             notice = TranslationResult({}, "fallback", reasons=["conflicting_article_identity"]).notice
             return (summary + "\n\n" + notice,
-                    [replace(item, summary=item.summary + "\n\n" + notice) for item in cards],
+                    [replace(item, summary=item.summary if compact else item.summary + "\n\n" + notice)
+                     for item in cards],
                     [replace(item, reasoning=item.reasoning + "\n\n" + notice) for item in ranked])
         fields[identity] = card.summary
     result = await translate_fields(fields, config, cache_dir)
@@ -284,7 +286,7 @@ async def translate_publication_presentation(
     presented = result.fields.get("category_digest", summary)
     presented = presented + "\n\n" + result.notice if presented else result.notice
     output = [replace(card, summary=result.fields[f"article:{article_hash(card.title, card.link)}"]
-                      + "\n\n" + result.notice) for card in cards]
+                      + ("" if compact else "\n\n" + result.notice)) for card in cards]
     return presented, output, _ranked_view(ranked, result)
 
 

@@ -405,3 +405,21 @@ async def test_explicit_review_translation_route_preserves_ordinary_roles_and_ca
         path.write_text(yaml.safe_dump(data))
         with pytest.raises(ValueError, match="already present"):
             load_config(path)
+
+@pytest.mark.asyncio
+async def test_compact_translation_has_one_global_notice_and_keeps_article_identity(tmp_path: Path) -> None:
+    from digest.translation import TranslationResult
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    card = ArticleSummary("Title", "https://example.com/a", "Source", "Category", "Only participating clients.")
+    identity = f"article:{article_hash(card.title, card.link)}"
+    result = TranslationResult(
+        {"category_digest": "Общий обзор.", identity: "Только участвующие клиенты."}, "translated",
+    )
+    with patch("digest.translation.translate_fields", AsyncMock(return_value=result)) as translate:
+        summary, cards = await translate_primary_presentation("Overview.", [card], cfg, tmp_path)
+    assert summary.count(result.notice) == 1 and result.notice not in cards[0].summary
+    assert cards[0].summary == result.fields[identity]
+    assert (cards[0].title, cards[0].link, cards[0].source) == (card.title, card.link, card.source)
+    translate.assert_awaited_once()

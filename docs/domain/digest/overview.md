@@ -8,7 +8,8 @@ This is the existing canonical Digest domain page. The 2026-10-01 register below
 preserves the earlier decision history; current status was reconciled on 2026-10-02.
 The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
 limits. The operating allocation is a reviewed proposal; the daily schedule is
-deployed, while compact rendering remains unimplemented. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+deployed. Compact rendering is an explicit engine opt-in with a required durable
+publication boundary; runtime activation and observed-output acceptance remain separate. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
 single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
 is under active scope reassessment for the simple daily edition; its factual release
 gate remains unmet. The latest owner direction permits no parked/deferred tasks:
@@ -85,8 +86,8 @@ credential or background receiver is introduced.
 
 **Reviewed operating allocation:** one daily cycle at `17 2 * * *` (02:17 UTC),
 retaining the existing primary/optional job ceilings of 8/12 minutes. The runtime
-schedule reduction was applied separately on 2026-10-02; compact rendering remains
-unimplemented. This is
+schedule reduction was applied separately on 2026-10-02; compact publication requires
+the managed reservation and explicit presentation-mode configuration. This is
 an intended start time, not a delivery-time guarantee. GitHub may delay or drop
 scheduled work. Keep the separately configured weekly discovery budget visible;
 do not hide it inside the daily estimate. No additional feedback-only cron is proposed.

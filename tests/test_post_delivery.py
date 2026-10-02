@@ -541,3 +541,25 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
         assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 0
     assert json.loads(_result(checkpoint).read_text()) == asdict(canonical)
     assert json.loads(_marker(checkpoint).read_text())["translation_status"] == "translated"
+
+@pytest.mark.asyncio
+async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    config = fixture_config()
+    config.telegram.delivery_mode = "compact"
+    stage = _stage_result(payload["evidence"]["bundle_id"], status="incomplete")
+    with (
+        patch("digest.post_delivery._config", return_value=config),
+        patch("httpx.AsyncClient", return_value=_client_context()),
+        patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=stage)) as process,
+        patch("digest.post_delivery._send_supplement", AsyncMock()) as send,
+    ):
+        prepare_post_delivery(Path("config.yaml"), checkpoint)
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+    process.assert_awaited_once()
+    send.assert_not_called()
+    assert json.loads(_result(checkpoint).read_text())["status"] == "incomplete"
+    record = json.loads(_marker(checkpoint).read_text())
+    assert record["supplement_status"] == "archive_only" and record["stage_status"] == "incomplete"
+    assert _markdown(checkpoint).exists()

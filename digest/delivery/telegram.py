@@ -6,11 +6,13 @@ import asyncio
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
+    from digest.radar.summarizer import ArticleSummary
 
 import httpx
 
@@ -41,6 +43,7 @@ _MAX_MESSAGE_LEN = 4096
 _MAX_RETRIES = 3
 # Supplement-only total dispatch cap; primary sender and retry policy stay unchanged.
 _SUPPLEMENT_DISPATCH_SECONDS = 30.0 * _MAX_RETRIES
+_COMPACT_DISPATCH_SECONDS = 30.0
 
 # Private Use Area sentinels for safe markdown conversion
 _BOLD_OPEN = "\ue000"
@@ -63,6 +66,41 @@ class ArticleDeliveryResult:
     failed: int = 0
     article_source_map: dict[str, str] = field(default_factory=dict)
     delivered_hashes: set[str] = field(default_factory=set)
+
+
+@dataclass
+class IssueDeliveryResult(ArticleDeliveryResult):
+    """Confirmed article coverage and the independent whole-issue outcome.
+
+    Article attempts count blocks touched by an attempted chunk; incomplete
+    attempted blocks count as failed, including uncertain deliveries. A final
+    notice can fail even when every article has been confirmed. ``unknown``
+    means Telegram acceptance could not be established and must not be retried.
+    """
+
+    outcome: Literal["sent", "failed", "unknown", "skipped"] = "skipped"
+    total_chunks: int = 0
+    attempted_chunks: int = 0
+    confirmed_chunks: int = 0
+
+    @property
+    def complete(self) -> bool:
+        return self.outcome == "sent" and self.sent > 0 and self.confirmed_chunks == self.total_chunks > 0
+
+
+@dataclass
+class _IssueArticleRange:
+    start: int
+    end: int
+    full_hash: str
+    source: str
+    covering_chunks: tuple[int, ...] = ()
+
+
+@dataclass
+class _IssueChunk:
+    text: str
+    reply_markup: dict[str, Any] | None = None
 
 
 def _labels(config: Any) -> dict[str, str]:
@@ -315,6 +353,149 @@ async def send_article_cards(
     logger.info(
         "Telegram article cards: %d attempted, %d sent, %d failed",
         result.attempted, result.sent, result.failed,
+    )
+    return result
+
+
+def _render_compact_issue(
+    articles: list[ArticleSummary], config: Any, notice: str,
+) -> tuple[list[_IssueChunk], list[_IssueArticleRange]]:
+    """Prepare every chunk and map escaped article ranges before dispatch."""
+    from digest.radar.collector import article_hash
+
+    username = getattr(config.telegram, "bot_username", "")
+    parts: list[str] = []
+    ranges: list[_IssueArticleRange] = []
+    offset = 0
+    for index, article in enumerate(articles, 1):
+        full_hash = article_hash(article.title, article.link)
+        block = f"{index}. {article.title}\n{article.summary}\n{article.source}\n{article.link}"
+        if not username:
+            block += f"\n[{full_hash[:8]}]"
+        if parts:
+            offset += len(escape_markdownv2("\n\n"))
+        end = offset + len(escape_markdownv2(block))
+        ranges.append(_IssueArticleRange(offset, end, full_hash, article.source))
+        parts.append(block)
+        offset = end
+
+    footer = [notice] if notice else []
+    if articles:
+        labels = _labels(config)
+        footer.append(labels["feedback"] if username else labels["feedback_plain"])
+        if not username:
+            footer.append(labels["fallback"].format(hash="HASH"))
+    if footer:
+        parts.append("\n".join(footer))
+    encoded_chunks = split_supplement("\n\n".join(parts), escape_markdownv2, _SPLIT_LIMIT)
+    chunks = [_IssueChunk(text) for text in encoded_chunks]
+    chunk_ranges: list[tuple[int, int]] = []
+    offset = 0
+    for chunk in chunks:
+        chunk_ranges.append((offset, offset + len(chunk.text)))
+        offset += len(chunk.text)
+
+    for index, article_range in enumerate(ranges, 1):
+        article_range.covering_chunks = tuple(
+            chunk_index for chunk_index, (start, end) in enumerate(chunk_ranges)
+            if start < article_range.end and article_range.start < end
+        )
+        if username:
+            final_chunk = chunks[article_range.covering_chunks[-1]]
+            if final_chunk.reply_markup is None:
+                final_chunk.reply_markup = {"inline_keyboard": []}
+            hash8 = article_range.full_hash[:8]
+            final_chunk.reply_markup["inline_keyboard"].append([
+                {"text": f"{index}👍", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
+                {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+            ])
+    return chunks, ranges
+
+
+async def send_compact_issue(
+    articles: list[ArticleSummary],
+    config: Any,
+    *,
+    notice: str = "",
+    before_send: Callable[[], None] | None = None,
+) -> IssueDeliveryResult:
+    """Send one lossless issue with a single attempt per transport chunk.
+
+    The caller reserves the issue durably. Its synchronous ``before_send``
+    callback marks the local dispatch boundary after all rendering succeeds,
+    immediately before the first POST. Callback exceptions propagate without
+    a request. No rejection, uncertain receipt or timeout causes a retry or
+    plaintext fallback; subsequent chunks stop and confirmed coverage survives.
+    Empty article selections are skipped even if an issue notice is supplied.
+    """
+    result = IssueDeliveryResult()
+    if not articles:
+        return result
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set, skipping compact issue")
+        return result
+
+    try:
+        chunks, ranges = _render_compact_issue(articles, config, notice)
+    except ValueError:
+        result.outcome = "failed"
+        logger.warning("Compact Telegram issue cannot fit a required atomic text element")
+        return result
+    result.total_chunks = len(chunks)
+    if not chunks:
+        return result
+
+    payloads: list[dict[str, Any]] = []
+    for chunk in chunks:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": chunk.text,
+            "parse_mode": "MarkdownV2",
+            "disable_notification": False,
+        }
+        if chunk.reply_markup is not None:
+            payload["reply_markup"] = chunk.reply_markup
+        payloads.append(payload)
+
+    api_url = _API_BASE.format(token=token)
+    async with httpx.AsyncClient(follow_redirects=False) as client:
+        if before_send is not None:
+            before_send()
+        try:
+            async with asyncio.timeout(_COMPACT_DISPATCH_SECONDS):
+                for payload in payloads:
+                    result.attempted_chunks += 1
+                    response = await client.post(api_url, json=payload, timeout=_COMPACT_DISPATCH_SECONDS)
+                    if 400 <= response.status_code < 500:
+                        result.outcome = "failed"
+                        break
+                    receipt = response.json()
+                    if isinstance(receipt, dict) and receipt.get("ok") is False:
+                        result.outcome = "failed"
+                        break
+                    if response.status_code != 200 or not isinstance(receipt, dict) or receipt.get("ok") is not True:
+                        result.outcome = "unknown"
+                        break
+                    result.confirmed_chunks += 1
+                else:
+                    result.outcome = "sent"
+        except (httpx.HTTPError, TimeoutError, ValueError):
+            result.outcome = "unknown"
+
+    for article_range in ranges:
+        if any(index < result.attempted_chunks for index in article_range.covering_chunks):
+            result.attempted += 1
+            if all(index < result.confirmed_chunks for index in article_range.covering_chunks):
+                result.sent += 1
+                result.delivered_hashes.add(article_range.full_hash)
+                result.article_source_map[article_range.full_hash[:8]] = article_range.source
+            else:
+                result.failed += 1
+    logger.info(
+        "Compact Telegram issue: %s, %d/%d chunks confirmed, %d articles confirmed",
+        result.outcome, result.confirmed_chunks, result.total_chunks, result.sent,
     )
     return result
 

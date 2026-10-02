@@ -438,24 +438,37 @@ async def run_evidence_review(
     )
 
 
-def primary_cards(
-    report: BlindReviewReport, articles_by_category: dict[str, list[Article]], language: str,
-) -> list[ArticleSummary]:
-    originals = _ordered_unique_articles(articles_by_category)
+def _delivery_review(report: BlindReviewReport) -> ModelReview:
     primary = report.reviews[0]
     if primary.status in {"invalid", "unavailable"}:
         primary = next((r for r in report.reviews if r.slot == "secondary" and r.status in {"ok", "partial"}), primary)
-    if primary.status not in {"ok", "partial"}:
-        return []
+    return primary
+
+
+def primary_notice(report: BlindReviewReport, language: str) -> str:
+    """Deterministic attribution, usable once for an entire compact issue."""
+    primary = _delivery_review(report)
     label = "Мнение модели" if language == "ru" else "Model view"
     label += f" ({primary.provider}/{primary.model})"
     if report.status != "complete":
         label += "; независимое сравнение не завершено" if language == "ru" else "; independent comparison incomplete"
+    return label
+
+
+def primary_cards(
+    report: BlindReviewReport, articles_by_category: dict[str, list[Article]], language: str,
+    *, include_attribution: bool = True,
+) -> list[ArticleSummary]:
+    originals = _ordered_unique_articles(articles_by_category)
+    primary = _delivery_review(report)
+    if primary.status not in {"ok", "partial"}:
+        return []
+    label = primary_notice(report, language)
     cards = []
     for selection in primary.selections:
         article = originals[selection.evidence_id]
-        cards.append(ArticleSummary(article.title, article.link, article.source, article.category,
-                                    f"{label}: {selection.reason}"))
+        summary = f"{label}: {selection.reason}" if include_attribution else selection.reason
+        cards.append(ArticleSummary(article.title, article.link, article.source, article.category, summary))
     return cards
 
 

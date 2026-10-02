@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from digest.delivery.issue_guard import IssueGuard
+    from digest.delivery.telegram import IssueDeliveryResult
     from digest.feedback import FeedbackStore
     from digest.irritator import IrritatorStatus
     from digest.radar.collector import Article, SourceFetchMetrics
@@ -608,7 +610,10 @@ async def _analyze_articles(
 
         report = await (run_primary_review(articles, config) if config.review.review_led_only
                         else run_blind_review(articles, config))
-        cards = primary_cards(report, articles, config.radar.language)
+        cards = primary_cards(
+            report, articles, config.radar.language,
+            include_attribution=getattr(config.telegram, "delivery_mode", "cards") != "compact",
+        )
         if config.review.review_led_only:
             logging.getLogger(__name__).info(
                 "Review-led only: skipping legacy category summaries, trends and counter-signal analysis."
@@ -691,8 +696,70 @@ async def _collect_run_feedback(
     return store, True, max(0, len(store.ratings) - before)
 
 
-async def run(
+def _publication_intro(combined: str, report: BlindReviewReport | None, config: Any) -> str:
+    if getattr(config.telegram, "delivery_mode", "cards") == "compact" and report is not None:
+        from digest.review import primary_notice
+
+        return primary_notice(report, config.radar.language) + "\n\n" + combined
+    return combined
+
+
+async def _legacy_delivery_extras(
+    cards: list[ArticleSummary], ranked: list[Any], irritator_status: IrritatorStatus,
+    review_report: BlindReviewReport | None, config: Any, review_led_only: bool, nano_status: str,
+) -> None:
+    from digest.delivery import send_counter_signals
+    from digest.delivery.telegram import _send_chunk, escape_markdownv2
+
+    if not review_led_only:
+        await _notify_skipped_cards(cards)
+        await send_counter_signals(ranked, config, irritator_status=irritator_status)
+    nano_status += _review_status_line(review_report, config.radar.language)
+    if review_led_only:
+        nano_status += "\n" + irritator_status.text
+    token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID", "")
+    if token and chat_id:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            await _send_chunk(client, f"https://api.telegram.org/bot{token}/sendMessage", chat_id,
+                              escape_markdownv2(nano_status), disable_notification=True)
+
+
+def _require_attribution_store(publishing_compact: bool, usable: bool) -> None:
+    if publishing_compact and not usable:
+        raise ValueError("Compact publication requires a valid feedback store for durable article attribution.")
+
+
+def _save_delivery_cache(cache: dict[str, str], compact: bool, cache_dir: str) -> None:
+    if compact:
+        from digest._util import atomic_json_write
+
+        atomic_json_write(Path(cache_dir) / "seen_articles.json", cache)
+    else:
+        from digest.radar import save_dedup_cache
+
+        save_dedup_cache(cache)
+
+
+def _finish_compact(guard: IssueGuard | None, result: IssueDeliveryResult | None) -> None:
+    if guard is not None and result is not None and guard.state == "sending":
+        outcome = ("confirmed" if result.complete else "unknown" if result.outcome == "unknown" else
+                   "partial" if result.confirmed_chunks else "failed_no_delivery")
+        guard.finish(outcome, accepted_count=result.confirmed_chunks, attempted_count=result.attempted_chunks)
+
+
+async def _deliver_compact(
+    articles: list[ArticleSummary], config: Any, notice: str, guard: IssueGuard,
+) -> IssueDeliveryResult:
+    from digest.delivery.telegram import send_compact_issue
+
+    return await send_compact_issue(articles, config, notice=notice, before_send=guard.mark_sending)
+
+
+async def _run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
+    issue_guard: IssueGuard | None = None,
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
     from digest._util import cleanup_stale_tmp
@@ -701,7 +768,7 @@ async def run(
         get_source_feedback_score,
         save_feedback,
     )
-    from digest.radar import AllFeedsFailedError, collect, save_dedup_cache
+    from digest.radar import AllFeedsFailedError, collect
     from digest.radar.collector import article_hash
     from digest.source_scorer import (
         apply_trial_decisions_to_cache,
@@ -717,6 +784,9 @@ async def run(
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
+    compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
+    if compact and not dry_run and not radar_only and issue_guard is None:
+        raise ValueError("Compact publication requires an externally persisted issue reservation.")
     review_led_only = bool(
         getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only
     )
@@ -729,6 +799,7 @@ async def run(
     feedback_store, feedback_usable, feedback_collected = await _collect_run_feedback(
         config, cache_dir, dry_run, feedback_precollected,
     )
+    _require_attribution_store(compact and not dry_run and not radar_only, feedback_usable)
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
@@ -773,7 +844,7 @@ async def run(
     if not articles_by_category:
         logger.info("No new articles found. Nothing to summarize.")
         if not dry_run:
-            save_dedup_cache(cache)
+            _save_delivery_cache(cache, compact, cache_dir)
             _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
             save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
             if feedback_usable:
@@ -792,11 +863,12 @@ async def run(
             {s.name for s in config.enabled_sources}, dry_run=dry_run,
         )
         await _notify_summaries_failed(
-            dry_run=dry_run, telegram_enabled=config.telegram.enabled,
+            dry_run=dry_run, telegram_enabled=config.telegram.enabled and not compact,
         )
         return _empty_stats(total_articles)
 
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
+    combined = _publication_intro(combined, review_report, config)
 
     if radar_only:
         combined, top_articles = await _primary_presentation(
@@ -834,7 +906,7 @@ async def run(
         )
 
     # Delivery
-    from digest.delivery import ArticleDeliveryResult, send_article_cards, send_counter_signals, write_digest
+    from digest.delivery import ArticleDeliveryResult, send_article_cards, write_digest
 
     md_path = write_digest(
         combined, config,
@@ -850,53 +922,44 @@ async def run(
     telegram_sent = False
     telegram_partial = False
     card_delivery = ArticleDeliveryResult()
+    issue_delivery: IssueDeliveryResult | None = None
     if config.telegram.enabled:
         try:
-            from digest.delivery.telegram import _send_chunk, escape_markdownv2
-
-            card_delivery = await send_article_cards(
-                articles_by_category, config, top_articles=top_articles,
-            )
+            if compact:
+                assert issue_guard is not None
+                issue_delivery = await _deliver_compact(top_articles, config, combined, issue_guard)
+                card_delivery = issue_delivery
+                telegram_sent = issue_delivery.complete
+                telegram_partial = bool(issue_delivery.confirmed_chunks) and not issue_delivery.complete
+            else:
+                card_delivery = await send_article_cards(
+                    articles_by_category, config, top_articles=top_articles,
+                )
+                telegram_sent = card_delivery.sent > 0 and card_delivery.failed == 0
+                telegram_partial = card_delivery.sent > 0 and card_delivery.failed > 0
             feedback_store.article_source_map.update(card_delivery.article_source_map)
-            telegram_sent = card_delivery.sent > 0 and card_delivery.failed == 0
-            telegram_partial = card_delivery.sent > 0 and card_delivery.failed > 0
             if telegram_sent:
                 feedback_store.last_digest_sources = contributing_sources
                 feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
                     "%Y-%m-%d %H:%M UTC"
                 )
-            if not review_led_only:
-                await _notify_skipped_cards(top_articles)
-                await send_counter_signals(all_ranked, config, irritator_status=irritator_status)
+            if not compact:
+                nano_status = _build_nano_status(
+                    feeds_count, total_articles,
+                    sum(m.fetch_ok for m in fetch_metrics.values()),
+                    sum(not m.fetch_ok for m in fetch_metrics.values()),
+                    source_stats, config, effective_priorities,
+                )
+                await _legacy_delivery_extras(
+                    top_articles, all_ranked, irritator_status, review_report, config, review_led_only, nano_status,
+                )
 
-            # Send nano status footer
-            nano_status = _build_nano_status(
-                feeds_count, total_articles,
-                sum(m.fetch_ok for m in fetch_metrics.values()),
-                sum(not m.fetch_ok for m in fetch_metrics.values()),
-                source_stats, config, effective_priorities,
-            )
-            nano_status += _review_status_line(review_report, config.radar.language)
-            if review_led_only:
-                nano_status += "\n" + irritator_status.text
-            token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-            if token and chat_id:
-                import httpx as _httpx
-
-                api_url = f"https://api.telegram.org/bot{token}/sendMessage"
-                async with _httpx.AsyncClient() as _client:
-                    await _send_chunk(
-                        _client, api_url, chat_id,
-                        escape_markdownv2(nano_status),
-                        disable_notification=True,
-                    )
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 
     delivered_hashes = set(card_delivery.delivered_hashes)
     telegram_required = getattr(config.telegram, "required", False)
-    if markdown_saved and (not telegram_required or telegram_sent):
+    if not compact and markdown_saved and (not telegram_required or telegram_sent):
         summarized_categories = {s.category for s in summaries}
         delivered_hashes.update(
             article_hash(a.title, a.link)
@@ -920,7 +983,7 @@ async def run(
     sources_demoted = 0
 
     if delivery_ok:
-        save_dedup_cache(delivered_cache)
+        _save_delivery_cache(delivered_cache, compact, cache_dir)
 
         # Process pending approvals BEFORE save_stats so newly approved
         # sources aren't pruned from stats as "unknown"
@@ -942,10 +1005,11 @@ async def run(
         feedback_store.article_source_map = saved_article_source_map
 
     if feedback_usable:
-        save_feedback(feedback_store, cache_dir)
+        save_feedback(feedback_store, cache_dir, strict=compact)
     save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
     save_source_category_map(config.enabled_sources, cache_dir)
+    _finish_compact(issue_guard, issue_delivery)
 
     return RunStats(
         feeds_fetched=feeds_count, new_articles=total_articles,
@@ -958,6 +1022,22 @@ async def run(
         review_status=review_report.status if review_report is not None else "not_requested",
         review_checkpoint=str(md_path.with_suffix(".review.json")) if md_path and review_report is not None else "",
     )
+
+
+async def run(
+    config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
+    issue_guard: IssueGuard | None = None,
+) -> RunStats:
+    """Finalize coarse issue state even when analysis or delivery exits early."""
+    try:
+        return await _run(config_path, dry_run, radar_only, verbose,
+                          feedback_precollected=feedback_precollected, issue_guard=issue_guard)
+    finally:
+        if issue_guard is not None:
+            if issue_guard.state == "reserved":
+                issue_guard.finish("not_sent")
+            elif issue_guard.state == "sending":
+                issue_guard.finish("unknown")
 
 
 def _publish_review_checkpoint(stats: RunStats) -> None:
@@ -1018,17 +1098,44 @@ async def main(argv: list[str] | None = None) -> int:
         "--feedback-precollected", action="store_true",
         help="Managed runtime owns feedback collection/persistence; do not poll again in this process",
     )
+    parser.add_argument("--reserve-issue", action="store_true",
+                        help="Reserve one compact issue locally; managed runtime must commit/push before publication")
+    parser.add_argument("--issue-reservation-sha",
+                        help="SHA256 of the externally persisted compact issue reservation")
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
     try:
+        if args.reserve_issue or args.issue_reservation_sha:
+            if args.check or args.discover or args.dry_run or args.radar_only:
+                raise ValueError("Issue reservation cannot be combined with check, discovery or preview modes.")
+            from digest.config import load_config
+            if load_config(args.config).telegram.delivery_mode != "compact":
+                raise ValueError("Issue reservation requires telegram.delivery_mode: compact.")
+        if args.reserve_issue:
+            if args.issue_reservation_sha:
+                raise ValueError("Reserve and publish are separate persistence phases.")
+            from digest.delivery.issue_guard import reserve
+            path, digest = reserve(args.config)
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                with Path(output).open("a", encoding="utf-8") as handle:
+                    handle.write(f"issue_reservation={path.relative_to(Path.cwd()).as_posix()}\n")
+                    handle.write(f"issue_reservation_sha256={digest}\n")
+            return 0
         if args.check:
             return await check_config(args.config)
         if args.discover:
             return await discover_sources(args.config)
 
-        stats = await run(args.config, args.dry_run, args.radar_only, args.verbose,
-                          feedback_precollected=args.feedback_precollected)
+        issue_guard = None
+        if args.issue_reservation_sha:
+            from digest.delivery.issue_guard import load_guard
+            issue_guard = load_guard(args.config, args.issue_reservation_sha)
+        run_options: dict[str, Any] = {"feedback_precollected": args.feedback_precollected}
+        if issue_guard is not None:
+            run_options["issue_guard"] = issue_guard
+        stats = await run(args.config, args.dry_run, args.radar_only, args.verbose, **run_options)
         _print_stats(stats)
 
         if stats.required_delivery_failed:

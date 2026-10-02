@@ -195,6 +195,11 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
                                           language=config.translation.target_language))
     markdown.write_text(_render_result(presented, canonical=result, notice=notice), encoding='utf-8')
     record['stage_status'] = result.status
+    if getattr(config.telegram, 'delivery_mode', 'cards') == 'compact':
+        record['supplement_status'] = 'archive_only'
+        record['finished_at'] = datetime.now(UTC).isoformat()
+        atomic_json_write(marker, record)
+        return 0 if result.status in {'complete', 'empty'} else 2
     record['supplement_status'] = 'dispatching'
     atomic_json_write(marker, record)
     try:
