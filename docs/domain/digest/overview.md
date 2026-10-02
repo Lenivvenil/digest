@@ -7,8 +7,8 @@ _Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconcil
 This is the existing canonical Digest domain page. The 2026-10-01 register below
 preserves the earlier decision history; current status was reconciled on 2026-10-02.
 The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
-limits. The operating envelope below is a reviewed proposal, not a deployed schedule
-or compact renderer. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+limits. The operating allocation is a reviewed proposal; the daily schedule is
+deployed, while compact rendering remains unimplemented. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
 single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
 is under active scope reassessment for the simple daily edition; its factual release
 gate remains unmet. The latest owner direction permits no parked/deferred tasks:

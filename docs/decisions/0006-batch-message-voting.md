@@ -66,7 +66,7 @@ API send alone closes that gate.
 The owner's later daily-edition/budget instruction does not extend Telegram retention.
 A single daily poll has zero timing margin against the at-most-24-hour ordinary-message
 limit. GitHub explicitly permits [delayed and dropped scheduled runs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
-Moving the proposed cycle to 02:17 UTC avoids the top-of-hour burst but does not provide
+Moving the cycle to 02:17 UTC avoids the top-of-hour burst but does not provide
 a delivery SLA. Therefore message voting remains best effort between daily runs; the
 successful real vote check is not proof that all future votes will survive.
 
