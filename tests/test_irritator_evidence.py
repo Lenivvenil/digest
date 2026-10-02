@@ -125,7 +125,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", [
     "unknown_id", "duplicate_id", "unmatched_quote_id", "fabricated_quote", "empty_quote", "too_many",
-    "extra_field", "unknown_category", "overlong_claim", "bad_assumptions", "invalid_json",
+    "extra_field", "unknown_category", "overlong_response", "bad_assumptions", "invalid_json",
 ])
 async def test_narrative_contract_rejects_malformed_ids_quotes_or_unbounded_output(mutation: str) -> None:
     config = fixture_config()
@@ -149,8 +149,8 @@ async def test_narrative_contract_rejects_malformed_ids_quotes_or_unbounded_outp
         item["url"] = "https://invented.example/"
     elif mutation == "unknown_category":
         item["category"] = "invented-category"
-    elif mutation == "overlong_claim":
-        item["claim"] = "x" * 601
+    elif mutation == "overlong_response":
+        item["claim"] = "x" * 16000
     elif mutation == "bad_assumptions":
         item["implicit_assumptions"] = [None]
     text = "not JSON" if mutation == "invalid_json" else json.dumps(response)
@@ -646,9 +646,9 @@ def test_quote_length_is_checked_before_typography_repair() -> None:
     ranking = _ranking(signal.url)
     ranking["rankings"][0]["quote"] = article.description.replace("-", "\u2011")
     with patch("digest.irritator.evidence_stage.canonical_evidence_quote", side_effect=AssertionError("Too early")):
-        with pytest.raises(ValueError, match="text budget"):
+        with pytest.raises(ValueError, match="source_quote:too_long"):
             _parse_narrative(json.dumps(response), bundle)
-        with pytest.raises(ValueError, match="text budget"):
+        with pytest.raises(ValueError, match="source_quote:too_long"):
             _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
@@ -685,3 +685,27 @@ async def test_opt_in_translation_observes_the_stage_runtime_pacing() -> None:
         async with httpx.AsyncClient() as client:
             result = await run_evidence_irritator(_bundle(config), config, client)
     assert result.status == "empty" and _request_state(config).next_request_at == 195.0
+
+
+def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics() -> None:
+    from digest.irritator.evidence_stage import MAX_RESPONSE_CHARS, _safe_error_detail
+
+    bundle = _bundle(fixture_config())
+    raw = _narrative(bundle)
+    raw["narratives"][0]["claim"] = "Useful context. " * 50
+    narrative = _parse_narrative(json.dumps(raw), bundle)[0][0]
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    ranking = _ranking(signal.url)
+    reasoning = "Relevant qualification. " * 40
+    ranking["rankings"][0]["reasoning"] = reasoning
+    ranking["limitations"] = ["Incomplete external evidence. " * 20]
+    parsed, limitations = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+    assert parsed[0].reasoning == reasoning.strip() and len(limitations[0]) > 400
+    for value, code in [(None, "invalid_type"), ("  ", "empty")]:
+        ranking["rankings"][0]["reasoning"] = value
+        with pytest.raises(ValueError) as error:
+            _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+        assert _safe_error_detail(error.value) == f"reasoning:{code}"
+    ranking["rankings"][0]["reasoning"] = "x" * MAX_RESPONSE_CHARS
+    with pytest.raises(ValueError, match="Response exceeds"):
+        _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
