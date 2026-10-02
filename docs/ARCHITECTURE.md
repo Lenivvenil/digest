@@ -141,7 +141,11 @@ as proof that no interesting articles or counter-signals exist.
 
 ## Feedback loop
 
-Article cards contain callbacks such as `fb:a:g:{article_hash}` and `fb:a:b:{article_hash}`.
+Article cards use vote URL buttons when `telegram.bot_username` is configured.
+The URL carries `start=vote_g_{article_hash}` or `start=vote_b_{article_hash}`;
+Telegram requires a subsequent Start tap, generating an ordinary `/start` message.
+A visible `/vote g|b <article_hash>` fallback requires no username configuration.
+Legacy `fb:a:g/b:{article_hash}` callbacks remain best effort only.
 The article/source mapping connects a later vote to the source. Polling is independent
 of automatic adaptation and does not continuously handle buttons between scheduled runs.
 A private owner chat and matching sender are required; group/inline callbacks cannot
@@ -151,7 +155,9 @@ One bounded batch is applied to a candidate store and strictly persisted with it
 and minimal pending reply receipts. Managed runtimes commit/push that store before
 acknowledging its exact SHA256-bound batch; `--feedback-precollected` prevents a second
 poll even after optional-stage failure. Local CLI use has a local-disk durability scope.
-Callback expiry is UI-only failure: votes remain saved and future ingestion can proceed. Pending UI receipts are best effort: a later successful collection supersedes any
+Callback queue expiry can prevent ingestion entirely: the upstream lifetime is 150s.
+An acknowledgement failure after persistence is different: recorded votes remain saved.
+Pending UI receipts are best effort: a later successful collection supersedes any
 unanswered earlier receipts while keeping their votes. Command replies and expired
 button acknowledgements are not promised eventual delivery.
 Only recognized authorized command tags are retained, never arbitrary message bodies.
@@ -166,10 +172,11 @@ not a promise about the final editorial selection.
 
 Source feedback uses a 14-day window and the latest valid rating per article; repeated
 taps do not multiply its influence. Stored history is retained unchanged until the
-existing 30-day pruning policy applies. Callback IDs are bounded to the newest 1,000
-receipts, alongside the existing 1,000-entry article map; a batch contains at most 100
-updates. This comfortably covers ordinary twice-daily batches over Telegram's 24-hour
-retention window, not an unlimited high-frequency event stream.
+existing 30-day pruning policy applies. Callback IDs and owner-bound vote-message identities are each bounded to the newest
+1,000 receipts, alongside the existing 1,000-entry article map; a batch contains at most 100
+updates. Ordinary messages have at most 24-hour upstream retention, not a guaranteed
+processing window. Schedule delays/failures can lose votes before collection.
+See [ADR-0006](decisions/0006-batch-message-voting.md); no continuous receiver is provisioned.
 
 Telegram may restart update IDs after a week without events. A missing, future or
 six-day-old observation timestamp therefore triggers a single read with no offset.

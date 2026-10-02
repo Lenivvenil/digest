@@ -50,6 +50,7 @@ def test_feedback_store_defaults() -> None:
     assert store.ratings == []
     assert store.last_update_id == 0
     assert store.pending_replies == [] and store.seen_callback_ids == [] and store.last_poll_counts == {}
+    assert store.seen_message_ids == []
 
 
 def test_feedback_store_with_ratings() -> None:
@@ -99,8 +100,9 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     )
     original = FeedbackStore(
         ratings=[fb1, fb2], last_update_id=100,
-        pending_replies=[PendingReply("callback", "receipt")],
+        pending_replies=[PendingReply("callback", "receipt"), PendingReply("vote", "recorded_votes")],
         seen_callback_ids=[str(index) for index in range(1005)],
+        seen_message_ids=[f"owner:{index}" for index in range(1005)],
     )
     save_feedback(original, str(tmp_path))
 
@@ -113,6 +115,7 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     assert loaded.ratings[1].rating == -1
     assert loaded.pending_replies == original.pending_replies
     assert len(loaded.seen_callback_ids) == 1000 and loaded.seen_callback_ids[0] == "5"
+    assert len(loaded.seen_message_ids) == 1000 and loaded.seen_message_ids[0] == "owner:5"
 
 
 def test_load_feedback_invalid_json(tmp_path: Path) -> None:
@@ -215,6 +218,13 @@ def _callback(update_id: int, data: str = "fb:a:g:abcd1234", identifier: str = "
     }
 
 
+def _message(update_id: int, text: str, message_id: int) -> dict[str, Any]:
+    return {"update_id": update_id, "message": {
+        "message_id": message_id, "text": text, "from": {"id": 123},
+        "chat": {"id": 123, "type": "private"},
+    }}
+
+
 def _poll(updates: list[dict[str, Any]]) -> respx.Route:
     respx.get(f"{API}/getWebhookInfo").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {"url": ""}}),
@@ -278,6 +288,110 @@ async def test_collect_feedback_per_article_bad(tmp_path: Path) -> None:
     latest = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
     assert [reply.identifier for reply in latest.pending_replies] == ["callback-1002"]
     assert len(latest.ratings) == 2 and latest.last_poll_counts["superseded_replies"] == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Message replay cannot replace a later vote, even after cursor reanchoring."""
+    owner_hash = hashlib.sha256(b"123").hexdigest()
+    store = FeedbackStore(
+        article_source_map={"abcd1234": "My Source"},
+        seen_callback_ids=[f"{owner_hash}:100"],
+    )
+    route = _poll([_message(1001, "/start vote_g_abcd1234 \n", 100)])
+    result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
+    assert store.ratings == [] and store.seen_message_ids == []
+    assert get_source_feedback_score(result, "My Source") == 1.0
+    assert result.seen_message_ids == [f"{owner_hash}:100"]
+    assert result.pending_replies == [PendingReply("vote", "recorded_votes")]
+    assert result.pending_owner_sha256 == owner_hash
+    assert not any("sendMessage" in str(call.request.url) for call in respx.calls)
+    with pytest.raises(ValueError, match="SHA-256"):
+        await acknowledge_feedback(TOKEN, str(tmp_path), "0" * 64)
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        durable = load_feedback(str(tmp_path), strict=True)
+        assert durable.ratings and durable.seen_message_ids and durable.pending_replies
+        saved = sum(reply.identifier == "recorded_votes" for reply in durable.pending_replies)
+        unknown = len(durable.pending_replies) - saved
+        assert json.loads(request.content) == {
+            "chat_id": "123", "text": f"Votes saved: {saved}. Unknown articles: {unknown}.",
+        }
+        return httpx.Response(200, json={"ok": True})
+
+    send = respx.post(f"{API}/sendMessage").mock(side_effect=answer)
+    assert await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path)) == {
+        "attempted": 1, "ack_ok": 1, "ack_failed": 0,
+    }
+    result = load_feedback(str(tmp_path), strict=True)
+    _poll([
+        _message(1002, "/vote b abcd1234 \n", 101),
+        _message(1003, "/start vote_g_abcd1234", 100),
+        _message(1004, "/start vote_b_deadbeef", 102),
+    ])
+    result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path))
+    assert [rating.rating for rating in result.ratings] == [1, -1]
+    assert get_source_feedback_score(result, "My Source") == 0.0
+    assert result.last_poll_counts["duplicates"] == 1 and send.call_count == 2
+    assert json.loads(send.calls[-1].request.content)["text"] == "Votes saved: 1. Unknown articles: 1."
+    assert result.pending_replies == []
+
+    result.cursor_observed_at = ""
+    save_feedback(result, str(tmp_path), strict=True)
+    _poll([_message(2, "/start vote_g_abcd1234", 100)])
+    result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
+    assert "offset" not in json.loads(route.calls[-1].request.content)
+    assert len(result.ratings) == 2 and result.last_poll_counts["duplicates"] == 1
+    assert get_source_feedback_score(result, "My Source") == 0.0
+
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "456")
+    new_owner = _message(3, "/vote g abcd1234", 100)
+    new_owner["message"]["chat"]["id"] = new_owner["message"]["from"]["id"] = 456
+    _poll([new_owner])
+    result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
+    assert len(result.ratings) == 3 and get_source_feedback_score(result, "My Source") == 1.0
+    assert result.seen_message_ids[-1] == f"{hashlib.sha256(b'456').hexdigest()}:100"
+    persisted = (tmp_path / "feedback.json").read_text()
+    assert "/start vote_" not in persisted and "/vote " not in persisted
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_collect_feedback_vote_messages_fail_closed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    unknown = _message(1, "/start vote_b_deadbeef", 1)
+    malformed = _message(2, "/vote g abcd1234\nextra", 2)
+    quoted = _message(3, "a private reply", 3)
+    quoted["message"]["reply_to_message"] = {"text": "/vote g abcd1234"}
+    foreign_sender, foreign_chat, group, no_id, boolean_id = [
+        _message(index, "/start vote_g_abcd1234", index) for index in range(4, 9)
+    ]
+    foreign_sender["message"]["from"]["id"] = 456
+    foreign_chat["message"]["chat"]["id"] = 456
+    group["message"]["chat"]["type"] = "group"
+    del no_id["message"]["message_id"]
+    boolean_id["message"]["message_id"] = True
+    _poll([unknown, malformed, quoted, foreign_sender, foreign_chat, group, no_id, boolean_id,
+           _message(9, "/start vote_g_ABCD1234", 9), _message(10, "/vote x abcd1234", 10)])
+    result = await collect_feedback(
+        TOKEN, FeedbackStore(article_source_map={"abcd1234": "My Source"}),
+        cache_dir=str(tmp_path), acknowledge=False,
+    )
+    assert result.ratings == []
+    assert result.last_poll_counts["unknown_article"] == 1
+    assert result.last_poll_counts["malformed"] == 5
+    assert result.last_poll_counts["rejected_owner"] == 3
+    assert result.last_poll_counts["ignored"] == 1
+    assert len(result.seen_message_ids) == 1 and result.seen_callback_ids == []
+    assert result.pending_replies == [PendingReply("vote", "unknown_article")]
+    persisted = (tmp_path / "feedback.json").read_text()
+    assert "deadbeef" not in persisted and "a private reply" not in persisted and "/vote " not in persisted
+    assert "deadbeef" not in caplog.text and "a private reply" not in caplog.text
+    send = respx.post(f"{API}/sendMessage").mock(return_value=httpx.Response(200, json={"ok": True}))
+    await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
+    assert json.loads(send.calls[0].request.content)["text"] == "Votes saved: 0. Unknown articles: 1."
 
 
 @pytest.mark.asyncio
@@ -397,7 +511,10 @@ async def test_collect_feedback_handles_failed_answer_callback(
     route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [_callback(102)]}))
     result = await collect_feedback(TOKEN, durable, cache_dir=str(tmp_path))
     assert len(result.ratings) == 3 and result.last_update_id == 102
-    route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [_callback(103), _callback(104)]}))
+    route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [
+        _callback(103), _callback(104),
+        _message(105, "/vote g deadbeef", 105), _message(106, "/vote b deadbeef", 106),
+    ]}))
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
 
     async def slow_answer(request: httpx.Request) -> httpx.Response:
@@ -408,9 +525,9 @@ async def test_collect_feedback_handles_failed_answer_callback(
     real_timeout = asyncio.timeout
     with patch("digest.feedback.asyncio.timeout", side_effect=lambda _: real_timeout(0.001)):
         counts = await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
-    assert counts == {"attempted": 2, "ack_ok": 0, "ack_failed": 2}
+    assert counts == {"attempted": 3, "ack_ok": 0, "ack_failed": 3}
     durable = load_feedback(str(tmp_path), strict=True)
-    assert len(durable.ratings) == 5 and durable.last_update_id == 104 and durable.pending_replies == []
+    assert len(durable.ratings) == 5 and durable.last_update_id == 106 and durable.pending_replies == []
 
 
 @pytest.mark.asyncio
@@ -463,13 +580,15 @@ async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) ->
     save_feedback(store, str(tmp_path))
     original = deepcopy(store)
     original_bytes = (tmp_path / "feedback.json").read_bytes()
-    _poll([_callback(1)])
+    _poll([_callback(1), _message(2, "/start vote_g_abcd1234", 2)])
     with patch("digest.feedback.atomic_json_write", side_effect=OSError("disk full")):
         with pytest.raises(OSError):
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
     assert store == original
     assert (tmp_path / "feedback.json").read_bytes() == original_bytes
-    assert not any("answerCallbackQuery" in str(call.request.url) for call in respx.calls)
+    assert not any(
+        endpoint in str(call.request.url) for call in respx.calls for endpoint in ("answerCallbackQuery", "sendMessage")
+    )
 
 
 @pytest.mark.asyncio
@@ -640,6 +759,7 @@ def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
     loaded = load_feedback(str(tmp_path))
     assert loaded.article_source_map == {}
     assert loaded.pending_replies == [] and loaded.seen_callback_ids == [] and loaded.last_poll_counts == {}
+    assert loaded.seen_message_ids == []
     assert loaded.cursor_observed_at == "" and loaded.previous_update_id == 0
 
 

@@ -588,3 +588,13 @@ def test_required_telegram_policy_is_opt_in() -> None:
 
     assert not _load_telegram({}).required
     assert _load_telegram({"telegram": {"required": True}}).required
+
+
+def test_telegram_vote_username_is_optional_and_cannot_change_link_destination() -> None:
+    from digest.config import _load_telegram
+
+    assert _load_telegram({}).bot_username == ""
+    assert _load_telegram({"telegram": {"bot_username": "example_digest_bot"}}).bot_username == "example_digest_bot"
+    for username in ["https://other.example/bot", "@example_digest_bot", "bot?start=other", None]:
+        with pytest.raises(ValueError, match="bot_username"):
+            _load_telegram({"telegram": {"bot_username": username}})

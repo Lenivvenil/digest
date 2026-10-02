@@ -239,8 +239,12 @@ weights and state ownership.
 Feedback is collected on eligible runs, independently of `adaptive.enabled`; there is
 no continuously running bot service. The supported owner is the configured private
 chat, and the sender must match that recipient. Group and inline callbacks are rejected
-until an explicit ownership contract exists. Only recognized `/status` and `/bubble`
-commands are retained, not other message bodies.
+until an explicit ownership contract exists. Set `telegram.bot_username` to the plain
+username of the same bot as your token to enable 👍/👎 vote links. Tap a vote, then
+Telegram’s **Start** button to send it as an ordinary message; collection occurs on
+the next run. A visible `/vote g <article-code>` or `/vote b <article-code>` command
+is also available, including when no username is configured. Recognized vote data
+and `/status` or `/bubble` command tags are retained, not arbitrary message bodies.
 
 Votes and their polling offset are saved together before acknowledgement. On a managed
 GitHub Actions runtime, run `python -m digest.feedback_poll collect`, commit and push
@@ -250,13 +254,14 @@ with the SHA256 of that exact committed file. Invoke the digest with
 consume another uncommitted batch. Direct local use saves strictly to local disk before
 acknowledgement; that is not a guarantee of remote repository persistence.
 
-A button tap may not be processed until the next scheduled run, and its Telegram
-acknowledgement may already have expired. That UI failure does not remove the recorded
-vote. Later feed, model or delivery failures also do not roll votes back. Pending UI receipts are best effort: a later successful collection supersedes any
-unanswered earlier receipts while keeping their votes. Command replies and expired
-button acknowledgements are not promised eventual delivery. Corrupt state
-is preserved for diagnosis, not silently replaced during ingestion. Telegram retains
-unconsumed updates for at most 24 hours, so older missed votes cannot be recovered.
+Legacy callback buttons are best effort only: the official Telegram server queues
+callbacks for about 150 seconds, so a sleeping batch bot cannot reliably receive them.
+Message-based votes last longer, but ordinary messages are retained for at most
+24 hours; delayed or failed schedules can still lose uncollected votes. See
+[ADR-0006](docs/decisions/0006-batch-message-voting.md) for the source evidence and UX tradeoff.
+Once a vote is durably recorded, later feed, model, delivery or UI-reply failures do
+not remove it. Pending replies remain best effort and may be superseded by a later
+successful collection. Corrupt state is preserved for diagnosis, not silently reset.
 Unknown or stale cursor history uses one non-confirming read without an offset before
 re-anchoring; it never blindly confirms updates using an old high offset. See the
 [Telegram update contract](https://core.telegram.org/bots/api#getupdates).
