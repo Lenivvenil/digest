@@ -1,6 +1,6 @@
 # ADR-0005: Opt-in translation of publication text
 
-Status: proposed for #94 implementation review; real translated-output verification remains pending.
+Status: accepted and implemented in PR96; configured primary and supplementary translation deployed. Narrow real verification passed; general semantic fidelity is not claimed.
 
 ## Context and authority
 

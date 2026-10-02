@@ -28,9 +28,9 @@ not the operating architecture documented below.
 ```mermaid
 flowchart TD
     RUN[Runtime schedule or manual invocation] --> CFG[Load config and runtime state]
-    CFG --> FB{Adaptive processing enabled?}
-    FB -->|Yes, non-dry run| POLL[Poll Telegram feedback]
-    FB --> COL[Collect RSS, filter, deduplicate, allocate]
+    CFG --> FB{Feedback precollected or dry run?}
+    FB -->|No, configured private owner| POLL[Collect and durably persist feedback before ack]
+    FB -->|Yes| COL[Collect RSS with bounded feedback-derived priorities]
     POLL --> COL
     COL --> MODE{Review enabled?}
     MODE -->|No| CAT[Category summaries, perspectives and trends]
@@ -235,8 +235,9 @@ is not a replacement for consistent concurrency and failure ordering.
 For review-led supplementary stages, follow the exact saved-checkpoint and reservation
 procedure in the review runbook. Retain prior engine/config pins for rollback. Do not
 merge experimental full-source code merely because unit tests or transport succeeded.
-The unresolved product gates are tracked in #55; the documentation/onboarding stage of
-#94 is currently active. Neither changes the production runtime by itself.
+The unresolved product gates and their current dispositions are tracked in #91 and
+#55. English documentation, configured translation and message voting are implemented;
+compact daily presentation and full-source quality must still meet their stated gates.
 
 ## Security
 
@@ -286,7 +287,8 @@ causes as known provider limits.
 ## Daily operating boundary (proposal, 2026-10-02)
 
 The canonical [Digest operating envelope](domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02)
-records the measured cost, daily schedule proposal, maintenance reserve, account-quota
+records the measured cost, applied daily schedule, proposed operating allocation,
+maintenance reserve, account-quota
 uncertainty and retention risks. This architecture page does not duplicate that budget.
 A cron change alone does not implement compact output: the current sender posts article
 cards and can retry uncertain requests. The proposed compact renderer must preserve

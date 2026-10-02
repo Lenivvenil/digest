@@ -68,7 +68,7 @@ Their issue-level review surface is #55 and its linked work order #91.
 
 | ID | Owner requirement | Source and rationale | Acceptance / current state |
 |---|---|---|---|
-| D-01 | Remain a zero-incremental-spend experiment; do not depend exclusively on one model vendor | October owner direction; original [project plan](../../plans/completed/digest.md#plan-daily-news-digest) already requires free hosting/no VPS/no payment | Provider availability, rate quota, context size and output allowance are separate operational constraints. No paid fallback is authorized by this requirement. Current blind review is implemented; two valid independent opinions on one real bundle remain unverified (#91). |
+| D-01 | Remain a zero-incremental-spend experiment; do not depend exclusively on one model vendor | October owner direction; original [project plan](../../plans/completed/digest.md#plan-daily-news-digest) already requires free hosting/no VPS/no payment | Provider availability, rate quota, context size and output allowance are separate operational constraints. No paid fallback is authorized by this requirement. Independent blind review is an opt-in comparison, not a mandatory daily-release gate or proof of factual correctness; its observed status must stay explicit (#91). |
 | D-02 | A Russian digest must add a specific non-obvious insight, with evidence, limitations and a reason to read the original | [#55](https://github.com/Lenivvenil/digest/issues/55); historical [PR73](https://github.com/Lenivvenil/digest/pull/73) already targeted information gain rather than headline repetition | The [three-source sample](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922127576) received only provisional positive feedback, [recorded here](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922207102). It is not a final gold standard, a fixed template, or a three-card quota. |
 | D-03 | Full source material must support the analysis; provider limits must not silently turn into editorial rejection of longer articles | October owner rejection of the proposed max-three/shared-input-budget policy, tracked under #55 | No article may be labelled uninteresting merely because it is long or a quota is exhausted. Pending/inaccessible/technically incomplete evidence must be distinguished from a completed editorial rejection. The mechanism is not yet decided or implemented. |
 | D-04 | Preserve the Irritator's genuine external counter-signal function while primary delivery remains independent of optional-stage failure | Owner-approved primary-first recovery; [PR89](https://github.com/Lenivvenil/digest/pull/89); historical [#53](https://github.com/Lenivvenil/digest/issues/53) defines the unmet core value | Search, provenance, ranking and honest incomplete status must survive editorial changes. A successful supplementary API send does not prove a useful contradiction was found. Source repairs remain #77. |
@@ -83,8 +83,10 @@ Radar, the learning loop or Irritator from the product concept. Translation rema
 an explicit presentation setting. No additional infrastructure, paid provider,
 credential or background receiver is introduced.
 
-**Reviewed proposal, not yet implemented:** one daily cycle at `17 2 * * *` (02:17
-UTC), retaining the existing primary/optional job ceilings of 8/12 minutes. This is
+**Reviewed operating allocation:** one daily cycle at `17 2 * * *` (02:17 UTC),
+retaining the existing primary/optional job ceilings of 8/12 minutes. The runtime
+schedule reduction was applied separately on 2026-10-02; compact rendering remains
+unimplemented. This is
 an intended start time, not a delivery-time guarantee. GitHub may delay or drop
 scheduled work. Keep the separately configured weekly discovery budget visible;
 do not hide it inside the daily estimate. No additional feedback-only cron is proposed.
@@ -108,6 +110,14 @@ Per-job timestamps imply approximately 63 private Linux minutes, conservatively 
 with timestamp-resolution headroom: 17 normal production, 7 requested rerun,
 37 diagnostic/trial/smoke and 2 private fork CI minutes. Public engine CI accounted
 for 61 further standard-runner minutes, which do not consume the private allowance.
+Maintenance accounting includes **all** discretionary work: 37 diagnostic/trial/smoke
++ 7 requested rerun + 2 private fork CI = **46 of the 100 allocated minutes already
+used** (47 conservatively after assigning one minute of timestamp uncertainty),
+leaving 54 estimated or 53 conservative minutes. This is the remaining part of the
+original monthly 100-minute allocation, not a new allocation. A possible finite validation package of 12 + 8 correction + 20
+integrated minutes would consume at most 40, leaving 13–14; this is an admission
+ceiling proposal, not authorization to execute or retry it.
+
 This is measured project use, not account remaining quota. Actual account plan,
 other private usage, Packages usage and monetary stop settings are **unknown**.
 

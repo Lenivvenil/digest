@@ -16,7 +16,7 @@ Digest starts with sources you care about, connects developments across categori
 and deliberately looks for evidence outside that selection.
 
 - **Radar:** what changed, why it matters, and which source is worth your time
-- **Three perspectives:** an Optimist, a Skeptic and a Realist examine important topics
+- **Optional perspectives:** an Optimist, a Skeptic and a Realist can examine important topics
   through different reasoning, so enthusiasm does not become the only lens
 - **Irritator:** what challenges the story you are being told, found through external
   sources rather than manufactured disagreement
@@ -58,10 +58,14 @@ The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
 [draft #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains open and owner-deferred.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open: full-source support
+and useful factual output are current requirements, with no deferred-task status.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
-optional post translation. Presentation changes preserve the existing publication
-policy and do not enable the proposed editorial pipeline.
+optional post translation, now implemented with explicit compatibility and recovery.
+The current priority is one compact daily edition within the documented
+[operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
+Schedule reduction alone does not provide the compact renderer. Presentation changes
+preserve the publication policy and do not enable the experimental editorial pipeline.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -409,8 +413,9 @@ Both Telegram and Markdown receive the same generated-text presentation. Structu
 checks preserve field IDs, numeric literals, URLs and recognized quotation/code spans;
 they cannot prove that every qualifier or meaning survived. Machine-translated text
 is labelled accordingly, and incomplete translation falls back to canonical English.
-A draft does not become fact-verified through translation. Representative real-output
-translation-fidelity review remains required before rollout. This presentation feature
+A draft does not become fact-verified through translation. A narrow real fixture and
+ordinary translated output have been checked; this does not prove general fidelity,
+and source-scope/terminology quality remains part of output acceptance. This presentation feature
 does not require completing the separate #55 redesign, and does not claim to solve it.
 See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 
@@ -456,6 +461,6 @@ upgrading; a historical release entry is not proof that every current quality ga
 passed. Keep the previous engine pin and compatible runtime state for rollback.
 
 **No software license grant is currently supplied.** This repository contains no
-LICENSE file or declared package license. Selecting one remains an owner release
-decision; this documentation does not assign a license or grant reuse/distribution
-rights.
+LICENSE file or declared package license. This is the current release state, not an
+implied open-source license. A future license grant would require an explicit owner
+decision; it is not a prerequisite for the existing personal runtime milestone.
