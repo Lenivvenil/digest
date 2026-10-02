@@ -286,3 +286,14 @@ not a claim about every historical endpoint response. No user configuration is
 removed and no undocumented replacement is attempted. Both execution paths preserve
 valid results from other sources with an incomplete coverage status; unavailable
 search is never counted as a successful empty search.
+
+Generated Irritator prose is constrained by the existing complete-response and provider
+output budgets, rather than separate cosmetic character caps on narrative, reasoning
+and limitations. Nonempty string types remain required. Query length, literal quote
+length and matching, source identity, score and relation validation remain strict.
+Text validation failures use fixed field/reason codes without recording rejected prose.
+This improves diagnosis and avoids a brittle failure class; it does not identify the
+cause of earlier responses whose bodies were not retained. Presentation translation
+also explicitly preserves technical data-flow direction; prompt-version cache binding
+keeps prior translations intact and distinct from new attempts. Neither change proves
+semantic fidelity without reviewing actual output.

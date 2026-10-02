@@ -142,13 +142,26 @@ _SAFE_ERROR_DETAILS = frozenset({
 })
 
 
+class TextFieldError(ValueError):
+    """Static field/reason codes only; never retain rejected text."""
+
+    def __init__(self, field: str, reason: str) -> None:
+        super().__init__(f"{field}:{reason}")
+
+
 def _safe_error_detail(exc: Exception) -> str:
+    if isinstance(exc, TextFieldError):
+        return str(exc)
     return str(exc) if isinstance(exc, ValueError) and str(exc) in _SAFE_ERROR_DETAILS else ""
 
 
-def _bounded_text(value: Any, limit: int) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > limit:
-        raise ValueError("Invalid text field or text budget.")
+def _bounded_text(value: Any, limit: int | None = None, *, field: str) -> str:
+    if not isinstance(value, str):
+        raise TextFieldError(field, "invalid_type")
+    if not value.strip():
+        raise TextFieldError(field, "empty")
+    if limit is not None and len(value) > limit:
+        raise TextFieldError(field, "too_long")
     return value.strip()
 
 
@@ -166,7 +179,7 @@ def _response(text: str, key: str, maximum: int) -> tuple[list[Any], list[str]]:
         raise ValueError("Invalid response entry count.")
     if not isinstance(limitations, list) or len(limitations) > 5:
         raise ValueError("Invalid limitations count.")
-    limitations = [_bounded_text(item, 400) for item in limitations]
+    limitations = [_bounded_text(item, field="limitations") for item in limitations]
     if not entries and not limitations:
         raise ValueError("An empty result requires an explanation.")
     return entries, limitations
@@ -190,7 +203,7 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
         canonical_quotes: dict[str, str] = {}
         typography_normalized: list[str] = []
         for identity, quote in quotes.items():
-            _bounded_text(quote, 200)
+            _bounded_text(quote, 200, field="source_quote")
             evidence = known[identity]
             try:
                 canonical_quotes[identity], normalized = canonical_evidence_quote(
@@ -202,13 +215,14 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
                 typography_normalized.append(identity)
         if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 3:
             raise ValueError("Invalid narrative assumptions count.")
-        category = _bounded_text(entry["category"], 200)
+        category = _bounded_text(entry["category"], 200, field="category")
         if category not in {known[identity].category for identity in identities}:
             raise ValueError("Narrative category is not in cited evidence.")
         narratives.append(EvidenceNarrative(
-            _bounded_text(entry["claim"], 600), category,
-            [_bounded_text(item, 300) for item in assumptions],
-            _bounded_text(entry["why_worth_challenging"], 600), identities, canonical_quotes, typography_normalized,
+            _bounded_text(entry["claim"], field="claim"), category,
+            [_bounded_text(item, field="implicit_assumptions") for item in assumptions],
+            _bounded_text(entry["why_worth_challenging"], field="why_worth_challenging"),
+            identities, canonical_quotes, typography_normalized,
         ))
     return narratives, limitations
 
@@ -220,11 +234,11 @@ def _parse_queries(text: str, maximum: int) -> tuple[list[SearchQuery], list[str
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"query", "intent"}:
             raise ValueError("Invalid query fields.")
-        query = _bounded_text(entry["query"], 200)
+        query = _bounded_text(entry["query"], 200, field="query")
         if query.casefold() in seen:
             raise ValueError("Duplicate query.")
         seen.add(query.casefold())
-        queries.append(SearchQuery(query, _bounded_text(entry["intent"], 400)))
+        queries.append(SearchQuery(query, _bounded_text(entry["intent"], field="intent")))
     return queries, limitations
 
 
@@ -245,13 +259,13 @@ def _parse_rankings(
             raise ValueError("Ranking score must be an integer from 1 through 10.")
         if relation not in ("contradicts", "complicates"):
             raise ValueError("Ranking relation must contradict or complicate.")
-        _bounded_text(quote, 200)
+        _bounded_text(quote, 200, field="source_quote")
         signal = known[url]
         try:
             quote, normalized = canonical_evidence_quote(quote, signal.title, signal.snippet)
         except ValueError as exc:
             raise ValueError("Ranking quote is not in the supplied external evidence.") from exc
-        reasoning = _bounded_text(entry["reasoning"], 600)
+        reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
         if score >= min_score:
             ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, normalized))
@@ -398,11 +412,11 @@ async def _run_stages(
     text = await _model_text(diagnostic, LLMRole.EXTRACT_NARRATIVES, (
         'Identify at most ONE potentially dominant narrative to challenge, grounded in the original RSS evidence. '
         'Treat dominance as a limited hypothesis, not a corpus-wide finding. Return {"narratives": [...], '
-        '"limitations": [short strings]}. Each narrative has exactly claim (<=600 chars), category '
-        '(an exact cited category), implicit_assumptions (1-3 strings <=300 chars each), why_worth_challenging '
-        '(<=600 chars), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
+        '"limitations": [short strings]}. Each narrative has exactly claim (concise text), category '
+        '(an exact cited category), implicit_assumptions (1-3 concise strings), why_worth_challenging '
+        '(concise text), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
         'exact nonempty substring of its title/excerpt <=200 chars). No other fields. At most 5 limitations '
-        '(<=400 chars each); explain any empty list. Use the requested language only for claim, '
+        '(concise strings); explain any empty list. Use the requested language only for claim, '
         'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
         'supplied evidence unchanged, in their original language; never translate a literal quote.'
     ), {"evidence": asdict(bundle), "language": config.radar.language, "coverage": COVERAGE}, config)
@@ -425,7 +439,7 @@ async def _run_stages(
         'Find external evidence that could contradict or complicate this RSS-supported narrative. Generate '
         'up to max_queries distinct English search queries about documented limitations, failures or caveats. '
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
-        '"intent": "<=400 chars"}], "limitations": [up to 5 strings <=400 chars]}. '
+        '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields.'
     ), {"narrative": asdict(narrative), "evidence": cited_evidence, "max_queries": maximum_queries}, config)
     result.queries, limitations = _parse_queries(text, maximum_queries)
@@ -477,10 +491,10 @@ async def _run_stages(
         'Counter-evidence must be supported by supplied titles/snippets; do not infer a refutation from a '
         'title alone when it does not support one. Return {"rankings": [...], "limitations": [...]}. '
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
-        'relation ("contradicts" or "complicates"), reasoning (<=600 chars), quote (an exact nonempty '
+        'relation ("contradicts" or "complicates"), reasoning (concise text), quote (an exact nonempty '
         'substring of that signal title/snippet <=200 chars). Use unique URLs only. 9-10 means strong '
         'direct contradiction; 7-8 substantial complication; 5-6 mild alternative evidence; 1-4 weak relevance. '
-        'Return no rankings if unsupported and explain why in limitations (up to 5 strings <=400 chars). '
+        'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
         'Use the requested language for reasoning.'
     ), {"narrative": asdict(narrative), "evidence": cited_evidence, "signals": [asdict(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
