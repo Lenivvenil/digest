@@ -598,3 +598,12 @@ def test_telegram_vote_username_is_optional_and_cannot_change_link_destination()
     for username in ["https://other.example/bot", "@example_digest_bot", "bot?start=other", None]:
         with pytest.raises(ValueError, match="bot_username"):
             _load_telegram({"telegram": {"bot_username": username}})
+
+
+def test_compact_delivery_is_explicit_and_legacy_default_is_preserved(tmp_path: Path) -> None:
+    assert load_config(_write_config(tmp_path, MINIMAL_CONFIG)).telegram.delivery_mode == "cards"
+    cfg = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ntelegram: {delivery_mode: compact}\n")
+    assert load_config(cfg).telegram.delivery_mode == "compact"
+    with pytest.raises(ValueError, match="delivery_mode"):
+        cfg = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ntelegram: {delivery_mode: arbitrary}\n")
+        load_config(cfg)

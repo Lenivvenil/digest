@@ -110,6 +110,7 @@ class TelegramConfig:
     split_messages: bool = True
     max_messages: int = 10
     bot_username: str = ""
+    delivery_mode: str = "cards"
 
 
 @dataclass
@@ -565,6 +566,9 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
     bot_username = section.get("bot_username", "")
     if not isinstance(bot_username, str) or (bot_username and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username)):
         raise ValueError("telegram.bot_username must be a plain bot username without @ or a URL.")
+    delivery_mode = section.get("delivery_mode", "cards")
+    if delivery_mode not in ("cards", "compact"):
+        raise ValueError("telegram.delivery_mode must be cards or compact.")
     enabled = bool(section.get("enabled", True))
     required = section.get("required", False)
     if not isinstance(required, bool):
@@ -578,7 +582,7 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
     if max_messages < 1:
         raise ValueError(f"telegram.max_messages must be >= 1, got {max_messages}.")
     return TelegramConfig(
-        bot_username=bot_username, enabled=enabled, required=required,
+        bot_username=bot_username, delivery_mode=delivery_mode, enabled=enabled, required=required,
         split_messages=split_messages, max_messages=max_messages
     )
 

@@ -28,3 +28,7 @@ verification and ordinary translated output do not establish universal semantic 
 [0006](0006-batch-message-voting.md) records batch-compatible message voting and the
 150-second callback queue limitation. Real message ingestion, persistence, acknowledgement
 and computed priority influence are verified; daily retention limitations remain explicit.
+
+[0007](0007-compact-issue-reservation.md) records compact daily presentation and its
+coarse pre-publication reservation. Local implementation is under review; no automatic
+resend lifecycle or exactly-once guarantee is implied.

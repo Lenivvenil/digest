@@ -290,10 +290,11 @@ The canonical [Digest operating envelope](domain/digest/overview.md#operating-en
 records the measured cost, applied daily schedule, proposed operating allocation,
 maintenance reserve, account-quota
 uncertainty and retention risks. This architecture page does not duplicate that budget.
-A cron change alone does not implement compact output: the current sender posts article
-cards and can retry uncertain requests. The proposed compact renderer must preserve
-complete text, source/vote identity and per-article confirmed chunk coverage, and must
-not claim exactly-once delivery across a crash before state persistence.
+A cron change alone does not implement compact output. Legacy card mode can retry
+uncertain requests; explicit compact mode uses a coarse durable issue reservation,
+complete text/source identity and confirmed per-article chunk coverage. See
+[ADR0007](decisions/0007-compact-issue-reservation.md) for the hold-after-crash policy;
+exactly-once delivery is not claimed.
 
 Retain configured translation and actual bounded Irritator/comparison processing.
 The initial compact presentation proposes archive-only optional outcomes, with honest

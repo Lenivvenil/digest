@@ -39,6 +39,8 @@ review:
   enabled: false
 
 telegram:
+  # compact requires the managed reserve/persist/publish boundary; cards preserves legacy delivery.
+  delivery_mode: compact
   # Plain username of the same bot as TELEGRAM_BOT_TOKEN; no @.
   # Enables vote link buttons; users must also tap Start. Omit for /vote commands only.
   bot_username: ""

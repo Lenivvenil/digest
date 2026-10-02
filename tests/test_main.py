@@ -70,6 +70,7 @@ class _TelegramCfg:
     required: bool = False
     split_messages: bool = True
     max_messages: int = 10
+    delivery_mode: str = "cards"
 
 
 @dataclass
@@ -724,3 +725,87 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
     assert [call.args[1] for call in add.call_args_list] == [fresh, failed]
     assert fresh.source_hash not in store.source_decisions
     assert store.source_decisions[failed.source_hash] == "approved"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["sent", "unknown", "persist_failure", "no_content", "corrupt_feedback"])
+async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertainty(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from digest.delivery.issue_guard import load_guard, reserve
+    from digest.delivery.telegram import IssueDeliveryResult
+    from digest.feedback import load_feedback, save_feedback
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("stable fixture config")
+    marker, expected = reserve(config_path)
+    guard = load_guard(config_path, expected)  # Represents the managed persisted-hash handoff.
+    if case == "corrupt_feedback":
+        Path(".cache/feedback.json").write_text("broken preserved state")
+    cfg = _mock_config()
+    cfg.telegram.enabled = cfg.telegram.required = True
+    cfg.telegram.delivery_mode = "compact"
+    cfg.obsidian.enabled = True
+    articles = [_Article(title="One"), _Article(title="Two", link="https://example.com/2")]
+    hashes = [article_hash(item.title, item.link) for item in articles]
+    cards = [ArticleSummary(item.title, item.link, item.source, "tech", "Complete text") for item in articles]
+    cache = {"old": "old", **dict.fromkeys(hashes, "new")}
+    confirmed = 1 if case == "unknown" else 2
+    outcome = "unknown" if case == "unknown" else "sent"
+
+    async def sender(*args, before_send, **kwargs):
+        before_send()
+        return IssueDeliveryResult(
+            attempted=2, sent=confirmed, failed=2 - confirmed,
+            delivered_hashes=set(hashes[:confirmed]),
+            article_source_map={key[:8]: "test" for key in hashes[:confirmed]},
+            outcome=outcome, total_chunks=2, attempted_chunks=2, confirmed_chunks=confirmed,
+        )
+
+    def save(store, directory, *, strict=False):
+        if strict and case == "persist_failure":
+            raise OSError("synthetic durable attribution failure after accepted POST")
+        save_feedback(store, directory, strict=strict)
+
+    with (
+        patch("digest.config.load_config", return_value=cfg),
+        patch("digest.radar.collect", AsyncMock(return_value=(
+            {} if case == "no_content" else {"tech": articles}, cache,
+        ))),
+        patch("digest.main._analyze_articles", AsyncMock(return_value=([_CategorySummary()], None, cards, None))),
+        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.delivery.write_digest", return_value=Path("digest.md")),
+        patch("digest.delivery.telegram.send_compact_issue", AsyncMock(side_effect=sender)) as send,
+        patch("digest.delivery.send_article_cards", AsyncMock()) as old_send,
+        patch("digest.main._legacy_delivery_extras", AsyncMock()) as extra,
+        patch("digest.feedback.save_feedback", side_effect=save),
+    ):
+        if case in {"persist_failure", "corrupt_feedback"}:
+            with pytest.raises(OSError if case == "persist_failure" else ValueError):
+                await run(str(config_path), False, False, False, feedback_precollected=True, issue_guard=guard)
+        else:
+            result = await run(str(config_path), False, False, False, feedback_precollected=True, issue_guard=guard)
+            assert result.telegram_sent is (case == "sent")
+        old_send.assert_not_called()
+        extra.assert_not_called()
+    record = json.loads(marker.read_text())
+    if case == "corrupt_feedback":
+        send.assert_not_called()
+        assert record["state"] == "not_sent"
+        assert Path(".cache/feedback.json").read_text() == "broken preserved state"
+        assert not Path(".cache/seen_articles.json").exists()
+    elif case == "no_content":
+        send.assert_not_called()
+        assert record["state"] == "not_sent"
+    elif case == "persist_failure":
+        assert record["state"] == "unknown" and record["attempted_count"] is None
+    else:
+        assert record["state"] == ("confirmed" if case == "sent" else "unknown")
+        assert set(json.loads(Path(".cache/seen_articles.json").read_text())) == {"old", *hashes[:confirmed]}
+        assert load_feedback(".cache", strict=True).article_source_map == {
+            key[:8]: "test" for key in hashes[:confirmed]
+        }

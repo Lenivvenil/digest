@@ -419,6 +419,33 @@ and source-scope/terminology quality remains part of output acceptance. This pre
 does not require completing the separate #55 redesign, and does not claim to solve it.
 See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 
+## Compact daily presentation
+
+Set `telegram.delivery_mode: compact` to assemble selected articles into one logical
+edition. Omitted settings preserve legacy per-article cards. Long editions use
+necessary Telegram chunks without cutting selected text or source URLs. Indexed
+vote buttons keep the same article identity and URL → Start interaction. Translation
+and model-attribution notices appear once per issue. Optional Irritator/comparison
+work remains in the archive with its real status, without extra Telegram pushes.
+
+Managed compact publication requires a durable reservation before the primary CLI:
+
+```sh
+python -m digest --config config.yaml --reserve-issue
+# Commit/push .cache/compact_issue.json and verify its exact remote SHA256.
+python -m digest --config config.yaml --feedback-precollected --issue-reservation-sha "$PERSISTED_ISSUE_SHA"
+# Persist the resulting marker, confirmed dedup/feedback state and archives together.
+```
+
+The managed workflow owns the Git barrier; a locally calculated hash alone does not
+prove remote persistence. Collect/persist/ack feedback before this publication guard.
+An unresolved issue holds future automatic publication, even on a later day, until
+inspection. Do not blindly reset it or rerun an uncertain send. Preview with
+`--dry-run --radar-only` does not reserve/send, but can still use source/model quotas.
+See [ADR0007](docs/decisions/0007-compact-issue-reservation.md) for the intentional
+availability tradeoff and recovery boundary. This mode does not enable experimental
+full-source analysis or claim to complete its quality gate.
+
 ## Development
 
 ```sh
