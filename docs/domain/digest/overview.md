@@ -10,7 +10,9 @@ The owner now prioritizes a simple daily digest within GitHub Actions and free-p
 limits. The operating envelope below is a reviewed proposal, not a deployed schedule
 or compact renderer. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
 single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
-is deferred by the owner with its factual release gate unmet. English/configurable
+is under active scope reassessment for the simple daily edition; its factual release
+gate remains unmet. The latest owner direction permits no parked/deferred tasks:
+complete each requirement or record an explicit, justified disposition. English/configurable
 translation and source-contract repairs are deployed; ordinary-run acceptance remains
 open in #94/#77. The real message-vote path is verified through persistence and computed
 priority influence; ordinary collector acceptance remains open in #48.
@@ -134,7 +136,8 @@ at-most-24-hour ordinary-message retention. Delayed or missed runs can lose vote
 Telegram sends must not be retried blindly or reported as confirmed. A chunk-spanning
 article is delivered only after all its covering chunks are accepted. A green workflow,
 an archive or a computed priority change does not prove full article fidelity or a
-changed real selection. Deferred #55 is not implicitly reactivated by this work.
+changed real selection. #55 requires an explicit current-scope decision and verification;
+it is neither deferred nor declared complete by this operating record.
 
 Current model control flow admits a conservative ceiling of ten physical requests
 per product cycle before cache reuse, timeout and failure short-circuiting: up to two
