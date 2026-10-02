@@ -25,13 +25,19 @@ logger = logging.getLogger(__name__)
 FEEDBACK_FILE = "feedback.json"
 TELEGRAM_TEXT_LIMIT = 4096
 # Ten full poll batches of replay protection, not an infinite event ledger.
-# Telegram retains updates for at most 24 hours; persisted offsets handle normal replay.
+# Telegram retains ordinary message updates for at most 24 hours; offsets handle normal replay.
+# Legacy callbacks expire after about 150 seconds and remain best effort.
 SEEN_CALLBACK_LIMIT = 1000
+SEEN_MESSAGE_LIMIT = 1000
 POLL_COUNT_KEYS = (
     "received", "recorded_votes", "source_decisions", "commands",
     "rejected_owner", "ignored", "malformed", "duplicates", "unknown_article", "superseded_replies",
 )
 COMMANDS = ("/status", "/bubble")
+VOTE_REPLIES = {
+    "recorded_votes": "Vote saved",
+    "unknown_article": "Article can no longer be matched",
+}
 
 
 class FeedbackOwnerError(ValueError):
@@ -52,9 +58,9 @@ class ArticleFeedback:
 
 @dataclass
 class PendingReply:
-    """Minimal UI receipt; commands retain only their recognized command tag."""
+    """Minimal UI receipt; commands and votes retain only recognized outcome tags."""
 
-    kind: Literal["callback", "command"]
+    kind: Literal["callback", "command", "vote"]
     identifier: str
     text: str = ""
 
@@ -73,6 +79,7 @@ class FeedbackStore:
     pending_owner_sha256: str = ""
     seen_callback_ids: list[str] = field(default_factory=list)
     last_poll_counts: dict[str, int] = field(default_factory=dict)
+    seen_message_ids: list[str] = field(default_factory=list)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -126,11 +133,12 @@ def _parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
     for reply in replies:
         if (
             not isinstance(reply, dict)
-            or reply.get("kind") not in ("callback", "command")
+            or reply.get("kind") not in ("callback", "command", "vote")
             or not isinstance(reply.get("identifier"), str)
             or not reply["identifier"]
             or not isinstance(reply.get("text", ""), str)
             or (reply["kind"] == "command" and (reply["identifier"] not in COMMANDS or reply.get("text", "")))
+            or (reply["kind"] == "vote" and (reply["identifier"] not in VOTE_REPLIES or reply.get("text", "")))
         ):
             raise ValueError("Invalid pending feedback reply")
         parsed_replies.append(PendingReply(reply["kind"], reply["identifier"], reply.get("text", "")))
@@ -154,6 +162,7 @@ def _parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
         pending_replies=parsed_replies,
         pending_owner_sha256=owner_hash,
         seen_callback_ids=_string_list(data.get("seen_callback_ids", []))[-SEEN_CALLBACK_LIMIT:],
+        seen_message_ids=_string_list(data.get("seen_message_ids", []))[-SEEN_MESSAGE_LIMIT:],
         last_poll_counts=counts,
     )
 
@@ -195,6 +204,7 @@ def save_feedback(store: FeedbackStore, cache_dir: str, *, strict: bool = False)
     candidate.ratings = ratings
     candidate.article_source_map = dict(list(candidate.article_source_map.items())[-1000:])
     candidate.seen_callback_ids = candidate.seen_callback_ids[-SEEN_CALLBACK_LIMIT:]
+    candidate.seen_message_ids = candidate.seen_message_ids[-SEEN_MESSAGE_LIMIT:]
     try:
         path = Path(cache_dir) / FEEDBACK_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,6 +217,7 @@ def save_feedback(store: FeedbackStore, cache_dir: str, *, strict: bool = False)
     store.ratings = candidate.ratings
     store.article_source_map = candidate.article_source_map
     store.seen_callback_ids = candidate.seen_callback_ids
+    store.seen_message_ids = candidate.seen_message_ids
 
 
 def _owner_chat_id() -> str:
@@ -227,6 +238,18 @@ def _owned_message(message: Any, sender: Any, owner: str) -> bool:
     )
 
 
+def _record_article_vote(store: FeedbackStore, article_hash: str, rating: str) -> str:
+    source = store.article_source_map.get(article_hash, "")
+    if not source:
+        logger.warning("Feedback article attribution unavailable")
+        return "unknown_article"
+    store.ratings.append(ArticleFeedback(
+        article_hash, source, 1 if rating == "g" else -1,
+        datetime.now(tz=timezone.utc).isoformat(),
+    ))
+    return "recorded_votes"
+
+
 def _collect_callback(callback: dict[str, Any], store: FeedbackStore, owner: str) -> str:
     if not _owned_message(callback.get("message"), callback.get("from"), owner):
         return "rejected_owner"
@@ -241,17 +264,9 @@ def _collect_callback(callback: dict[str, Any], store: FeedbackStore, owner: str
     if len(parts) == 4 and parts[:2] == ["fb", "a"] and parts[2] in ("g", "b"):
         if not re.fullmatch(r"[0-9a-f]{8}", parts[3]):
             return "malformed"
-        source = store.article_source_map.get(parts[3], "")
-        if not source:
-            logger.warning("Feedback article attribution unavailable")
-            outcome = "unknown_article"
-            reply_text = "Article can no longer be matched"
-        else:
-            store.ratings.append(ArticleFeedback(
-                parts[3], source, 1 if parts[2] == "g" else -1,
-                datetime.now(tz=timezone.utc).isoformat(),
-            ))
-            outcome = "recorded_votes"
+        outcome = _record_article_vote(store, parts[3], parts[2])
+        if outcome == "unknown_article":
+            reply_text = VOTE_REPLIES[outcome]
     elif len(parts) == 3 and parts[0] == "src" and parts[1] in ("ok", "no"):
         if not re.fullmatch(r"[0-9a-f]{8}", parts[2]):
             return "malformed"
@@ -281,10 +296,27 @@ def _collect_update(update: dict[str, Any], store: FeedbackStore, owner: str) ->
     if not isinstance(text, str):
         return "malformed"
     command = text.strip()
-    if command not in COMMANDS:
+    if command in COMMANDS:
+        store.pending_replies.append(PendingReply("command", command))
+        return "commands"
+    vote = re.fullmatch(r"/start vote_([gb])_([0-9a-f]{8})", command) or re.fullmatch(
+        r"/vote ([gb]) ([0-9a-f]{8})", command,
+    )
+    if vote is None:
+        if command.startswith(("/vote", "/start vote_")):
+            return "malformed"
         return "ignored"
-    store.pending_replies.append(PendingReply("command", command))
-    return "commands"
+    message_id = message.get("message_id")
+    if type(message_id) is not int or message_id <= 0:
+        return "malformed"
+    # Message IDs are per chat; keep their namespace separate from arbitrary callback IDs.
+    identifier = f"{hashlib.sha256(owner.encode()).hexdigest()}:{message_id}"
+    if identifier in store.seen_message_ids:
+        return "duplicates"
+    outcome = _record_article_vote(store, vote[2], vote[1])
+    store.seen_message_ids.append(identifier)
+    store.pending_replies.append(PendingReply("vote", outcome))
+    return outcome
 
 
 @asynccontextmanager
@@ -414,10 +446,19 @@ async def acknowledge_feedback(bot_token: str, cache_dir: str, expected_sha256: 
     counts = {"attempted": 0, "ack_ok": 0, "ack_failed": 0}
     if not store.pending_replies:
         return counts
+    vote_replies = [reply for reply in store.pending_replies if reply.kind == "vote"]
+    replies = [reply for reply in store.pending_replies if reply.kind != "vote"]
+    vote_text = ""
+    if vote_replies:
+        saved = sum(reply.identifier == "recorded_votes" for reply in vote_replies)
+        unknown = len(vote_replies) - saved
+        vote_text = f"Votes saved: {saved}. Unknown articles: {unknown}."
+        # One ephemeral dispatch entry; durable per-vote receipts stay unchanged.
+        replies.append(vote_replies[0])
     api_url = f"https://api.telegram.org/bot{bot_token}"
     try:
         async with asyncio.timeout(30.0), _telegram_client() as client:
-            for reply in store.pending_replies:
+            for reply in replies:
                 counts["attempted"] += 1
                 try:
                     if reply.kind == "callback":
@@ -426,9 +467,12 @@ async def acknowledge_feedback(bot_token: str, cache_dir: str, expected_sha256: 
                             json={"callback_query_id": reply.identifier, "text": reply.text}, timeout=5.0,
                         )
                     else:
+                        text = vote_text if reply.kind == "vote" else _command_reply(
+                            reply.identifier, store, cache_dir,
+                        )
                         response = await client.post(
                             f"{api_url}/sendMessage",
-                            json={"chat_id": owner, "text": _command_reply(reply.identifier, store, cache_dir)},
+                            json={"chat_id": owner, "text": text},
                             timeout=5.0,
                         )
                     response.raise_for_status()
@@ -442,8 +486,8 @@ async def acknowledge_feedback(bot_token: str, cache_dir: str, expected_sha256: 
                     counts["ack_ok"] += 1
     except TimeoutError:
         # Unfinished UI work is terminal too; it must never hold up later polling.
-        counts["attempted"] = len(store.pending_replies)
-        counts["ack_failed"] = len(store.pending_replies) - counts["ack_ok"]
+        counts["attempted"] = len(replies)
+        counts["ack_failed"] = len(replies) - counts["ack_ok"]
         logger.warning("Feedback reply budget exhausted (%d failed)", counts["ack_failed"])
     store.pending_replies = []
     store.pending_owner_sha256 = ""

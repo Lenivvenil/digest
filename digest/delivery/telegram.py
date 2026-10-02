@@ -22,11 +22,17 @@ _API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
 # Static presentation labels follow canonical generation language, not translation targets.
 _LABELS = {
     "en": {
-        "feedback": "Votes are processed on digest runs; private owner chat only",
+        "feedback": ("Tap a vote button, then Start to send it. "
+                     "Processed on the next digest run; private owner chat only."),
+        "feedback_plain": "Votes are processed on digest runs; private owner chat only.",
+        "fallback": "Or send /vote g {hash} (good) or /vote b {hash} (bad).",
         "irritator": "Irritator",
     },
     "ru": {
-        "feedback": "Оценки обрабатываются при запусках дайджеста; только личный чат владельца",
+        "feedback": ("Нажмите оценку, затем Start (Запустить), чтобы отправить голос. "
+                     "Учтём при следующем выпуске; только личный чат владельца."),
+        "feedback_plain": "Оценки обрабатываются при запусках дайджеста; только личный чат владельца.",
+        "fallback": "Или отправьте /vote g {hash} (полезно) либо /vote b {hash} (неполезно).",
         "irritator": "Раздражатор",
     },
 }
@@ -267,7 +273,9 @@ async def send_article_cards(
             summary_esc = escape_markdownv2(summary)
 
             labels = _labels(config)
-            async_note = escape_markdownv2(labels["feedback"])
+            username = getattr(config.telegram, "bot_username", "")
+            notice = labels["feedback"] if username else labels["feedback_plain"]
+            async_note = escape_markdownv2(notice + "\n" + labels["fallback"].format(hash=hash8))
             text = (
                 f"[{title_esc}]({url_esc})\n\n"
                 f"{summary_esc}\n\n"
@@ -275,14 +283,14 @@ async def send_article_cards(
                 f"_{async_note}_"
             )
 
-            keyboard: dict[str, Any] = {
+            keyboard: dict[str, Any] | None = {
                 "inline_keyboard": [
                     [
-                        {"text": "\U0001f44d", "callback_data": f"fb:a:g:{hash8}"},
-                        {"text": "\U0001f44e", "callback_data": f"fb:a:b:{hash8}"},
+                        {"text": "\U0001f44d", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
+                        {"text": "\U0001f44e", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
                     ]
                 ]
-            }
+            } if username else None
 
             result.attempted += 1
             try:

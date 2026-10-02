@@ -39,6 +39,9 @@ review:
   enabled: false
 
 telegram:
+  # Plain username of the same bot as TELEGRAM_BOT_TOKEN; no @.
+  # Enables vote link buttons; users must also tap Start. Omit for /vote commands only.
+  bot_username: ""
   enabled: false
   required: false
 

@@ -23,3 +23,6 @@ installation is not required to read, configure or run Digest.
 
 [0005](0005-optional-presentation-translation.md) records the opt-in primary-presentation
 translation slice under #94; its real-output release gate remains pending.
+
+[0006](0006-batch-message-voting.md) records batch-compatible message voting and the
+150-second callback queue limitation; real-message acceptance remains pending.

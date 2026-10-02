@@ -321,7 +321,7 @@ class TestSendArticleCards:
     def no_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", AsyncMock())
 
-    async def test_sends_cards_with_keyboard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_without_username_sends_command_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
@@ -340,6 +340,10 @@ class TestSendArticleCards:
             article_hash(article.title, article.link) for article in top
         }
         assert route.call_count == 2
+        for call, article in zip(route.calls, top, strict=True):
+            payload = json.loads(call.request.content)
+            assert "reply_markup" not in payload
+            assert escape_markdownv2(f"/vote g {article_hash(article.title, article.link)[:8]}") in payload["text"]
 
     async def test_returns_hash_source_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -465,10 +469,8 @@ class TestSendArticleCards:
         assert route.call_count == 1
 
     @pytest.mark.parametrize("language,enabled,note", [
-        ("en", True, "Votes are processed on digest runs; private owner chat only"),
-        ("en", False, "Votes are processed on digest runs; private owner chat only"),
-        ("ru", True, "Оценки обрабатываются при запусках дайджеста; только личный чат владельца"),
-        ("ru", False, "Оценки обрабатываются при запусках дайджеста; только личный чат владельца"),
+        ("en", False, "Tap a vote button, then Start to send it."),
+        ("ru", False, "Нажмите оценку, затем Start (Запустить), чтобы отправить голос."),
     ])
     async def test_card_includes_async_feedback_note(
         self, monkeypatch: pytest.MonkeyPatch, language: str, enabled: bool, note: str,
@@ -483,6 +485,7 @@ class TestSendArticleCards:
         config = _make_config()
         config.radar = SimpleNamespace(language=language)
         config.adaptive = SimpleNamespace(enabled=enabled)
+        config.telegram.bot_username = "example_digest_bot"
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
@@ -492,12 +495,13 @@ class TestSendArticleCards:
         assert route.call_count == 1
         payload = json.loads(route.calls[0].request.content)
         text: str = payload["text"]
-        assert f"_{escape_markdownv2(note)}_" in text
+        assert escape_markdownv2(note) in text
+        assert escape_markdownv2("/vote g ") in text
 
         hash8 = article_hash(top[0].title, top[0].link)[:8]
         assert payload["reply_markup"]["inline_keyboard"] == [[
-            {"text": "👍", "callback_data": f"fb:a:g:{hash8}"},
-            {"text": "👎", "callback_data": f"fb:a:b:{hash8}"},
+            {"text": "👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{hash8}"},
+            {"text": "👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{hash8}"},
         ]]
 
     async def test_skips_send_when_top_articles_empty(
