@@ -13,7 +13,6 @@ import math
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 from urllib.parse import urlparse
-from xml.etree import ElementTree
 
 import httpx
 
@@ -22,10 +21,10 @@ from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_generator import SearchQuery
 from digest.irritator.ranker import RankedSignal
-from digest.irritator.sources import Signal
+from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
-from digest.irritator.sources.lobsters import search_lobsters
+from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, _extract_json, complete
 from digest.review import EvidenceBundle, canonical_evidence_quote
@@ -102,7 +101,7 @@ class StageDiagnostic:
 class SourceAttempt:
     query: str
     source: str
-    status: Literal["complete", "empty", "error"]
+    status: Literal["complete", "empty", "unavailable", "error"]
     result_count: int = 0
     omitted_count: int = 0
     error: str = ""
@@ -138,6 +137,7 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
     "Invalid Hacker News search response.", "Invalid Lobsters search response.",
+    "Invalid Hacker News story.", "Hacker News response contains no identifiable stories.",
     "Checkpoint evidence hash mismatch.",
 })
 
@@ -326,20 +326,10 @@ async def _check_source_response(response: httpx.Response) -> None:
     await response.aread()
     if len(response.content) > MAX_SOURCE_RESPONSE_BYTES:
         raise ValueError("Source response exceeds the response budget.")
-    if response.request.url.host == "export.arxiv.org":
-        root = ElementTree.fromstring(response.content)
-        atom = "{http://www.w3.org/2005/Atom}"
-        if root.tag != f"{atom}feed" or any(
-            "/api/errors" in (entry.findtext(f"{atom}id") or "") for entry in root.findall(f"{atom}entry")
-        ):
-            raise ValueError("Invalid or error arXiv feed.")
-        return
-    raw = response.json()
-    if response.request.url.host == "hn.algolia.com":
-        if not isinstance(raw, dict) or not isinstance(raw.get("hits"), list):
-            raise ValueError("Invalid Hacker News search response.")
-    elif not isinstance(raw, list) and not (isinstance(raw, dict) and isinstance(raw.get("results"), list)):
-        raise ValueError("Invalid Lobsters search response.")
+    source = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "lobste.rs": "lobsters"}[
+        response.request.url.host
+    ]
+    validate_search_response(response, source)
 
 
 async def _search(
@@ -361,6 +351,12 @@ async def _search(
                 max(0, len(raw) - len(signals)),
             ))
             return signals
+        except SourceUnavailableError:
+            result.source_attempts.append(SourceAttempt(
+                query.query, source, "unavailable", error="SourceUnavailableError",
+                error_detail=UNAVAILABLE_REASON if source == "lobsters" else "Configured source is unavailable.",
+            ))
+            return []
         except asyncio.CancelledError:
             result.source_attempts.append(SourceAttempt(query.query, source, "error", error="CancelledError"))
             raise
@@ -370,8 +366,7 @@ async def _search(
             ))
             return []
 
-    # Existing adapters intentionally tolerate some malformed payloads as empty.
-    # A scoped hook validates those same responses without issuing more requests.
+    # Add bounded response size/redirect checks to the shared envelope validation.
     # Preserve the caller's hooks and remove only our own, including on cancellation.
     client.event_hooks["response"].append(_check_source_response)
     try:
@@ -448,11 +443,13 @@ async def _run_stages(
     raw = await _search(result, config, client)
     _finish_stage(diagnostic, len(raw))
     diagnostic.omitted_count = sum(attempt.omitted_count for attempt in result.source_attempts)
-    failed = sum(attempt.status == "error" for attempt in result.source_attempts)
+    failed = sum(attempt.status in {"error", "unavailable"} for attempt in result.source_attempts)
     if failed:
         diagnostic.status = "incomplete" if failed < len(result.source_attempts) else "error"
         diagnostic.error = "SourceSearchFailure"
-        result.limitations.append(f"{failed} of {len(result.source_attempts)} source/query searches failed.")
+        result.limitations.append(
+            f"{failed} of {len(result.source_attempts)} source/query searches failed or were unavailable."
+        )
     if not raw:
         result.status = "error" if diagnostic.status == "error" else "incomplete" if failed else "empty"
         return

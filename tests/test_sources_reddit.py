@@ -8,6 +8,7 @@ import httpx
 import pytest
 import respx
 
+from digest.irritator.sources import SourceUnavailableError
 from digest.irritator.sources.reddit import search_reddit
 
 _TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
@@ -45,27 +46,27 @@ def _reddit_response(posts: list[dict[str, object]] | None = None) -> dict[str, 
 
 @pytest.mark.asyncio
 class TestSearchReddit:
-    async def test_no_credentials_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_no_credentials_is_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         with respx.mock:
             async with httpx.AsyncClient() as client:
-                signals = await search_reddit("AI risk", _make_config(), client)
-        assert signals == []
+                with pytest.raises(SourceUnavailableError):
+                    await search_reddit("AI risk", _make_config(), client)
         assert respx.calls.call_count == 0
 
-    async def test_missing_one_credential_returns_empty(
+    async def test_missing_one_credential_is_unavailable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "some-id")
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         with respx.mock:
             async with httpx.AsyncClient() as client:
-                signals = await search_reddit("AI risk", _make_config(), client)
-        assert signals == []
+                with pytest.raises(SourceUnavailableError):
+                    await search_reddit("AI risk", _make_config(), client)
         assert respx.calls.call_count == 0
 
-    async def test_token_fetch_failure_returns_empty(
+    async def test_token_fetch_failure_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
@@ -73,19 +74,39 @@ class TestSearchReddit:
         with respx.mock:
             respx.post(_TOKEN_URL).mock(return_value=httpx.Response(401))
             async with httpx.AsyncClient() as client:
-                signals = await search_reddit("AI risk", _make_config(), client)
-        assert signals == []
+                with pytest.raises(httpx.HTTPStatusError):
+                    await search_reddit("AI risk", _make_config(), client)
 
-    async def test_token_response_missing_access_token_returns_empty(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("token_data", [[], {}, {"access_token": 1}, {"access_token": " "}])
+    async def test_invalid_token_response_raises(
+        self, monkeypatch: pytest.MonkeyPatch, token_data: Any,
     ) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         with respx.mock:
-            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json={}))
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json=token_data))
             async with httpx.AsyncClient() as client:
-                signals = await search_reddit("AI risk", _make_config(), client)
-        assert signals == []
+                with pytest.raises(ValueError, match=r"^Invalid Reddit token response\.$"):
+                    await search_reddit("AI risk", _make_config(), client)
+
+    async def test_non_json_token_response_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+        monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+        with respx.mock:
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, text="private response body"))
+            async with httpx.AsyncClient() as client:
+                with pytest.raises(ValueError, match=r"^Invalid Reddit token response\.$"):
+                    await search_reddit("AI risk", _make_config(), client)
+
+    async def test_malformed_search_envelope_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
+        monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+        with respx.mock:
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json=_token_response()))
+            respx.get(_SEARCH_URL).mock(return_value=httpx.Response(200, json={"data": {"children": {}}}))
+            async with httpx.AsyncClient() as client:
+                with pytest.raises(ValueError, match=r"^Invalid Reddit search response\.$"):
+                    await search_reddit("AI risk", _make_config(), client)
 
     async def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")

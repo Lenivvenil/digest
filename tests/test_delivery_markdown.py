@@ -123,18 +123,23 @@ class TestWriteDigest:
         assert nested.exists()
 
     def test_with_counter_signals(self, tmp_path: Path) -> None:
+        from digest.irritator import IrritatorStatus
+
         config = _make_config(output_dir=str(tmp_path))
         signals = [_make_ranked_signal()]
         result = write_digest(
             "Summary",
             config,
             ranked_signals=signals,
+            irritator_status=IrritatorStatus("One source unavailable; valid counter-evidence retained", "incomplete"),
             date=datetime(2026, 4, 9, tzinfo=timezone.utc),
         )
         assert result is not None
         text = result.read_text(encoding="utf-8")
         assert "Counter-Signals" in text
         assert "Counter evidence" in text
+        assert "Irritator status: incomplete" in text
+        assert "One source unavailable; valid counter-evidence retained" in text
 
     def test_default_date_is_utc_now(self, tmp_path: Path) -> None:
         config = _make_config(output_dir=str(tmp_path))

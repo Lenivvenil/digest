@@ -1,4 +1,8 @@
-"""Lobsters search adapter."""
+"""Lobsters adapter retained for configuration compatibility.
+
+No supported JSON search contract is verified in the maintained server source.
+Do not silently substitute an unrelated feed or scrape an undocumented endpoint.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,9 @@ from typing import Any
 
 import httpx
 
-from digest.irritator.sources import Signal, _register
+from digest.irritator.sources import Signal, SourceUnavailableError, _register
 
-_BASE_URL = "https://lobste.rs/search.json"
-_TIMEOUT = 10.0
-_MAX_RESULTS = 10
+UNAVAILABLE_REASON = "Lobsters search is unavailable: no supported JSON search contract is verified."
 
 
 @_register("lobsters")
@@ -19,26 +21,5 @@ async def search_lobsters(
     config: Any,
     client: httpx.AsyncClient,
 ) -> list[Signal]:
-    """Search Lobsters via the JSON API."""
-    resp = await client.get(
-        _BASE_URL,
-        params={"q": query, "what": "stories", "order": "relevance"},
-        timeout=_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    signals: list[Signal] = []
-    results = data if isinstance(data, list) else data.get("results", [])
-    for item in results[:_MAX_RESULTS]:
-        signals.append(
-            Signal(
-                url=item.get("url") or item.get("short_id_url", ""),
-                title=item.get("title", ""),
-                snippet=item.get("description", "") or item.get("comment_plain", "") or "",
-                source_name="lobsters",
-                published=item.get("created_at", ""),
-                score=float(item.get("score", 0)),
-            )
-        )
-    return signals
+    """Report unavailable without a network request or configuration mutation."""
+    raise SourceUnavailableError(UNAVAILABLE_REASON)

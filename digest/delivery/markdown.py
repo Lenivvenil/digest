@@ -12,6 +12,7 @@ from digest._util import atomic_json_write
 from digest.delivery.supplement import signal_text
 
 if TYPE_CHECKING:
+    from digest.irritator import IrritatorStatus
     from digest.review import BlindReviewReport
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ def write_digest(
     top_articles: list[Any] | None = None,
     ranked_signals: list[Any] | None = None,
     review_report: BlindReviewReport | None = None,
+    irritator_status: IrritatorStatus | None = None,
     date: datetime | None = None,
     sources_count: int = 0,
     articles_count: int = 0,
@@ -94,6 +96,9 @@ def write_digest(
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)
+
+    if irritator_status is not None:
+        content += f"\n\nIrritator status: {irritator_status.level} — {irritator_status.text}\n"
 
     if review_report is not None:
         from digest.review import render_review

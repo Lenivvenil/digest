@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any
 
 import httpx
 
-from digest.irritator.sources import Signal, _register
-
-logger = logging.getLogger(__name__)
+from digest.irritator.sources import Signal, SourceUnavailableError, _register, validate_search_response
 
 _TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
 _SEARCH_BASE = "https://oauth.reddit.com"
@@ -28,8 +25,7 @@ async def search_reddit(
     client_id = os.environ.get("REDDIT_CLIENT_ID", "")
     client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
     if not client_id or not client_secret:
-        logger.info("Reddit credentials not configured — skipping Reddit source")
-        return []
+        raise SourceUnavailableError("Reddit credentials are not configured.")
 
     username = os.environ.get("REDDIT_USERNAME", "digest-bot")
     user_agent = f"script:digest-bot:2.0 (by /u/{username})"
@@ -41,20 +37,14 @@ async def search_reddit(
         headers={"User-Agent": user_agent},
         timeout=_TIMEOUT,
     )
-    if token_resp.status_code >= 400:
-        logger.warning(
-            "Reddit token fetch failed (%d) — skipping Reddit source",
-            token_resp.status_code,
-        )
-        return []
+    token_resp.raise_for_status()
     try:
-        access_token: str = token_resp.json().get("access_token", "")
-    except Exception:
-        logger.warning("Reddit token response is not valid JSON — skipping Reddit source")
-        return []
-    if not access_token:
-        logger.warning("Reddit token response missing access_token — skipping Reddit source")
-        return []
+        token_data = token_resp.json()
+    except ValueError:
+        raise ValueError("Invalid Reddit token response.") from None
+    access_token = token_data.get("access_token") if isinstance(token_data, dict) else None
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise ValueError("Invalid Reddit token response.")
 
     subreddits = getattr(config.irritator, "reddit_subreddits", ["programming"])
     sub_str = "+".join(subreddits)
@@ -70,10 +60,10 @@ async def search_reddit(
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    data = resp.json()
+    data = validate_search_response(resp, "reddit")
 
     signals: list[Signal] = []
-    for child in data.get("data", {}).get("children", []):
+    for child in data["data"]["children"]:
         post = child.get("data", {})
         signals.append(
             Signal(

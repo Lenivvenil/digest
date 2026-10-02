@@ -407,19 +407,17 @@ async def test_existing_search_adapters_and_validator_run_with_mock_http() -> No
                                                       "url": "https://external.example/caveat", "points": 10}]})
         if request.url.host == "export.arxiv.org":
             return httpx.Response(200, text='<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
-        if request.url.host == "lobste.rs":
-            return httpx.Response(503, text="Server failed")
         raise AssertionError("Unexpected endpoint")
 
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)):
         async with httpx.AsyncClient(transport=httpx.MockTransport(adapter)) as client:
             result = await run_evidence_irritator(bundle, config, client)
     assert result.status == "incomplete"
-    assert len(requests) == 3
+    assert len(requests) == 2
     assert result.ranked_signals[0].signal.url == "https://external.example/caveat"
     assert any("liveness" in limitation for limitation in result.limitations)
     assert {attempt.source: attempt.status for attempt in result.source_attempts} == {
-        "hackernews": "complete", "arxiv": "empty", "lobsters": "error",
+        "hackernews": "complete", "arxiv": "empty", "lobsters": "unavailable",
     }
 
 
@@ -451,7 +449,6 @@ async def test_llm_provider_429_is_one_http_request_without_retry_or_fallback(mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source,body", [
     ("hackernews", '{}'), ("hackernews", '{"hits": null}'),
-    ("lobsters", '{}'), ("lobsters", '{"results": "not a list"}'),
     ("arxiv", '<html><body>Temporarily unavailable</body></html>'),
     ("arxiv", '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
               '<id>https://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>'),
