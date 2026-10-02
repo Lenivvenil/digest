@@ -281,3 +281,19 @@ causes as known provider limits.
   requires canonical English and leaves source evidence and analysis language unchanged;
   see [ADR-0005](decisions/0005-optional-presentation-translation.md). Its generated-text
   scope and unverified semantic-fidelity boundary are documented explicitly.
+
+
+## Daily operating boundary (proposal, 2026-10-02)
+
+The canonical [Digest operating envelope](domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02)
+records the measured cost, daily schedule proposal, maintenance reserve, account-quota
+uncertainty and retention risks. This architecture page does not duplicate that budget.
+A cron change alone does not implement compact output: the current sender posts article
+cards and can retry uncertain requests. The proposed compact renderer must preserve
+complete text, source/vote identity and per-article confirmed chunk coverage, and must
+not claim exactly-once delivery across a crash before state persistence.
+
+Retain configured translation and actual bounded Irritator/comparison processing.
+The initial compact presentation proposes archive-only optional outcomes, with honest
+status, instead of extra Telegram pushes. No new receiver, queue or feedback polling
+cron is implied. Daily voting remains best effort under [ADR0006](decisions/0006-batch-message-voting.md).

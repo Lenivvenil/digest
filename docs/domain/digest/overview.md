@@ -4,15 +4,16 @@ _Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconcil
 
 ## Decision and evidence register — 2026-10-01
 
-This is the existing canonical Digest domain page, not a new architecture proposal.
-As of 2026-10-01, productization
-[#94](https://github.com/Lenivvenil/digest/issues/94) is the sole active item. English
-documentation/onboarding #95 is merged; optional primary-post translation is under review. Editorial
-quality [#55](https://github.com/Lenivvenil/digest/issues/55), tracked in work order
-[#91](https://github.com/Lenivvenil/digest/issues/91), awaits real-output verification
-and is not complete. Feedback #48 and source contracts #77 remain queued. This
-documentation work makes no production change; the existence of this register
-does not approve a code change.
+This is the existing canonical Digest domain page. The 2026-10-01 register below
+preserves the earlier decision history; current status was reconciled on 2026-10-02.
+The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
+limits. The operating envelope below is a reviewed proposal, not a deployed schedule
+or compact renderer. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
+is deferred by the owner with its factual release gate unmet. English/configurable
+translation and source-contract repairs are deployed; ordinary-run acceptance remains
+open in #94/#77. The real message-vote path is verified through persistence and computed
+priority influence; ordinary collector acceptance remains open in #48.
 
 ### Product intent comes before the latest implementation
 
@@ -71,6 +72,84 @@ Their issue-level review surface is #55 and its linked work order #91.
 | D-04 | Preserve the Irritator's genuine external counter-signal function while primary delivery remains independent of optional-stage failure | Owner-approved primary-first recovery; [PR89](https://github.com/Lenivvenil/digest/pull/89); historical [#53](https://github.com/Lenivvenil/digest/issues/53) defines the unmet core value | Search, provenance, ranking and honest incomplete status must survive editorial changes. A successful supplementary API send does not prove a useful contradiction was found. Source repairs remain #77. |
 | D-05 | Telegram is the required primary destination; archived evidence and delivery state must remain truthful and replay-safe | Owner-approved recovery, [PR88](https://github.com/Lenivvenil/digest/pull/88), [PR89](https://github.com/Lenivvenil/digest/pull/89), [PR90](https://github.com/Lenivvenil/digest/pull/90) | Only confirmed card delivery consumes its dedup identity. Footer-only output, an archived report or a green workflow is not proof of a useful delivered digest. |
 | D-06 | Changes must preserve accumulated domain analysis and follow one visible issue at a time | Current owner direction; [Principles §4 and Definition of Done](../../principles.md); [#91](https://github.com/Lenivvenil/digest/issues/91) | Link requirement/source → decision/rationale → issue acceptance → change → verification before resuming implementation. Existing documents and issues are updated, not replaced by parallel sources of truth. |
+
+### Operating envelope and daily-edition decision — 2026-10-02
+
+**Owner requirement:** first deliver a simple daily digest and fit the existing
+GitHub Actions limits. This narrows the immediate release scope, without deleting
+Radar, the learning loop or Irritator from the product concept. Translation remains
+an explicit presentation setting. No additional infrastructure, paid provider,
+credential or background receiver is introduced.
+
+**Reviewed proposal, not yet implemented:** one daily cycle at `17 2 * * *` (02:17
+UTC), retaining the existing primary/optional job ceilings of 8/12 minutes. This is
+an intended start time, not a delivery-time guarantee. GitHub may delay or drop
+scheduled work. Keep the separately configured weekly discovery budget visible;
+do not hide it inside the daily estimate. No additional feedback-only cron is proposed.
+
+| Monthly project allocation (31-day conservative month) | Standard Linux minutes |
+|---|---:|
+| One daily primary + optional cycle: 31 × (8 + 12) | 620 |
+| Up to five existing weekly discoveries: 5 × 10 | 50 |
+| Maintenance, private CI, manually admitted verification/retries | 100 |
+| Contingency reserve | 230 |
+| Total proposed project envelope | **1,000** |
+
+The deployed schedule at the 2026-10-02 audit snapshot had two daily cycles,
+allocating up to 1,240 minutes before
+weekly discovery or maintenance. The 1,000-minute proposal is an operating allocation,
+not an enforced account billing limit. Timeouts, per-job rounding and cancellation
+cleanup need reserve; estimates must not be presented as an exact invoice.
+
+The October 1–2 audit covered all 94 digest-family workflow runs and all job attempts.
+Per-job timestamps imply approximately 63 private Linux minutes, conservatively 64
+with timestamp-resolution headroom: 17 normal production, 7 requested rerun,
+37 diagnostic/trial/smoke and 2 private fork CI minutes. Public engine CI accounted
+for 61 further standard-runner minutes, which do not consume the private allowance.
+This is measured project use, not account remaining quota. Actual account plan,
+other private usage, Packages usage and monetary stop settings are **unknown**.
+
+The [official billing contract](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+shares private usage across the owner's account; public standard runners are free.
+The published Free-plan 2,000 minutes are a planning reference, not proof of this
+account's entitlement or remaining balance. Each job is
+[rounded up independently](https://docs.github.com/en/billing/reference/actions-runner-pricing).
+No paid overage or automatic increase is authorized. Before additional private tests,
+record their maximum job/request cost and preserve the ordinary-product reserve.
+Prefer local checks and public engine CI for implementation verification.
+
+A **daily edition** is one coherent list of selected articles with useful short text,
+source links and stable per-article vote attribution. Telegram transport chunks may
+be necessary; they must preserve complete selected content and URL/identity bindings.
+No artificial first-N article rule or length-based editorial rejection follows from
+this format decision. Put translation/verification notices once per edition rather
+than repeating them on every article. The proposed first compact release retains
+optional Irritator/comparison processing and honest results in the archive, without
+additional supplementary Telegram pushes. This presentation change requires code;
+it is not available merely by changing the cron or an existing configuration flag.
+
+**Risk/acceptance boundaries:** daily polling has no safety margin against Telegram's
+at-most-24-hour ordinary-message retention. Delayed or missed runs can lose votes;
+[ADR0006](../../decisions/0006-batch-message-voting.md) records this limitation. Unknown
+Telegram sends must not be retried blindly or reported as confirmed. A chunk-spanning
+article is delivered only after all its covering chunks are accepted. A green workflow,
+an archive or a computed priority change does not prove full article fidelity or a
+changed real selection. Deferred #55 is not implicitly reactivated by this work.
+
+Current model control flow admits a conservative ceiling of ten physical requests
+per product cycle before cache reuse, timeout and failure short-circuiting: up to two
+primary/fallback reviews, one primary translation, three Irritator phases, one optional
+translation and three independent-review slots. Runtime retries are zero. Review
+outputs are capped at 4,096 tokens; Irritator/translation outputs at 2,048. The current
+20 × 500-character RSS evidence allocation plus metadata is not full-article coverage.
+Primary pacing is configured separately from optional stages' 65-second pacing.
+These are execution constraints, not an editorial rule to prefer shorter articles.
+
+Provider quotas are a separate ledger: account entitlement, RPM/TPM, daily tokens,
+context and output limits are not interchangeable with Actions minutes. Current
+routes/retry ceilings remain unchanged; quota exhaustion produces explicit incomplete
+status, never a paid fallback. Git archives and translation records still need a
+prospective growth/retention policy. Preserve existing history while agreeing it.
 
 ### Historical decisions that must not be rediscovered
 
