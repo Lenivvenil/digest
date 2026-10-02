@@ -841,6 +841,7 @@ async def run(
         top_articles=top_articles or None,
         ranked_signals=all_ranked or None,
         review_report=review_report,
+        irritator_status=irritator_status,
         sources_count=len(articles_by_category), articles_count=total_articles,
     )
     markdown_saved = md_path is not None

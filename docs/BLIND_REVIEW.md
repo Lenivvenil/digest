@@ -220,3 +220,69 @@ The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
 hyphen repairs and one originally exact quote) and rejects one over-budget,
 paraphrased quote. These tests make no model or network calls.
+
+
+### Literal-quote failure diagnostics
+
+The bounded Irritator narrative stage keeps literal quotes in the source language;
+only generated claims, assumptions, explanation and limitations use the configured
+output language. A literal mismatch still stops that stage before external search.
+The matcher is not relaxed into paraphrase or semantic equivalence.
+
+For a known evidence ID and a quote within the existing 200-character allowance,
+the private Irritator archive can retain the rejected quote, evidence ID and immutable
+bundle ID alongside existing prompt/response hashes. This permits comparison against
+the original checkpoint to distinguish formatting from unsupported text. It does not
+retain a whole provider response, and the rejected text is not logged or delivered
+as a counter-signal. Unknown IDs and oversized fields do not enter this diagnostic.
+Keep these runtime artifacts private; public issue updates should summarize outcomes.
+A mismatch alone does not establish hallucination or a translation cause. Source
+adapter availability and useful external evidence remain separate #77 acceptance gates.
+
+
+### Source and ranking outcomes
+
+Legacy synchronous Irritator processing retains its list-based source API but records
+successful, failed and unavailable source attempts separately. A valid empty response
+is a successful search; missing Reddit credentials or intentionally unsupported DEV.to
+or Lobsters search is unavailable, not evidence that no counter-signals exist. The bounded and
+legacy paths share response-envelope validation. No new credentials are provisioned.
+
+Partial source or ranking failures produce `incomplete` while retaining valid results.
+If no attempt in a failed stage succeeds, the outcome is `error`; valid searches and
+rankings yielding no usable evidence remain `empty`. Telegram and Markdown preserve
+the same outcome text. Diagnostics contain counts and exception classes, not raw
+provider error bodies. This classification does not prove live endpoint availability
+or semantic counter-evidence quality.
+
+arXiv queries are URL-encoded once by the HTTP client, without changing query grammar.
+Hacker News discussion links require a supplied usable story ID when no external URL
+exists; unidentifiable items are not manufactured into provenance links. An entirely
+unidentifiable response is a contract failure. Live query sensitivity, documented
+current external availability remain #77 acceptance work.
+
+
+### Verified protocol references (2026-10-02)
+
+The [arXiv API manual](https://info.arxiv.org/help/api/user-manual.html) defines
+`search_query`, Atom responses and error entries. Its [API terms](https://info.arxiv.org/help/api/tou.html)
+require a single connection and at least three seconds between requests. The adapter
+serializes requests and spaces starts in the owned event loop; the runtime's existing
+job concurrency coordinates its scheduled processes. Operators must also account for
+other clients/machines they control; this local gate does not coordinate unrelated
+processes. Waiting remains inside existing stage deadlines, without added retries.
+
+The [HN Algolia documentation](https://hn.algolia.com/api) defines full-text `query`,
+`tags=story`, `hitsPerPage`, and story `objectID`; its published limit is 10,000 requests
+per IP per hour. These references establish request semantics, not current reachability
+from a particular runner or independent quota entitlement on shared infrastructure.
+
+Lobsters remains a recognized configuration value but performs no HTTP request and
+reports `unavailable`. The maintained [search controller](https://github.com/lobsters/lobsters/blob/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/app/controllers/search_controller.rb),
+[HTML view](https://github.com/lobsters/lobsters/tree/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/app/views/search)
+and [request specifications](https://github.com/lobsters/lobsters/blob/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/spec/requests/search_spec.rb)
+do not establish a supported JSON search contract. This is a verified contract gap,
+not a claim about every historical endpoint response. No user configuration is
+removed and no undocumented replacement is attempted. Both execution paths preserve
+valid results from other sources with an incomplete coverage status; unavailable
+search is never counted as a successful empty search.

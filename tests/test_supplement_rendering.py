@@ -36,6 +36,8 @@ def test_split_preserves_unicode_escaping_whitespace_and_atomic_url() -> None:
 async def test_both_supplement_paths_keep_all_archived_signal_content(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    from digest.irritator import IrritatorStatus
+
     config = fixture_config()
     config.radar.language = "en"
     config.telegram.enabled = True
@@ -49,10 +51,12 @@ async def test_both_supplement_paths_keep_all_archived_signal_content(monkeypatc
     legacy_archive = _build_counter_signals_section(signals)
     with respx.mock, patch("digest.delivery.telegram.asyncio.sleep", AsyncMock()):
         route = respx.post(re.compile(r"api\.telegram\.org")).mock(return_value=httpx.Response(200, json={"ok": True}))
-        await send_counter_signals(signals, config)
+        status = IrritatorStatus("One source failed; retained valid counter-evidence", "incomplete")
+        await send_counter_signals(signals, config, status)
         split_at = route.call_count
         assert await _send_supplement(result, config) == "sent"
     payloads = [json.loads(call.request.content) for call in route.calls]
+    assert "Irritator status: incomplete — " + status.text in _decode([p["text"] for p in payloads[:split_at]])
     for subset in (payloads[:split_at], payloads[split_at:]):
         text = _decode([payload["text"] for payload in subset])
         assert all(len(payload["text"].encode("utf-16-le")) // 2 <= 3800 for payload in subset)

@@ -348,6 +348,8 @@ async def send_counter_signals(
         f"💢🔥 {labels['irritator'].upper()} 🔥💢",
         *(signal_text(ranked, language) for ranked in ranked_signals),
     ])
+    if irritator_status is not None:
+        text += f"\n\nIrritator status: {irritator_status.level} — {irritator_status.text}"
     chunks = split_supplement(text, escape_markdownv2)
 
     async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:

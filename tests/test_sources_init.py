@@ -9,7 +9,13 @@ import httpx
 import pytest
 
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.sources import _import_adapters, search_all_sources
+from digest.irritator.sources import (
+    SearchDiagnostics,
+    SourceUnavailableError,
+    _import_adapters,
+    search_all_sources,
+    validate_search_response,
+)
 from tests.factories import make_signal
 
 # Pre-import all adapter modules so their @_register decorators fire before any
@@ -104,9 +110,39 @@ class TestSearchAllSources:
         assert signals[0].source_name == "hackernews"
 
     async def test_empty_queries(self) -> None:
+        diagnostics = SearchDiagnostics()
         async with httpx.AsyncClient() as client:
-            signals = await search_all_sources([], _make_config(), client)
+            signals = await search_all_sources([], _make_config(), client, diagnostics=diagnostics)
         assert signals == []
+        assert diagnostics.total == 0
+
+    async def test_outcomes_distinguish_valid_empty_failed_and_unavailable(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        diagnostics = SearchDiagnostics()
+        adapters = {
+            "hackernews": AsyncMock(return_value=[_make_signal("hackernews")]),
+            "arxiv": AsyncMock(return_value=[]),
+            "reddit": AsyncMock(side_effect=RuntimeError("private response credential")),
+            "devto": AsyncMock(side_effect=SourceUnavailableError("private configuration")),
+        }
+        with patch.dict("digest.irritator.sources._ADAPTERS", adapters, clear=True):
+            async with httpx.AsyncClient() as client:
+                signals = await search_all_sources(
+                    [_make_query("private search query"), _make_query("second private query")],
+                    _make_config([*adapters, "unknown"]), client, diagnostics=diagnostics,
+                )
+
+        assert len(signals) == 2
+        assert diagnostics.successful == 4
+        assert diagnostics.failed == 2
+        assert diagnostics.unavailable == 4
+        assert diagnostics.total == 10
+        assert "Source reddit failed (RuntimeError)" in caplog.text
+        assert "Source devto unavailable (SourceUnavailableError)" in caplog.text
+        assert "Source unknown unavailable (SourceUnavailableError)" in caplog.text
+        assert "private" not in caplog.text
+        assert "credential" not in caplog.text
 
     async def test_query_string_passed_to_adapter(self) -> None:
         mock_adapter = AsyncMock(return_value=[])
@@ -122,3 +158,49 @@ class TestSearchAllSources:
 
         called_query = mock_adapter.call_args[0][0]
         assert called_query == "AI failure criticism"
+
+
+@pytest.mark.parametrize(("source", "body"), [
+    ("hackernews", {"hits": []}),
+    ("lobsters", []),
+    ("lobsters", {"results": []}),
+    ("reddit", {"data": {"children": []}}),
+])
+def test_valid_empty_search_envelopes(source: str, body: Any) -> None:
+    assert validate_search_response(httpx.Response(200, json=body), source) == body
+
+
+@pytest.mark.parametrize(("source", "message", "body"), [
+    ("hackernews", "Invalid Hacker News search response.", {"hits": None}),
+    ("lobsters", "Invalid Lobsters search response.", {"results": {}}),
+    ("reddit", "Invalid Reddit search response.", {"data": []}),
+])
+def test_invalid_search_envelopes(source: str, message: str, body: Any) -> None:
+    with pytest.raises(ValueError) as caught:
+        validate_search_response(httpx.Response(200, json=body), source)
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize("source", ["hackernews", "lobsters", "reddit"])
+def test_non_json_search_response_has_fixed_error(source: str) -> None:
+    with pytest.raises(ValueError) as caught:
+        validate_search_response(httpx.Response(200, text="private response body"), source)
+    assert "private" not in str(caught.value)
+
+
+def test_valid_empty_atom_feed() -> None:
+    root = validate_search_response(
+        httpx.Response(200, text='<feed xmlns="http://www.w3.org/2005/Atom"/>'), "arxiv",
+    )
+    assert root.tag == "{http://www.w3.org/2005/Atom}feed"
+
+
+@pytest.mark.parametrize("body", [
+    "<html>error</html>",
+    "<feed>",
+    '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+    '<id>http://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>',
+])
+def test_invalid_or_error_atom_feed(body: str) -> None:
+    with pytest.raises(ValueError, match=r"^Invalid or error arXiv feed\.$"):
+        validate_search_response(httpx.Response(200, text=body), "arxiv")

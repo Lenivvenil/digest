@@ -78,17 +78,26 @@ class TestRunIrritator:
             narratives, ranked, status = await run_irritator([], cfg, _make_client())
         assert status.level == "error"
 
-    async def test_no_signals_found_returns_empty(self) -> None:
+    @pytest.mark.parametrize("successful,failed,unavailable,expected", [
+        (1, 0, 0, "empty"), (0, 1, 1, "error"), (1, 1, 0, "incomplete"),
+    ])
+    async def test_empty_search_is_distinct_from_source_failures(
+        self, successful: int, failed: int, unavailable: int, expected: str,
+    ) -> None:
         cfg = _make_config()
         narrative = make_narrative()
         queries = {narrative.claim: [MagicMock()]}
+        async def search(_queries, _config, _client, *, diagnostics):
+            diagnostics.successful, diagnostics.failed, diagnostics.unavailable = successful, failed, unavailable
+            return []
+
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=[])),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(side_effect=search)),
         ):
             _, ranked, status = await run_irritator([], cfg, _make_client())
-        assert status.level == "empty"
+        assert status.level == expected
         assert ranked == []
 
     async def test_all_signals_filtered_returns_empty(self) -> None:
@@ -124,7 +133,7 @@ class TestRunIrritator:
         assert len(ranked) == 1
         assert ranked[0] is ranked_signal
 
-    async def test_per_narrative_ranking_failure_does_not_set_error(self) -> None:
+    async def test_all_ranking_failures_are_error_not_empty(self) -> None:
         cfg = _make_config()
         narrative = make_narrative()
         queries = {narrative.claim: [MagicMock()]}
@@ -137,27 +146,32 @@ class TestRunIrritator:
             patch(f"{_MODULE}.rank_signals", AsyncMock(side_effect=RuntimeError("rank fail"))),
         ):
             _, ranked, status = await run_irritator([], cfg, _make_client())
-        assert status.level == "empty"
+        assert status.level == "error"
+        assert status.diagnostics.ranking_failed == 1
         assert ranked == []
 
-    async def test_returns_typed_tuple(self) -> None:
+    async def test_partial_source_and_ranking_failures_preserve_valid_results(self) -> None:
         cfg = _make_config()
-        narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
-        raw = [make_signal()]
-        ranked_signal = make_ranked_signal()
+        narratives = [make_narrative(), make_narrative(claim="Second source-backed hypothesis")]
+        queries = {item.claim: [MagicMock()] for item in narratives}
+        raw, ranked_signal = [make_signal()], make_ranked_signal()
+
+        async def search(_queries, _config, _client, *, diagnostics):
+            diagnostics.successful, diagnostics.failed = 1, 1
+            return raw
+
         with (
-            patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
+            patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=narratives)),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(side_effect=search)),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
-            patch(f"{_MODULE}.rank_signals", AsyncMock(return_value=[ranked_signal])),
+            patch(f"{_MODULE}.rank_signals", AsyncMock(side_effect=[RuntimeError("synthetic"), [ranked_signal]])),
         ):
-            result = await run_irritator([], cfg, _make_client())
-        narratives, ranked, status = result
-        assert isinstance(narratives, list)
-        assert isinstance(ranked, list)
-        assert isinstance(status, IrritatorStatus)
+            _, ranked, status = await run_irritator([], cfg, _make_client())
+        assert isinstance(status, IrritatorStatus) and status.level == "incomplete"
+        assert ranked == [ranked_signal]
+        assert status.diagnostics.search.failed == 1
+        assert status.diagnostics.ranking_successful == status.diagnostics.ranking_failed == 1
 
     async def test_injected_client_passed_to_search_and_validate(self) -> None:
         cfg = _make_config()

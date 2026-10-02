@@ -13,7 +13,6 @@ import math
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 from urllib.parse import urlparse
-from xml.etree import ElementTree
 
 import httpx
 
@@ -22,10 +21,10 @@ from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_generator import SearchQuery
 from digest.irritator.ranker import RankedSignal
-from digest.irritator.sources import Signal
+from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
-from digest.irritator.sources.lobsters import search_lobsters
+from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, _extract_json, complete
 from digest.review import EvidenceBundle, canonical_evidence_quote
@@ -65,6 +64,21 @@ class EvidenceRankedSignal(RankedSignal):
     typography_normalized: bool = False
 
 
+@dataclass(frozen=True)
+class RejectedEvidenceQuote:
+    """Bounded private diagnostic, linked to the already validated source bundle."""
+
+    bundle_id: str
+    evidence_id: str
+    quote: str
+
+
+class NarrativeQuoteMismatch(ValueError):
+    def __init__(self, rejection: RejectedEvidenceQuote) -> None:
+        super().__init__("Narrative quote is not in original evidence.")
+        self.rejection = rejection
+
+
 @dataclass
 class StageDiagnostic:
     stage: str
@@ -80,13 +94,14 @@ class StageDiagnostic:
     prompt_sha256: str | None = None
     response_sha256: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    rejected_quote: RejectedEvidenceQuote | None = None
 
 
 @dataclass
 class SourceAttempt:
     query: str
     source: str
-    status: Literal["complete", "empty", "error"]
+    status: Literal["complete", "empty", "unavailable", "error"]
     result_count: int = 0
     omitted_count: int = 0
     error: str = ""
@@ -122,6 +137,7 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
     "Invalid Hacker News search response.", "Invalid Lobsters search response.",
+    "Invalid Hacker News story.", "Hacker News response contains no identifiable stories.",
     "Checkpoint evidence hash mismatch.",
 })
 
@@ -181,7 +197,7 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
                     quote, evidence.title, evidence.excerpt,
                 )
             except ValueError as exc:
-                raise ValueError("Narrative quote is not in original evidence.") from exc
+                raise NarrativeQuoteMismatch(RejectedEvidenceQuote(bundle.bundle_id, identity, quote)) from exc
             if normalized:
                 typography_normalized.append(identity)
         if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 3:
@@ -310,20 +326,10 @@ async def _check_source_response(response: httpx.Response) -> None:
     await response.aread()
     if len(response.content) > MAX_SOURCE_RESPONSE_BYTES:
         raise ValueError("Source response exceeds the response budget.")
-    if response.request.url.host == "export.arxiv.org":
-        root = ElementTree.fromstring(response.content)
-        atom = "{http://www.w3.org/2005/Atom}"
-        if root.tag != f"{atom}feed" or any(
-            "/api/errors" in (entry.findtext(f"{atom}id") or "") for entry in root.findall(f"{atom}entry")
-        ):
-            raise ValueError("Invalid or error arXiv feed.")
-        return
-    raw = response.json()
-    if response.request.url.host == "hn.algolia.com":
-        if not isinstance(raw, dict) or not isinstance(raw.get("hits"), list):
-            raise ValueError("Invalid Hacker News search response.")
-    elif not isinstance(raw, list) and not (isinstance(raw, dict) and isinstance(raw.get("results"), list)):
-        raise ValueError("Invalid Lobsters search response.")
+    source = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "lobste.rs": "lobsters"}[
+        response.request.url.host
+    ]
+    validate_search_response(response, source)
 
 
 async def _search(
@@ -345,6 +351,12 @@ async def _search(
                 max(0, len(raw) - len(signals)),
             ))
             return signals
+        except SourceUnavailableError:
+            result.source_attempts.append(SourceAttempt(
+                query.query, source, "unavailable", error="SourceUnavailableError",
+                error_detail=UNAVAILABLE_REASON if source == "lobsters" else "Configured source is unavailable.",
+            ))
+            return []
         except asyncio.CancelledError:
             result.source_attempts.append(SourceAttempt(query.query, source, "error", error="CancelledError"))
             raise
@@ -354,8 +366,7 @@ async def _search(
             ))
             return []
 
-    # Existing adapters intentionally tolerate some malformed payloads as empty.
-    # A scoped hook validates those same responses without issuing more requests.
+    # Add bounded response size/redirect checks to the shared envelope validation.
     # Preserve the caller's hooks and remove only our own, including on cancellation.
     client.event_hooks["response"].append(_check_source_response)
     try:
@@ -391,7 +402,9 @@ async def _run_stages(
         '(an exact cited category), implicit_assumptions (1-3 strings <=300 chars each), why_worth_challenging '
         '(<=600 chars), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
         'exact nonempty substring of its title/excerpt <=200 chars). No other fields. At most 5 limitations '
-        '(<=400 chars each); explain any empty list. Use the requested language.'
+        '(<=400 chars each); explain any empty list. Use the requested language only for claim, '
+        'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
+        'supplied evidence unchanged, in their original language; never translate a literal quote.'
     ), {"evidence": asdict(bundle), "language": config.radar.language, "coverage": COVERAGE}, config)
     result.narratives, limitations = _parse_narrative(text, bundle)
     result.limitations.extend(limitations)
@@ -430,11 +443,13 @@ async def _run_stages(
     raw = await _search(result, config, client)
     _finish_stage(diagnostic, len(raw))
     diagnostic.omitted_count = sum(attempt.omitted_count for attempt in result.source_attempts)
-    failed = sum(attempt.status == "error" for attempt in result.source_attempts)
+    failed = sum(attempt.status in {"error", "unavailable"} for attempt in result.source_attempts)
     if failed:
         diagnostic.status = "incomplete" if failed < len(result.source_attempts) else "error"
         diagnostic.error = "SourceSearchFailure"
-        result.limitations.append(f"{failed} of {len(result.source_attempts)} source/query searches failed.")
+        result.limitations.append(
+            f"{failed} of {len(result.source_attempts)} source/query searches failed or were unavailable."
+        )
     if not raw:
         result.status = "error" if diagnostic.status == "error" else "incomplete" if failed else "empty"
         return
@@ -509,6 +524,10 @@ async def run_evidence_irritator(
         if current is not None:
             current.status, current.error = "error", type(exc).__name__
             current.error_detail = _safe_error_detail(exc)
-        # No response bodies, prompts, HTTP headers or credentials in error records.
+            if isinstance(exc, NarrativeQuoteMismatch):
+                current.rejected_quote = exc.rejection
+        # No full provider responses, prompts, HTTP headers or credentials are retained.
+        # Only a <=200-character quote tied to a validated evidence ID may be saved
+        # in the private result archive; exception text/logging remains fixed.
         result.status = "incomplete" if result.narratives else "error"
     return result
