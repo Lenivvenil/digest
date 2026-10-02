@@ -16,7 +16,7 @@ from digest.article_source import FetchedArticle
 from digest.radar.collector import Article, article_hash
 
 VERSION = 1
-PROMPT_VERSION = "source-passages-v1"
+PROMPT_VERSION = "source-passages-v2"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _ARTICLE_HASH = re.compile(r"[0-9a-f]{32}")
 

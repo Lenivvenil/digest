@@ -52,11 +52,28 @@ async def _generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_
     return response(messages)
 
 
-async def _seed(config: Config, article: Article) -> BriefRun:
+async def _seed(
+    config: Config, article: Article, *, brief: str | None = None, restriction: str | None = None,
+) -> BriefRun:
+    async def generate(*args: Any, **kwargs: Any) -> Any:
+        spans = json.loads(args[1][1]["content"])["spans"]
+        if restriction is not None and spans[0]["id"] > 1:
+            return response(args[1], abstain=True)
+        text, usage = await _generate(*args, **kwargs)
+        if brief is not None:
+            payload = json.loads(text)
+            payload["reading_angle"]["text"] = brief
+            text = json.dumps(payload)
+        return text, usage
+
+    async def count(messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> int:
+        return 1_048_577 if len(json.loads(messages[1]["content"])["spans"]) > 1 else 100
+
+    source = "Source wording stays verbatim." + ("\n\n" + restriction if restriction is not None else "")
     with (patch("digest.reading_brief.fetch_article",
-                AsyncMock(return_value=fetched("Source wording stays verbatim."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=_generate)):
+                AsyncMock(return_value=fetched(source))),
+          patch("digest.llm.count_gemini_tokens", side_effect=count),
+          patch("digest.llm.complete", side_effect=generate)):
         return await enrich_selected_cards([article], config, Path(".cache"), time.monotonic() + 1000)
 
 
@@ -89,7 +106,12 @@ async def test_selected_articles_only_become_full_source_cards_and_checkpoint(tm
     payload = json.loads(Path(result.review_checkpoint).read_text())
     assert payload["full_source_required"] is True and payload["status"] == "incomplete"
     assert payload["full_source_evidence"]["rss_bundle_id"] == payload["evidence"]["bundle_id"]
-    assert all("Source wording stays verbatim." in card.summary for card in cards)
+    assert all("Source wording stays verbatim." not in card.summary for card in cards)
+    assert "Source wording stays verbatim." in Path(result.markdown_path).read_text().split(
+        "## Original source evidence (archive only)",
+    )[1]
+    assert all(item["excerpt"] == "Source wording stays verbatim."
+               for item in payload["full_source_evidence"]["items"])
     assert {call.args[0] for call in fetch.call_args_list} == {card.link for card in cards}
     committed = json.loads(Path(".cache/seen_articles.json").read_text())
     assert set(committed) == {article_hash(card.title, card.link) for card in cards}
@@ -124,17 +146,28 @@ async def test_pending_only_never_sends_notice_archive_or_consumes_dedup(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_empty_rss_resumes_ready_brief_and_quotes_bypass_translation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("multi_page", [False, True])
+async def test_empty_rss_brief_translates_all_caveats_and_archives_original_quotes(
+    tmp_path: Path, multi_page: bool,
+) -> None:
     config = _config(tmp_path)
     article = make_article()
-    seeded = await _seed(config, article)
+    brief = ("The proxy is the sole database boundary. Access is limited to pilot tenants. "
+             "The source is inconsistent about payload logging; that conflict remains unresolved.")
+    restriction = "QUALIFICATION: the results exclude shared production accounts." if multi_page else None
+    seeded = await _seed(config, article, brief=brief, restriction=restriction)
     quote = seeded.quotations[article_hash(article.title, article.link)]
+    provenance = seeded.provenance[article_hash(article.title, article.link)]
     config.translation = TranslationConfig(enabled=True, provider="groq", model="openai/gpt-oss-120b")
 
     async def translate(summary: str, cards: list[ArticleSummary], ranked: list[Any], *_args: Any) -> Any:
         assert "Source wording stays verbatim." not in summary
         assert all("Source wording stays verbatim." not in card.summary for card in cards)
-        return summary, [replace(card, summary="Переведённый ракурс чтения.") for card in cards], ranked
+        assert all(brief in card.summary for card in cards)
+        if restriction is not None:
+            assert restriction not in summary and all(restriction not in card.summary for card in cards)
+        return summary, [replace(card, summary="Прокси ограничивает доступ; только пилот. "
+                                 "Противоречие источника о логировании не разрешено.") for card in cards], ranked
 
     with (patch("digest.config.load_config", return_value=config),
           patch("digest.radar.collect", AsyncMock(return_value=({}, {}))),
@@ -150,9 +183,17 @@ async def test_empty_rss_resumes_ready_brief_and_quotes_bypass_translation(tmp_p
     model.assert_not_called()
     assert result.new_articles == 0 and result.telegram_sent and result.markdown_saved
     card = delivery.call_args.kwargs["top_articles"][0]
-    assert card.summary == "Переведённый ракурс чтения.\n\n" + quote
+    assert card.summary == ("Прокси ограничивает доступ; только пилот. "
+                            "Противоречие источника о логировании не разрешено.\n\n" + provenance)
+    assert quote not in card.summary
+    if restriction is not None:
+        assert "Conditions/limitations from the source (original text)" in card.summary
+        assert restriction in card.summary and restriction in provenance
     markdown = Path(result.markdown_path).read_text()
     assert all("> " + line in markdown for line in card.summary.split("\n"))
+    brief_section, appendix = markdown.split("## Original source evidence (archive only)")
+    assert "Source wording stays verbatim." not in brief_section
+    assert quote in appendix
     payload = json.loads(Path(result.review_checkpoint).read_text())
     assert payload["reviews"] == [] and payload["status"] == "incomplete"
     assert payload["evidence"]["items"][0]["evidence_id"] == article_hash(article.title, article.link)

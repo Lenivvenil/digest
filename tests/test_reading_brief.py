@@ -69,6 +69,7 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
         run = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000)
         assert len(run.cards) == 1 and run.pending == 0 and run.abstained == 0
         identity = next(iter(run.quotations))
+        assert run.cards[0].summary.startswith("Reading brief: ")
         assert "".join(span["text"] for span in payload(requests[0])["spans"]) == text
         assert "FINAL QUALIFICATION" not in run.cards[0].summary
         assert "FINAL QUALIFICATION" in run.quotations[identity]
@@ -76,6 +77,9 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
         assert "2026-09-20T09:00:00+00:00" in run.quotations[identity]
         assert "source metadata" in run.quotations[identity]
         assert "Conditions/limitations from the source" in run.quotations[identity]
+        assert "FINAL QUALIFICATION" not in run.provenance[identity]
+        assert "Published: 2026-09-20 (source)" in run.provenance[identity]
+        assert "Images not assessed." in run.provenance[identity]
         assert fetch.call_count == count.call_count == call.call_count == 1
         again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
         assert again.quotations == run.quotations and call.call_count == 1
@@ -133,7 +137,8 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("damage", ["truncated", "unknown_id", "partial_coverage", "no_angle_citations", "bad_type"])
+@pytest.mark.parametrize("damage", ["truncated", "unknown_id", "partial_coverage", "no_angle_citations",
+                                    "missing_brief", "bad_type"])
 async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path: Path, damage: str) -> None:
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         text, usage = response(messages)
@@ -146,6 +151,8 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
             data["coverage"]["last_span_id"] = 1
         elif damage == "no_angle_citations":
             data["reading_angle"]["span_ids"] = []
+        elif damage == "missing_brief":
+            data["reading_angle"] = None
         else:
             data["abstain"] = "false"
         return json.dumps(data), usage
@@ -315,3 +322,113 @@ async def test_fetch_transport_failure_is_persisted_as_technical_pending(tmp_pat
     with patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=httpx.ConnectError("offline"))):
         result = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
     assert result.pending == 1 and not result.cards and result.abstained == 0
+
+
+@pytest.mark.asyncio
+async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separate_from_quote_archive(
+    tmp_path: Path,
+) -> None:
+    text = (
+        "The cache places hot keys in memory to reduce lookup latency.\n\n"
+        "The overview says cached values persist across a process restart.\n\n"
+        "The recovery section says the volatile cache loses every value on restart.\n\n"
+        "The latency measurements apply only to warm reads; rebuild time is excluded."
+    )
+    brief = (
+        "The cache speeds warm reads by keeping hot keys in memory, but the measurements exclude rebuild time. "
+        "The source leaves restart durability unresolved: its overview says values persist, while its recovery "
+        "section says the volatile cache loses every value on restart."
+    )
+
+    async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        instructions = messages[0]["content"]
+        assert "concrete mechanism, result, or tradeoff beyond" in instructions
+        assert "unresolved" in instructions and "invent a resolution" in instructions
+        assert "Retain the nominated material conditions in that prose" in instructions
+        assert "cache" not in instructions.lower()
+        assert "".join(span["text"] for span in payload(messages)["spans"]) == text
+        return json.dumps({
+            "coverage": {"first_span_id": 1, "last_span_id": 4},
+            "selected_span_ids": [1], "qualification_span_ids": [2, 3, 4],
+            "reading_angle": {"text": brief, "span_ids": [1, 2, 3, 4]}, "abstain": False,
+        }), {"finish_reason": "STOP"}
+
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+          patch("digest.llm.complete", side_effect=generate) as call):
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+    identity = next(iter(run.quotations))
+    assert run.cards[0].summary == f"Reading brief: {brief}"
+    assert all(part in run.quotations[identity] for part in text.split("\n\n"))
+    assert "Citations: [S1-S4]" in run.provenance[identity]
+    assert not any(part in run.provenance[identity] for part in text.split("\n\n"))
+    assert count.call_count == call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_v1_angle_cannot_be_reused_or_silently_rewritten(tmp_path: Path) -> None:
+    async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        return response(messages)
+
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=generate) as call):
+        ready = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        identity = next(iter(ready.quotations))
+        path = state_root(tmp_path) / f"{identity}.json"
+        envelope = json.loads(path.read_text())
+        envelope["payload"]["route"]["prompt_version"] = "source-passages-v1"
+        envelope["sha256"] = checksum(envelope["payload"])
+        legacy_bytes = json.dumps(envelope).encode()
+        path.write_bytes(legacy_bytes)
+        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+    assert held.pending == 1 and not held.cards and not held.provenance and call.call_count == 1
+    assert path.read_bytes() == legacy_bytes
+
+
+@pytest.mark.asyncio
+async def test_abstaining_later_page_qualification_remains_literal_in_published_presentation(tmp_path: Path) -> None:
+    from digest.main import _append_source_provenance, _primary_presentation
+
+    claim = "The cache accelerates every read."
+    condition = "The result applies only to the pilot deployment; production traffic was not evaluated."
+    text = claim + "\n\n" + condition
+    generated_pages = []
+
+    async def count(messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> int:
+        return 100 + 10 * len(payload(messages)["spans"])
+
+    async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        ids = [span["id"] for span in payload(messages)["spans"]]
+        generated_pages.append(ids)
+        is_qualification = ids == [2]
+        return json.dumps({
+            "coverage": {"first_span_id": ids[0], "last_span_id": ids[-1]},
+            "selected_span_ids": [] if is_qualification else [1],
+            "qualification_span_ids": [2] if is_qualification else [],
+            "reading_angle": None if is_qualification else {"text": claim, "span_ids": [1]},
+            "abstain": is_qualification,
+        }), {"finish_reason": "STOP"}
+
+    async def translate(combined: str, cards: list[Any], *_args: Any, **_kwargs: Any) -> Any:
+        assert all(condition not in card.summary for card in cards)
+        return combined, [replace(card, summary="Обзор: кэш ускоряет чтение.") for card in cards]
+
+    cfg = config()
+    cfg.translation = replace(cfg.translation, enabled=True, target_language="ru")
+    with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+          patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
+          patch("digest.llm.count_gemini_tokens", side_effect=count),
+          patch("digest.llm.complete", side_effect=generate),
+          patch("digest.translation.translate_primary_presentation", side_effect=translate) as translation):
+        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
+        _, translated = await _primary_presentation("", run.cards, cfg, tmp_path, False)
+        publication = _append_source_provenance(translated, run.provenance)
+    identity = next(iter(run.quotations))
+    assert generated_pages == [[1], [2]] and run.pending == 0 and len(run.cards) == 1
+    assert load_state(tmp_path, identity).pages[1].result.abstain is True
+    assert translation.call_count == 1
+    assert publication[0].summary.startswith("Обзор:")
+    assert "Conditions/limitations from the source (original text)" in publication[0].summary
+    assert f"[S2]\n{condition}" in publication[0].summary
+    assert claim in run.quotations[identity] and condition in run.quotations[identity]

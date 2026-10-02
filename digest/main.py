@@ -732,16 +732,16 @@ def _publication_intro(combined: str, report: BlindReviewReport | None, config: 
     return combined
 
 
-def _append_source_quotations(
-    cards: list[ArticleSummary], quotations: dict[str, str],
+def _append_source_provenance(
+    cards: list[ArticleSummary], provenance: dict[str, str],
 ) -> list[ArticleSummary]:
-    """Attach literal source passages only after generated prose is translated."""
+    """Attach short source/date/citation notes after all brief prose is translated."""
     from digest.radar.collector import article_hash
 
-    if not quotations:
+    if not provenance:
         return cards
     return [dataclasses.replace(card, summary="\n\n".join(part for part in (
-        card.summary, quotations[article_hash(card.title, card.link)],
+        card.summary, provenance[article_hash(card.title, card.link)],
     ) if part)) for card in cards]
 
 
@@ -840,7 +840,7 @@ def _reading_summary(result: BriefRun | None, config: Any) -> tuple[dict[str, st
     notice = (f"\n\nReading brief model: {config.reading_brief.provider}/{config.reading_brief.model}.\n"
               f"Reading briefs: {len(result.cards)} ready; {result.pending} pending; "
               f"{result.abstained} abstained. Oldest pending: {result.oldest_pending or 'none'}.")
-    return result.quotations, status, notice
+    return result.provenance, status, notice
 
 
 def _setup_reading_budget(config: Any, state_dir: Path) -> dict[str, str]:
@@ -1076,7 +1076,7 @@ async def _run(
     summaries, trends, top_articles, review_report, brief_run = await _analyze_publication(
         articles_by_category, config, Path(cache_dir), _t_run_start, dry_run or radar_only, set(confirmed_cache),
     )
-    quotations, reading_status, reading_notice = _reading_summary(brief_run, config)
+    provenance, reading_status, reading_notice = _reading_summary(brief_run, config)
     if reading_enabled and not top_articles:
         logger.info("No ready reading briefs; primary issue was not published.")
         _save_failed_run_stats(source_stats, fetch_metrics, cache_dir,
@@ -1102,7 +1102,7 @@ async def _run(
         combined, top_articles = await _primary_presentation(
             combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
         )
-        top_articles = _append_source_quotations(top_articles, quotations)
+        top_articles = _append_source_provenance(top_articles, provenance)
         _print_radar_presentation(combined, top_articles, config)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
@@ -1123,7 +1123,7 @@ async def _run(
     combined, top_articles, all_ranked = await _publication_presentation(
         combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
     )
-    top_articles = _append_source_quotations(top_articles, quotations)
+    top_articles = _append_source_provenance(top_articles, provenance)
 
     # Dry-run output
     if dry_run:
@@ -1145,6 +1145,7 @@ async def _run(
         review_report=review_report,
         irritator_status=irritator_status,
         sources_count=len(articles_by_category), articles_count=total_articles,
+        source_quotations=brief_run.quotations if brief_run is not None else None,
     )
     markdown_saved = md_path is not None
     markdown_path = str(md_path) if md_path else ""

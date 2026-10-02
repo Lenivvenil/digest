@@ -185,7 +185,15 @@ Whole-body input is preferred on the explicitly configured supported route. Exac
 counting uses the same Gemini generation payload, including system instructions;
 only verified context overflow creates a complete ordered page sweep. Quota failure
 never causes context splitting. Every page must finish before an article is ready,
-and all nominated material-qualification passages remain in the literal rendering.
+and all nominated material-qualification passages remain in the original-language
+archive appendix and evidence checkpoint. Publication carries the generated substantive
+brief with essential conditions and unresolved source contradictions, followed by
+short source/date/citation notes. Translation includes the entire generated brief;
+it does not rewrite the literal evidence archive. For multi-page sources, publication
+also retains every nominated material-qualification passage verbatim, including
+qualifications from abstaining pages. This deliberately trades compactness for visible
+cross-page conditions without adding a synthesis request. Prompt-version binding prevents
+reuse of older generated reading angles as current briefs.
 Neither full input coverage nor literal citation validation proves semantic completeness.
 The configured model's advertised context is not evidence of free-account entitlement.
 This path remains off pending the finite #55 quality/cost acceptance gate; no new live
