@@ -14,8 +14,8 @@ These historical records retain their original language and decision context. Cu
 English explanations are in the [architecture guide](../ARCHITECTURE.md) and canonical
 [domain overview](../domain/digest/overview.md).
 
-ADR0004 is proposed/implemented in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93),
-which is not merged into main. Its existence in a draft is not a release approval.
+ADR0004 was proposed in [PR #93](https://github.com/Lenivvenil/digest/pull/93), which was
+closed without merging. It is not an accepted main-branch implementation.
 
 Choose the next unused sequence number after checking open PRs. If the local claude-mini
 skill package is installed, its `next_adr_number.sh` helper can assist; that private tool
@@ -30,5 +30,6 @@ verification and ordinary translated output do not establish universal semantic 
 and computed priority influence are verified; daily retention limitations remain explicit.
 
 [0007](0007-compact-issue-reservation.md) records compact daily presentation and its
-coarse pre-publication reservation. Local implementation is under review; no automatic
-resend lifecycle or exactly-once guarantee is implied.
+coarse pre-publication reservation. Implementation is merged and runtime activation is
+deployed; ordinary-output acceptance remains open. No automatic resend lifecycle or
+exactly-once guarantee is implied.

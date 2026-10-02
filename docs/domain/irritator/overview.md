@@ -2,24 +2,25 @@
 
 _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written against commit `cc974f5`; issue-#53 fixes incorporated)._
 
-## Current status — 2026-10-01
+## Current status — 2026-10-02
 
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
 distinguishes those observations from owner requirements and later implementation.
-Productization [#94](https://github.com/Lenivvenil/digest/issues/94)
-is the sole active item. English documentation/onboarding #95 is merged; primary-post
-translation is under review while supplementary translation remains pending. Editorial quality
-[#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
-These scoped changes do not alter the production runtime or the external-search contract.
+English documentation and configurable primary/supplementary translation are implemented.
+[#94](https://github.com/Lenivvenil/digest/issues/94) still requires ordinary post-#102
+semantic and presentation acceptance. Earlier synthetic translation validation is limited
+historical evidence. [#55](https://github.com/Lenivvenil/digest/issues/55) remains the open
+full-source factual-quality requirement.
 
 Irritator's product purpose remains genuine external counter-evidence. An
 independent model opinion or a Skeptic paragraph is not an external counter-signal.
 The primary-first delivery recovery isolates optional-stage failures without
-removing that purpose. Statements below that the pipeline is wholly transient
+removing that purpose; compact mode retains actual supplementary results in the archive.
+Statements below that the pipeline is wholly transient
 or that nothing is persisted describe the April snapshot, not the later
-follow-up checkpoints; source-contract repairs remain queued under
-[#77](https://github.com/Lenivvenil/digest/issues/77).
+follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
+acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
 ---
 

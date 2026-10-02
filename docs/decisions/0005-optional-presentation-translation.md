@@ -1,6 +1,6 @@
 # ADR-0005: Opt-in translation of publication text
 
-Status: accepted and implemented in PR96; configured primary and supplementary translation deployed. Narrow real verification passed; general semantic fidelity is not claimed.
+Status: accepted and implemented; primary and supplementary translation are deployed. Earlier synthetic-fixture verification is limited historical evidence. Ordinary output using `presentation-translation-v2` still requires independent semantic acceptance under #94.
 
 ## Context and authority
 
@@ -43,9 +43,9 @@ structural checks. They do not prove preservation of every actor, condition, neg
 or qualification. The output identifies machine translation and its unverified
 semantic fidelity. Translation must never upgrade the verification status of a draft.
 
-Real representative translation needs independent source/canonical-text review before
-rollout. On failure, retain canonical English with visible degraded status. The #55
-factual quality gate remains independent of this presentation step.
+Independent comparison of ordinary post-#102 translated output with its canonical text
+and evidence remains required for #94 acceptance. On failure, retain canonical English
+with visible degraded status. The #55 full-source factual-quality requirement remains independent.
 
 ## Deliberate remaining scope
 
@@ -53,8 +53,8 @@ Main currently supports en/ru; arbitrary language support is not claimed. Canoni
 supplementary rendering was made lossless in #98, and the separate primary prefix
 repetition defect was fixed in #99. The same translation setting covers generated
 Irritator prose; raw reviews, literal source quotations, source titles and evidence
-remain canonical. Representative real translation fidelity and rollout verification
-are still open. No new delivery subsystem or inference framework is implied.
+remain canonical. Ordinary post-#102 semantic and final compact-output acceptance remain
+open. No new delivery subsystem or inference framework is implied.
 
 
 Normal completion includes the existing adapters' stop/STOP and Anthropic end_turn;

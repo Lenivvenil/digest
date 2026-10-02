@@ -57,15 +57,28 @@ article was understood. Read the [Digest domain overview](docs/domain/digest/ove
 The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
-[draft #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
 [#55](https://github.com/Lenivvenil/digest/issues/55) remains open: full-source support
 and useful factual output are current requirements, with no deferred-task status.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
 optional post translation, now implemented with explicit compatibility and recovery.
 The current priority is one compact daily edition within the documented
 [operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
-Schedule reduction alone does not provide the compact renderer. Presentation changes
-preserve the publication policy and do not enable the experimental editorial pipeline.
+Compact delivery is implemented and enabled in the runtime; ordinary-output acceptance
+remains open. Full-source reading briefs are an opt-in implementation whose quality and
+cost gate remains separate from presentation delivery.
+
+
+Full-source reading briefs are off by default. The `reading_brief` setting requires
+English canonical text, review-led selection, and an explicitly configured model
+route. The implemented exact-count profile is Gemini 3.8 Flash; unknown profiles
+remain technical pending. Advertised context does not establish your free-account
+quota. Pending selected articles retain complete-source progress and resume on later
+runs, including empty-feed days. Source quotations remain in their original language;
+only generated reading guidance is translated. Literal citations and completed input
+coverage do not certify that every important qualification was recognized. The finite
+quality and throughput gate in #55 remains open; see the
+[request envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -495,6 +508,12 @@ failure, even when Markdown can be saved.
 Use the package version, immutable commit and [changelog](CHANGELOG.md) together when
 upgrading; a historical release entry is not proof that every current quality gate has
 passed. Keep the previous engine pin and compatible runtime state for rollback.
+
+Before rolling back, verify that the chosen engine/configuration can interpret retained
+runtime state. Preserve delivery receipts, dedup/feedback state, translation records and
+compact issue reservations. Hold publication if compatibility is uncertain or an issue
+is unresolved; inspect confirmed and unknown delivery outcomes before proceeding.
+Rolling back is not a reason to reset state or resend an existing edition.
 
 **No software license grant is currently supplied.** This repository contains no
 LICENSE file or declared package license. This is the current release state, not an

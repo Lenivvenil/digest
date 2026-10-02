@@ -56,3 +56,13 @@ obsidian:
 translation:
   enabled: false
   target_language: ru
+
+# Full-source reading is opt-in; keep off until quality/cost acceptance.
+# Enabling requires canonical English, review.enabled + review.review_led_only,
+# and an existing explicitly configured route. No fallback or new credentials.
+reading_brief:
+  enabled: false
+  provider: gemini
+  model: YOUR_GEMINI_MODEL_ID
+  max_output_tokens: 2048
+  max_requests_per_run: 12

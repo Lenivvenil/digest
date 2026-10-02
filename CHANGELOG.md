@@ -2,6 +2,22 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Opt-in source-cited reading briefs reuse safe full-article acquisition, exact request
+  counting, immutable source spans and durable selected-work progress. Literal passage
+  checks are not semantic certification; the finite quality/cost gate remains open.
+
+- English current documentation and safe onboarding example; environment credentials
+  are explicitly loaded by the operator. Historical records retain their original language.
+- Opt-in generated-text translation with an explicitly configured provider/model,
+  bounded calls/time/output, canonical fallback and durable content/target/model/prompt-bound
+  records. Absent configuration preserves legacy generation; enabled translation requires
+  canonical English. Prompt v2 explicitly preserves technical data-flow direction.
+  Ordinary post-v2 semantic acceptance remains open.
+- Compact Telegram editions preserve selected text, URLs and article identities across
+  UTF-16-bounded chunks, with once-per-edition notices and a durable pre-publication
+  reservation. Only confirmed chunk coverage earns delivery attribution; unknown outcomes
+  hold automatic publication. Optional-stage results remain archived.
+
 - Opt-in blind evidence review: immutable RSS snapshot and identical prompts for
   explicit primary/secondary model slots, no implicit provider fallback, optional
   third family only on validated selection disagreement. Strict source-ID/quote

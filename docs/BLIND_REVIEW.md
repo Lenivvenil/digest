@@ -1,12 +1,12 @@
 # Blind evidence review (opt-in experiment)
 
 This runbook describes the RSS-review code available on main. Full-source enrichment
-in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93) is not installed by these
+in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not installed by these
 instructions. Editorial quality remains open in [#55](https://github.com/Lenivvenil/digest/issues/55).
-Optional primary presentation translation is documented in
-[README](../README.md#language-and-optional-primary-post-translation) and
-[ADR-0005](decisions/0005-optional-presentation-translation.md). Its translation-fidelity
-checks are separate from #55's proposed editorial pipeline. Current work order is
+Optional primary and supplementary presentation translation is documented in
+[README](../README.md#language-and-optional-post-translation) and
+[ADR-0005](decisions/0005-optional-presentation-translation.md). Its acceptance checks
+remain separate from #55's full-source factual-quality requirement. Current work order is
 tracked in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 `review.enabled` adds provider-neutral independent selection to the existing RSS,
