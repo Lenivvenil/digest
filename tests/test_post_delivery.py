@@ -563,3 +563,28 @@ async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tm
     record = json.loads(_marker(checkpoint).read_text())
     assert record["supplement_status"] == "archive_only" and record["stage_status"] == "incomplete"
     assert _markdown(checkpoint).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path, invalid: bool) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    payload["full_source_required"] = True
+    if invalid:
+        payload["full_source_evidence"] = {"invalid": "incomplete checkpoint"}
+    checkpoint.write_text(json.dumps(payload))
+    assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    with (patch("httpx.AsyncClient", return_value=_client_context()),
+          patch("digest.llm.complete", AsyncMock(side_effect=AssertionError("No RSS fallback"))) as model,
+          patch("digest.post_delivery._send_supplement", AsyncMock(return_value="sent"))):
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+    model.assert_not_called()
+    result = json.loads(_result(checkpoint).read_text())
+    assert result["status"] == "incomplete"
+    assert result["diagnostics"][0]["error"] == "FullSourceEvidencePending"
+    assert "selected literal full-source passages" in _markdown(checkpoint).read_text()
+    marker = json.loads(_marker(checkpoint).read_text())
+    assert marker["full_source_required"] is True
+    if invalid:
+        assert marker["full_source_error"] == "ValueError"

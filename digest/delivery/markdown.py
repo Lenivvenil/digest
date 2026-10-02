@@ -35,16 +35,18 @@ def _build_frontmatter(
     )
 
 
-def _build_top_articles_section(top_articles: list[Any]) -> str:
+def _build_top_articles_section(top_articles: list[Any], *, literal_passages: bool = False) -> str:
     """Build Obsidian callout block for per-article LLM summaries."""
     if not top_articles:
         return ""
 
     lines = ["\n\n## Top Articles\n"]
     for a in top_articles:
+        summary = ("\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages
+                   else f"> {a.summary}")
         lines.append(
             f"> [!note] [{a.title}]({a.link})\n"
-            f"> {a.summary}\n"
+            f"{summary}\n"
             f"> *{a.source} · {a.category}*\n"
         )
     return "\n".join(lines)
@@ -92,7 +94,9 @@ def write_digest(
     content = f"{frontmatter}\n{summary}\n"
 
     if top_articles:
-        content += _build_top_articles_section(top_articles)
+        content += _build_top_articles_section(
+            top_articles, literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
+        )
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)

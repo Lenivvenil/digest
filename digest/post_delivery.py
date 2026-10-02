@@ -29,6 +29,8 @@ from digest.review_trial import _ALLOWED_MODELS
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
+    from digest.review import EvidenceBundle
+    from digest.review_checkpoint import FullSourceEvidence
 
 
 _SUPPLEMENT_DISPATCH_SECONDS = 30.0
@@ -89,7 +91,9 @@ def _render_result(
 ) -> str:
     lines = ['# Irritator: bounded post-delivery supplement', f'Status: {result.status}',
              f'Original evidence bundle: {result.bundle_id}',
-             'Limited coverage: at most one narrative; RSS excerpts are not full-article verification.']
+             result.coverage]
+    if result.source_bundle_id is not None:
+        lines.append(f'Full-source passage bundle: {result.source_bundle_id}')
     for narrative in result.narratives:
         lines.append(f'\nNarrative checked: {narrative.claim}')
     for ranked in result.ranked_signals:
@@ -98,6 +102,31 @@ def _render_result(
         lines.append('\n' + notice)
     lines.append('\n## Stage diagnostics\n' + json.dumps(asdict(canonical or result), ensure_ascii=False, indent=2))
     return '\n'.join(lines) + '\n'
+
+
+def _coverage_notice(result: EvidenceIrritatorResult, russian: bool) -> str:
+    from digest.irritator.evidence_stage import FULL_SOURCE_COVERAGE
+
+    if result.coverage == FULL_SOURCE_COVERAGE:
+        return ('Охват ограничен выбранными отрывками полных статей; это не независимая проверка всех утверждений.'
+                if russian else 'Limited coverage; selected full-source passages, not verification of every claim.')
+    return ('Охват ограничен; RSS-выдержки, не полные статьи.' if russian
+            else 'Limited coverage; RSS excerpts, not full articles.')
+
+
+def _source_provenance(
+    checkpoint: Path, bundle: EvidenceBundle, config: Config, content: bytes,
+) -> tuple[FullSourceEvidence | None, bool, str]:
+    from digest.review_checkpoint import load_full_source_evidence
+
+    payload = json.loads(content)
+    required = (payload.get('full_source_required', False) is not False or 'full_source_evidence' in payload
+                or getattr(getattr(config, 'reading_brief', None), 'enabled', False))
+    try:
+        source = load_full_source_evidence(checkpoint, bundle, config)
+    except (ValueError, TypeError, KeyError) as exc:
+        return None, True, type(exc).__name__
+    return source, required, ''
 
 
 async def _send_supplement(result: EvidenceIrritatorResult, config: Config, *, notice: str = "") -> str:
@@ -112,9 +141,7 @@ async def _send_supplement(result: EvidenceIrritatorResult, config: Config, *, n
     outcome = {'complete': 'проверка выполнена', 'empty': 'проверка выполнена, контрсигналов не найдено',
                'incomplete': 'проверка неполная', 'error': 'проверка не выполнена'}
     status = outcome.get(result.status, 'проверка неполная') if russian else result.status
-    lines = [header, status,
-             'Охват ограничен; RSS-выдержки, не полные статьи.' if russian
-             else 'Limited coverage; RSS excerpts, not full articles.']
+    lines = [header, status, _coverage_notice(result, russian)]
     if result.narratives:
         label = "Проверяем: " if russian else "Narrative checked: "
         lines.extend(label + narrative.claim for narrative in result.narratives)
@@ -151,6 +178,9 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
     bundle, _reviews = load_review_checkpoint(checkpoint, config)
     if source_bytes != checkpoint.read_bytes():
         raise ValueError("Checkpoint changed while being read.")
+    source_evidence, require_full_source, source_error = _source_provenance(checkpoint, bundle, config, source_bytes)
+    if source_bytes != checkpoint.read_bytes():
+        raise ValueError("Checkpoint changed while being read.")
     if (type(record.get('schema_version')) is not int or record['schema_version'] != 1
             or record.get('execute_started')
             or record.get('checkpoint') != checkpoint.relative_to(Path.cwd().resolve()).as_posix()
@@ -158,13 +188,21 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
             or record.get('checkpoint_sha256') != hashlib.sha256(source_bytes).hexdigest()):
         raise ValueError('Invalid, changed or already executed post-delivery checkpoint.')
     record['execute_started'] = datetime.now(UTC).isoformat()
+    if require_full_source:
+        record['full_source_required'] = True
+        if source_error:
+            record['full_source_error'] = source_error
     atomic_json_write(marker, record)
     translation_enabled = config.translation.enabled and config.translation.target_language != 'en'
     extra = min(config.translation.timeout_seconds, 45.0) if translation_enabled else 0.0
     processing_deadline = time.monotonic() + MAX_SECONDS + extra
     try:
         async with httpx.AsyncClient() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            if require_full_source or source_evidence is not None:
+                result = await run_evidence_irritator(bundle, config, client, source_evidence=source_evidence,
+                                                     require_full_source=require_full_source)
+            else:
+                result = await run_evidence_irritator(bundle, config, client)
     except Exception as exc:
         # Unexpected implementation failures still leave an explicit durable outcome.
         payload = {'status': 'error', 'bundle_id': bundle.bundle_id, 'error': type(exc).__name__,

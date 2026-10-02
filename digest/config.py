@@ -152,6 +152,7 @@ class ReviewConfig:
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
+    select_from_entire_packet: bool = False  # Derived from reading_brief.enabled, not a separate setting.
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,17 @@ class TranslationConfig:
     max_input_chars: int = 12000
 
 
+@dataclass(frozen=True)
+class ReadingBriefConfig:
+    """Opt-in full-source reading briefs on an explicitly configured route."""
+
+    enabled: bool = False
+    provider: str = ""
+    model: str = ""
+    max_output_tokens: int = 2048
+    max_requests_per_run: int = 12
+
+
 @dataclass
 class Config:
     llm: LLMConfig
@@ -182,6 +194,7 @@ class Config:
     )
     review: ReviewConfig = field(default_factory=ReviewConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
+    reading_brief: ReadingBriefConfig = field(default_factory=ReadingBriefConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -710,7 +723,7 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only, select_from_entire_packet=False, **values,
     )
 
 
@@ -769,6 +782,39 @@ def _load_translation(
                              timeout_seconds=float(timeout), **values)
 
 
+def _load_reading_brief(
+    data: dict[str, Any], llm: LLMConfig, radar: RadarConfig, review: ReviewConfig,
+) -> ReadingBriefConfig:
+    section = data.get("reading_brief", {})
+    if not isinstance(section, dict):
+        raise ValueError("reading_brief must be a mapping.")
+    enabled = section.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("reading_brief.enabled must be a boolean.")
+    provider, model = section.get("provider", ""), section.get("model", "")
+    if not isinstance(provider, str) or not isinstance(model, str):
+        raise ValueError("reading_brief provider/model must be strings.")
+    values: dict[str, int] = {}
+    for key, default, lower, upper in (("max_output_tokens", 2048, 256, 4096),
+                                       ("max_requests_per_run", 12, 1, 20)):
+        value = section.get(key, default)
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError(f"reading_brief.{key} must be an integer between {lower} and {upper}.")
+        values[key] = value
+    if enabled:
+        if radar.language != "en" or not review.enabled or not review.review_led_only:
+            raise ValueError("Reading briefs require canonical English and review-led primary selection.")
+        configured = {(p.name, p.model) for p in llm.providers}
+        review_section = data.get("review", {})
+        for slot in ("primary", "secondary", "tie_breaker"):
+            route = getattr(review, slot)
+            if isinstance(review_section.get(slot), dict) and route is not None:
+                configured.add((route.provider, route.model))
+        if not provider or not model or (provider, model) not in configured:
+            raise ValueError("Reading briefs require an explicit existing configured provider/model route.")
+    return ReadingBriefConfig(enabled=enabled, provider=provider, model=model, **values)
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -800,6 +846,8 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     adaptive = _load_adaptive(data)
     review = _load_review(data)
     translation = _load_translation(data, llm, radar, review)
+    reading_brief = _load_reading_brief(data, llm, radar, review)
+    review.select_from_entire_packet = reading_brief.enabled
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -819,4 +867,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         adaptive=adaptive,
         review=review,
         translation=translation,
+        reading_brief=reading_brief,
     )

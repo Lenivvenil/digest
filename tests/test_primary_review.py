@@ -238,3 +238,54 @@ async def test_non_delivery_modes_never_publish_checkpoint(args: list[str]) -> N
     ):
         assert await main(args) == 0
     publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reading_selection_accepts_entire_packet_without_expanding_evidence() -> None:
+    from dataclasses import replace
+
+    from digest.config import ReadingBriefConfig
+    from digest.review import build_evidence_bundle, build_review_messages
+    from tests.factories import make_article
+
+    config = fixture_config()
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+    config.review.select_from_entire_packet = True
+    config.review.max_selections = 2
+    articles = {"AI": [replace(make_article(), title=f"Useful {i}", link=f"https://example.com/{i}") for i in range(7)]}
+    bundle = build_evidence_bundle(articles, config.review)
+    assert len(bundle.items) == 7
+    assert json.loads(build_review_messages(bundle, config.review, "en")[1]["content"])["max_selections"] == 7
+
+    async def select(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        data = json.loads(messages[1]["content"])
+        return json.dumps({"selections": [{"evidence_id": item["evidence_id"], "reason": "Useful context.",
+                                           "quote": item["title"], "confidence": "medium"}
+                                          for item in data["evidence"]["items"]], "limitations": []}), {
+                                              "finish_reason": "STOP"}
+
+    with patch("digest.review.complete", side_effect=select):
+        report = await run_primary_review(articles, config)
+    assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 7
+    assert report.evidence == bundle
+    config.review.select_from_entire_packet = False
+    assert json.loads(build_review_messages(bundle, config.review, "en")[1]["content"])["max_selections"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", [None, "MAX_TOKENS"])
+async def test_reading_primary_incomplete_completion_never_implies_editorial_rejection(finish: str | None) -> None:
+    from digest.config import ReadingBriefConfig
+
+    config = fixture_config()
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+
+    async def select(*args: Any, **kwargs: Any) -> Any:
+        text, usage = await fixture_response(*args, **kwargs)
+        return text, usage | {"finish_reason": finish}
+
+    with patch("digest.review.complete", side_effect=select):
+        report = await run_primary_review(fixture_articles(), config)
+    assert all(review.status == "invalid" and not review.selections for review in report.reviews)
+    assert all(review.error == "incomplete_selection_completion" for review in report.reviews)
+    assert not primary_cards(report, fixture_articles(), "en")

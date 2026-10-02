@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import json
 import logging
 import os
 import re
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
     from digest.radar.collector import Article, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
+    from digest.reading_brief import BriefRun
     from digest.review import BlindReviewReport
     from digest.source_scorer import SourceStats
 
@@ -130,6 +132,10 @@ class RunStats:
     required_delivery_failed: bool = False
     review_status: str = "not_requested"
     review_checkpoint: str = ""
+    reading_pending: int | None = 0
+    reading_abstained: int | None = 0
+    reading_oldest_pending: str | None = None
+    reading_state: str = "not_requested"
 
 
 async def _send_status_message(text: str) -> bool:
@@ -198,6 +204,12 @@ def _print_stats(stats: RunStats) -> None:
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
     print(f"Blind review:       {stats.review_status}")
+    if stats.reading_state == "unavailable":
+        print("Reading briefs:    unavailable; saved backlog count unknown")
+    elif stats.reading_pending or stats.reading_abstained:
+        print(f"Reading briefs:    {stats.reading_pending} pending / {stats.reading_abstained} abstained")
+        if stats.reading_oldest_pending:
+            print(f"Oldest pending:    {stats.reading_oldest_pending}")
     if stats.telegram_partial:
         print("Telegram sent:      partial (some chunks failed)")
     else:
@@ -640,7 +652,8 @@ async def _analyze_articles(
 
 def _print_radar_presentation(combined: str, cards: list[ArticleSummary], config: Any) -> None:
     print(combined)
-    if getattr(getattr(config, "translation", None), "enabled", False):
+    if (getattr(getattr(config, "translation", None), "enabled", False)
+            or getattr(getattr(config, "reading_brief", None), "enabled", False)):
         for card in cards:
             print(f"\n{card.title}\n{card.link}\n{card.summary}")
 
@@ -709,16 +722,195 @@ async def _collect_run_feedback(
 
 
 def _publication_intro(combined: str, report: BlindReviewReport | None, config: Any) -> str:
-    if getattr(config.telegram, "delivery_mode", "cards") == "compact" and report is not None:
+    if getattr(getattr(config, "reading_brief", None), "enabled", False):
+        return combined
+    if (getattr(config.telegram, "delivery_mode", "cards") == "compact"
+            and report is not None and report.reviews):
         from digest.review import primary_notice
 
         return primary_notice(report, config.radar.language) + "\n\n" + combined
     return combined
 
 
+def _append_source_quotations(
+    cards: list[ArticleSummary], quotations: dict[str, str],
+) -> list[ArticleSummary]:
+    """Attach literal source passages only after generated prose is translated."""
+    from digest.radar.collector import article_hash
+
+    if not quotations:
+        return cards
+    return [dataclasses.replace(card, summary="\n\n".join(part for part in (
+        card.summary, quotations[article_hash(card.title, card.link)],
+    ) if part)) for card in cards]
+
+
+async def _enrich_reading_briefs(
+    selected: list[Article], config: Any, state_dir: Path, deadline: float, preview: bool,
+    confirmed_history: set[str],
+) -> BriefRun:
+    from digest.reading_brief import enrich_selected_cards, reconcile_briefs_delivered
+
+    if not preview:
+        reconcile_briefs_delivered(state_dir, confirmed_history)
+        return await enrich_selected_cards(selected, config, state_dir, deadline)
+    # Preview can use existing progress, but cannot consume or change durable work.
+    import shutil
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory(prefix="digest-reading-preview-") as temporary:
+        preview_root = Path(temporary)
+        existing = state_dir / "reading_briefs"
+        if existing.exists() and not existing.is_symlink():
+            shutil.copytree(existing, preview_root / "reading_briefs", symlinks=True)
+        reconcile_briefs_delivered(preview_root, confirmed_history)
+        return await enrich_selected_cards(selected, config, preview_root, deadline)
+
+
+def _confirmed_reading_cache(state_dir: Path) -> dict[str, str]:
+    """Read the durable delivery ledger before collection adds provisional entries."""
+    path = state_dir / "seen_articles.json"
+    if path.is_symlink():
+        raise ValueError("Reading brief reconciliation requires a plain delivery ledger.")
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or any(
+        not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{32}", identity)
+        or not isinstance(stamp, str) for identity, stamp in payload.items()
+    ):
+        raise ValueError("Reading brief reconciliation requires a valid delivery ledger.")
+    return payload
+
+
+async def _analyze_publication(
+    articles: dict[str, list[Article]], config: Any, state_dir: Path, started: float, preview: bool,
+    confirmed_history: set[str],
+) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None, BriefRun | None]:
+    """Keep the existing RSS selection report separate from full-source reading."""
+    if not getattr(getattr(config, "reading_brief", None), "enabled", False):
+        summaries, trends, cards, report = await _analyze_articles(articles, config)
+        return summaries, trends, cards, report, None
+    from digest.radar.collector import article_hash
+    from digest.review import SCHEMA_VERSION, BlindReviewReport, build_evidence_bundle
+
+    logger = logging.getLogger(__name__)
+    translation = getattr(config, "translation", None)
+    presentation_seconds = (translation.timeout_seconds if translation is not None and translation.enabled
+                            and translation.target_language != "en" else 0.0)
+    deadline = started + 360.0 - presentation_seconds - 45.0
+    selected_cards: list[ArticleSummary] = []
+    report = None
+    if articles:
+        try:
+            async with asyncio.timeout_at(deadline):
+                _, _, selected_cards, report = await _analyze_articles(articles, config)
+        except Exception as exc:
+            logger.warning("Primary selection unavailable (%s); checking saved reading briefs", type(exc).__name__)
+    identities = {article_hash(card.title, card.link) for card in selected_cards}
+    selected = [article for group in articles.values() for article in group
+                if article_hash(article.title, article.link) in identities]
+    try:
+        result = await _enrich_reading_briefs(selected, config, state_dir, deadline, preview, confirmed_history)
+    except Exception as exc:
+        logger.warning("Reading brief stage unavailable (%s); saved backlog count unknown, no issue sent",
+                       type(exc).__name__)
+        return [], None, [], report, None
+    logger.info("Reading briefs: %d ready, %d pending, %d abstained; oldest pending: %s",
+                len(result.cards), result.pending, result.abstained, result.oldest_pending or "none")
+    if report is None and result.cards:
+        ready_articles: dict[str, list[Article]] = {}
+        for article in result.articles:
+            ready_articles.setdefault(article.category, []).append(article)
+        report = BlindReviewReport(
+            SCHEMA_VERSION, build_evidence_bundle(ready_articles, config.review), [],
+            "incomplete", None, [], "pending_independent_review",
+        )
+    return [], None, result.cards, report, result
+
+
+def _reading_summary(result: BriefRun | None, config: Any) -> tuple[dict[str, str], dict[str, Any], str]:
+    status: dict[str, Any] = {"pending": 0, "abstained": 0, "oldest_pending": None, "state": "not_requested"}
+    if result is None:
+        if getattr(getattr(config, "reading_brief", None), "enabled", False):
+            status.update(state="unavailable", pending=None, abstained=None)
+        return {}, status, ""
+    status.update(pending=result.pending, abstained=result.abstained, oldest_pending=result.oldest_pending,
+                  state="available")
+    notice = (f"\n\nReading brief model: {config.reading_brief.provider}/{config.reading_brief.model}.\n"
+              f"Reading briefs: {len(result.cards)} ready; {result.pending} pending; "
+              f"{result.abstained} abstained. Oldest pending: {result.oldest_pending or 'none'}.")
+    return result.quotations, status, notice
+
+
+def _setup_reading_budget(config: Any, state_dir: Path) -> dict[str, str]:
+    if not getattr(getattr(config, "reading_brief", None), "enabled", False):
+        return {}
+    from digest.llm import set_request_limit
+
+    config.llm.max_retries = 0
+    set_request_limit(config, config.reading_brief.max_requests_per_run)
+    return _confirmed_reading_cache(state_dir)
+
+
+def _reading_backlog_after_feed_failure(
+    error: Exception, enabled: bool, confirmed_cache: dict[str, str],
+) -> tuple[dict[str, list[Article]], dict[str, str]]:
+    if not enabled:
+        raise error
+    logging.getLogger(__name__).warning("All feeds failed; continuing saved reading briefs without fresh selection.")
+    return {}, dict(confirmed_cache)
+
+
+def _acknowledge_reading_delivery(enabled: bool, state_dir: Path, delivered: set[str]) -> None:
+    if enabled and delivered:
+        from digest.reading_brief import mark_briefs_delivered
+
+        mark_briefs_delivered(state_dir, delivered)
+
+
+def _committed_delivery_cache(
+    cache: dict[str, str], collected: set[str], delivered: set[str], reading_enabled: bool,
+) -> dict[str, str]:
+    """Commit confirmed coverage only, including resumed articles absent today's RSS."""
+    committed = {identity: stamp for identity, stamp in cache.items()
+                 if identity not in collected or identity in delivered}
+    if reading_enabled:
+        committed.update({identity: datetime.now(tz=timezone.utc).isoformat()
+                          for identity in delivered if identity not in committed})
+    return committed
+
+
+def _archive_source_evidence(
+    markdown: Path | None, report: BlindReviewReport | None, cards: list[ArticleSummary], state_dir: Path,
+    reading_status: dict[str, Any], enabled: bool,
+) -> None:
+    """Bind optional full-source provenance without changing the RSS review report."""
+    from digest._util import atomic_json_write
+    from digest.radar.collector import article_hash
+    from digest.review_checkpoint import build_full_source_evidence
+
+    if not enabled or markdown is None or report is None:
+        return
+    payload = dataclasses.asdict(report)
+    payload.update(full_source_required=True, reading_brief_status=reading_status)
+    try:
+        source = build_full_source_evidence(
+            report.evidence, state_dir, [article_hash(card.title, card.link) for card in cards],
+        )
+        payload["full_source_evidence"] = dataclasses.asdict(source)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        # Primary quoted briefs stay usable; optional analysis must abstain rather
+        # than silently reverting to the RSS excerpts if provenance is unavailable.
+        payload["full_source_error"] = type(exc).__name__
+        logging.getLogger(__name__).warning("Full-source checkpoint unavailable (%s)", type(exc).__name__)
+    atomic_json_write(markdown.with_suffix(".review.json"), payload)
+
+
 async def _legacy_delivery_extras(
     cards: list[ArticleSummary], ranked: list[Any], irritator_status: IrritatorStatus,
     review_report: BlindReviewReport | None, config: Any, review_led_only: bool, nano_status: str,
+    reading_notice: str = "",
 ) -> None:
     from digest.delivery import send_counter_signals
     from digest.delivery.telegram import _send_chunk, escape_markdownv2
@@ -727,6 +919,7 @@ async def _legacy_delivery_extras(
         await _notify_skipped_cards(cards)
         await send_counter_signals(ranked, config, irritator_status=irritator_status)
     nano_status += _review_status_line(review_report, config.radar.language)
+    nano_status += reading_notice
     if review_led_only:
         nano_status += "\n" + irritator_status.text
     token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -814,6 +1007,9 @@ async def _run(
     config = _apply_pending_approvals(
         config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
     )
+    reading_enabled = getattr(getattr(config, "reading_brief", None), "enabled", False)
+    reading_status: dict[str, Any] = {"pending": 0, "abstained": 0, "oldest_pending": None, "state": "not_requested"}
+    confirmed_cache = _setup_reading_budget(config, Path(cache_dir))
     feeds_count = len(config.enabled_sources)
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
@@ -839,12 +1035,16 @@ async def _run(
         articles_by_category, cache = await collect(
             run_config, effective_priorities=effective_priorities, fetch_metrics=fetch_metrics,
         )
-    except AllFeedsFailedError:
+    except AllFeedsFailedError as exc:
+        from copy import deepcopy
+
+        # Persist failed-feed health now; a continuing run records these same
+        # observations once when finalizing, rather than double-counting them.
         _save_failed_run_stats(
-            source_stats, fetch_metrics, cache_dir,
+            deepcopy(source_stats) if reading_enabled else source_stats, fetch_metrics, cache_dir,
             {s.name for s in config.enabled_sources}, dry_run=dry_run,
         )
-        raise
+        articles_by_category, cache = _reading_backlog_after_feed_failure(exc, reading_enabled, confirmed_cache)
 
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
@@ -854,9 +1054,12 @@ async def _run(
             telegram_sent=False, telegram_partial=False,
             markdown_saved=False, markdown_path="",
             feedback_collected=feedback_collected,
+            reading_pending=reading_status["pending"], reading_abstained=reading_status["abstained"],
+            reading_oldest_pending=reading_status["oldest_pending"],
+            reading_state=reading_status["state"],
         )
 
-    if not articles_by_category:
+    if not articles_by_category and not reading_enabled:
         logger.info("No new articles found. Nothing to summarize.")
         if not dry_run:
             _save_delivery_cache(cache, compact, cache_dir)
@@ -870,8 +1073,17 @@ async def _run(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
-    summaries, trends, top_articles, review_report = await _analyze_articles(articles_by_category, config)
-    if not summaries and not top_articles and review_report is None:
+    summaries, trends, top_articles, review_report, brief_run = await _analyze_publication(
+        articles_by_category, config, Path(cache_dir), _t_run_start, dry_run or radar_only, set(confirmed_cache),
+    )
+    quotations, reading_status, reading_notice = _reading_summary(brief_run, config)
+    if reading_enabled and not top_articles:
+        logger.info("No ready reading briefs; primary issue was not published.")
+        _save_failed_run_stats(source_stats, fetch_metrics, cache_dir,
+                               {s.name for s in config.enabled_sources}, dry_run=dry_run or radar_only)
+        return _empty_stats(total_articles)
+    contributing_sources = sorted({card.source for card in top_articles}) if reading_enabled else contributing_sources
+    if not reading_enabled and not summaries and not top_articles and review_report is None:
         logger.error("All category summarizations failed.")
         _save_failed_run_stats(
             source_stats, fetch_metrics, cache_dir,
@@ -884,11 +1096,13 @@ async def _run(
 
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
     combined = _publication_intro(combined, review_report, config)
+    combined += reading_notice
 
     if radar_only:
         combined, top_articles = await _primary_presentation(
             combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
         )
+        top_articles = _append_source_quotations(top_articles, quotations)
         _print_radar_presentation(combined, top_articles, config)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
@@ -909,6 +1123,7 @@ async def _run(
     combined, top_articles, all_ranked = await _publication_presentation(
         combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
     )
+    top_articles = _append_source_quotations(top_articles, quotations)
 
     # Dry-run output
     if dry_run:
@@ -933,6 +1148,7 @@ async def _run(
     )
     markdown_saved = md_path is not None
     markdown_path = str(md_path) if md_path else ""
+    _archive_source_evidence(md_path, review_report, top_articles, Path(cache_dir), reading_status, reading_enabled)
 
     telegram_sent = False
     telegram_partial = False
@@ -967,6 +1183,7 @@ async def _run(
                 )
                 await _legacy_delivery_extras(
                     top_articles, all_ranked, irritator_status, review_report, config, review_led_only, nano_status,
+                    reading_notice,
                 )
 
         except Exception as exc:
@@ -988,17 +1205,14 @@ async def _run(
         for articles in articles_by_category.values() for a in articles
     }
     # Preserve old entries, but commit new entries only for confirmed output.
-    delivered_cache = {
-        key: timestamp for key, timestamp in cache.items()
-        if key not in collected_hashes or key in delivered_hashes
-    }
+    delivered_cache = _committed_delivery_cache(cache, collected_hashes, delivered_hashes, reading_enabled)
     _record_source_stats(source_stats, fetch_metrics, articles_by_category, delivered_hashes)
     delivery_ok = card_delivery.sent > 0 or markdown_saved
     sources_promoted = 0
     sources_demoted = 0
 
     if delivery_ok:
-        _save_delivery_cache(delivered_cache, compact, cache_dir)
+        _save_delivery_cache(delivered_cache, compact or reading_enabled, cache_dir)
 
         if config.adaptive.enabled:
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
@@ -1015,10 +1229,11 @@ async def _run(
         feedback_store.article_source_map = saved_article_source_map
 
     if feedback_usable:
-        save_feedback(feedback_store, cache_dir, strict=compact)
+        save_feedback(feedback_store, cache_dir, strict=compact or reading_enabled)
     save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
     save_source_category_map(config.enabled_sources, cache_dir)
+    _acknowledge_reading_delivery(reading_enabled, Path(cache_dir), delivered_hashes)
     _finish_compact(issue_guard, issue_delivery)
 
     return RunStats(
@@ -1031,6 +1246,9 @@ async def _run(
         required_delivery_failed=telegram_required and not telegram_sent,
         review_status=review_report.status if review_report is not None else "not_requested",
         review_checkpoint=str(md_path.with_suffix(".review.json")) if md_path and review_report is not None else "",
+        reading_pending=reading_status["pending"], reading_abstained=reading_status["abstained"],
+        reading_oldest_pending=reading_status["oldest_pending"],
+        reading_state=reading_status["state"],
     )
 
 
