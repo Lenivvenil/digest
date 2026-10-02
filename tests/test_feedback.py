@@ -16,6 +16,7 @@ import httpx
 import pytest
 import respx
 
+from digest.discovery import PendingSource, proposal_binding, save_pending
 from digest.feedback import (
     ArticleFeedback,
     FeedbackStore,
@@ -580,7 +581,10 @@ async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) ->
     save_feedback(store, str(tmp_path))
     original = deepcopy(store)
     original_bytes = (tmp_path / "feedback.json").read_bytes()
-    _poll([_callback(1), _message(2, "/start vote_g_abcd1234", 2)])
+    proposal = PendingSource("New feed", "https://example.com/new", "Tech", datetime.now(timezone.utc).isoformat())
+    save_pending([proposal], str(tmp_path), strict=True)
+    _poll([_callback(1), _message(2, "/start vote_g_abcd1234", 2),
+           _message(3, f"/source ok {proposal.source_hash}", 3)])
     with patch("digest.feedback.atomic_json_write", side_effect=OSError("disk full")):
         with pytest.raises(OSError):
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
@@ -769,10 +773,16 @@ def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
 
 
 def test_source_decisions_round_trip(tmp_path: Path) -> None:
-    store = FeedbackStore(source_decisions={"abc12345": "approved", "def67890": "rejected"})
+    store = FeedbackStore(
+        source_decisions={"abc12345": "approved", "def67890": "rejected"},
+        source_decision_bindings={"abc12345": "a" * 64, "def67890": "b" * 64},
+        pending_replies=[PendingReply("source", "source_decisions"), PendingReply("source", "unknown_source")],
+    )
     save_feedback(store, str(tmp_path))
     loaded = load_feedback(str(tmp_path))
     assert loaded.source_decisions == {"abc12345": "approved", "def67890": "rejected"}
+    assert loaded.source_decision_bindings == store.source_decision_bindings
+    assert loaded.pending_replies == store.pending_replies
 
 
 def test_source_decisions_default_empty(tmp_path: Path) -> None:
@@ -780,6 +790,7 @@ def test_source_decisions_default_empty(tmp_path: Path) -> None:
     save_feedback(store, str(tmp_path))
     loaded = load_feedback(str(tmp_path))
     assert loaded.source_decisions == {}
+    assert loaded.source_decision_bindings == {}
 
 
 def test_source_decisions_missing_key_loads_empty(tmp_path: Path) -> None:
@@ -794,11 +805,169 @@ def test_source_decisions_missing_key_loads_empty(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_src_ok_callback(tmp_path: Path) -> None:
-    _poll([_callback(10001, "src:ok:abcd1234"), _callback(10002, "src:no:efab5678")])
+    now = datetime.now(timezone.utc).isoformat()
+    accepted = PendingSource("Accepted", "https://example.com/accept", "Tech", now)
+    rejected = PendingSource("Rejected", "https://example.com/reject", "Tech", now)
+    save_pending([accepted, rejected], str(tmp_path), strict=True)
+    _poll([_callback(10001, f"src:ok:{accepted.source_hash}"),
+           _callback(10002, f"src:no:{rejected.source_hash}"), _callback(10003, "src:ok:deadbeef")])
     result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
-    assert result.source_decisions == {"abcd1234": "approved", "efab5678": "rejected"}
+    assert result.source_decisions == {accepted.source_hash: "approved", rejected.source_hash: "rejected"}
+    assert result.source_decision_bindings == {
+        proposal.source_hash: proposal_binding(proposal) for proposal in (accepted, rejected)
+    }
     assert result.ratings == []
     assert result.last_poll_counts["source_decisions"] == 2
+    assert result.last_poll_counts["unknown_source"] == 1
+    assert [reply.text for reply in result.pending_replies] == [
+        "Decision saved", "Decision saved", "Proposal unavailable or expired",
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_source_messages_bind_current_proposals_before_one_batch_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    accepted = PendingSource("Accepted", "https://example.com/accept", "Tech", now)
+    rejected = PendingSource("Rejected", "https://example.com/reject", "Tech", now)
+    save_pending([accepted, rejected], str(tmp_path), strict=True)
+    route = _poll([
+        _message(1, f"/start source_ok_{accepted.source_hash}", 10),
+        _message(2, f"/source no {rejected.source_hash}", 11),
+        _message(3, "/source ok deadbeef", 12),
+        _message(4, f"/source no {accepted.source_hash}", 10),
+    ])
+    result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
+    assert result.source_decisions == {accepted.source_hash: "approved", rejected.source_hash: "rejected"}
+    assert result.source_decision_bindings == {
+        proposal.source_hash: proposal_binding(proposal) for proposal in (accepted, rejected)
+    }
+    assert result.last_poll_counts["source_decisions"] == 2
+    assert result.last_poll_counts["unknown_source"] == 1 and result.last_poll_counts["duplicates"] == 1
+    assert len(result.pending_replies) == 3 and len(result.seen_message_ids) == 3
+    assert not any("sendMessage" in str(call.request.url) for call in respx.calls)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "456")
+    with pytest.raises(ValueError, match="owner binding"):
+        await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        durable = load_feedback(str(tmp_path), strict=True)
+        assert durable == result
+        assert json.loads(request.content) == {
+            "chat_id": "123", "text": "Source decisions saved: 2. Unavailable or expired proposals: 1.",
+        }
+        return httpx.Response(200, json={"ok": True})
+
+    send = respx.post(f"{API}/sendMessage").mock(side_effect=answer)
+    assert await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path)) == {
+        "attempted": 1, "ack_ok": 1, "ack_failed": 0,
+    }
+    assert send.call_count == 1
+    result = load_feedback(str(tmp_path), strict=True)
+    result.cursor_observed_at = ""
+    save_feedback(result, str(tmp_path), strict=True)
+    _poll([_message(1, f"/source no {accepted.source_hash}", 10)])
+    replayed = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
+    assert "offset" not in json.loads(route.calls[-1].request.content)
+    assert replayed.source_decisions == result.source_decisions
+    assert replayed.last_poll_counts["duplicates"] == 1 and replayed.pending_replies == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("transport", ["start", "command", "callback"])
+async def test_unreadable_proposals_preserve_source_batch_until_repaired(
+    transport: str, tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    proposal = PendingSource("New", "https://example.com/new", "Tech", now)
+    owner_hash = hashlib.sha256(b"123").hexdigest()
+    store = FeedbackStore(
+        last_update_id=43, cursor_observed_at=now, article_source_map={"abcd1234": "My Source"},
+        seen_message_ids=[f"{owner_hash}:1"], seen_callback_ids=["prior-callback"],
+        pending_replies=[PendingReply("vote", "unknown_article")], pending_owner_sha256=owner_hash,
+    )
+    save_feedback(store, str(tmp_path), strict=True)
+    original_bytes = (tmp_path / "feedback.json").read_bytes()
+    (tmp_path / "pending_sources.json").write_text("{broken", encoding="utf-8")
+    hash8 = proposal.source_hash
+    source_update = (
+        _callback(45, f"src:ok:{hash8}") if transport == "callback"
+        else _message(45, f"/start source_ok_{hash8}" if transport == "start" else f"/source ok {hash8}", 45)
+    )
+    vote_update = _message(44, "/vote g abcd1234", 44)
+    _poll([vote_update, source_update])
+    with pytest.raises(ValueError):
+        await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
+    assert (tmp_path / "feedback.json").read_bytes() == original_bytes
+    assert store == load_feedback(str(tmp_path), strict=True)
+    assert not any(
+        endpoint in str(call.request.url) for call in respx.calls for endpoint in ("answerCallbackQuery", "sendMessage")
+    )
+
+    # Article voting does not depend on proposal state.
+    _poll([vote_update])
+    voted = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
+    assert voted.last_update_id == 44 and len(voted.ratings) == 1
+    assert (tmp_path / "pending_sources.json").read_text() == "{broken"
+    save_pending([proposal], str(tmp_path), strict=True)
+    _poll([vote_update, source_update])
+    repaired = await collect_feedback(TOKEN, voted, cache_dir=str(tmp_path), acknowledge=False)
+    assert repaired.last_update_id == 45 and len(repaired.ratings) == 1
+    assert repaired.source_decisions == {hash8: "approved"}
+    assert repaired.source_decision_bindings == {hash8: proposal_binding(proposal)}
+    assert repaired.last_poll_counts["duplicates"] == 1 and repaired.last_poll_counts["source_decisions"] == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("case", ["missing", "stale", "future", "duplicate", "wrong_hash"])
+@pytest.mark.parametrize("transport", ["start", "command", "callback"])
+async def test_source_decisions_reject_unavailable_proposals(
+    case: str, transport: str, tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc)
+    proposal = PendingSource("Feed", "https://example.com/feed", "Tech", now.isoformat())
+    if case == "stale":
+        proposal.discovered_at = (now - timedelta(days=31)).isoformat()
+    elif case == "future":
+        proposal.discovered_at = (now + timedelta(days=1)).isoformat()
+    elif case == "wrong_hash":
+        proposal.source_hash = "12345678"
+    pending = [] if case == "missing" else [proposal, proposal] if case == "duplicate" else [proposal]
+    hash8 = proposal.source_hash
+    update = (
+        _callback(1, f"src:ok:{hash8}") if transport == "callback"
+        else _message(1, f"/start source_ok_{hash8}" if transport == "start" else f"/source ok {hash8}", 1)
+    )
+    _poll([update])
+    with patch("digest.feedback.load_pending", return_value=pending):
+        result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
+    assert result.source_decisions == {} and result.source_decision_bindings == {}
+    assert result.last_poll_counts["unknown_source"] == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_source_messages_reject_foreign_owner_and_malformed_commands(tmp_path: Path) -> None:
+    proposal = PendingSource("Feed", "https://example.com/feed", "Tech", datetime.now(timezone.utc).isoformat())
+    save_pending([proposal], str(tmp_path), strict=True)
+    hash8 = proposal.source_hash
+    foreign_sender, foreign_chat, group = [_message(i, f"/source ok {hash8}", i) for i in range(1, 4)]
+    foreign_sender["message"]["from"]["id"] = 456
+    foreign_chat["message"]["chat"]["id"] = 456
+    group["message"]["chat"]["type"] = "group"
+    no_id = _message(4, f"/source ok {hash8}", 4)
+    del no_id["message"]["message_id"]
+    _poll([foreign_sender, foreign_chat, group, no_id,
+           _message(5, f"/source ok {hash8}\nextra", 5), _message(6, f"/start source_yes_{hash8}", 6)])
+    result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
+    assert result.source_decisions == {} and result.source_decision_bindings == {}
+    assert result.last_poll_counts["rejected_owner"] == 3 and result.last_poll_counts["malformed"] == 3
+    assert result.pending_replies == [] and result.seen_message_ids == []
 
 
 @pytest.mark.asyncio

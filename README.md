@@ -275,8 +275,17 @@ priorities within the existing bounds; unrated sources retain their configured p
 The latest valid vote per article is effective; repeated taps change an opinion rather
 than amplify it. Raw rating history follows the existing retention policy, and raw
 votes are never model input. This affects the candidate pool, not a guarantee that
-an individual article will be selected. Automatic trial decisions remain disabled with adaptation; explicit authenticated
-source approvals still apply only to previously pending proposals. [#48](https://github.com/Lenivvenil/digest/issues/48)
+an individual article will be selected. Automatic trial decisions remain disabled with adaptation.
+Source proposals use Add/Reject links followed by Telegram's Start button, or the
+`/source ok HASH` and `/source no HASH` command fallback. A private owner message
+records a decision only for one matching proposal, with its URL hash and age (0–30
+days) checked during collection and application. The saved decision binds the exact
+proposal; historical unbound decisions cannot authorize a later replacement.
+One batch receipt reports decisions saved, not sources added. Approved sources are
+applied before feed collection, even when the digest is empty or later fails;
+config/backup failures retain the decision for retry. Ordinary decision messages
+have the same at-most-24-hour Telegram retention limit as votes.
+[#48](https://github.com/Lenivvenil/digest/issues/48)
 tracks operational acceptance of this learning loop.
 
 <a id="формат-дайджеста"></a>
