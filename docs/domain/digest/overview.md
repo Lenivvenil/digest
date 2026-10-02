@@ -499,19 +499,20 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 ### UC-4: Operator approves/rejects a new source
 
-**Actor:** User (Telegram inline button)
-**Preconditions:** The discovery phase (`--discover`) has found a new source and sent an approval message with `src:ok:{hash}` / `src:no:{hash}` buttons; PendingSource is saved in `.cache/pending_sources.json`.
+**Actor:** User (private owner Telegram message)
+**Preconditions:** The discovery phase (`--discover`) has found a new source, saved PendingSource in `.cache/pending_sources.json`, and sent approval links or command instructions.
 **Main scenario:**
-1. The user presses “✅ Add” or “❌ Reject” (original Russian UI labels: “✅ Добавить” / “❌ Отклонить”).
-2. On the next run, `collect_feedback()` parses `callback_data = "src:{ok|no}:{source_hash}"`.
-3. Record the decision in `FeedbackStore.source_decisions`.
-4. `_process_pending_approvals()` loads the pending list and finds the match by `source_hash`.
-5. If approved: `add_source_to_config()` adds a trial block to `config.yaml`; `TrialStarted` is emitted on the next run.
+1. The user presses Add or Reject and Telegram's Start button, or sends `/source ok HASH` / `/source no HASH`.
+2. On the next run, `collect_feedback()` parses the ordinary `/start source_{ok|no}_{hash}` or `/source {ok|no} {hash}` message, verifies private owner identity, and rejects replay.
+3. Require exactly one current proposal with a matching URL hash and age 0–30 days. Persist `FeedbackStore.source_decisions`, its exact proposal SHA-256 binding, replay receipt and cursor before acknowledging the batch as decisions saved.
+4. Before feed collection, `_process_pending_approvals()` repeats the identity, uniqueness and age checks, requiring the same proposal binding.
+5. If approved: `add_source_to_config()` idempotently adds a trial block to `config.yaml`; the pipeline reloads config for collection, independently of digest success.
 6. If rejected: remove PendingSource from pending.
 
 **Alternatives:**
-- 4a: PendingSource has already been removed (for example, previously rejected) → ignore the decision.
-- 5a: `add_source_to_config()` fails → log the error; PendingSource stays in pending.
+- 4a: PendingSource is missing, ambiguous, changed, stale or future-dated, or the saved decision has no binding → do not apply it. Legacy unbound decisions cannot authorize a later proposal.
+- 5a: Config or backup writing fails → preserve the decision and proposal for retry. State persistence failures do not clear the in-memory decision.
+- Legacy `src:{ok|no}:{hash}` callbacks pass the same proposal checks but remain best effort. Ordinary messages have at-most-24-hour Telegram retention; an uncollected decision can still expire upstream.
 
 **Postconditions:** `config.yaml` is updated (approved) or PendingSource is removed (rejected).
 

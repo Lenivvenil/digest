@@ -19,6 +19,7 @@ from typing import Any, Literal
 import httpx
 
 from digest._util import atomic_json_write
+from digest.discovery import PendingSource, load_pending, proposal_binding, resolve_pending_proposal
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ SEEN_CALLBACK_LIMIT = 1000
 SEEN_MESSAGE_LIMIT = 1000
 POLL_COUNT_KEYS = (
     "received", "recorded_votes", "source_decisions", "commands",
-    "rejected_owner", "ignored", "malformed", "duplicates", "unknown_article", "superseded_replies",
+    "unknown_source", "rejected_owner", "ignored", "malformed", "duplicates", "unknown_article", "superseded_replies",
 )
 COMMANDS = ("/status", "/bubble")
 VOTE_REPLIES = {
@@ -60,7 +61,7 @@ class ArticleFeedback:
 class PendingReply:
     """Minimal UI receipt; commands and votes retain only recognized outcome tags."""
 
-    kind: Literal["callback", "command", "vote"]
+    kind: Literal["callback", "command", "vote", "source"]
     identifier: str
     text: str = ""
 
@@ -74,6 +75,7 @@ class FeedbackStore:
     last_digest_sources: list[str] = field(default_factory=list)
     last_digest_time: str = ""
     source_decisions: dict[str, str] = field(default_factory=dict)
+    source_decision_bindings: dict[str, str] = field(default_factory=dict)
     article_source_map: dict[str, str] = field(default_factory=dict)
     pending_replies: list[PendingReply] = field(default_factory=list)
     pending_owner_sha256: str = ""
@@ -133,11 +135,14 @@ def _parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
     for reply in replies:
         if (
             not isinstance(reply, dict)
-            or reply.get("kind") not in ("callback", "command", "vote")
+            or reply.get("kind") not in ("callback", "command", "vote", "source")
             or not isinstance(reply.get("identifier"), str)
             or not reply["identifier"]
             or not isinstance(reply.get("text", ""), str)
             or (reply["kind"] == "command" and (reply["identifier"] not in COMMANDS or reply.get("text", "")))
+            or (reply["kind"] == "source" and (
+                reply["identifier"] not in ("source_decisions", "unknown_source") or reply.get("text", "")
+            ))
             or (reply["kind"] == "vote" and (reply["identifier"] not in VOTE_REPLIES or reply.get("text", "")))
         ):
             raise ValueError("Invalid pending feedback reply")
@@ -158,6 +163,7 @@ def _parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
         last_digest_sources=_string_list(data.get("last_digest_sources", [])),
         last_digest_time=digest_time,
         source_decisions=_string_map(data.get("source_decisions", {})),
+        source_decision_bindings=_string_map(data.get("source_decision_bindings", {})),
         article_source_map=_string_map(data.get("article_source_map", {})),
         pending_replies=parsed_replies,
         pending_owner_sha256=owner_hash,
@@ -250,7 +256,36 @@ def _record_article_vote(store: FeedbackStore, article_hash: str, rating: str) -
     return "recorded_votes"
 
 
-def _collect_callback(callback: dict[str, Any], store: FeedbackStore, owner: str) -> str:
+def _record_source_decision(
+    store: FeedbackStore, pending: list[PendingSource], hash8: str, action: str,
+) -> str:
+    proposal = resolve_pending_proposal(pending, hash8)
+    if proposal is None:
+        return "unknown_source"
+    store.source_decisions[hash8] = "approved" if action == "ok" else "rejected"
+    store.source_decision_bindings[hash8] = proposal_binding(proposal)
+    return "source_decisions"
+
+
+def _owned_source_update(update: dict[str, Any], owner: str) -> bool:
+    """Source inputs need readable proposal state before any batch is consumed."""
+    callback = update.get("callback_query")
+    if callback is not None:
+        return (
+            isinstance(callback, dict) and _owned_message(callback.get("message"), callback.get("from"), owner)
+            and isinstance(callback.get("data"), str) and callback["data"].startswith("src:")
+        )
+    message = update.get("message")
+    return (
+        isinstance(message, dict) and _owned_message(message, message.get("from"), owner)
+        and isinstance(message.get("text"), str)
+        and message["text"].strip().startswith(("/start source_", "/source"))
+    )
+
+
+def _collect_callback(
+    callback: dict[str, Any], store: FeedbackStore, owner: str, pending: list[PendingSource],
+) -> str:
     if not _owned_message(callback.get("message"), callback.get("from"), owner):
         return "rejected_owner"
     identifier, payload = callback.get("id"), callback.get("data")
@@ -270,8 +305,8 @@ def _collect_callback(callback: dict[str, Any], store: FeedbackStore, owner: str
     elif len(parts) == 3 and parts[0] == "src" and parts[1] in ("ok", "no"):
         if not re.fullmatch(r"[0-9a-f]{8}", parts[2]):
             return "malformed"
-        store.source_decisions[parts[2]] = "approved" if parts[1] == "ok" else "rejected"
-        outcome = "source_decisions"
+        outcome = _record_source_decision(store, pending, parts[2], parts[1])
+        reply_text = "Decision saved" if outcome == "source_decisions" else "Proposal unavailable or expired"
     elif len(parts) != 3 or parts[0] != "fb" or parts[1] not in ("good", "bad") or not parts[2].isdigit():
         return "ignored"
     store.seen_callback_ids.append(identifier)
@@ -279,12 +314,14 @@ def _collect_callback(callback: dict[str, Any], store: FeedbackStore, owner: str
     return outcome
 
 
-def _collect_update(update: dict[str, Any], store: FeedbackStore, owner: str) -> str:
+def _collect_update(
+    update: dict[str, Any], store: FeedbackStore, owner: str, pending: list[PendingSource],
+) -> str:
     callback = update.get("callback_query")
     if callback is not None:
         if not isinstance(callback, dict):
             return "malformed"
-        return _collect_callback(callback, store, owner)
+        return _collect_callback(callback, store, owner, pending)
     message = update.get("message")
     if message is None:
         return "ignored"
@@ -302,8 +339,11 @@ def _collect_update(update: dict[str, Any], store: FeedbackStore, owner: str) ->
     vote = re.fullmatch(r"/start vote_([gb])_([0-9a-f]{8})", command) or re.fullmatch(
         r"/vote ([gb]) ([0-9a-f]{8})", command,
     )
-    if vote is None:
-        if command.startswith(("/vote", "/start vote_")):
+    source = re.fullmatch(r"/start source_(ok|no)_([0-9a-f]{8})", command) or re.fullmatch(
+        r"/source (ok|no) ([0-9a-f]{8})", command,
+    )
+    if vote is None and source is None:
+        if command.startswith(("/vote", "/start vote_", "/source", "/start source_")):
             return "malformed"
         return "ignored"
     message_id = message.get("message_id")
@@ -313,9 +353,15 @@ def _collect_update(update: dict[str, Any], store: FeedbackStore, owner: str) ->
     identifier = f"{hashlib.sha256(owner.encode()).hexdigest()}:{message_id}"
     if identifier in store.seen_message_ids:
         return "duplicates"
-    outcome = _record_article_vote(store, vote[2], vote[1])
+    if source is not None:
+        outcome = _record_source_decision(store, pending, source[2], source[1])
+        reply_kind: Literal["vote", "source"] = "source"
+    else:
+        assert vote is not None
+        outcome = _record_article_vote(store, vote[2], vote[1])
+        reply_kind = "vote"
     store.seen_message_ids.append(identifier)
-    store.pending_replies.append(PendingReply("vote", outcome))
+    store.pending_replies.append(PendingReply(reply_kind, outcome))
     return outcome
 
 
@@ -387,6 +433,7 @@ async def collect_feedback(
         for update in updates
     ):
         raise ValueError("Invalid Telegram update envelope")
+    pending = load_pending(cache_dir, strict=True) if any(_owned_source_update(item, owner) for item in updates) else []
     candidate = deepcopy(store)
     if not trusted_cursor and updates:
         candidate.previous_update_id = store.last_update_id
@@ -402,7 +449,7 @@ async def collect_feedback(
             counts["duplicates"] += 1
             continue
         seen_updates.add(update_id)
-        counts[_collect_update(update, candidate, owner)] += 1
+        counts[_collect_update(update, candidate, owner, pending)] += 1
         candidate.last_update_id = max(candidate.last_update_id, update_id)
     if seen_updates:
         candidate.cursor_observed_at = datetime.now(tz=timezone.utc).isoformat()
@@ -447,7 +494,14 @@ async def acknowledge_feedback(bot_token: str, cache_dir: str, expected_sha256: 
     if not store.pending_replies:
         return counts
     vote_replies = [reply for reply in store.pending_replies if reply.kind == "vote"]
-    replies = [reply for reply in store.pending_replies if reply.kind != "vote"]
+    source_replies = [reply for reply in store.pending_replies if reply.kind == "source"]
+    replies = [reply for reply in store.pending_replies if reply.kind not in ("vote", "source")]
+    source_text = ""
+    if source_replies:
+        saved = sum(reply.identifier == "source_decisions" for reply in source_replies)
+        unavailable = len(source_replies) - saved
+        source_text = f"Source decisions saved: {saved}. Unavailable or expired proposals: {unavailable}."
+        replies.append(source_replies[0])
     vote_text = ""
     if vote_replies:
         saved = sum(reply.identifier == "recorded_votes" for reply in vote_replies)
@@ -467,8 +521,9 @@ async def acknowledge_feedback(bot_token: str, cache_dir: str, expected_sha256: 
                             json={"callback_query_id": reply.identifier, "text": reply.text}, timeout=5.0,
                         )
                     else:
-                        text = vote_text if reply.kind == "vote" else _command_reply(
-                            reply.identifier, store, cache_dir,
+                        text = (
+                            vote_text if reply.kind == "vote" else source_text if reply.kind == "source"
+                            else _command_reply(reply.identifier, store, cache_dir)
                         )
                         response = await client.post(
                             f"{api_url}/sendMessage",

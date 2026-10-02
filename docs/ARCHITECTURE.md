@@ -194,8 +194,21 @@ category mix, feedback and lifecycle state; they do not measure factual accuracy
 
 1. `--discover` asks a model for feeds in underrepresented categories, validates feed
    URLs, persists candidates and requests operator approval where Telegram is configured.
-2. Polling records approval/rejection callbacks. Approved additions are written to the
-   **runtime** configuration; rejected candidates are removed from the pending list.
+2. Discovery sends Add/Reject deep links (`/start source_ok_HASH` or
+   `/start source_no_HASH`) after persisting the proposal. Without a valid configured
+   bot username, the message provides `/source ok HASH` and `/source no HASH` commands.
+   The private owner poller persists decisions, replay receipts and the cursor before
+   sending a single aggregate source-decision receipt. Legacy callbacks remain best effort.
+   A decision requires exactly one pending proposal whose hash matches its URL and
+   whose age is 0–30 days, and stores a SHA-256 binding to all proposal fields.
+   Application repeats those checks and requires the same binding; legacy unbound
+   decisions remain historical. Approved additions are written idempotently to the
+   **runtime** configuration before feed collection, independently of digest success.
+   The pipeline reloads config before collecting. Config/backup failures preserve the
+   decision and proposal; strict state-write failures never clear the in-memory decision.
+   Rejected candidates are removed from pending. Receipts confirm saved decisions,
+   not successful config additions. Decision messages share the at-most-24-hour
+   Telegram retention limit of article votes.
 3. Trial sources receive the configured trial allocation. Trial start, graduation and
    demotion are runtime state in `source_state.json`, not fields repeatedly written into
    source configuration by the evaluator.

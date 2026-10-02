@@ -71,6 +71,7 @@ class _TelegramCfg:
     split_messages: bool = True
     max_messages: int = 10
     delivery_mode: str = "cards"
+    bot_username: str = "digest_test_bot"
 
 
 @dataclass
@@ -702,7 +703,7 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
 def test_pending_source_approval_requires_current_identity_and_keeps_failed_decision(tmp_path: Path) -> None:
     from datetime import datetime, timedelta, timezone
 
-    from digest.discovery import PendingSource
+    from digest.discovery import PendingSource, proposal_binding
     from digest.main import _process_pending_approvals
 
     now = datetime.now(timezone.utc)
@@ -710,7 +711,11 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
     failed = PendingSource("Retry", "https://example.com/retry", "Tech", now.isoformat())
     stale = PendingSource("Stale", "https://example.com/stale", "Tech", (now-timedelta(days=31)).isoformat())
     wrong = PendingSource("Wrong", "https://example.com/wrong", "Tech", now.isoformat(), "12345678")
-    store = FeedbackStore(source_decisions={x.source_hash: "approved" for x in (fresh, failed, stale, wrong)})
+    proposals = (fresh, failed, stale, wrong)
+    store = FeedbackStore(
+        source_decisions={x.source_hash: "approved" for x in proposals},
+        source_decision_bindings={x.source_hash: proposal_binding(x) for x in proposals},
+    )
 
     def apply(_path, proposal):
         if proposal is failed:
@@ -725,6 +730,207 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
     assert [call.args[1] for call in add.call_args_list] == [fresh, failed]
     assert fresh.source_hash not in store.source_decisions
     assert store.source_decisions[failed.source_hash] == "approved"
+    assert store.source_decision_bindings[failed.source_hash] == proposal_binding(failed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_fails", [False, True])
+async def test_discovery_persists_unique_proposals_before_sending_instructions(
+    write_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from digest.discovery import load_pending
+    from digest.main import discover_sources
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    url = "https://example.com/new"
+    client = MagicMock()
+    client.get = AsyncMock(return_value=MagicMock())
+
+    async def send(proposal, token, owner, bot_username):
+        assert load_pending(".cache") == [proposal]
+        assert (token, owner, bot_username) == ("synthetic-test-token", "123", "digest_test_bot")
+        return True
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("digest.config.load_config", return_value=_mock_config()))
+        stack.enter_context(patch("digest.llm.complete", AsyncMock(return_value=(
+            f"FEED|{url}|tech|New\nFEED|{url}|tech|Duplicate", None,
+        ))))
+        stack.enter_context(patch("digest._dns_pinning.validate_url", return_value=SimpleNamespace(
+            url=url, hostname="example.com", pinned_addrinfos=[],
+        )))
+        stack.enter_context(patch("digest._dns_pinning.pin_dns", return_value=nullcontext()))
+        http = stack.enter_context(patch("httpx.AsyncClient"))
+        http.return_value.__aenter__.return_value = client
+        sent = stack.enter_context(patch("digest.discovery.send_source_approval_message", side_effect=send))
+        if write_fails:
+            stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
+            with pytest.raises(OSError):
+                await discover_sources("config.yaml")
+            sent.assert_not_called()
+        else:
+            assert await discover_sources("config.yaml") == 0
+            sent.assert_awaited_once()
+
+
+def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    from digest.discovery import PendingSource, load_pending, proposal_binding, save_pending
+    from digest.feedback import load_feedback, save_feedback
+    from digest.main import _process_pending_approvals
+
+    proposal = PendingSource("Rejected", "https://example.com/no", "Tech", datetime.now(timezone.utc).isoformat())
+    save_pending([proposal], str(tmp_path), strict=True)
+    store = FeedbackStore(
+        source_decisions={proposal.source_hash: "rejected"},
+        source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
+    )
+    save_feedback(store, str(tmp_path), strict=True)
+    with patch("digest.discovery.add_source_to_config") as add:
+        _process_pending_approvals("config.yaml", str(tmp_path), store)
+    add.assert_not_called()
+    assert load_pending(str(tmp_path)) == []
+    assert load_feedback(str(tmp_path), strict=True).source_decisions == {}
+    assert store.source_decisions == {} and store.source_decision_bindings == {}
+
+
+@pytest.mark.parametrize("case", ["legacy", "changed_name", "changed_category", "changed_date", "duplicate", "future"])
+def test_pending_decision_cannot_authorize_a_different_proposal(case: str, tmp_path: Path) -> None:
+    from copy import deepcopy
+    from datetime import datetime, timedelta, timezone
+
+    from digest.discovery import PendingSource, proposal_binding
+    from digest.main import _process_pending_approvals
+
+    now = datetime.now(timezone.utc)
+    proposal = PendingSource("Original", "https://example.com/feed", "Tech", now.isoformat())
+    store = FeedbackStore(
+        source_decisions={proposal.source_hash: "approved"},
+        source_decision_bindings={} if case == "legacy" else {proposal.source_hash: proposal_binding(proposal)},
+    )
+    original = deepcopy(store)
+    if case == "changed_name":
+        proposal.name = "Replacement"
+    elif case == "changed_category":
+        proposal.category = "Replacement"
+    elif case == "changed_date":
+        proposal.discovered_at = (now - timedelta(hours=1)).isoformat()
+    elif case == "future":
+        proposal.discovered_at = (now + timedelta(days=1)).isoformat()
+        store.source_decision_bindings[proposal.source_hash] = proposal_binding(proposal)
+        original = deepcopy(store)
+    pending = [proposal, proposal] if case == "duplicate" else [proposal]
+    with (
+        patch("digest.discovery.load_pending", return_value=pending),
+        patch("digest.discovery.add_source_to_config") as add,
+        patch("digest.discovery.save_pending") as save,
+    ):
+        _process_pending_approvals("config.yaml", str(tmp_path), store)
+    add.assert_not_called()
+    save.assert_not_called()
+    assert store == original
+
+
+@pytest.mark.parametrize("failure", ["backup", "config", "pending", "feedback"])
+def test_source_application_io_failure_preserves_durable_decision(failure: str, tmp_path: Path) -> None:
+    from copy import deepcopy
+    from datetime import datetime, timezone
+
+    import yaml
+
+    from digest.discovery import PendingSource, load_pending, proposal_binding, save_pending
+    from digest.feedback import load_feedback, save_feedback
+    from digest.main import _process_pending_approvals
+
+    proposal = PendingSource("New", "https://example.com/new", "Tech", datetime.now(timezone.utc).isoformat())
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("sources: []\n", encoding="utf-8")
+    store = FeedbackStore(
+        source_decisions={proposal.source_hash: "approved"},
+        source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
+    )
+    original = deepcopy(store)
+    save_pending([proposal], str(tmp_path), strict=True)
+    save_feedback(store, str(tmp_path), strict=True)
+    original_replace = Path.replace
+
+    def fail_config_replace(path: Path, target: Path) -> Path:
+        if path == config_path.with_suffix(".yaml.tmp"):
+            raise OSError("synthetic config write failure")
+        return original_replace(path, target)
+
+    targets = {
+        "backup": "digest.discovery.shutil.copy2", "config": "pathlib.Path.replace",
+        "pending": "digest.discovery.atomic_json_write", "feedback": "digest.feedback.atomic_json_write",
+    }
+    with patch(targets[failure], autospec=True, side_effect=(
+        fail_config_replace if failure == "config" else OSError("synthetic failure")
+    )):
+        if failure in ("pending", "feedback"):
+            with pytest.raises(OSError):
+                _process_pending_approvals(str(config_path), str(tmp_path), store)
+        else:
+            _process_pending_approvals(str(config_path), str(tmp_path), store)
+    assert store == original and load_feedback(str(tmp_path), strict=True) == original
+    if failure != "feedback":
+        assert load_pending(str(tmp_path)) == [proposal]
+    if failure in ("backup", "config"):
+        assert yaml.safe_load(config_path.read_text()) == {"sources": []}
+    else:
+        assert yaml.safe_load(config_path.read_text())["sources"][0]["url"] == proposal.url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["empty", "feeds", "analysis", "pending_write"])
+async def test_source_application_precedes_collection_and_survives_unsuccessful_digest(
+    failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timezone
+
+    from digest.discovery import PendingSource, load_pending, proposal_binding, save_pending
+    from digest.feedback import load_feedback, save_feedback
+    from digest.radar import AllFeedsFailedError
+
+    monkeypatch.chdir(tmp_path)
+    proposal = PendingSource("New", "https://example.com/new", "tech", datetime.now(timezone.utc).isoformat())
+    Path("config.yaml").write_text("sources: []\n", encoding="utf-8")
+    save_pending([proposal], ".cache", strict=True)
+    save_feedback(FeedbackStore(
+        source_decisions={proposal.source_hash: "approved"},
+        source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
+    ), ".cache", strict=True)
+    initial = _mock_config()
+    reloaded = _mock_config()
+    reloaded.sources.append(_SourceCfg(name=proposal.name, url=proposal.url))
+
+    async def collect(config, **kwargs):
+        assert [source.name for source in config.sources] == ["test", "New"]
+        if failure == "feeds":
+            raise AllFeedsFailedError("synthetic feed failure")
+        return ({"tech": [_Article()]} if failure == "analysis" else {}), {}
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("digest.config.load_config", side_effect=[initial, reloaded]))
+        stack.enter_context(patch("digest.radar.collect", side_effect=collect))
+        stack.enter_context(patch("digest.main._analyze_articles", AsyncMock(return_value=([], None, [], None))))
+        if failure == "pending_write":
+            stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
+        if failure == "feeds":
+            with pytest.raises(AllFeedsFailedError):
+                await run("config.yaml", False, False, False, feedback_precollected=True)
+        else:
+            result = await run("config.yaml", False, False, False, feedback_precollected=True)
+            assert not result.telegram_sent and not result.markdown_saved
+            assert result.feeds_fetched == 2
+    durable = load_feedback(".cache", strict=True)
+    assert durable.source_decisions == ({proposal.source_hash: "approved"} if failure == "pending_write" else {})
+    assert load_pending(".cache") == ([proposal] if failure == "pending_write" else [])
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["sent", "unknown", "persist_failure", "no_content", "corrupt_feedback"])

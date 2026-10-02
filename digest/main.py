@@ -20,7 +20,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -424,18 +424,21 @@ async def discover_sources(config_path: str) -> int:
                     logger.info("Source '%s' already pending, skipping", name)
                     continue
                 new_pending.append(pending)
-                if bot_token and chat_id:
-                    await send_source_approval_message(pending, bot_token, chat_id)
-                else:
-                    logger.warning(
-                        "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — "
-                        "cannot send approval message for '%s'",
-                        name,
-                    )
+                existing_hashes.add(pending.source_hash)
 
     if new_pending:
-        save_pending(existing_pending + new_pending, cache_dir)
+        save_pending(existing_pending + new_pending, cache_dir, strict=True)
         logger.info("Saved %d new pending source(s) for approval", len(new_pending))
+        for pending in new_pending:
+            if bot_token and chat_id:
+                await send_source_approval_message(
+                    pending, bot_token, chat_id, config.telegram.bot_username,
+                )
+            else:
+                logger.warning(
+                    "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — "
+                    "cannot send approval message for '%s'", pending.name,
+                )
 
     return 0
 
@@ -453,54 +456,63 @@ async def _run_irritator(
 
 
 def _process_pending_approvals(
-    config_path: str, cache_dir: str, feedback_store: Any
+    config_path: str, cache_dir: str, feedback_store: FeedbackStore
 ) -> None:
-    """Process pending source approval decisions from Telegram callbacks."""
+    """Apply only decisions bound to a still-current proposal, independently of delivery."""
+    from copy import deepcopy
+
     from digest.discovery import (
-        PendingSource,
         add_source_to_config,
         load_pending,
+        proposal_binding,
+        resolve_pending_proposal,
         save_pending,
-        source_hash,
     )
     from digest.feedback import save_feedback
 
     logger = logging.getLogger(__name__)
-    if not feedback_store.source_decisions:
-        return
-    pending = load_pending(cache_dir)
-    if not pending:
-        return
-    remaining: list[PendingSource] = []
+    pending = load_pending(cache_dir, strict=True)
+    candidate = deepcopy(feedback_store)
+    remaining = list(pending)
     for ps in pending:
-        decision = feedback_store.source_decisions.get(ps.source_hash)
-        if decision:
-            try:
-                discovered = datetime.fromisoformat(ps.discovered_at)
-                if discovered.tzinfo is None:
-                    discovered = discovered.replace(tzinfo=timezone.utc)
-                valid = (ps.source_hash == source_hash(ps.url)
-                         and timedelta(0) <= datetime.now(timezone.utc) - discovered <= timedelta(days=30))
-            except ValueError:
-                valid = False
-            if not valid:
-                logger.warning("Ignoring stale or mismatched pending source approval")
-                remaining.append(ps)
-                continue
+        decision = candidate.source_decisions.get(ps.source_hash)
+        current = resolve_pending_proposal(pending, ps.source_hash)
+        if (decision not in ("approved", "rejected") or current is None
+                or candidate.source_decision_bindings.get(ps.source_hash) != proposal_binding(current)):
+            # Legacy unbound decisions remain historical; they cannot authorize a future proposal.
+            continue
         if decision == "approved":
             try:
                 add_source_to_config(config_path, ps)
-                feedback_store.source_decisions.pop(ps.source_hash, None)
             except Exception as exc:
-                logger.error("Failed to add source '%s' to config: %s", ps.name, exc)
-                remaining.append(ps)
-        elif decision == "rejected":
-            feedback_store.source_decisions.pop(ps.source_hash, None)
-            logger.info("Source '%s' rejected by user, removing from pending", ps.name)
-        else:
-            remaining.append(ps)
-    save_pending(remaining, cache_dir)
-    save_feedback(feedback_store, cache_dir)
+                logger.error("Source application incomplete (%s); decision retained", type(exc).__name__)
+                continue
+        remaining.remove(ps)
+        candidate.source_decisions.pop(ps.source_hash, None)
+        candidate.source_decision_bindings.pop(ps.source_hash, None)
+    if remaining == pending:
+        return
+    # Config additions are idempotent if a later persistence step fails.
+    save_pending(remaining, cache_dir, strict=True)
+    save_feedback(candidate, cache_dir, strict=True)
+    feedback_store.source_decisions = candidate.source_decisions
+    feedback_store.source_decision_bindings = candidate.source_decision_bindings
+
+
+def _apply_pending_approvals(
+    config: Any, config_path: str, cache_dir: str, feedback_store: FeedbackStore, *, enabled: bool,
+) -> Any:
+    """Apply durable decisions before collection, then use the current runtime config."""
+    from digest.config import load_config
+
+    if not enabled or not feedback_store.source_decisions:
+        return config
+    try:
+        _process_pending_approvals(config_path, cache_dir, feedback_store)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Source decision persistence incomplete (%s)", type(exc).__name__)
+    # A state-write failure can follow a successful idempotent config addition.
+    return load_config(config_path)
 
 
 def _record_source_stats(
@@ -793,13 +805,16 @@ async def _run(
     logger = logging.getLogger(__name__)
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
-    feeds_count = len(config.enabled_sources)
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
     feedback_store, feedback_usable, feedback_collected = await _collect_run_feedback(
         config, cache_dir, dry_run, feedback_precollected,
     )
     _require_attribution_store(compact and not dry_run and not radar_only, feedback_usable)
+    config = _apply_pending_approvals(
+        config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
+    )
+    feeds_count = len(config.enabled_sources)
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
@@ -984,11 +999,6 @@ async def _run(
 
     if delivery_ok:
         _save_delivery_cache(delivered_cache, compact, cache_dir)
-
-        # Process pending approvals BEFORE save_stats so newly approved
-        # sources aren't pruned from stats as "unknown"
-        if feedback_usable and feedback_store.source_decisions:
-            _process_pending_approvals(config_path, cache_dir, feedback_store)
 
         if config.adaptive.enabled:
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
