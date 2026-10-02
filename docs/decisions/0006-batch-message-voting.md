@@ -1,6 +1,6 @@
 # ADR-0006: Message-based voting for a batch-only runtime
 
-Status: accepted for implementation under delegated #48 repair; deployment and real-message acceptance pending.
+Status: accepted and deployed; real message ingestion, durable persistence and computed priority influence verified. Ordinary collector acceptance remains open in #48.
 Date: 2026-10-02.
 
 ## Context and evidence
@@ -59,3 +59,19 @@ message replay, persistence failure and latest-vote scoring. Real acceptance req
 one owner message vote to survive delayed collection, durable commit and reload,
 and affect the defined source-priority/candidate path. No test fixture or successful
 API send alone closes that gate.
+
+
+## Daily scheduling constraint clarified — 2026-10-02
+
+The owner's later daily-edition/budget instruction does not extend Telegram retention.
+A single daily poll has zero timing margin against the at-most-24-hour ordinary-message
+limit. GitHub explicitly permits [delayed and dropped scheduled runs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+Moving the cycle to 02:17 UTC avoids the top-of-hour burst but does not provide
+a delivery SLA. Therefore message voting remains best effort between daily runs; the
+successful real vote check is not proof that all future votes will survive.
+
+No extra feedback-only cron or continuous receiver is approved in this operating
+proposal. Any later reliability measure must have an explicit bounded cost and
+preserve the existing persist-before-ack contract. This clarification preserves the
+original two-tap decision and its source evidence; it does not restore callback voting
+or claim that the 150-second lifetime was only an acknowledgement/UI timeout.
