@@ -208,9 +208,9 @@ def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tup
     return parsed, limitations
 
 
-def canonical_evidence_quote(quote: str, title: str, excerpt: str) -> tuple[str, bool]:
+def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length: int = 200) -> tuple[str, bool]:
     """Return literal source text; only ASCII/U+2010/U+2011 hyphens may align."""
-    if not isinstance(quote, str) or not quote.strip() or len(quote) > 200:
+    if not isinstance(quote, str) or not quote.strip() or len(quote) > max_length:
         raise ValueError("invalid selection text budget")
     if quote in title or quote in excerpt:
         return quote, False
