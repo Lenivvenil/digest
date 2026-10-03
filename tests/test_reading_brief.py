@@ -342,7 +342,14 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
 
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         instructions = messages[0]["content"]
-        assert "concrete mechanism, result, or tradeoff beyond" in instructions
+        assert "concrete mechanism, result or tradeoff supported by the supplied passages" in instructions
+        assert "publication brief, not a place for your own architectural interpretation" in instructions
+        assert "Every factual clause" in instructions and "be supported by the cited passages" in instructions
+        assert "Do not add unstated mechanisms, causal explanations, exclusivity" in instructions
+        assert "Describing one route or capability does not establish that alternatives are" in instructions
+        assert "Preserve distinctions between related technical concepts" in instructions
+        assert "Attribute reported results and assurances to their source" in instructions
+        assert "do not fill it with domain knowledge" in instructions
         assert "unresolved" in instructions and "invent a resolution" in instructions
         assert "Retain the nominated material conditions in that prose" in instructions
         assert "cache" not in instructions.lower()
@@ -366,7 +373,10 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
 
 
 @pytest.mark.asyncio
-async def test_cached_v1_angle_cannot_be_reused_or_silently_rewritten(tmp_path: Path) -> None:
+@pytest.mark.parametrize("previous_version", ["source-passages-v1", "source-passages-v2"])
+async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
+    tmp_path: Path, previous_version: str,
+) -> None:
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
@@ -377,7 +387,8 @@ async def test_cached_v1_angle_cannot_be_reused_or_silently_rewritten(tmp_path: 
         identity = next(iter(ready.quotations))
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
-        envelope["payload"]["route"]["prompt_version"] = "source-passages-v1"
+        assert envelope["payload"]["route"]["prompt_version"] == "source-passages-v3"
+        envelope["payload"]["route"]["prompt_version"] = previous_version
         envelope["sha256"] = checksum(envelope["payload"])
         legacy_bytes = json.dumps(envelope).encode()
         path.write_bytes(legacy_bytes)
