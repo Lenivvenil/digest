@@ -206,3 +206,20 @@ async def test_model_outside_approved_lineup_is_rejected_without_requests(tmp_pa
         with pytest.raises(ValueError, match="approved"):
             prepare_resume(Path("config.yaml"), tmp_path / "digests", NOW)
     complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_preserves_separate_source_provenance_without_promoting_rss_review(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    provenance = {"full_source_required": True, "full_source_error": "ValueError",
+                  "reading_brief_status": {"pending": 2, "abstained": 0, "oldest_pending": "2026-09-29"}}
+    payload.update(provenance)
+    checkpoint.write_text(json.dumps(payload))
+    assert prepare_resume(Path("fixture.yaml"), checkpoint.parent, NOW) == checkpoint
+    with patch("digest.review.complete", side_effect=fixture_response):
+        await execute_resume(Path("fixture.yaml"), checkpoint)
+    resumed = json.loads(checkpoint.with_name("day.review-resumed.json").read_text())
+    assert {key: resumed[key] for key in provenance} == provenance
+    assert resumed["evidence"] == json.loads(json.dumps(payload["evidence"]))
+    assert "full_source_evidence" not in resumed

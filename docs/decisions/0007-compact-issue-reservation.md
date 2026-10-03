@@ -1,6 +1,6 @@
 # ADR-0007: Compact daily presentation with a coarse publication reservation
 
-Status: accepted for local implementation under the owner-requested daily operating envelope; rollout and real-output acceptance remain open.
+Status: accepted and implemented; runtime activation is deployed. Ordinary-output acceptance remains open.
 Date: 2026-10-02. Work order: #91; presentation scope: #94.
 
 ## Context

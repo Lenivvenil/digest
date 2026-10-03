@@ -8,8 +8,8 @@ This is the existing canonical Digest domain page. The 2026-10-01 register below
 preserves the earlier decision history; current status was reconciled on 2026-10-02.
 The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
 limits. The operating allocation is a reviewed proposal; the daily schedule is
-deployed. Compact rendering is an explicit engine opt-in with a required durable
-publication boundary; runtime activation and observed-output acceptance remain separate. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+deployed. Compact rendering is implemented and enabled in the runtime with a required
+durable publication boundary; observed-output acceptance remains open. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
 single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
 is under active scope reassessment for the simple daily edition; its factual release
 gate remains unmet. The latest owner direction permits no parked/deferred tasks:
@@ -136,10 +136,10 @@ source links and stable per-article vote attribution. Telegram transport chunks 
 be necessary; they must preserve complete selected content and URL/identity bindings.
 No artificial first-N article rule or length-based editorial rejection follows from
 this format decision. Put translation/verification notices once per edition rather
-than repeating them on every article. The proposed first compact release retains
+than repeating them on every article. The compact release retains
 optional Irritator/comparison processing and honest results in the archive, without
-additional supplementary Telegram pushes. This presentation change requires code;
-it is not available merely by changing the cron or an existing configuration flag.
+additional supplementary Telegram pushes. It requires `telegram.delivery_mode: compact`
+and the managed reservation/persistence boundary.
 
 **Risk/acceptance boundaries:** daily polling has no safety margin against Telegram's
 at-most-24-hour ordinary-message retention. Delayed or missed runs can lose votes;
@@ -164,7 +164,7 @@ allows delayed/dropped runs; minute 17 is no guarantee. The late run persisted
 feedback before acknowledgement and blocked a duplicate confirmed edition. These
 safeguards worked; they do not eliminate the 24-hour feedback retention risk.
 
-Current model control flow admits a conservative ceiling of ten physical requests
+With reading briefs disabled, the deployed model control flow admits a conservative ceiling of ten physical requests
 per product cycle before cache reuse, timeout and failure short-circuiting: up to two
 primary/fallback reviews, one primary translation, three Irritator phases, one optional
 translation and three independent-review slots. Runtime retries are zero. Review
@@ -172,6 +172,46 @@ outputs are capped at 4,096 tokens; Irritator/translation outputs at 2,048. The 
 20 × 500-character RSS evidence allocation plus metadata is not full-article coverage.
 Primary pacing is configured separately from optional stages' 65-second pacing.
 These are execution constraints, not an editorial rule to prefer shorter articles.
+
+The opt-in full-source reading-brief path changes this envelope: a default shared ceiling of
+12 primary model-service HTTP attempts includes primary selection/fallback, exact token preflights,
+source reading and presentation translation. In this mode, primary selection may choose
+any useful item in the actual supplied RSS packet; the legacy max_selections card
+quota does not constrain it. The packet is not enlarged, omitted candidates remain
+unreviewed, and output-token truncation is incomplete work rather than rejection.
+Existing optional-stage requests remain
+separate (at most seven in the current pipeline); the old ten-request whole-cycle
+estimate must not be reused for this mode. Cache hits consume no request, and no
+automatic retries or paid fallbacks are added.
+
+Its application budget is 360 seconds inside the unchanged 8-minute primary job.
+The reading stage subtracts the configured translation deadline and 45 seconds for
+transport/persistence, then checks that pacing plus the acquisition/count timeout fits before each call.
+A generation needs at least 30 useful seconds after pacing; its adapter HTTP timeout
+is clipped to the remaining reading window, at most 120 seconds, with an absolute
+outer deadline as a second bound. A timed-out request is not retried in that pass. A normal uncached article needs at most 20 seconds to
+fetch, 10 seconds for exact counting and 120 seconds for one generation, plus pacing.
+Five worst-case articles therefore do not fit by assumption. Previously selected
+unfinished work resumes before fresh work, including on empty RSS days; backlog age,
+request usage and technical pending outcomes must remain observable.
+
+Whole-body input is preferred on the explicitly configured supported route. Exact
+counting uses the same Gemini generation payload, including system instructions;
+only verified context overflow creates a complete ordered page sweep. Quota failure
+never causes context splitting. Every page must finish before an article is ready,
+and all nominated material-qualification passages remain in the original-language
+archive appendix and evidence checkpoint. Publication carries the generated substantive
+brief with essential conditions and unresolved source contradictions, followed by
+short source/date/citation notes. Translation includes the entire generated brief;
+it does not rewrite the literal evidence archive. For multi-page sources, publication
+also retains every nominated material-qualification passage verbatim, including
+qualifications from abstaining pages. This deliberately trades compactness for visible
+cross-page conditions without adding a synthesis request. Prompt-version binding prevents
+reuse of older generated reading angles as current briefs.
+Neither full input coverage nor literal citation validation proves semantic completeness.
+The configured model's advertised context is not evidence of free-account entitlement.
+This path remains off pending the finite #55 quality/cost acceptance gate; no new live
+run or runtime activation is authorized by this documentation.
 
 Provider quotas are a separate ledger: account entitlement, RPM/TPM, daily tokens,
 context and output limits are not interchangeable with Actions minutes. Current

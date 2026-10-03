@@ -23,6 +23,13 @@ has a second, opt-in RSS-review path. Full-source enrichment in
 [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
 not the operating architecture documented below.
 
+The opt-in reading-brief stage reuses safe article acquisition and durable selected-work
+progress, with exact model-request counting and literal source passages. It shares the
+primary request/deadline budget and preserves separate full-source provenance for
+optional narrative extraction. It does not reuse PR #93's writer/critic approval
+mechanism or mark independent comparison complete. Source completeness and editorial
+usefulness remain acceptance gates under #55; runtime activation remains off.
+
 ## Data flow
 
 ```mermaid

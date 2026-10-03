@@ -607,3 +607,36 @@ def test_compact_delivery_is_explicit_and_legacy_default_is_preserved(tmp_path: 
     with pytest.raises(ValueError, match="delivery_mode"):
         cfg = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ntelegram: {delivery_mode: arbitrary}\n")
         load_config(cfg)
+
+
+def test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes(tmp_path: Path) -> None:
+    import yaml
+
+    base = yaml.safe_load(textwrap.dedent(MINIMAL_CONFIG))
+    path = tmp_path / 'config.yaml'
+    path.write_text(yaml.safe_dump(base))
+    assert not load_config(path).reading_brief.enabled
+    base.update({
+        'radar': {'language': 'en'},
+        'review': {'enabled': True, 'review_led_only': True,
+                   'primary': {'provider': 'gemini', 'model': 'gemini-3.8-flash'}},
+        'reading_brief': {'enabled': True, 'provider': 'gemini', 'model': 'gemini-3.8-flash'},
+    })
+    path.write_text(yaml.safe_dump(base))
+    loaded = load_config(path)
+    assert loaded.review.select_from_entire_packet
+    settings = loaded.reading_brief
+    assert settings.max_requests_per_run == 12 and settings.max_output_tokens == 2048
+    assert (settings.provider, settings.model) == ('gemini', 'gemini-3.8-flash')
+    base['reading_brief']['model'] = 'unconfigured-model'
+    path.write_text(yaml.safe_dump(base))
+    with pytest.raises(ValueError, match='explicit existing'):
+        load_config(path)
+    base['reading_brief']['model'] = 'gemini-3.8-flash'
+    base['review'].pop('primary')
+    path.write_text(yaml.safe_dump(base))
+    with pytest.raises(ValueError, match='explicit existing'):
+        load_config(path)
+    base['reading_brief']['enabled'] = False
+    path.write_text(yaml.safe_dump(base))
+    assert not load_config(path).reading_brief.enabled

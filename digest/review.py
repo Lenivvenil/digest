@@ -140,6 +140,11 @@ def build_evidence_bundle(
     return EvidenceBundle(SCHEMA_VERSION, bundle_id, "sanitized_rss_excerpt", len(unique) - len(items), tuple(items))
 
 
+def selection_limit(bundle: EvidenceBundle, settings: ReviewConfig) -> int:
+    """Reading selection may retain every useful item in the bounded RSS packet."""
+    return len(bundle.items) if getattr(settings, "select_from_entire_packet", False) else settings.max_selections
+
+
 def build_review_messages(bundle: EvidenceBundle, settings: ReviewConfig, language: str) -> list[dict[str, str]]:
     """No model identity, prior selection or earlier analysis is an input."""
     system = (
@@ -155,7 +160,7 @@ def build_review_messages(bundle: EvidenceBundle, settings: ReviewConfig, langua
     task = {
         "schema_version": SCHEMA_VERSION,
         "language": language,
-        "max_selections": settings.max_selections,
+        "max_selections": selection_limit(bundle, settings),
         "evidence": asdict(bundle),
     }
     return [{"role": "system", "content": system},
@@ -333,9 +338,14 @@ async def _review_slot(
     result.resolved_model = resolved_model if isinstance(resolved_model, str) else None
     result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
                     and type(v) is int and v >= 0}
+    if (getattr(getattr(config, "reading_brief", None), "enabled", False)
+            and usage.get("finish_reason") not in {"stop", "STOP"}):
+        result.status = "invalid"
+        result.error = "incomplete_selection_completion"
+        return result
     try:
         result.selections, result.limitations, result.rejected_items = _parse_live_review(
-            text, bundle, config.review.max_selections,
+            text, bundle, selection_limit(bundle, config.review),
         )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
@@ -371,8 +381,13 @@ async def run_primary_review(articles_by_category: dict[str, list[Article]], con
     validate_evidence_bundle(bundle, config)
     messages = build_review_messages(bundle, settings, config.radar.language)
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
-    # Do not mutate the caller's retry policy or share its provider cooldowns.
+    # Legacy selection has isolated cooldowns. The opt-in reading pipeline shares
+    # its run-wide attempt/pacing budget, including the primary fallback.
     delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
+    if getattr(getattr(config, "reading_brief", None), "enabled", False):
+        from digest.llm import _request_state
+
+        delivery_config.llm._runtime = _request_state(config)
     primary = await _review_slot("primary", settings.primary, bundle, messages, delivery_config)
     secondary = ModelReview(
         "secondary", settings.secondary.provider, settings.secondary.model,
@@ -406,7 +421,7 @@ async def run_evidence_review(
         if (model is not None and previous.status in {"ok", "partial", "abstained"}
                 and (previous.provider, previous.model, previous.bundle_id, previous.prompt_hash)
                 == (model.provider, model.model, bundle.bundle_id, prompt_hash)):
-            selections, limitations = _validated_cached_selections(previous, bundle, settings.max_selections)
+            selections, limitations = _validated_cached_selections(previous, bundle, selection_limit(bundle, settings))
             reusable[name] = replace(previous, selections=selections, limitations=limitations,
                                      reused_from_checkpoint=True)
 

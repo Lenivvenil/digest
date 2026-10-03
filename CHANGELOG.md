@@ -2,6 +2,10 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Opt-in source-cited reading briefs reuse safe full-article acquisition, exact request
+  counting, immutable source spans and durable selected-work progress. Literal passage
+  checks are not semantic certification; the finite quality/cost gate remains open.
+
 - English current documentation and safe onboarding; historical records retain their
   original language, and no software-license grant is supplied.
 - Configurable generated-text translation with a pinned route, bounded requests,

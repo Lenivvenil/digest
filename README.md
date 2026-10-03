@@ -69,6 +69,20 @@ articles in one Telegram chunk, with its archive and delivery state persisted.
 Translation and recovery acceptance covers the observed cases described below;
 full-source factual quality remains open in #55.
 
+Full-source reading briefs are off by default. The `reading_brief` setting requires
+English canonical text, review-led selection, and an explicitly configured model
+route. The implemented exact-count profile is Gemini 3.8 Flash; unknown profiles
+remain technical pending. Advertised context does not establish your free-account
+quota. Pending selected articles retain complete-source progress and resume on later
+runs, including empty-feed days. Cards carry a concise source-cited brief, including
+material conditions and unresolved source contradictions, plus source/date notes.
+The complete selected quotations stay in an original-language archive appendix and
+evidence checkpoint; translation covers the generated brief and its caveats. Literal
+citations and completed input coverage do not certify that every important qualification
+was recognized. The finite
+quality and throughput gate in #55 remains open; see the
+[request envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
+
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
 [ADR-0002](docs/decisions/0002-engine-instance-split.md). Cloning this repository does

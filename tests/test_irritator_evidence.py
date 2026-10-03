@@ -6,6 +6,7 @@ import asyncio
 import json
 from copy import deepcopy
 from dataclasses import asdict, replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -25,15 +26,17 @@ from digest.irritator.evidence_stage import (
 from digest.irritator.ranker import RANK_RELATION_CONTRACT
 from digest.llm import LLMRole
 from digest.review import EvidenceBundle, build_evidence_bundle
+from digest.review_checkpoint import FullSourceEvidence
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article, make_signal
+from tests.test_review_checkpoint import _full_source_evidence
 
 
 def _bundle(config: Config) -> EvidenceBundle:
     return build_evidence_bundle(fixture_articles(), config.review)
 
 
-def _narrative(bundle: EvidenceBundle) -> dict[str, Any]:
+def _narrative(bundle: EvidenceBundle | FullSourceEvidence) -> dict[str, Any]:
     item = bundle.items[0]
     return {"narratives": [{
         "claim": "The proposed rollout can improve reliability.", "category": item.category,
@@ -711,6 +714,97 @@ def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics()
     ranking["rankings"][0]["reasoning"] = "x" * MAX_RESPONSE_CHARS
     with pytest.raises(ValueError, match="Response exceeds"):
         _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+
+
+@pytest.mark.asyncio
+async def test_full_source_narrative_uses_late_literal_passages_instead_of_rss(tmp_path: Path) -> None:
+    config = fixture_config()
+    rss_bundle = _bundle(config)
+    source_evidence = _full_source_evidence(tmp_path, rss_bundle)
+    response = _narrative(source_evidence)
+    item = source_evidence.items[0]
+    response["narratives"][0]["quotes"][item.evidence_id] = item.excerpt
+    response["limitations"] = ["These are provider-reported results from selected source passages."]
+    model = AsyncMock(side_effect=[
+        (json.dumps(response), {}),
+        (json.dumps({"queries": [], "limitations": ["No useful external query was identified."]}), {}),
+    ])
+    before = asdict(source_evidence)
+    with patch("digest.irritator.evidence_stage.complete", model):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(
+                rss_bundle, config, client, source_evidence=source_evidence, require_full_source=True,
+            )
+    assert result.status == "empty"
+    assert result.bundle_id == rss_bundle.bundle_id
+    assert result.source_bundle_id == source_evidence.bundle_id
+    assert result.narratives[0].quotes == {item.evidence_id: item.excerpt}
+    assert not result.narratives[0].typography_normalized
+    assert item.start > 500
+    assert model.await_count == 2 and not result.source_attempts
+    for index, call in enumerate(model.await_args_list):
+        payload = json.loads(call.args[1][1]["content"])
+        assert payload["evidence"]["bundle_id"] == source_evidence.bundle_id
+        if index == 0:
+            assert payload["evidence"] == json.loads(json.dumps(before))
+            assert "not independent confirmation" in call.args[1][0]["content"]
+        else:
+            assert payload["evidence"]["items"] == [json.loads(json.dumps(asdict(item)))]
+        assert "A model-only reading angle" not in call.args[1][1]["content"]
+    assert asdict(source_evidence) == before
+
+
+@pytest.mark.parametrize("mutation", ["title", "translated", "hyphen", "other_span", "rss_id"])
+def test_full_source_quotes_require_exact_text_from_the_identified_span(mutation: str, tmp_path: Path) -> None:
+    rss_bundle = _bundle(fixture_config())
+    evidence = _full_source_evidence(tmp_path, rss_bundle)
+    response = _narrative(evidence)
+    narrative = response["narratives"][0]
+    item = evidence.items[0]
+    quote = item.excerpt
+    if mutation == "title":
+        quote = item.title
+    elif mutation == "translated":
+        quote = "The system definitely makes every deployment reliable."
+    elif mutation == "hyphen":
+        quote = item.excerpt.replace("API-powered", "API\u2011powered")
+    elif mutation == "other_span":
+        quote = evidence.items[1].excerpt
+    else:
+        narrative["evidence_ids"] = [rss_bundle.items[0].evidence_id]
+        narrative["quotes"] = {rss_bundle.items[0].evidence_id: rss_bundle.items[0].title}
+    if mutation != "rss_id":
+        narrative["quotes"] = {item.evidence_id: quote}
+    with pytest.raises(ValueError):
+        _parse_narrative(json.dumps(response), evidence)
+
+
+@pytest.mark.asyncio
+async def test_required_full_source_without_provenance_stays_pending_without_model_or_search() -> None:
+    config = fixture_config()
+    with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(_bundle(config), config, client, require_full_source=True)
+    assert result.status == "incomplete"
+    assert result.diagnostics[0].error == "FullSourceEvidencePending"
+    assert result.diagnostics[1].status == "not_run"
+    assert not result.narratives and not result.source_attempts
+    model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_full_source_hash_fails_before_model_and_never_falls_back_to_rss(tmp_path: Path) -> None:
+    config = fixture_config()
+    rss_bundle = _bundle(config)
+    evidence = replace(_full_source_evidence(tmp_path, rss_bundle), bundle_id="tampered")
+    with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss_bundle, config, client, source_evidence=evidence)
+    assert result.status == "error"
+    assert result.diagnostics[0].error_detail == "Full-source evidence hash mismatch."
+    assert result.diagnostics[1].status == "not_run"
+    assert not result.source_attempts
+    model.assert_not_awaited()
 
 
 @pytest.mark.asyncio
