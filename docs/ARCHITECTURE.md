@@ -220,7 +220,10 @@ separately in `discovery_delivery.json`. Preparation prunes expired proposals be
 deduplication and validates up to three feeds, including safe redirects and RSS/Atom
 content. Still-valid legacy pending proposals without a receipt get the first available
 offer slots; a full legacy batch uses no model call. Otherwise generation makes at
-most one configured-route request, with pending/rejected history and no retry/fallback.
+most two physical requests for one logical generation: the first two existing summarize/
+fallback routes in configured order, with zero retries per route and shared pacing.
+It stops after the first successful response, including a valid empty response; no third
+route or new provider is added. Weekly discovery retains its ten-minute runtime ceiling.
 A valid empty result is distinct from feed-validation or delivery failure.
 
 Managed discovery uses `--discover --discovery-phase prepare`, commits/pushes both
