@@ -142,7 +142,7 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Narrative category is not in cited evidence.", "Invalid query fields.", "Duplicate query.",
     "Invalid ranking fields.", "Unknown or duplicate ranking URL.",
     "Ranking score must be an integer from 1 through 10.", "Ranking relation must contradict or complicate.",
-    "Ranking quote is not in the supplied external evidence.", "Invalid source result fields.",
+    "Ranking quote ID is not bound to the supplied signal URL.", "Invalid source result fields.",
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
     "Invalid Hacker News search response.", "Invalid Lobsters search response.",
@@ -263,6 +263,30 @@ def _parse_queries(text: str, maximum: int) -> tuple[list[SearchQuery], list[str
     return queries, limitations
 
 
+def _ranking_signal_payload(signal: Signal) -> dict[str, Any]:
+    """Keep each supplied character once; quote IDs bind URL, field, offsets and text."""
+    payload = asdict(signal)
+    for field_name in ("title", "snippet"):
+        text = getattr(signal, field_name)
+        segments = []
+        start = 0
+        while start < len(text):
+            end = min(start + 200, len(text))
+            if end < len(text):
+                # Prefer a sentence or word boundary without removing any whitespace.
+                boundary = text.rfind(". ", start, end)
+                if boundary < start:
+                    boundary = max(text.rfind(" ", start, end), text.rfind("\n", start, end))
+                if boundary >= start:
+                    end = boundary + 1
+            literal = text[start:end]
+            identity = json.dumps([signal.url, field_name, start, end, literal], ensure_ascii=False)
+            segments.append({"id": hashlib.sha256(identity.encode()).hexdigest()[:16], "text": literal})
+            start = end
+        payload[field_name] = segments
+    return payload
+
+
 def _parse_rankings(
     text: str, signals: list[Signal], narrative: EvidenceNarrative, maximum: int, min_score: int,
 ) -> tuple[list[EvidenceRankedSignal], list[str]]:
@@ -271,25 +295,26 @@ def _parse_rankings(
     ranked = []
     seen: set[str] = set()
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote"}:
+        if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote_id"}:
             raise ValueError("Invalid ranking fields.")
-        url, score, relation, quote = (entry[key] for key in ("url", "score", "relation", "quote"))
+        url, score, relation, quote_id = (entry[key] for key in ("url", "score", "relation", "quote_id"))
         if not isinstance(url, str) or url not in known or url in seen:
             raise ValueError("Unknown or duplicate ranking URL.")
         if type(score) is not int or not 1 <= score <= 10:
             raise ValueError("Ranking score must be an integer from 1 through 10.")
         if relation not in ("contradicts", "complicates"):
             raise ValueError("Ranking relation must contradict or complicate.")
-        _bounded_text(quote, 200, field="source_quote")
         signal = known[url]
-        try:
-            quote, normalized = canonical_evidence_quote(quote, signal.title, signal.snippet)
-        except ValueError as exc:
-            raise ValueError("Ranking quote is not in the supplied external evidence.") from exc
+        evidence = _ranking_signal_payload(signal)
+        options = {item["id"]: item["text"] for field in ("title", "snippet") for item in evidence[field]}
+        if not isinstance(quote_id, str) or quote_id not in options:
+            raise ValueError("Ranking quote ID is not bound to the supplied signal URL.")
+        quote = options[quote_id]
+        _bounded_text(quote, 200, field="source_quote")
         reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
         if score >= min_score:
-            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, normalized))
+            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, False))
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
     return ranked, limitations
 
@@ -346,7 +371,8 @@ def _ranking_candidates(signals: list[Signal]) -> list[Signal]:
         if len(candidates) >= MAX_RANKING_CANDIDATES:
             break
         trial = [*candidates, signal]
-        if len(json.dumps([asdict(item) for item in trial], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS:
+        payload_size = len(json.dumps([_ranking_signal_payload(item) for item in trial], ensure_ascii=False))
+        if payload_size <= MAX_RANKING_JSON_CHARS:
             candidates = trial
     return candidates
 
@@ -530,12 +556,15 @@ async def _run_stages(
         'Counter-evidence must be supported by supplied titles/snippets; do not infer a refutation from a '
         'title alone when it does not support one. Return {"rankings": [...], "limitations": [...]}. '
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
-        'relation ("contradicts" or "complicates"), reasoning (concise text), quote (an exact nonempty '
-        'substring of that signal title/snippet <=200 chars). Use unique URLs only. 9-10 means strong '
+        'relation ("contradicts" or "complicates"), reasoning (concise text), quote_id (one exact ID '
+        'from that same signal URL title/snippet segments). Select an ID; do not retype or repair source text. '
+        'Ordered segments preserve the original field, including typos and whitespace. '
+        'Use unique URLs only. 9-10 means strong '
         'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
         'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
         'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
-    ), {"narrative": asdict(narrative), "evidence": cited_evidence, "signals": [asdict(s) for s in candidates],
+    ), {"narrative": asdict(narrative), "evidence": cited_evidence,
+        "signals": [_ranking_signal_payload(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
     result.ranked_signals, limitations = _parse_rankings(
         text, candidates, narrative, maximum_ranked, config.irritator.min_signal_score,
