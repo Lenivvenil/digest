@@ -743,6 +743,8 @@ async def test_discovery_persists_unique_proposals_before_sending_instructions(
     from scripts.review_fixture import fixture_config
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
     url = "https://example.com/new"
