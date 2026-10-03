@@ -80,6 +80,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
     original_bundle, original_config = asdict(bundle), asdict(config)
+    original_narrative = _narrative(bundle)["narratives"][0]
     model = _mock_model(bundle)
     signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
     with (
@@ -107,6 +108,13 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         if index == 0:
             assert payload["evidence"] == json.loads(json.dumps(original_bundle))
         else:
+            assert payload["narrative"] == {
+                "claim": original_narrative["claim"], "category": original_narrative["category"],
+                "evidence_ids": original_narrative["evidence_ids"], "quotes": original_narrative["quotes"],
+            }
+            for hypothesis in [*original_narrative["implicit_assumptions"],
+                               original_narrative["why_worth_challenging"]]:
+                assert hypothesis not in call.args[1][1]["content"]
             assert payload["evidence"]["bundle_id"] == bundle.bundle_id
             assert payload["evidence"]["items"] == [asdict(bundle.items[0])]
             assert payload["evidence"]["limited_to_narrative_citations"] is True
@@ -120,8 +128,9 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         override = call.kwargs["provider_override"]
         assert (override.name, override.model) == (config.review.secondary.provider, config.review.secondary.model)
     assert all(item is copied_configs[0] for item in copied_configs)
+    assert asdict(result.narratives[0]) == {**original_narrative, "typography_normalized": []}
     serialized = json.loads(json.dumps(asdict(result)))
-    assert serialized["narratives"][0]["evidence_ids"] == [bundle.items[0].evidence_id]
+    assert serialized["narratives"][0] == {**original_narrative, "typography_normalized": []}
     assert len(serialized["diagnostics"]) == 6
     assert next(d for d in result.diagnostics if d.stage == "narrative").resolved_model == "approved-model"
 
