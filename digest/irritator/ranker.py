@@ -13,6 +13,17 @@ from digest.llm import LLMRole, _extract_json, complete
 
 logger = logging.getLogger(__name__)
 
+RANK_RELATION_CONTRACT = (
+    "Compare each source with the EXACT supplied narrative claim. Do not add a premise that a "
+    "solution is exclusive, sufficient, necessary or primary unless the claim actually states it. "
+    "A supporting example, adjacent tool or alternative implementation is not counter-evidence; omit it. "
+    "A complication requires an explicit material condition, tradeoff or limitation supported by the "
+    "supplied source and tied to what the actual claim asserts. A literal quote proves text identity, "
+    "not that the claimed contradiction or complication follows. Explain that relation using only the "
+    "supplied evidence. Return an empty list when no source establishes such a relation; do not manufacture one. "
+)
+
+
 
 @dataclass
 class RankedSignal:
@@ -46,9 +57,9 @@ _USER_PROMPTS: dict[str, str] = {
         "Оцени каждый сигнал по шкале 1-10, где:\n"
         "9-10 = прямые доказательства того, что нарратив неверен или преувеличен\n"
         "7-8 = существенное осложнение или важная оговорка, которую нарратив игнорирует\n"
-        "5-6 = мягкая альтернативная перспектива\n"
-        "1-4 = согласуется с нарративом или повторяет его\n\n"
-        "Для каждого сигнала верни JSON-объект с полями:\n"
+        "5-6 = ограниченная, но подтверждённая оговорка к данному утверждению\n"
+        "1-4 = согласуется с нарративом или повторяет его; такой сигнал пропусти\n\n"
+        "Для каждого подходящего сигнала верни JSON-объект с полями:\n"
         '- "index" — порядковый номер сигнала (начиная с 0)\n'
         '- "score" — оценка от 1 до 10\n'
         '- "reasoning" — обоснование оценки (1-2 предложения)\n\n'
@@ -60,9 +71,9 @@ _USER_PROMPTS: dict[str, str] = {
         "Score each signal on a 1-10 scale where:\n"
         "9-10 = direct evidence the narrative is wrong or overstated\n"
         "7-8 = significant complication or important caveat the narrative ignores\n"
-        "5-6 = mildly relevant alternative perspective\n"
-        "1-4 = agrees with or restates the narrative\n\n"
-        "For each signal return a JSON object with fields:\n"
+        "5-6 = limited but supported qualification of this claim\n"
+        "1-4 = agrees with or restates the narrative; omit such signals\n\n"
+        "For each qualifying signal return a JSON object with fields:\n"
         '- "index" — signal index (starting from 0)\n'
         '- "score" — score from 1 to 10\n'
         '- "reasoning" — justification for the score (1-2 sentences)\n\n'
@@ -85,7 +96,7 @@ def _build_prompt(
     user_tmpl = _USER_PROMPTS.get(language, _USER_PROMPTS["ru"])
     user = user_tmpl.format(claim=narrative.claim, signals_text=signals_text)
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": system + " " + RANK_RELATION_CONTRACT},
         {"role": "user", "content": user},
     ]
 

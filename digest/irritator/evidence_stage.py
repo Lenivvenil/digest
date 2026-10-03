@@ -21,7 +21,7 @@ from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.ranker import RankedSignal
+from digest.irritator.ranker import RANK_RELATION_CONTRACT, RankedSignal
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
@@ -496,9 +496,9 @@ async def _run_stages(
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
         'relation ("contradicts" or "complicates"), reasoning (concise text), quote (an exact nonempty '
         'substring of that signal title/snippet <=200 chars). Use unique URLs only. 9-10 means strong '
-        'direct contradiction; 7-8 substantial complication; 5-6 mild alternative evidence; 1-4 weak relevance. '
+        'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
         'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
-        'Use the requested language for reasoning.'
+        'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
     ), {"narrative": asdict(narrative), "evidence": cited_evidence, "signals": [asdict(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
     result.ranked_signals, limitations = _parse_rankings(

@@ -10,6 +10,7 @@ import pytest
 
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.ranker import (
+    RANK_RELATION_CONTRACT,
     RankedSignal,
     _build_prompt,
     _parse_rankings,
@@ -69,12 +70,14 @@ class TestBuildPrompt:
 
         assert len(messages) == 2
         assert "контр-сигналов" in messages[0]["content"]
+        assert RANK_RELATION_CONTRACT in messages[0]["content"]
         assert n.claim in messages[1]["content"]
         assert signals[0].title in messages[1]["content"]
 
     def test_english_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
         assert "counter-signal" in messages[0]["content"]
+        assert RANK_RELATION_CONTRACT in messages[0]["content"]
 
     def test_english_prompt_has_calibration_anchors(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
