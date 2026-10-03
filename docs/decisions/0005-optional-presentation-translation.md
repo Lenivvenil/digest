@@ -1,6 +1,6 @@
 # ADR-0005: Opt-in translation of publication text
 
-Status: accepted and implemented in PR96; configured primary and supplementary translation deployed. Narrow real verification passed; general semantic fidelity is not claimed.
+Status: accepted, implemented and deployed. Finite runtime acceptance under #94 passed on 2026-10-03: independently reviewed ordinary archived narrative translation using prompt v2, exact canonical fallback on a rate limit, and confirmed compact delivery/archive state. General semantic fidelity is not claimed.
 
 ## Context and authority
 
@@ -43,9 +43,12 @@ structural checks. They do not prove preservation of every actor, condition, neg
 or qualification. The output identifies machine translation and its unverified
 semantic fidelity. Translation must never upgrade the verification status of a draft.
 
-Real representative translation needs independent source/canonical-text review before
-rollout. On failure, retain canonical English with visible degraded status. The #55
-factual quality gate remains independent of this presentation step.
+The observed prompt-v2 narrative preserves its canonical meaning. The primary
+publication hit a provider rate limit and retained all canonical fields with one
+visible fallback notice; that Telegram edition was English. This is finite observed
+coverage, not proof of every technical term, the earlier ingest wording, or a Russian
+Telegram delivery. Existing interruption/cache/version tests complement that runtime
+evidence. The #55 factual-quality gate remains independent of presentation.
 
 ## Deliberate remaining scope
 
@@ -53,8 +56,8 @@ Main currently supports en/ru; arbitrary language support is not claimed. Canoni
 supplementary rendering was made lossless in #98, and the separate primary prefix
 repetition defect was fixed in #99. The same translation setting covers generated
 Irritator prose; raw reviews, literal source quotations, source titles and evidence
-remain canonical. Representative real translation fidelity and rollout verification
-are still open. No new delivery subsystem or inference framework is implied.
+remain canonical. Broader corpus fidelity is not claimed by the finite acceptance; the documented
+failures retain canonical text. No new delivery subsystem or inference framework is implied.
 
 
 Normal completion includes the existing adapters' stop/STOP and Anthropic end_turn;

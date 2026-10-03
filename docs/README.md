@@ -33,17 +33,21 @@ Original versions of translated documents remain available through git history. 
 section anchors referenced by existing documents are retained where required. Historical
 issues and PR discussions are not translated or erased.
 
-## Current work boundary — 2026-10-01
+## Current work boundary — 2026-10-03
 
-English documentation/onboarding #95 is merged. Optional post translation is tracked in
-[#94](https://github.com/Lenivvenil/digest/issues/94), with its own compatibility and
-fidelity checks. [#55](https://github.com/Lenivvenil/digest/issues/55) is deferred by the
-owner, remains open, and does not block unrelated presentation work. [Draft #93](https://github.com/Lenivvenil/digest/pull/93)
-contains experimental selected-source enrichment; its commands are not advertised as
-available on main. The ordered backlog lives in [#91](https://github.com/Lenivvenil/digest/issues/91).
+English documentation/onboarding and configurable primary/supplementary translation
+are implemented and deployed. The finite acceptance under
+[#94](https://github.com/Lenivvenil/digest/issues/94) covers an independently reviewed
+ordinary archived narrative using prompt v2, exact canonical fallback after a provider
+rate limit, and a confirmed compact edition with persisted archive/state. It does not
+claim general translation accuracy or Russian delivery for that English-fallback edition.
 
-An absent translation section preserves direct `radar.language` generation. The optional
-post-presentation setting is documented in README and ADR-0005, including generated
-Irritator prose. Real-output translation review remains pending. Licensing
-remains an owner release decision. No software license grant is currently supplied by
-this repository; the documentation does not choose one on the owner's behalf.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains an open full-source
+factual-quality requirement. [PR #93](https://github.com/Lenivvenil/digest/pull/93) was
+closed without merging; its experimental enrichment is not available on main. The
+ordered requirements and acceptance status live in [#91](https://github.com/Lenivvenil/digest/issues/91).
+
+An absent translation section preserves legacy direct `radar.language` generation.
+README and ADR-0005 document explicit English canonical generation and optional
+translation of generated publication prose. No software-license grant is supplied;
+choosing a distribution license is outside this personal-runtime milestone.

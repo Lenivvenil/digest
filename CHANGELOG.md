@@ -2,6 +2,21 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- English current documentation and safe onboarding; historical records retain their
+  original language, and no software-license grant is supplied.
+- Configurable generated-text translation with a pinned route, bounded requests,
+  canonical fallback and durable content/target/model/prompt-bound cache. Absent
+  configuration preserves legacy generation. Finite runtime acceptance includes a
+  faithful prompt-v2 archived narrative and visible English fallback after a rate limit.
+- Compact daily editions (#105) preserve selected text, links and article identities
+  across bounded Telegram chunks. Durable reservation precedes publication; only
+  confirmed coverage earns delivery attribution, and unknown outcomes hold replay.
+  Optional results remain archived. One production edition confirmed five articles
+  in one chunk with persisted archive and state.
+- Batch-compatible source approvals (#106) bind ordinary-message decisions to a
+  current proposal and apply them before collection. Backup/config/state failures
+  retain decisions; replay does not duplicate an already configured source.
+
 - Opt-in blind evidence review: immutable RSS snapshot and identical prompts for
   explicit primary/secondary model slots, no implicit provider fallback, optional
   third family only on validated selection disagreement. Strict source-ID/quote
