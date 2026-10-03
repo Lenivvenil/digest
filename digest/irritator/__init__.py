@@ -10,7 +10,7 @@ import httpx
 
 from digest.irritator.narrative_extractor import Narrative, extract_narratives
 from digest.irritator.query_generator import QueryDiagnostics, SearchQuery, generate_queries
-from digest.irritator.ranker import RankedSignal, rank_signals
+from digest.irritator.ranker import RankedSignal, _ranking_signal_packet, rank_signals
 from digest.irritator.sources import SearchDiagnostics, Signal, search_all_sources
 from digest.irritator.validator import validate_signals, validate_signals_async
 
@@ -30,6 +30,7 @@ class IrritatorDiagnostics:
     search: SearchDiagnostics = field(default_factory=SearchDiagnostics)
     ranking_successful: int = 0
     ranking_failed: int = 0
+    ranking_omitted: int = 0
 
 
 @dataclass
@@ -78,9 +79,11 @@ async def run_irritator(
         if counts.successful or counts.failed or counts.unavailable:
             text += (f"; source attempts: {counts.successful} successful, "
                      f"{counts.failed} failed, {counts.unavailable} unavailable")
-        if diagnostics.ranking_successful or diagnostics.ranking_failed:
+        if diagnostics.ranking_successful or diagnostics.ranking_failed or diagnostics.ranking_omitted:
             text += (f"; ranking: {diagnostics.ranking_successful} successful, "
                      f"{diagnostics.ranking_failed} failed")
+        if diagnostics.ranking_omitted:
+            text += f", {diagnostics.ranking_omitted} whole signals omitted by evidence budget"
         return IrritatorStatus(text, level, diagnostics)
 
     # Stage 1: Narrative extraction
@@ -158,7 +161,11 @@ async def run_irritator(
     logger.info("Irritator: %d/%d signals passed validation", valid_signal_count, raw_signal_count)
 
     # Stage 5: Ranking (per narrative; failures are logged and skipped)
+    _packet, admitted_indices = _ranking_signal_packet(signals)
     for narrative in narratives:
+        diagnostics.ranking_omitted += len(signals) - len(admitted_indices)
+        if not admitted_indices:
+            continue
         try:
             ranked = await rank_signals(narrative, signals, config)
             all_ranked.extend(ranked)
@@ -193,7 +200,7 @@ async def run_irritator(
     level: IrritatorLevel = "ok" if all_ranked else "empty"
     if diagnostics.ranking_failed and not diagnostics.ranking_successful:
         level = "error"
-    elif source_failures or diagnostics.ranking_failed:
+    elif source_failures or diagnostics.ranking_failed or diagnostics.ranking_omitted:
         level = "incomplete"
     return narratives, all_ranked, outcome(status_text, level)
 

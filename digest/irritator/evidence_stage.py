@@ -16,12 +16,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from digest._sanitize import sanitize_article
 from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.ranker import RANK_RELATION_CONTRACT, RANK_RELATIONS, RankedSignal
+from digest.irritator.ranker import (
+    MAX_RANKING_JSON_CHARS,
+    RANK_RELATION_CONTRACT,
+    RANK_RELATIONS,
+    RankedSignal,
+)
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
@@ -34,7 +38,6 @@ from digest.review_checkpoint import validate_evidence_bundle
 MAX_QUERIES = 3
 MAX_SOURCE_RESULTS = 10
 MAX_RANKING_CANDIDATES = 12
-MAX_RANKING_JSON_CHARS = 8000
 MAX_SOURCE_RESPONSE_BYTES = 512000
 MAX_RANKED_SIGNALS = 3
 MAX_OUTPUT_TOKENS = 2048
@@ -43,7 +46,8 @@ MAX_SECONDS = 180.0
 SAFE_SOURCES = ("hackernews", "arxiv", "lobsters")
 COVERAGE = (
     "Limited coverage: at most one narrative from sanitized RSS excerpts, three queries, "
-    "and the configured Hacker News/arXiv/Lobsters sources. Search snippets are not full articles; "
+    "and the configured Hacker News/arXiv/Lobsters sources. "
+    "Search snippets and complete arXiv abstracts are not full articles; "
     "absence of a counter-signal is not confirmation of the narrative."
 )
 
@@ -344,7 +348,7 @@ async def _model_text(
 
 
 def _bounded_signals(signals: list[Signal], source: str) -> list[Signal]:
-    """Keep adapter data bounded and sanitized, preserving the actual external URL."""
+    """Validate adapter metadata; retain exact evidence until whole-packet admission."""
     bounded = []
     for signal in signals[:MAX_SOURCE_RESULTS]:
         if not isinstance(signal, Signal) or not all(isinstance(value, str) for value in (
@@ -357,8 +361,9 @@ def _bounded_signals(signals: list[Signal], source: str) -> list[Signal]:
             raise ValueError("Invalid source result URL.")
         if type(signal.score) not in {int, float} or not math.isfinite(signal.score):
             raise ValueError("Invalid source score.")
-        title, snippet, _ = sanitize_article(signal.title, signal.snippet, source)
-        bounded.append(Signal(signal.url, title[:400], snippet[:800], source, signal.published[:80], signal.score))
+        # Source text is untrusted data, not executable instructions. Rewriting or
+        # prefix-cutting it would change the evidence later certified by quote IDs.
+        bounded.append(Signal(signal.url, signal.title, signal.snippet, source, signal.published[:80], signal.score))
     return bounded
 
 
@@ -454,8 +459,15 @@ async def _run_stages(
     _finish_stage(diagnostic, len(bundle.items))
     diagnostic = _stage(result, "narrative", len(bundle.items))
     text = await _model_text(diagnostic, LLMRole.EXTRACT_NARRATIVES, (
-        'Identify at most ONE potentially dominant narrative to challenge, grounded in the original RSS evidence. '
-        'Treat dominance as a limited hypothesis, not a corpus-wide finding. Return {"narratives": [...], '
+        'Select at most ONE concrete source-attributed assertion or announced decision from the original RSS evidence. '
+        'The claim must name its source or actor and preserve the stated scope, timing and uncertainty. '
+        'Do not turn reported framing into an imminent threat, necessity, consensus or exclusive solution. '
+        'Duplicate reports of one event are not independent support; '
+        'do not merge unrelated announcements into a claim. '
+        'Keep inferred framing only in implicit_assumptions or why_worth_challenging, labelled as hypotheses; '
+        'those fields are not the target of external checking. '
+        'If no concrete target is supported, return no narratives. '
+        'Return {"narratives": [...], '
         '"limitations": [short strings]}. Each narrative has exactly claim (concise text), category '
         '(an exact cited category), implicit_assumptions (1-3 concise strings), why_worth_challenging '
         '(concise text), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
@@ -534,6 +546,10 @@ async def _run_stages(
     diagnostic.omitted_count = len(signals) - len(candidates)
     if diagnostic.omitted_count:
         result.limitations.append(f"Ranking considered only {len(candidates)} of {len(signals)} validated signals.")
+    if not candidates:
+        diagnostic.status = "incomplete"
+        result.status = "incomplete"
+        return
     text = await _model_text(diagnostic, LLMRole.RANK_SIGNALS, (
         'Classify up to max_ranked external signals against the narrative, prioritizing supported '
         'counter-evidence. Return {"rankings": [...], "limitations": [...]}. '
@@ -554,7 +570,8 @@ async def _run_stages(
     )
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.ranked_signals))
-    result.status = "incomplete" if failed else "complete" if result.ranked_signals else "empty"
+    result.status = ("incomplete" if failed or diagnostic.omitted_count
+                     else "complete" if result.ranked_signals else "empty")
 
 
 async def run_evidence_irritator(

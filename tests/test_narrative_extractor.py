@@ -74,6 +74,8 @@ class TestBuildPrompt:
         assert "critical analyst" in messages[0]["content"]
         assert "AI news here" in messages[1]["content"]
         assert "5" in messages[1]["content"]
+        assert "source-attributed assertions or announced decisions" in messages[1]["content"]
+        assert "Duplicate reports are not independent support" in messages[1]["content"]
 
     def test_unknown_language_falls_back_to_ru(self) -> None:
         messages = _build_prompt([_make_summary()], "fr", 3)

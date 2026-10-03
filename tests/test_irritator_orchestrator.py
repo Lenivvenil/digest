@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from digest.irritator import IrritatorStatus, run_irritator
+from digest.irritator.ranker import MAX_RANKING_JSON_CHARS
 from tests.factories import make_narrative, make_ranked_signal, make_signal
 
 
@@ -29,6 +31,35 @@ _MODULE = "digest.irritator"
 
 @pytest.mark.asyncio
 class TestRunIrritator:
+    @pytest.mark.parametrize(("include_small", "counter_signal"), [(False, False), (True, False), (True, True)])
+    async def test_whole_evidence_omissions_are_incomplete(
+        self, include_small: bool, counter_signal: bool,
+    ) -> None:
+        narrative = make_narrative()
+        queries = {narrative.claim: [MagicMock()]}
+        raw = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS)]
+        if include_small:
+            raw.append(make_signal(url="https://example.com/admitted"))
+        ranking = [{"index": 1, "score": 8, "relation": "complicates", "reasoning": "A material condition."}]
+        model = AsyncMock(return_value=(json.dumps(ranking if counter_signal else []), {}))
+        with (
+            patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
+            patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
+            patch("digest.irritator.ranker.complete", model),
+        ):
+            _, ranked, status = await run_irritator([], _make_config(), _make_client())
+        assert status.level == "incomplete"
+        assert status.diagnostics.ranking_omitted == 1
+        assert status.diagnostics.ranking_successful == int(include_small)
+        assert status.diagnostics.ranking_failed == 0
+        assert "1 whole signals omitted by evidence budget" in status.text
+        assert model.await_count == int(include_small)
+        assert len(ranked) == int(counter_signal)
+        if ranked:
+            assert ranked[0].signal is raw[1]
+
     async def test_narrative_extraction_failure_returns_error(self) -> None:
         cfg = _make_config()
         with patch(f"{_MODULE}.extract_narratives", AsyncMock(side_effect=RuntimeError("boom"))):
