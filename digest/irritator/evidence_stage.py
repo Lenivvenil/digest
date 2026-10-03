@@ -19,8 +19,9 @@ import httpx
 from digest._sanitize import sanitize_article
 from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
+from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.ranker import RankedSignal
+from digest.irritator.ranker import RANK_RELATION_CONTRACT, RankedSignal
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
@@ -132,6 +133,7 @@ class EvidenceIrritatorResult:
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
 # provider/source exception strings, which can contain credentials or raw bodies.
 _SAFE_ERROR_DETAILS = frozenset({
+    QUERY_ERROR,
     "Invalid text field or text budget.", "Response exceeds the response budget.",
     "Invalid JSON response.", "Invalid response fields.", "Invalid response entry count.",
     "Invalid limitations count.", "An empty result requires an explanation.", "Invalid narrative fields.",
@@ -253,6 +255,7 @@ def _parse_queries(text: str, maximum: int) -> tuple[list[SearchQuery], list[str
         if not isinstance(entry, dict) or set(entry) != {"query", "intent"}:
             raise ValueError("Invalid query fields.")
         query = _bounded_text(entry["query"], 200, field="query")
+        lexical_atoms(query)
         if query.casefold() in seen:
             raise ValueError("Duplicate query.")
         seen.add(query.casefold())
@@ -473,10 +476,10 @@ async def _run_stages(
     diagnostic = _stage(result, "queries", 1)
     text = await _model_text(diagnostic, LLMRole.GENERATE_QUERIES, (
         'Find external evidence that could contradict or complicate this source-supported narrative. Generate '
-        'up to max_queries distinct English search queries about documented limitations, failures or caveats. '
+        'up to max_queries distinct English topic/entity searches for relevant external material. '
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
-        'Explain an empty query list. No other fields.'
+        'Explain an empty query list. No other fields. ' + QUERY_CONTRACT
     ), {"narrative": asdict(narrative), "evidence": cited_evidence, "max_queries": maximum_queries}, config)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
@@ -529,9 +532,9 @@ async def _run_stages(
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
         'relation ("contradicts" or "complicates"), reasoning (concise text), quote (an exact nonempty '
         'substring of that signal title/snippet <=200 chars). Use unique URLs only. 9-10 means strong '
-        'direct contradiction; 7-8 substantial complication; 5-6 mild alternative evidence; 1-4 weak relevance. '
+        'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
         'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
-        'Use the requested language for reasoning.'
+        'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
     ), {"narrative": asdict(narrative), "evidence": cited_evidence, "signals": [asdict(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
     result.ranked_signals, limitations = _parse_rankings(

@@ -5,8 +5,8 @@ in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is no
 instructions. Editorial quality remains open in [#55](https://github.com/Lenivvenil/digest/issues/55).
 Optional primary and supplementary presentation translation is documented in
 [README](../README.md#language-and-optional-post-translation) and
-[ADR-0005](decisions/0005-optional-presentation-translation.md). Its acceptance checks
-remain separate from #55's full-source factual-quality requirement. Current work order is
+[ADR-0005](decisions/0005-optional-presentation-translation.md). Its presentation acceptance
+is separate from #55's full-source factual-quality requirement. Current work order is
 tracked in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 `review.enabled` adds provider-neutral independent selection to the existing RSS,
@@ -271,6 +271,17 @@ serializes requests and spaces starts in the owned event loop; the runtime's exi
 job concurrency coordinates its scheduled processes. Operators must also account for
 other clients/machines they control; this local gate does not coordinate unrelated
 processes. Waiting remains inside existing stage deadlines, without added retries.
+
+Both query-generation paths use the same lexical contract: 1–8 words, including
+words inside double-quoted exact phrases, within the existing 200-character bound.
+Explanations belong in `intent`. Invalid prose/operator syntax fails explicitly;
+queries are never silently shortened. This is a syntax contract, not a relevance
+classifier. arXiv receives an `all:` prefix for each term or phrase, joined with
+`AND`, as described in its [query grammar](https://info.arxiv.org/help/api/user-manual.html#51-details-of-query-construction).
+HN receives the lexical text with exact-phrase syntax enabled; Boolean/field
+operators and exclusions are not accepted in generated input. Request counts,
+source deadlines and ranking requirements are unchanged. This correction does
+not establish the cause of earlier read timeouts or prove counter-evidence recall.
 
 The [HN Algolia documentation](https://hn.algolia.com/api) defines full-text `query`,
 `tags=story`, `hitsPerPage`, and story `objectID`; its published limit is 10,000 requests

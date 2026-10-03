@@ -6,17 +6,20 @@
   counting, immutable source spans and durable selected-work progress. Literal passage
   checks are not semantic certification; the finite quality/cost gate remains open.
 
-- English current documentation and safe onboarding example; environment credentials
-  are explicitly loaded by the operator. Historical records retain their original language.
-- Opt-in generated-text translation with an explicitly configured provider/model,
-  bounded calls/time/output, canonical fallback and durable content/target/model/prompt-bound
-  records. Absent configuration preserves legacy generation; enabled translation requires
-  canonical English. Prompt v2 explicitly preserves technical data-flow direction.
-  Ordinary post-v2 semantic acceptance remains open.
-- Compact Telegram editions preserve selected text, URLs and article identities across
-  UTF-16-bounded chunks, with once-per-edition notices and a durable pre-publication
-  reservation. Only confirmed chunk coverage earns delivery attribution; unknown outcomes
-  hold automatic publication. Optional-stage results remain archived.
+- English current documentation and safe onboarding; historical records retain their
+  original language, and no software-license grant is supplied.
+- Configurable generated-text translation with a pinned route, bounded requests,
+  canonical fallback and durable content/target/model/prompt-bound cache. Absent
+  configuration preserves legacy generation. Finite runtime acceptance includes a
+  faithful prompt-v2 archived narrative and visible English fallback after a rate limit.
+- Compact daily editions (#105) preserve selected text, links and article identities
+  across bounded Telegram chunks. Durable reservation precedes publication; only
+  confirmed coverage earns delivery attribution, and unknown outcomes hold replay.
+  Optional results remain archived. One production edition confirmed five articles
+  in one chunk with persisted archive and state.
+- Batch-compatible source approvals (#106) bind ordinary-message decisions to a
+  current proposal and apply them before collection. Backup/config/state failures
+  retain decisions; replay does not duplicate an already configured source.
 
 - Opt-in blind evidence review: immutable RSS snapshot and identical prompts for
   explicit primary/secondary model slots, no implicit provider fallback, optional

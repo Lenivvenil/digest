@@ -289,7 +289,7 @@ async def test_send_source_approval_message_success() -> None:
     )
 
     result = await send_source_approval_message(ps, token, chat_id, "digest_test_bot")
-    assert result is True
+    assert result.status == "confirmed" and result.message_id == 1
     assert route.called
 
     sent = json.loads(route.calls[0].request.content)
@@ -340,7 +340,7 @@ async def test_send_source_approval_message_network_error() -> None:
     )
 
     result = await send_source_approval_message(ps, token, chat_id)
-    assert result is False
+    assert result.status == "unknown" and result.message_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -526,3 +526,12 @@ def test_add_source_rejects_invalid_config_without_mutation(tmp_path: Path, cont
     with pytest.raises(ValueError, match="Cannot add a source"):
         add_source_to_config(config_path, _fresh_proposal())
     assert Path(config_path).read_text(encoding="utf-8") == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body,expected", [({"ok": False}, "rejected"), ({"ok": True}, "unknown")])
+@respx.mock
+async def test_source_delivery_needs_actual_receipt(body, expected):
+    respx.post("https://api.telegram.org/bottoken/sendMessage").mock(return_value=httpx.Response(200, json=body))
+    result = await send_source_approval_message(_fresh_proposal(), "token", "owner")
+    assert result.status == expected and result.message_id is None

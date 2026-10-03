@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from digest.irritator.query_contract import lexical_atoms
 from digest.irritator.sources import Signal, _register, validate_search_response
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,13 @@ async def search_hackernews(
     client: httpx.AsyncClient,
 ) -> list[Signal]:
     """Search Hacker News via the Algolia API."""
+    lexical_atoms(query)
     resp = await client.get(
         _BASE_URL,
-        params={"query": query, "tags": "story", "hitsPerPage": _MAX_RESULTS},
+        params={
+            "query": query, "tags": "story", "hitsPerPage": _MAX_RESULTS,
+            "advancedSyntax": "true",
+        },
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()

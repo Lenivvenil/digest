@@ -64,10 +64,10 @@ and useful factual output are current requirements, with no deferred-task status
 optional post translation, now implemented with explicit compatibility and recovery.
 The current priority is one compact daily edition within the documented
 [operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
-Compact delivery is implemented and enabled in the runtime; ordinary-output acceptance
-remains open. Full-source reading briefs are an opt-in implementation whose quality and
-cost gate remains separate from presentation delivery.
-
+Compact delivery is implemented and deployed: a production edition confirmed five
+articles in one Telegram chunk, with its archive and delivery state persisted.
+Translation and recovery acceptance covers the observed cases described below;
+full-source factual quality remains open in #55.
 
 Full-source reading briefs are off by default. The `reading_brief` setting requires
 English canonical text, review-led selection, and an explicitly configured model
@@ -439,8 +439,11 @@ checks preserve field IDs, numeric literals, URLs and recognized quotation/code 
 they cannot prove that every qualifier or meaning survived. Machine-translated text
 is labelled accordingly, and incomplete translation falls back to canonical English.
 A draft does not become fact-verified through translation. A narrow real fixture and
-ordinary translated output have been checked; this does not prove general fidelity,
-and source-scope/terminology quality remains part of output acceptance. This presentation feature
+an ordinary archived narrative using prompt v2 passed independent comparison. A
+production rate-limit failure preserved every canonical field and showed one fallback
+notice in the compact edition. That edition was delivered in English; this evidence
+does not claim a Russian Telegram delivery, general fidelity, or validation of every
+technical term and data-flow direction. This presentation feature
 does not require completing the separate #55 redesign, and does not claim to solve it.
 See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 

@@ -191,3 +191,37 @@ class TestRunIrritator:
             await run_irritator([], cfg, client)
         assert mock_search.call_args[0][2] is client
         assert mock_validate.call_args[0][2] is client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_invalid_generated_query_remains_incomplete_through_legacy_pipeline(partial: bool) -> None:
+    import json
+
+    from digest.irritator.query_generator import generate_queries
+    from scripts.review_fixture import fixture_config
+
+    narratives = [make_narrative(claim="First claim")]
+    responses = [(json.dumps([{
+        "query": "research on limitations of current AI agents in automating credential theft",
+        "intent": "Find limitations",
+    }]), {})]
+    if partial:
+        narratives.append(make_narrative(claim="Second claim"))
+        responses.append((json.dumps([{
+            "query": '"AI agents" limitations', "intent": "Find limitations",
+        }]), {}))
+    model = AsyncMock(side_effect=responses)
+    search = AsyncMock(return_value=[])
+    with (
+        patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=narratives)),
+        patch(f"{_MODULE}.generate_queries", generate_queries),
+        patch("digest.irritator.query_generator.complete", model),
+        patch(f"{_MODULE}.search_all_sources", search),
+    ):
+        _, ranked, status = await run_irritator([], fixture_config(), _make_client())
+    assert status.level == "incomplete" and ranked == []
+    assert status.diagnostics.queries.failed == 1
+    assert status.diagnostics.queries.successful == int(partial)
+    assert search.await_count == int(partial)
+    assert model.await_count == 1 + int(partial)

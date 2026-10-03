@@ -9,6 +9,7 @@ from typing import Any
 
 from digest.config import Config
 from digest.irritator.narrative_extractor import Narrative
+from digest.irritator.query_contract import QUERY_CONTRACT, lexical_atoms
 from digest.llm import LLMRole, _extract_json, complete
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,12 @@ class SearchQuery:
     intent: str
 
 
+@dataclass
+class QueryDiagnostics:
+    successful: int = 0
+    failed: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -29,11 +36,11 @@ class SearchQuery:
 _SYSTEM_PROMPTS: dict[str, str] = {
     "ru": (
         "Ты — поисковый аналитик-критик. Твоя задача — составить поисковые запросы, "
-        "которые найдут доказательства ПРОТИВ доминирующего нарратива."
+        "для поиска материалов, позволяющих проверить доминирующий нарратив."
     ),
     "en": (
         "You are a critical search analyst. Your task is to craft search queries "
-        "that will find EVIDENCE AGAINST a dominant narrative."
+        "for material that can test a dominant narrative."
     ),
 }
 
@@ -43,11 +50,10 @@ _USER_PROMPTS: dict[str, str] = {
         "Категория: {category}\n"
         "Неявные предположения:\n{assumptions}\n"
         "Почему стоит оспорить: {why_worth_challenging}\n\n"
-        "Составь {queries_per_narrative} поисковых запросов, которые найдут доказательства ПРОТИВ "
-        "этого нарратива. НЕ описывай нарратив. Ищи опровержения, провалы, критику, пост-мортемы.\n"
-        "Используй шаблоны: «failure of X», «X didn't work», «criticism of X», «post-mortem X», "
-        "«X considered harmful», «why X is wrong», «X limitations», «X hype».\n"
-        "Каждый запрос ДОЛЖЕН содержать хотя бы одно слово отрицания, провала или сомнения.\n\n"
+        "Составь {queries_per_narrative} кратких поисковых запросов по теме или сущности.\n"
+        "Не закладывай желаемое опровержение в поисковые слова. Используй разные ракурсы темы.\n"
+        "Контргипотезу и причину проверки укажи в intent; отношение найденного материала к нарративу "
+        "оценивается после поиска.\n\n"
         "Для каждого запроса верни JSON-объект с полями:\n"
         '- "query" — поисковый запрос (на английском)\n'
         '- "intent" — что именно ищем (1 предложение)\n\n'
@@ -58,11 +64,9 @@ _USER_PROMPTS: dict[str, str] = {
         "Category: {category}\n"
         "Implicit assumptions:\n{assumptions}\n"
         "Why worth challenging: {why_worth_challenging}\n\n"
-        "Craft {queries_per_narrative} search queries that will find EVIDENCE AGAINST this narrative.\n"
-        "Do NOT describe the narrative. Hunt for refutations, failures, criticism, post-mortems.\n"
-        "Use adversarial patterns: 'failure of X', 'X didn't work', 'criticism of X', 'post-mortem X', "
-        "'X considered harmful', 'why X is wrong', 'X limitations', 'X hype'.\n"
-        "Each query MUST contain at least one negation, failure, or doubt keyword.\n\n"
+        "Craft {queries_per_narrative} concise topic/entity search queries from different angles.\n"
+        "Do not require the desired counterclaim in search keywords. Put the counter-hypothesis "
+        "and reason to investigate in intent; assess the retrieved material's relation after search.\n\n"
         "For each query return a JSON object with fields:\n"
         '- "query" — the search query\n'
         '- "intent" — what we are looking for (1 sentence)\n\n'
@@ -90,7 +94,7 @@ def _build_prompt(
         queries_per_narrative=queries_per_narrative,
     )
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": system + " " + QUERY_CONTRACT},
         {"role": "user", "content": user},
     ]
 
@@ -108,9 +112,10 @@ def _parse_queries(raw: Any) -> list[SearchQuery]:
             raise ValueError(
                 f"Query #{i} missing field(s): {', '.join(sorted(missing))}"
             )
+        lexical_atoms(item["query"])
         queries.append(
             SearchQuery(
-                query=str(item["query"]),
+                query=item["query"],
                 intent=str(item["intent"]),
             )
         )
@@ -137,6 +142,8 @@ async def _generate_for_narrative(
 async def generate_queries(
     narratives: list[Narrative],
     config: Config,
+    *,
+    diagnostics: QueryDiagnostics | None = None,
 ) -> dict[str, list[SearchQuery]]:
     """Generate adversarial search queries for all narratives in parallel.
 
@@ -152,12 +159,15 @@ async def generate_queries(
     queries_by_narrative: dict[str, list[SearchQuery]] = {}
     for narrative, result in zip(narratives, results, strict=True):
         if isinstance(result, Exception):
+            if diagnostics is not None:
+                diagnostics.failed += 1
             logger.warning(
-                "Query generation failed for narrative '%s': %s",
-                narrative.claim[:80],
-                result,
+                "Query generation failed (%s)",
+                type(result).__name__,
             )
             continue
+        if diagnostics is not None:
+            diagnostics.successful += 1
         queries_by_narrative[narrative.claim] = result  # type: ignore[assignment]
 
     total = sum(len(qs) for qs in queries_by_narrative.values())

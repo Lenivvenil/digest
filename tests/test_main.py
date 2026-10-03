@@ -738,13 +738,13 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
 async def test_discovery_persists_unique_proposals_before_sending_instructions(
     write_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from contextlib import nullcontext
-    from types import SimpleNamespace
-
-    from digest.discovery import load_pending
+    from digest.discovery import ProposalDelivery, load_pending
     from digest.main import discover_sources
+    from scripts.review_fixture import fixture_config
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
     url = "https://example.com/new"
@@ -754,19 +754,19 @@ async def test_discovery_persists_unique_proposals_before_sending_instructions(
     async def send(proposal, token, owner, bot_username):
         assert load_pending(".cache") == [proposal]
         assert (token, owner, bot_username) == ("synthetic-test-token", "123", "digest_test_bot")
-        return True
+        return ProposalDelivery("confirmed", 1)
 
+    config = fixture_config()
+    config.telegram.enabled = True
+    config.telegram.bot_username = "digest_test_bot"
+    from digest.config import ProviderConfig
+    config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
     with ExitStack() as stack:
-        stack.enter_context(patch("digest.config.load_config", return_value=_mock_config()))
+        stack.enter_context(patch("digest.config.load_config", return_value=config))
         stack.enter_context(patch("digest.llm.complete", AsyncMock(return_value=(
             f"FEED|{url}|tech|New\nFEED|{url}|tech|Duplicate", None,
         ))))
-        stack.enter_context(patch("digest._dns_pinning.validate_url", return_value=SimpleNamespace(
-            url=url, hostname="example.com", pinned_addrinfos=[],
-        )))
-        stack.enter_context(patch("digest._dns_pinning.pin_dns", return_value=nullcontext()))
-        http = stack.enter_context(patch("httpx.AsyncClient"))
-        http.return_value.__aenter__.return_value = client
+        stack.enter_context(patch("digest.discovery_feed.validate_feed_url", AsyncMock(return_value=url)))
         sent = stack.enter_context(patch("digest.discovery.send_source_approval_message", side_effect=send))
         if write_fails:
             stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
@@ -787,6 +787,12 @@ def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path
 
     proposal = PendingSource("Rejected", "https://example.com/no", "Tech", datetime.now(timezone.utc).isoformat())
     save_pending([proposal], str(tmp_path), strict=True)
+    import json
+    from dataclasses import asdict
+    from datetime import timedelta
+    expired = PendingSource("Expired", "https://example.com/expired", "Tech",
+                            (datetime.now(timezone.utc)-timedelta(days=31)).isoformat())
+    (tmp_path / "pending_sources.json").write_text(json.dumps({"pending": [asdict(proposal), asdict(expired)]}))
     store = FeedbackStore(
         source_decisions={proposal.source_hash: "rejected"},
         source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
@@ -798,6 +804,8 @@ def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path
     assert load_pending(str(tmp_path)) == []
     assert load_feedback(str(tmp_path), strict=True).source_decisions == {}
     assert store.source_decisions == {} and store.source_decision_bindings == {}
+    from digest.discovery import load_delivery
+    assert {item["decision"] for item in load_delivery(str(tmp_path))["history"]} == {"rejected", "expired"}
 
 
 @pytest.mark.parametrize("case", ["legacy", "changed_name", "changed_category", "changed_date", "duplicate", "future"])
@@ -1015,3 +1023,142 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
         assert load_feedback(".cache", strict=True).article_source_map == {
             key[:8]: "test" for key in hashes[:confirmed]
         }
+
+
+@pytest.mark.asyncio
+async def test_discovery_legacy_batch_pair_barrier_receipts_and_no_reoffer(tmp_path, monkeypatch):
+    import hashlib
+    from datetime import datetime, timedelta, timezone
+
+    from digest.discovery import PendingSource, ProposalDelivery, load_delivery, load_pending
+    from digest.main import discover_sources
+    from scripts.review_fixture import fixture_config
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture-run")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fixture-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fixture-owner")
+    now = datetime.now(timezone.utc)
+    proposals = [PendingSource(f"Feed {n}", f"https://example.com/{n}", "New category", now.isoformat())
+                 for n in range(3)]
+    expired = PendingSource("Old", "https://example.com/old", "Old", (now-timedelta(days=31)).isoformat())
+    # Write expired explicitly: save_pending itself prunes on write.
+    import json
+    from dataclasses import asdict
+    Path(".cache").mkdir()
+    Path(".cache/pending_sources.json").write_text(json.dumps({"pending": [asdict(p) for p in [expired, *proposals]]}))
+    config = fixture_config()
+    config.telegram.enabled = True
+    config.telegram.bot_username = "fixture_bot"
+    from digest.config import ProviderConfig
+    config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
+    with (patch("digest.config.load_config", return_value=config),
+          patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
+          patch("digest.llm.complete", AsyncMock(return_value=("", {}))) as model,
+          patch("digest.discovery.send_source_approval_message", AsyncMock(side_effect=[
+              ProposalDelivery("confirmed", 42), ProposalDelivery("unknown"), ProposalDelivery("rejected"),
+          ])) as send):
+        assert await discover_sources("config.yaml", phase="prepare") == 0
+        model.assert_not_awaited()
+        send.assert_not_awaited()
+        with pytest.raises(ValueError, match="separate persisted"):
+            await discover_sources("config.yaml")
+        model.assert_not_awaited()
+        assert load_pending(".cache") == proposals
+        assert len(load_delivery(".cache")["history"]) == 1
+        pending = Path(".cache/pending_sources.json")
+        receipt = Path(".cache/discovery_delivery.json")
+        ps, ds = [hashlib.sha256(p.read_bytes()).hexdigest() for p in [pending, receipt]]
+        with pytest.raises(ValueError, match="pair hash mismatch"):
+            await discover_sources("config.yaml", phase="send", pending_sha=ps, delivery_sha="wrong")
+        send.assert_not_awaited()
+        config.telegram.enabled = False
+        assert await discover_sources("config.yaml", phase="send", pending_sha=ps, delivery_sha=ds) == 1
+        send.assert_not_awaited()
+        assert hashlib.sha256(receipt.read_bytes()).hexdigest() == ds
+        config.telegram.enabled = True
+        assert await discover_sources("config.yaml", phase="send", pending_sha=ps, delivery_sha=ds) == 1
+        assert send.await_count == 3
+        records = list(load_delivery(".cache")["deliveries"].values())
+        assert [r["status"] for r in records] == ["confirmed", "unknown", "rejected"]
+        assert records[0]["message_id"] == 42 and records[1]["message_id"] is None
+        with pytest.raises(ValueError, match="pair hash mismatch"):
+            await discover_sources("config.yaml", phase="send", pending_sha=ps, delivery_sha=ds)
+        monkeypatch.setenv("GITHUB_RUN_ID", "next-fixture-run")
+        model.return_value = ("FEED|https://example.com/old|Old|Old", {})
+        assert await discover_sources("config.yaml", phase="prepare") == 0
+        assert load_delivery(".cache")["batch"]["bindings"] == []
+        assert all(p.url != expired.url for p in load_pending(".cache"))
+        assert send.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_discovery_reserved_before_crash_holds_future_run(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from digest.discovery import PendingSource, load_delivery, save_pending
+    from digest.main import discover_sources
+    from scripts.review_fixture import fixture_config
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_RUN_ID", "prepare-only")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fixture-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fixture-owner")
+    proposal = PendingSource("Feed", "https://example.com/feed", "New", datetime.now(timezone.utc).isoformat())
+    save_pending([proposal], ".cache")
+    config = fixture_config()
+    config.telegram.enabled = True
+    from digest.config import ProviderConfig
+    config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
+    with (patch("digest.config.load_config", return_value=config),
+          patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
+          patch("digest.llm.complete", AsyncMock(side_effect=RuntimeError("unavailable"))),
+          patch("digest.discovery.send_source_approval_message", AsyncMock()) as send):
+        await discover_sources("config.yaml", phase="prepare")
+        assert len(load_delivery(".cache")["batch"]["bindings"]) == 1
+        assert load_delivery(".cache")["prepare_counts"]["generation_failed"] == 1
+        monkeypatch.setenv("GITHUB_RUN_ID", "later-run")
+        await discover_sources("config.yaml", phase="prepare")
+        assert load_delivery(".cache")["batch"]["bindings"] == []
+        send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failures, expected_calls", [(0, 1), (1, 2), (2, 2)])
+async def test_discovery_generation_preserves_bounded_configured_fallback(
+    tmp_path, monkeypatch, failures, expected_calls,
+):
+    import httpx
+
+    from digest.config import ProviderConfig
+    from digest.discovery import load_delivery
+    from digest.main import discover_sources
+    from scripts.review_fixture import fixture_config
+
+    monkeypatch.chdir(tmp_path)
+    config = fixture_config()
+    config.llm.providers = [
+        ProviderConfig("gemini", "first", ["summarize"]),
+        ProviderConfig("groq", "second", ["fallback"]),
+        ProviderConfig("mistral", "third", ["fallback"]),
+    ]
+    config.llm.max_retries = 5
+    config.llm.min_request_interval_seconds = 0
+    calls = []
+
+    async def provider_call(client, provider, messages, temperature, max_output_tokens):
+        calls.append(provider.model)
+        assert max_output_tokens == 2048
+        if len(calls) <= failures:
+            response = httpx.Response(503, request=httpx.Request("POST", "https://example.com/model"))
+            raise httpx.HTTPStatusError("unavailable", request=response.request, response=response)
+        return "", {}  # Valid empty ends generation without trying another provider.
+
+    with patch("digest.config.load_config", return_value=config), \
+            patch("digest.llm._call_provider", side_effect=provider_call):
+        assert await discover_sources("config.yaml", phase="prepare") == 0
+    assert calls == ["first", "second"][:expected_calls]
+    counts = load_delivery(".cache")["prepare_counts"]
+    assert counts["generation_failed"] == int(failures == 2)
+    assert counts["suggested"] == 0

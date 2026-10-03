@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 import httpx
 
 from digest.irritator.narrative_extractor import Narrative, extract_narratives
-from digest.irritator.query_generator import SearchQuery, generate_queries
+from digest.irritator.query_generator import QueryDiagnostics, SearchQuery, generate_queries
 from digest.irritator.ranker import RankedSignal, rank_signals
 from digest.irritator.sources import SearchDiagnostics, Signal, search_all_sources
 from digest.irritator.validator import validate_signals, validate_signals_async
@@ -26,6 +26,7 @@ IrritatorLevel = Literal["ok", "empty", "error", "incomplete", "deferred"]
 
 @dataclass
 class IrritatorDiagnostics:
+    queries: QueryDiagnostics = field(default_factory=QueryDiagnostics)
     search: SearchDiagnostics = field(default_factory=SearchDiagnostics)
     ranking_successful: int = 0
     ranking_failed: int = 0
@@ -68,6 +69,11 @@ async def run_irritator(
     diagnostics = IrritatorDiagnostics()
 
     def outcome(text: str, level: IrritatorLevel) -> IrritatorStatus:
+        if diagnostics.queries.failed:
+            text += (f"; query generation: {diagnostics.queries.successful} successful, "
+                     f"{diagnostics.queries.failed} failed")
+            if level in {"ok", "empty"}:
+                level = "incomplete"
         counts = diagnostics.search
         if counts.successful or counts.failed or counts.unavailable:
             text += (f"; source attempts: {counts.successful} successful, "
@@ -92,7 +98,7 @@ async def run_irritator(
 
     # Stage 2: Query generation
     try:
-        queries_by_narrative = await generate_queries(narratives, config)
+        queries_by_narrative = await generate_queries(narratives, config, diagnostics=diagnostics.queries)
         all_queries = [q for qs in queries_by_narrative.values() for q in qs]
     except Exception as exc:
         logger.error("Irritator: query generation failed (%s)", type(exc).__name__)

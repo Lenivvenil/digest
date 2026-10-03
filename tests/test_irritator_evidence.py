@@ -23,6 +23,7 @@ from digest.irritator.evidence_stage import (
     _parse_rankings,
     run_evidence_irritator,
 )
+from digest.irritator.ranker import RANK_RELATION_CONTRACT
 from digest.llm import LLMRole
 from digest.review import EvidenceBundle, build_evidence_bundle
 from digest.review_checkpoint import FullSourceEvidence
@@ -93,6 +94,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     assert result.ranked_signals[0].relation == "complicates"
     assert result.ranked_signals[0].quote == signal.title
     assert model.await_count == 3
+    assert RANK_RELATION_CONTRACT in model.await_args_list[2].args[1][0]["content"]
     assert asdict(bundle) == original_bundle
     assert asdict(config) == original_config
     assert result.bundle_id == bundle.bundle_id
@@ -803,3 +805,27 @@ async def test_invalid_full_source_hash_fails_before_model_and_never_falls_back_
     assert result.diagnostics[1].status == "not_run"
     assert not result.source_attempts
     model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "empirical studies on frequency of AI‑generated malware or phishing attacks bypassing existing security controls",
+    "evaluations of macOS Full Disk Access permission changes and their actual impact on preventing AI‑based abuse",
+    "research on limitations of current AI agents in automating credential theft "
+    "or account abuse compared to human attackers",
+])
+async def test_research_prose_is_incomplete_before_any_source_request(query: str) -> None:
+    config = fixture_config()
+    bundle = _bundle(config)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}),
+        (json.dumps({"queries": [{"query": query, "intent": "Find limitations"}], "limitations": []}), {}),
+    ])
+    with patch("digest.irritator.evidence_stage.complete", model), \
+            patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "incomplete"
+    assert model.await_count == 2
+    search.assert_not_awaited()
+    assert any(item.error_detail == "Invalid lexical query contract." for item in result.diagnostics)

@@ -33,13 +33,14 @@ Original versions of translated documents remain available through git history. 
 section anchors referenced by existing documents are retained where required. Historical
 issues and PR discussions are not translated or erased.
 
-## Current work boundary — 2026-10-02
+## Current work boundary — 2026-10-03
 
-English documentation/onboarding #95 and configurable primary/supplementary translation
-are implemented. [#94](https://github.com/Lenivvenil/digest/issues/94) remains open for
-ordinary post-#102 translation, fallback/recovery and compact-presentation acceptance.
-Previously validated synthetic translation is limited historical evidence; it does not
-establish semantic fidelity of ordinary output using `presentation-translation-v2`.
+English documentation/onboarding and configurable primary/supplementary translation
+are implemented and deployed. The finite acceptance under
+[#94](https://github.com/Lenivvenil/digest/issues/94) covers an independently reviewed
+ordinary archived narrative using prompt v2, exact canonical fallback after a provider
+rate limit, and a confirmed compact edition with persisted archive/state. It does not
+claim general translation accuracy or Russian delivery for that English-fallback edition.
 
 [#55](https://github.com/Lenivvenil/digest/issues/55) remains an open full-source
 factual-quality requirement. [PR #93](https://github.com/Lenivvenil/digest/pull/93) was
