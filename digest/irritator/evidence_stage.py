@@ -440,7 +440,7 @@ async def _run_stages(
     diagnostic = _stage(result, "queries", 1)
     text = await _model_text(diagnostic, LLMRole.GENERATE_QUERIES, (
         'Find external evidence that could contradict or complicate this RSS-supported narrative. Generate '
-        'up to max_queries distinct English search queries about documented limitations, failures or caveats. '
+        'up to max_queries distinct English topic/entity searches for relevant external material. '
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields. ' + QUERY_CONTRACT

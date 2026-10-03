@@ -6,7 +6,10 @@ import re
 
 QUERY_CONTRACT = (
     'The query must be 1–8 search words (at most 200 characters), not a sentence or '
-    'research instruction. Use topic and caveat keywords; put the explanation in intent. '
+    'research instruction. Prefer 2–4 core topic/entity terms or one exact entity phrase. '
+    'Search for relevant material without requiring a desired conclusion in the query. '
+    'Keep the counter-hypothesis and why it matters in intent; ranking assesses the actual relation. '
+    'Use different topic angles across queries, not longer conjunctions of all narrative details. '
     'Double quotes group an exact phrase and its words still count toward eight. '
     'Use no Boolean operators, field prefixes, parentheses, exclusions or wildcards. '
     'Keep technical punctuation within words (for example GPT-4 or C++).'
