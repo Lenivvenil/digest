@@ -709,3 +709,27 @@ def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics()
     ranking["rankings"][0]["reasoning"] = "x" * MAX_RESPONSE_CHARS
     with pytest.raises(ValueError, match="Response exceeds"):
         _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "empirical studies on frequency of AI‑generated malware or phishing attacks bypassing existing security controls",
+    "evaluations of macOS Full Disk Access permission changes and their actual impact on preventing AI‑based abuse",
+    "research on limitations of current AI agents in automating credential theft "
+    "or account abuse compared to human attackers",
+])
+async def test_research_prose_is_incomplete_before_any_source_request(query: str) -> None:
+    config = fixture_config()
+    bundle = _bundle(config)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}),
+        (json.dumps({"queries": [{"query": query, "intent": "Find limitations"}], "limitations": []}), {}),
+    ])
+    with patch("digest.irritator.evidence_stage.complete", model), \
+            patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "incomplete"
+    assert model.await_count == 2
+    search.assert_not_awaited()
+    assert any(item.error_detail == "Invalid lexical query contract." for item in result.diagnostics)

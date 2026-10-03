@@ -31,8 +31,10 @@ class TestSearchArxiv:
                 return_value=httpx.Response(200, text=_ARXIV_ATOM)
             )
             async with httpx.AsyncClient() as client:
-                signals = await search_arxiv("LLM reasoning & café limits", None, client)
-            assert route.calls[0].request.url.params["search_query"] == "all:LLM reasoning & café limits"
+                signals = await search_arxiv('"LLM reasoning" café limits', None, client)
+            assert route.calls[0].request.url.params["search_query"] == (
+                'all:"LLM reasoning" AND all:café AND all:limits'
+            )
 
         assert len(signals) == 1
         assert signals[0].title == "Limits of LLM Reasoning"
