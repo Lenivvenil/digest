@@ -22,6 +22,7 @@ from digest.irritator.evidence_stage import (
     _parse_rankings,
     run_evidence_irritator,
 )
+from digest.irritator.ranker import RANK_RELATION_CONTRACT
 from digest.llm import LLMRole
 from digest.review import EvidenceBundle, build_evidence_bundle
 from scripts.review_fixture import fixture_articles, fixture_config
@@ -90,6 +91,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     assert result.ranked_signals[0].relation == "complicates"
     assert result.ranked_signals[0].quote == signal.title
     assert model.await_count == 3
+    assert RANK_RELATION_CONTRACT in model.await_args_list[2].args[1][0]["content"]
     assert asdict(bundle) == original_bundle
     assert asdict(config) == original_config
     assert result.bundle_id == bundle.bundle_id
