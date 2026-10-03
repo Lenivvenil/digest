@@ -209,11 +209,12 @@ def _parse_narrative(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceNa
         canonical_quotes: dict[str, str] = {}
         typography_normalized: list[str] = []
         for identity, quote in quotes.items():
-            _bounded_text(quote, 200, field="source_quote")
             evidence = known[identity]
+            quote_limit = max(len(evidence.title), len(evidence.excerpt))
+            _bounded_text(quote, quote_limit, field="source_quote")
             try:
                 canonical_quotes[identity], normalized = canonical_evidence_quote(
-                    quote, evidence.title, evidence.excerpt,
+                    quote, evidence.title, evidence.excerpt, max_length=quote_limit,
                 )
             except ValueError as exc:
                 raise NarrativeQuoteMismatch(RejectedEvidenceQuote(bundle.bundle_id, identity, quote)) from exc
@@ -471,7 +472,8 @@ async def _run_stages(
         '"limitations": [short strings]}. Each narrative has exactly claim (concise text), category '
         '(an exact cited category), implicit_assumptions (1-3 concise strings), why_worth_challenging '
         '(concise text), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
-        'exact nonempty substring of its title/excerpt <=200 chars). No other fields. At most 5 limitations '
+        'exact nonempty substring of its supplied title or excerpt, up to the full field length). '
+        'No other fields. At most 5 limitations '
         '(concise strings); explain any empty list. Use the requested language only for claim, '
         'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
         'supplied evidence unchanged, in their original language; never translate a literal quote.'
@@ -609,7 +611,7 @@ async def run_evidence_irritator(
             if isinstance(exc, NarrativeQuoteMismatch):
                 current.rejected_quote = exc.rejection
         # No full provider responses, prompts, HTTP headers or credentials are retained.
-        # Only a <=200-character quote tied to a validated evidence ID may be saved
+        # Only a quote bounded by its validated evidence title/excerpt length may be saved
         # in the private result archive; exception text/logging remains fixed.
         result.status = "incomplete" if result.narratives else "error"
     return result

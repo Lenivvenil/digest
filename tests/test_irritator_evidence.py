@@ -663,7 +663,9 @@ async def test_quote_failure_preserves_bounded_private_evidence_but_no_raw_respo
     assert "Fabricated source quotation" not in caplog.text
     assert "raw_response" not in asdict(diagnostic) and diagnostic.response_sha256
     # Unknown IDs and overlong fields are rejected before a quote diagnostic exists.
-    for identity, quote in (("unknown-source", "Synthetic quote"), (bundle.items[0].evidence_id, "x" * 201)):
+    evidence = bundle.items[0]
+    overlong = "x" * (max(len(evidence.title), len(evidence.excerpt)) + 1)
+    for identity, quote in (("unknown-source", "Synthetic quote"), (evidence.evidence_id, overlong)):
         rejected = _narrative(bundle)
         rejected["narratives"][0]["evidence_ids"] = [identity]
         rejected["narratives"][0]["quotes"] = {identity: quote}
@@ -753,7 +755,7 @@ def test_ranking_selected_id_preserves_exact_source_text(text: str) -> None:
 ])
 def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quote: str) -> None:
     config = fixture_config()
-    article = make_article(title="API-powered systems")
+    article = make_article(title="API-powered systems", description="Original evidence describing API-powered systems.")
     bundle = build_evidence_bundle({article.category: [article]}, config.review)
     response = _narrative(bundle)
     narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
@@ -767,13 +769,20 @@ def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quo
         _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
-def test_quote_length_is_checked_before_typography_repair() -> None:
+@pytest.mark.parametrize("model_hyphen", ["-", "\u2011"])
+def test_narrative_quote_length_is_bound_to_source_before_typography_repair(model_hyphen: str) -> None:
     config = fixture_config()
-    article = make_article(description="a" * 199 + "-z")
+    article = make_article(description="API-powered systems " * 10 + "end.")
     bundle = build_evidence_bundle({article.category: [article]}, config.review)
     response = _narrative(bundle)
+    identity = bundle.items[0].evidence_id
+    quote = article.description.replace("-", model_hyphen)
+    assert len(quote) == len(bundle.items[0].excerpt) == 204
+    response["narratives"][0]["quotes"][identity] = quote
     narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
-    response["narratives"][0]["quotes"][bundle.items[0].evidence_id] = article.description.replace("-", "\u2011")
+    assert narrative.quotes[identity] == bundle.items[0].excerpt
+    assert narrative.typography_normalized == ([identity] if model_hyphen != "-" else [])
+    response["narratives"][0]["quotes"][identity] = quote + "!"
     signal = make_signal(url="https://external.example/caveat", snippet=article.description)
     ranking = _ranking(signal.url)
     ranking["rankings"][0]["quote"] = article.description.replace("-", "\u2011")
