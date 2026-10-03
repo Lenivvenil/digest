@@ -11,10 +11,12 @@ import pytest
 
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.ranker import (
+    MAX_RANKING_JSON_CHARS,
     RANK_RELATION_CONTRACT,
     RankedSignal,
     _build_prompt,
     _parse_rankings,
+    _ranking_signal_packet,
     rank_signals,
 )
 from digest.irritator.sources import Signal
@@ -65,6 +67,38 @@ def _make_config(language: str = "ru", min_score: int = 5, top_signals: int = 3)
 # ---------------------------------------------------------------------------
 
 class TestBuildPrompt:
+    def test_complete_snippet_keeps_late_condition(self) -> None:
+        snippet = "The measured benefit was observed in the sample. " * 20
+        snippet += " Benefits require expert review of every proposed action."
+        signal = make_signal(snippet=snippet)
+        messages = _build_prompt(_make_narrative(), [signal], "en")
+        packet, indices = _ranking_signal_packet([signal])
+        assert indices == {0}
+        assert json.loads(packet)[0]["snippet"] == snippet
+        assert packet in messages[1]["content"]
+
+    def test_packet_budget_counts_serialization_and_omits_whole_records(self) -> None:
+        signal = make_signal(snippet="")
+        empty_packet, _ = _ranking_signal_packet([signal])
+        signal.snippet = "a" * (MAX_RANKING_JSON_CHARS - len(empty_packet))
+        packet, indices = _ranking_signal_packet([signal])
+        assert len(packet) == MAX_RANKING_JSON_CHARS
+        assert indices == {0}
+        assert json.loads(packet)[0]["snippet"] == signal.snippet
+
+        signal.snippet += "\n"
+        packet, indices = _ranking_signal_packet([signal])
+        assert (packet, indices) == ("[]", set())
+
+    def test_packet_skips_whole_candidate_and_keeps_original_indices(self) -> None:
+        signals = [make_signal(snippet="a" * 6000), make_signal(snippet="b" * 3000), make_signal()]
+        packet, indices = _ranking_signal_packet(signals)
+        assert len(packet) <= MAX_RANKING_JSON_CHARS
+        assert indices == {0, 2}
+        records = json.loads(packet)
+        assert [record["index"] for record in records] == [0, 2]
+        assert [record["snippet"] for record in records] == [signals[0].snippet, signals[2].snippet]
+
     def test_russian_prompt(self) -> None:
         n = _make_narrative()
         signals = [_make_signal()]
@@ -194,6 +228,27 @@ class TestParseRankings:
 
 @pytest.mark.asyncio
 class TestRankSignals:
+    async def test_omitted_candidate_cannot_be_ranked_and_indices_do_not_shift(self) -> None:
+        signals = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS), _make_signal()]
+        raw = _valid_rankings(1, [8])
+        raw[0]["index"] = 1
+        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
+        with patch("digest.irritator.ranker.complete", mock_complete):
+            result = await rank_signals(_make_narrative(), signals, _make_config())
+        assert result[0].signal is signals[1]
+        assert mock_complete.await_count == 1
+        raw[0]["index"] = 0
+        with pytest.raises(ValueError, match="ranking index"):
+            _parse_rankings(raw, signals, "claim", 5)
+
+    async def test_no_model_call_when_every_candidate_exceeds_budget(self) -> None:
+        signals = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS)]
+        mock_complete = AsyncMock()
+        with patch("digest.irritator.ranker.complete", mock_complete):
+            result = await rank_signals(_make_narrative(), signals, _make_config())
+        assert result == []
+        mock_complete.assert_not_awaited()
+
     async def test_success(self) -> None:
         signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
         raw = _valid_rankings(2, [9, 8])

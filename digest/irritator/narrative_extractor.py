@@ -29,39 +29,42 @@ class Narrative:
 
 _SYSTEM_PROMPTS: dict[str, str] = {
     "ru": (
-        "Ты — критический аналитик. Твоя задача — выявить доминирующие нарративы "
-        "(главные предположения), которые пронизывают новостное освещение, "
-        "но редко оспариваются."
+        "Ты — критический аналитик. Выбирай конкретные утверждения или объявленные решения "
+        "с указанным источником для поиска существенных внешних оговорок."
     ),
     "en": (
-        "You are a critical analyst. Your task is to identify dominant narratives "
-        "(key assumptions) that permeate news coverage but are rarely questioned."
+        "You are a critical analyst. Select concrete source-attributed assertions or announced decisions "
+        "for examination against material external evidence."
     ),
 }
 
 _USER_PROMPTS: dict[str, str] = {
     "ru": (
         "Проанализируй следующие категорийные саммари новостей и выдели до "
-        "{max_narratives} доминирующих нарративов — неявных предположений, "
-        "которые пронизывают освещение, но редко оспариваются.\n\n"
+        "{max_narratives} конкретных утверждений или объявленных решений с атрибуцией источнику. "
+        "Сохраняй условия и время; не выводи необходимость, исключительность или консенсус. "
+        "Повторы одной новости не являются независимыми подтверждениями. Если саммари не даёт "
+        "конкретного утверждения с источником, пропусти его; саммари не является полным первоисточником.\n\n"
         "{summaries_text}\n\n"
         "Для каждого нарратива верни JSON-объект с полями:\n"
-        '- "claim" — суть нарратива в 1-2 предложениях\n'
+        '- "claim" — конкретное утверждение или решение с источником в 1-2 предложениях\n'
         '- "category" — категория новостей, из которой возник нарратив\n'
-        '- "implicit_assumptions" — список из 2-3 ключевых неявных предположений\n'
+        '- "implicit_assumptions" — предположения, явно помеченные как гипотезы, а не проверяемое утверждение\n'
         '- "why_worth_challenging" — абзац (3-4 предложения) о том, '
         "почему этот нарратив стоит оспорить\n\n"
         "Верни JSON-массив объектов. Ничего больше не добавляй."
     ),
     "en": (
         "Analyse the following category summaries and identify up to "
-        "{max_narratives} dominant narratives — implicit assumptions "
-        "that permeate coverage but are rarely questioned.\n\n"
+        "{max_narratives} concrete source-attributed assertions or announced decisions. "
+        "Preserve conditions and timing; do not infer necessity, exclusivity or consensus. "
+        "Duplicate reports are not independent support. Omit a summary without a concrete attributed target; "
+        "summaries are not full primary sources.\n\n"
         "{summaries_text}\n\n"
         "For each narrative return a JSON object with fields:\n"
-        '- "claim" — the essence of the narrative in 1-2 sentences\n'
+        '- "claim" — the concrete attributed assertion or decision in 1-2 sentences\n'
         '- "category" — the news category the narrative emerged from\n'
-        '- "implicit_assumptions" — list of 2-3 key unstated assumptions\n'
+        '- "implicit_assumptions" — hypotheses explicitly labelled as inferred context, not the claim to check\n'
         '- "why_worth_challenging" — a paragraph (3-4 sentences) explaining '
         "why this narrative deserves scrutiny\n\n"
         "Return a JSON array of objects. Return nothing else."

@@ -18,6 +18,7 @@ from digest.irritator.evidence_stage import (
     MAX_RANKING_CANDIDATES,
     MAX_RANKING_JSON_CHARS,
     MAX_SOURCE_RESULTS,
+    _bounded_signals,
     _parse_narrative,
     _parse_rankings,
     _ranking_signal_payload,
@@ -95,6 +96,9 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     assert result.ranked_signals[0].quote == signal.title
     assert model.await_count == 3
     assert RANK_RELATION_CONTRACT in model.await_args_list[2].args[1][0]["content"]
+    extraction = model.await_args_list[0].args[1][0]["content"]
+    assert "source-attributed assertion or announced decision" in extraction
+    assert "Duplicate reports of one event are not independent support" in extraction
     assert asdict(bundle) == original_bundle
     assert asdict(config) == original_config
     assert result.bundle_id == bundle.bundle_id
@@ -632,9 +636,9 @@ async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
     payload = json.loads(model.await_args_list[2].args[1][1]["content"])
     assert len(json.dumps(payload["signals"], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
     assert 0 < len(payload["signals"]) < 10
+    assert result.status == "incomplete"
     diagnostic = next(item for item in result.diagnostics if item.stage == "ranking")
     assert diagnostic.omitted_count == len(raw) - len(payload["signals"])
-    assert result.status == "empty"
 
 
 @pytest.mark.asyncio
@@ -875,3 +879,42 @@ def test_rank_segments_preserve_whole_fields_and_bind_changed_evidence() -> None
     assert payload == _ranking_signal_payload(signal) and asdict(signal) == before
     changed = _ranking_signal_payload(replace(signal, snippet=text.replace("tradeofff", "tradeoff")))
     assert payload["snippet"][0]["id"] != changed["snippet"][0]["id"]
+
+
+def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission() -> None:
+    from digest.irritator.evidence_stage import _ranking_candidates
+
+    abstract = ("Background  with exact spacing. " * 30
+                + "Our evaluation preserves utility while reducing the measured attacks. "
+                + "Only the tested deployment was evaluated; tradeofff remains workload dependent.")
+    signal = make_signal(title="Exact  title", snippet=abstract)
+    validated = _bounded_signals([signal], "arxiv")
+    assert validated[0].title == signal.title
+    assert validated[0].snippet == abstract
+    candidates = _ranking_candidates(validated)
+    assert len(candidates) == 1
+    payload = _ranking_signal_payload(candidates[0])
+    assert "".join(part["text"] for part in payload["snippet"]) == abstract
+    assert len(json.dumps([payload], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
+    oversized = make_signal(url="https://example.org/too-large", snippet="x" * 9000)
+    assert _ranking_candidates(_bounded_signals([oversized, signal], "arxiv")) == validated
+
+
+@pytest.mark.asyncio
+async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["arxiv"]
+    bundle = _bundle(config)
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {})])
+    signal = make_signal(snippet="x" * 9000)
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert model.await_count == 2
+    assert result.status == "incomplete"
+    ranking = next(item for item in result.diagnostics if item.stage == "ranking")
+    assert ranking.status == "incomplete" and ranking.omitted_count == 1
+    assert result.ranked_signals == []
