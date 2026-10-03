@@ -150,6 +150,20 @@ an archive or a computed priority change does not prove full article fidelity or
 changed real selection. #55 requires an explicit current-scope decision and verification;
 it is neither deferred nor declared complete by this operating record.
 
+**Observed scheduler boundary — 2026-10-03:** all 60 September scheduled daily
+runs were found; median creation delay was 4h49m against same-day 02:00/13:00 slots
+paired chronologically. REST records omit the triggering cron expression, so this
+is a nominal-slot comparison. The daily workflow was unchanged from April 24 to
+September 30: delays predate recovery changes and vary rather than fitting a timezone offset.
+On October 3, the 02:17 run was created at 08:07:38 UTC; its job started two seconds
+later. The measured delay precedes execution; GitHub's internal cause remains unknown.
+GitHub's [August incident report](https://github.blog/news-insights/company-news/github-availability-report-august-2026/)
+describes event/database saturation, but does not establish this continuing cause.
+The [schedule contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+allows delayed/dropped runs; minute 17 is no guarantee. The late run persisted
+feedback before acknowledgement and blocked a duplicate confirmed edition. These
+safeguards worked; they do not eliminate the 24-hour feedback retention risk.
+
 Current model control flow admits a conservative ceiling of ten physical requests
 per product cycle before cache reuse, timeout and failure short-circuiting: up to two
 primary/fallback reviews, one primary translation, three Irritator phases, one optional
