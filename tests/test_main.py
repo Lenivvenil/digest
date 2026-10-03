@@ -1122,3 +1122,43 @@ async def test_discovery_reserved_before_crash_holds_future_run(tmp_path, monkey
         await discover_sources("config.yaml", phase="prepare")
         assert load_delivery(".cache")["batch"]["bindings"] == []
         send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failures, expected_calls", [(0, 1), (1, 2), (2, 2)])
+async def test_discovery_generation_preserves_bounded_configured_fallback(
+    tmp_path, monkeypatch, failures, expected_calls,
+):
+    import httpx
+
+    from digest.config import ProviderConfig
+    from digest.discovery import load_delivery
+    from digest.main import discover_sources
+    from scripts.review_fixture import fixture_config
+
+    monkeypatch.chdir(tmp_path)
+    config = fixture_config()
+    config.llm.providers = [
+        ProviderConfig("gemini", "first", ["summarize"]),
+        ProviderConfig("groq", "second", ["fallback"]),
+        ProviderConfig("mistral", "third", ["fallback"]),
+    ]
+    config.llm.max_retries = 5
+    config.llm.min_request_interval_seconds = 0
+    calls = []
+
+    async def provider_call(client, provider, messages, temperature, max_output_tokens):
+        calls.append(provider.model)
+        assert max_output_tokens == 2048
+        if len(calls) <= failures:
+            response = httpx.Response(503, request=httpx.Request("POST", "https://example.com/model"))
+            raise httpx.HTTPStatusError("unavailable", request=response.request, response=response)
+        return "", {}  # Valid empty ends generation without trying another provider.
+
+    with patch("digest.config.load_config", return_value=config), \
+            patch("digest.llm._call_provider", side_effect=provider_call):
+        assert await discover_sources("config.yaml", phase="prepare") == 0
+    assert calls == ["first", "second"][:expected_calls]
+    counts = load_delivery(".cache")["prepare_counts"]
+    assert counts["generation_failed"] == int(failures == 2)
+    assert counts["suggested"] == 0

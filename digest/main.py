@@ -405,11 +405,15 @@ async def discover_sources(
                 providers = _resolve_routed_providers(LLMRole.SUMMARIZE, None, config)
                 if not providers:
                     raise ValueError("No discovery model route configured.")
-                single = replace(config, llm=replace(config.llm, max_retries=0))
+                # One logical generation, at most two already-configured routes.
+                # The normal client retains fallback ordering and shared pacing.
+                single = replace(config, llm=replace(
+                    config.llm, providers=providers[:2], max_retries=0,
+                ))
                 response, _ = await complete(LLMRole.SUMMARIZE, [
                     {"role": "system", "content": "You suggest sources for owner approval; never activate them."},
                     {"role": "user", "content": prompt},
-                ], single, provider_override=providers[0], max_output_tokens=2048)
+                ], single, max_output_tokens=2048)
             except Exception as exc:
                 counts["generation_failed"] += 1
                 logger.warning("Discovery generation unavailable (%s)", type(exc).__name__)
