@@ -259,3 +259,12 @@ class TestGenerateQueries:
         user_content = next(m["content"] for m in messages if m["role"] == "user")
         adversarial_markers = ["failure", "criticism", "wrong", "didn't work", "limitations"]
         assert any(m in user_content for m in adversarial_markers)
+
+
+@pytest.mark.parametrize("query", [
+    '"unterminated phrase', "AI AND security", "all:security", "-security",
+    "one two three four five six seven eight nine",
+])
+def test_invalid_lexical_query_is_rejected_without_rewriting(query: str) -> None:
+    with pytest.raises(ValueError, match="Invalid lexical query"):
+        _parse_queries([{"query": query, "intent": "Find a limitation"}])

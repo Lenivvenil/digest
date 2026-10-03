@@ -272,6 +272,17 @@ job concurrency coordinates its scheduled processes. Operators must also account
 other clients/machines they control; this local gate does not coordinate unrelated
 processes. Waiting remains inside existing stage deadlines, without added retries.
 
+Both query-generation paths use the same lexical contract: 1–8 words, including
+words inside double-quoted exact phrases, within the existing 200-character bound.
+Explanations belong in `intent`. Invalid prose/operator syntax fails explicitly;
+queries are never silently shortened. This is a syntax contract, not a relevance
+classifier. arXiv receives an `all:` prefix for each term or phrase, joined with
+`AND`, as described in its [query grammar](https://info.arxiv.org/help/api/user-manual.html#51-details-of-query-construction).
+HN receives the lexical text with exact-phrase syntax enabled; Boolean/field
+operators and exclusions are not accepted in generated input. Request counts,
+source deadlines and ranking requirements are unchanged. This correction does
+not establish the cause of earlier read timeouts or prove counter-evidence recall.
+
 The [HN Algolia documentation](https://hn.algolia.com/api) defines full-text `query`,
 `tags=story`, `hitsPerPage`, and story `objectID`; its published limit is 10,000 requests
 per IP per hour. These references establish request semantics, not current reachability

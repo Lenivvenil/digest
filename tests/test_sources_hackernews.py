@@ -81,3 +81,20 @@ async def test_all_unidentified_hits_are_contract_failure_not_empty_search() -> 
         async with httpx.AsyncClient() as client:
             with pytest.raises(ValueError, match="no identifiable stories"):
                 await search_hackernews("synthetic query", None, client)
+
+
+@pytest.mark.asyncio
+async def test_lexical_phrases_are_preserved_in_outgoing_params() -> None:
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"hits": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        await search_hackernews('"AI agents" GPT-4 limitations', None, client)
+    assert dict(requests[0].url.params) == {
+        "query": '"AI agents" GPT-4 limitations', "tags": "story",
+        "hitsPerPage": "10", "advancedSyntax": "true",
+    }
+    assert requests[0].extensions["timeout"]["read"] == 10.0

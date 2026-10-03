@@ -10,6 +10,7 @@ from typing import Any
 import feedparser
 import httpx
 
+from digest.irritator.query_contract import lexical_atoms
 from digest.irritator.sources import Signal, _register, validate_search_response
 
 _BASE_URL = "https://export.arxiv.org/api/query"
@@ -44,6 +45,8 @@ async def search_arxiv(
     client: httpx.AsyncClient,
 ) -> list[Signal]:
     """Search arXiv via the Atom API."""
+    # Each lexical atom gets its own documented all: field; phrases stay quoted.
+    search_query = " AND ".join(f"all:{atom}" for atom in lexical_atoms(query))
     state = _request_state()
     # arXiv requires one active connection and >=3 seconds between requests.
     # Hold the lock through the complete response; both orchestration paths use
@@ -56,7 +59,7 @@ async def search_arxiv(
         resp = await client.get(
             _BASE_URL,
             params={
-                "search_query": f"all:{query}",
+                "search_query": search_query,
                 "start": 0,
                 "max_results": _MAX_RESULTS,
                 "sortBy": "relevance",

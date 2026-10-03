@@ -9,6 +9,7 @@ from typing import Any
 
 from digest.config import Config
 from digest.irritator.narrative_extractor import Narrative
+from digest.irritator.query_contract import QUERY_CONTRACT, lexical_atoms
 from digest.llm import LLMRole, _extract_json, complete
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,12 @@ class SearchQuery:
 
     query: str
     intent: str
+
+
+@dataclass
+class QueryDiagnostics:
+    successful: int = 0
+    failed: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +97,7 @@ def _build_prompt(
         queries_per_narrative=queries_per_narrative,
     )
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": system + " " + QUERY_CONTRACT},
         {"role": "user", "content": user},
     ]
 
@@ -108,9 +115,10 @@ def _parse_queries(raw: Any) -> list[SearchQuery]:
             raise ValueError(
                 f"Query #{i} missing field(s): {', '.join(sorted(missing))}"
             )
+        lexical_atoms(item["query"])
         queries.append(
             SearchQuery(
-                query=str(item["query"]),
+                query=item["query"],
                 intent=str(item["intent"]),
             )
         )
@@ -137,6 +145,8 @@ async def _generate_for_narrative(
 async def generate_queries(
     narratives: list[Narrative],
     config: Config,
+    *,
+    diagnostics: QueryDiagnostics | None = None,
 ) -> dict[str, list[SearchQuery]]:
     """Generate adversarial search queries for all narratives in parallel.
 
@@ -152,12 +162,15 @@ async def generate_queries(
     queries_by_narrative: dict[str, list[SearchQuery]] = {}
     for narrative, result in zip(narratives, results, strict=True):
         if isinstance(result, Exception):
+            if diagnostics is not None:
+                diagnostics.failed += 1
             logger.warning(
-                "Query generation failed for narrative '%s': %s",
-                narrative.claim[:80],
-                result,
+                "Query generation failed (%s)",
+                type(result).__name__,
             )
             continue
+        if diagnostics is not None:
+            diagnostics.successful += 1
         queries_by_narrative[narrative.claim] = result  # type: ignore[assignment]
 
     total = sum(len(qs) for qs in queries_by_narrative.values())
