@@ -335,9 +335,10 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
         "The latency measurements apply only to warm reads; rebuild time is excluded."
     )
     brief = (
-        "The cache speeds warm reads by keeping hot keys in memory, but the measurements exclude rebuild time. "
-        "The source leaves restart durability unresolved: its overview says values persist, while its recovery "
-        "section says the volatile cache loses every value on restart."
+        "The source reports that the cache speeds warm reads by keeping hot keys in memory. "
+        'Its measurements "apply only to warm reads; rebuild time is excluded". '
+        'The overview says "cached values persist across a process restart", while the recovery section says '
+        '"the volatile cache loses every value on restart". The source leaves restart durability unresolved.'
     )
 
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
@@ -350,6 +351,10 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
         assert "Preserve distinctions between related technical concepts" in instructions
         assert "Attribute reported results and assurances to their source" in instructions
         assert "do not fill it with domain knowledge" in instructions
+        assert "short attributed quotation of the relevant" in instructions
+        assert "preserving its relation verb, modality and negation" in instructions
+        assert "Do not re-express that clause" in instructions and "as a stronger restriction" in instructions
+        assert "Keep the quotation within the brief; retain full passages" in instructions
         assert "unresolved" in instructions and "invent a resolution" in instructions
         assert "Retain the nominated material conditions in that prose" in instructions
         assert "cache" not in instructions.lower()
@@ -373,7 +378,7 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("previous_version", ["source-passages-v1", "source-passages-v2"])
+@pytest.mark.parametrize("previous_version", ["source-passages-v1", "source-passages-v2", "source-passages-v3"])
 async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
     tmp_path: Path, previous_version: str,
 ) -> None:
@@ -387,7 +392,7 @@ async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
         identity = next(iter(ready.quotations))
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
-        assert envelope["payload"]["route"]["prompt_version"] == "source-passages-v3"
+        assert envelope["payload"]["route"]["prompt_version"] == "source-passages-v4"
         envelope["payload"]["route"]["prompt_version"] = previous_version
         envelope["sha256"] = checksum(envelope["payload"])
         legacy_bytes = json.dumps(envelope).encode()
