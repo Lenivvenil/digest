@@ -308,3 +308,15 @@ cause of earlier responses whose bodies were not retained. Presentation translat
 also explicitly preserves technical data-flow direction; prompt-version cache binding
 keeps prior translations intact and distinct from new attempts. Neither change proves
 semantic fidelity without reviewing actual output.
+
+
+### Exact quote selection in bounded counter-evidence ranking
+
+The bounded rank request represents each supplied signal title/snippet once as ordered
+exact segments of at most 200 characters. Their IDs bind the signal URL, field, offsets
+and original text. The model selects a quote ID; code reconstructs the unchanged literal
+quote, including source typos. Unknown or cross-source IDs fail closed. The existing
+8,000-character ranking-packet budget includes these segments; omitted candidates remain
+visible in diagnostics. Archived ranked results retain their existing literal quote shape.
+This prevents transcription errors; it does not establish that a claimed counter-relation
+is semantically justified. Scores, relation criteria and request counts are unchanged.

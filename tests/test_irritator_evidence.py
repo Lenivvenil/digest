@@ -20,6 +20,7 @@ from digest.irritator.evidence_stage import (
     MAX_SOURCE_RESULTS,
     _parse_narrative,
     _parse_rankings,
+    _ranking_signal_payload,
     run_evidence_irritator,
 )
 from digest.irritator.ranker import RANK_RELATION_CONTRACT
@@ -49,9 +50,10 @@ def _queries(count: int = 1) -> dict[str, Any]:
 
 
 def _ranking(url: str = "https://external.example/caveat") -> dict[str, Any]:
+    quote_id = _ranking_signal_payload(make_signal(url=url, title="Deployment limitations"))["title"][0]["id"]
     return {"rankings": [{"url": url, "score": 8, "relation": "complicates",
                            "reasoning": "Documented deployment limitations complicate the rollout claim.",
-                           "quote": "Deployment limitations"}], "limitations": []}
+                           "quote_id": quote_id}], "limitations": []}
 
 
 def _mock_model(bundle: EvidenceBundle, *, query_count: int = 1) -> AsyncMock:
@@ -296,7 +298,7 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
     elif mutation == "duplicate_url":
         ranking["rankings"].append(deepcopy(item))
     elif mutation == "bad_quote":
-        item["quote"] = "Fabricated external evidence"
+        item["quote_id"] = "unknown-id"
     elif mutation == "float_score":
         item["score"] = 8.0
     elif mutation == "bool_score":
@@ -602,19 +604,25 @@ def test_narrative_hyphen_alignment_recovers_exact_original_quote(source_hyphen:
     assert asdict(bundle) == original
 
 
-@pytest.mark.parametrize("source_hyphen", ["-", "\u2010", "\u2011"])
-@pytest.mark.parametrize("model_hyphen", ["-", "\u2010", "\u2011"])
-def test_ranking_hyphen_alignment_recovers_exact_external_quote(source_hyphen: str, model_hyphen: str) -> None:
+@pytest.mark.parametrize("text", [
+    "API-powered limitations", "API\u2011powered limitations", "tradeofff", "literal ... text",
+])
+def test_ranking_selected_id_preserves_exact_source_text(text: str) -> None:
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
-    signal = make_signal(url="https://external.example/caveat", title=f"API{source_hyphen}powered limitations")
+    signal = make_signal(url="https://external.example/caveat", title=text)
     original = asdict(signal)
     ranking = _ranking(signal.url)
-    ranking["rankings"][0]["quote"] = f"API{model_hyphen}powered limitations"
+    ranking["rankings"][0]["quote_id"] = _ranking_signal_payload(signal)["title"][0]["id"]
     ranked, _ = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
-    assert ranked[0].quote == signal.title
-    assert ranked[0].typography_normalized is (source_hyphen != model_hyphen)
+    assert ranked[0].quote == text and not ranked[0].typography_normalized
     assert asdict(signal) == original
+    # Archive shape remains literal text; no new ID is needed to read old outcomes.
+    assert "quote_id" not in asdict(ranked[0]) and asdict(ranked[0])["quote"] == text
+    other = replace(signal, url="https://other.example/same-text")
+    ranking["rankings"][0]["url"] = other.url
+    with pytest.raises(ValueError, match="not bound"):
+        _parse_rankings(json.dumps(ranking), [other], narrative, 3, 5)
 
 
 @pytest.mark.parametrize("bad_quote", [
@@ -633,7 +641,7 @@ def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quo
     signal = make_signal(url="https://external.example/caveat", title=article.title)
     ranking = _ranking(signal.url)
     ranking["rankings"][0]["quote"] = bad_quote
-    with pytest.raises(ValueError, match="not in the supplied external evidence"):
+    with pytest.raises(ValueError, match="Invalid ranking fields"):
         _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
@@ -650,7 +658,7 @@ def test_quote_length_is_checked_before_typography_repair() -> None:
     with patch("digest.irritator.evidence_stage.canonical_evidence_quote", side_effect=AssertionError("Too early")):
         with pytest.raises(ValueError, match="source_quote:too_long"):
             _parse_narrative(json.dumps(response), bundle)
-        with pytest.raises(ValueError, match="source_quote:too_long"):
+        with pytest.raises(ValueError, match="Invalid ranking fields"):
             _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
@@ -735,3 +743,17 @@ async def test_research_prose_is_incomplete_before_any_source_request(query: str
     assert model.await_count == 2
     search.assert_not_awaited()
     assert any(item.error_detail == "Invalid lexical query contract." for item in result.diagnostics)
+
+
+def test_rank_segments_preserve_whole_fields_and_bind_changed_evidence() -> None:
+    text = "  tradeofff. " + "Long exact source phrase. " * 35 + "\nFinal qualification.  "
+    signal = make_signal(title="😀 Exact title", snippet=text)
+    before = asdict(signal)
+    payload = _ranking_signal_payload(signal)
+    for field in ("title", "snippet"):
+        assert "".join(item["text"] for item in payload[field]) == getattr(signal, field)
+        assert all(0 < len(item["text"]) <= 200 for item in payload[field])
+        assert len({item["id"] for item in payload[field]}) == len(payload[field])
+    assert payload == _ranking_signal_payload(signal) and asdict(signal) == before
+    changed = _ranking_signal_payload(replace(signal, snippet=text.replace("tradeofff", "tradeoff")))
+    assert payload["snippet"][0]["id"] != changed["snippet"][0]["id"]
