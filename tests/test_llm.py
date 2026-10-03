@@ -751,3 +751,41 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
                 )
             assert route.call_count == 1
             sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gemini_preserves_all_final_parts_and_omits_hidden_metadata() -> None:
+    from digest.llm import _gemini_call
+
+    payload = {"candidates": [{"content": {"parts": [
+        {"text": "synthetic hidden content", "thought": True},
+        {"text": "First statement. ", "thoughtSignature": "synthetic-opaque-signature"},
+        {"thoughtSignature": "synthetic-metadata-only"},
+        {"text": "Only enrolled customers qualify.", "partMetadata": {"fixture": True}},
+    ]}, "finishReason": "STOP"}], "modelVersion": "fixture-model", "usageMetadata": {
+        "promptTokenCount": 12, "candidatesTokenCount": 8,
+    }}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=payload)), trust_env=False,
+    ) as client:
+        text, usage = await _gemini_call(client, "synthetic", "fixture", [], 0.1, 2048)
+    assert text == "First statement. Only enrolled customers qualify."
+    assert usage == {"prompt_tokens": 12, "completion_tokens": 8,
+                     "finish_reason": "STOP", "resolved_model": "fixture-model"}
+    assert "hidden" not in text and "signature" not in text
+
+
+@pytest.mark.parametrize("parts", [
+    None, [], [{}], ["invalid"], [{"text": None}], [{"text": " "}],
+    [{"text": "synthetic hidden content", "thought": True}],
+    [{"text": "partial"}, {"functionCall": {"name": "do_not_execute"}}],
+    [{"text": "partial"}, {"inlineData": {"data": "synthetic"}}],
+    [{"text": "partial", "thought": "false"}],
+])
+def test_gemini_final_parts_fail_closed_without_disclosing_response(parts) -> None:
+    from digest.llm import _gemini_final_text
+
+    with pytest.raises(ValueError) as error:
+        _gemini_final_text({"content": {"parts": parts}})
+    assert "synthetic" not in str(error.value) and "do_not_execute" not in str(error.value)
+    assert "partial" not in str(error.value)
