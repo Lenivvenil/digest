@@ -249,6 +249,18 @@ are excluded from these requests. Legacy query generation uses claim and categor
 only; legacy ranking remains claim-only. This input boundary does not verify claim
 truth or semantic counter-evidence quality.
 
+Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
+`context` or `insufficient` against the supplied claim. Every entry must pass field,
+identity, score, relation and reasoning validation before filtering; bounded ranking
+also verifies its URL-bound quote ID. Only `contradicts` and `complicates` at the
+existing minimum score reach public results, even when another relation has a high
+score. Bounded results record fixed omission counts for the three non-counter
+relations in the existing limitations list. An all-non-counter response is `empty`,
+not a ranking failure; an unknown relation fails the response closed. Public and
+archived result shapes, quote identity, request counts and ranking caps are unchanged.
+This filter enforces the declared classification; it cannot prove that the model
+assigned the semantically correct relation.
+
 Legacy synchronous Irritator processing retains its list-based source API but records
 successful, failed and unavailable source attempts separately. A valid empty response
 is a successful search; missing Reddit credentials or intentionally unsupported DEV.to

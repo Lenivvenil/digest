@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -39,7 +40,8 @@ def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict[st
     if scores is None:
         scores = [8, 6]
     return [
-        {"index": i, "score": scores[i] if i < len(scores) else 5, "reasoning": f"Reason {i}"}
+        {"index": i, "score": scores[i] if i < len(scores) else 5,
+         "relation": "complicates", "reasoning": f"Reason {i}"}
         for i in range(n)
     ]
 
@@ -73,11 +75,17 @@ class TestBuildPrompt:
         assert RANK_RELATION_CONTRACT in messages[0]["content"]
         assert n.claim in messages[1]["content"]
         assert signals[0].title in messages[1]["content"]
+        assert all(relation in messages[1]["content"] for relation in (
+            "contradicts", "complicates", "supports", "context", "insufficient",
+        ))
 
     def test_english_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
         assert "counter-signal" in messages[0]["content"]
         assert RANK_RELATION_CONTRACT in messages[0]["content"]
+        assert all(relation in messages[1]["content"] for relation in (
+            "contradicts", "complicates", "supports", "context", "insufficient",
+        ))
 
     def test_english_prompt_has_calibration_anchors(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
@@ -119,24 +127,65 @@ class TestParseRankings:
 
     def test_threshold_5_lets_through_score_5(self) -> None:
         signals = [_make_signal()]
-        raw = [{"index": 0, "score": 5, "reasoning": "mild alternative"}]
+        raw = _valid_rankings(1, [5])
         result = _parse_rankings(raw, signals, "claim", 5)
         assert len(result) == 1
         assert result[0].score == 5
 
-    def test_invalid_index_skipped(self) -> None:
+    def test_invalid_index_rejected(self) -> None:
         signals = [_make_signal()]
-        raw = [{"index": 5, "score": 9, "reasoning": "good"}]
-        result = _parse_rankings(raw, signals, "claim", 1)
-        assert result == []
+        raw = _valid_rankings(1, [9])
+        raw[0]["index"] = 5
+        with pytest.raises(ValueError, match="ranking index"):
+            _parse_rankings(raw, signals, "claim", 1)
 
     def test_not_a_list(self) -> None:
         with pytest.raises(ValueError, match="Expected JSON array"):
             _parse_rankings({"index": 0}, [], "claim", 1)
 
-    def test_non_dict_items_skipped(self) -> None:
-        result = _parse_rankings(["not a dict"], [_make_signal()], "claim", 1)
-        assert result == []
+    def test_non_dict_items_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid ranking fields"):
+            _parse_rankings(["not a dict"], [_make_signal()], "claim", 1)
+
+    @pytest.mark.parametrize("relation", ["supports", "context", "insufficient"])
+    def test_high_scoring_non_counter_relations_excluded(self, relation: str) -> None:
+        raw = _valid_rankings(1, [10])
+        raw[0]["relation"] = relation
+        assert _parse_rankings(raw, [_make_signal()], "claim", 1) == []
+
+    def test_mixed_relations_keep_only_qualifying_counter_signals(self) -> None:
+        signals = [_make_signal(f"https://example.com/{index}") for index in range(4)]
+        raw = _valid_rankings(4, [10, 5, 9, 4])
+        raw[0].update(relation="supports", reasoning="The rollout reduced failed requests.")
+        raw[1].update(reasoning="Stateful services require a maintenance window during rollout.")
+        raw[2]["relation"] = "contradicts"
+        result = _parse_rankings(raw, signals, "The rollout improves reliability.", 5)
+        assert [item.signal for item in result] == [signals[2], signals[1]]
+        assert set(asdict(result[0])) == {"signal", "score", "reasoning", "narrative_claim"}
+
+    @pytest.mark.parametrize(("field", "value"), [
+        ("index", True), ("score", 11), ("relation", "unknown"), ("reasoning", "  "),
+    ])
+    def test_invalid_non_counter_entry_rejects_whole_response(self, field: str, value: Any) -> None:
+        signals = [_make_signal(), _make_signal("https://example.com/support")]
+        raw = _valid_rankings(2, [8, 1])
+        raw[1]["relation"] = "supports"
+        raw[1][field] = value
+        with pytest.raises(ValueError):
+            _parse_rankings(raw, signals, "claim", 5)
+
+    @pytest.mark.parametrize("mutation", ["missing_relation", "extra_field", "duplicate_index"])
+    def test_invalid_entry_shape_or_identity_rejects_whole_response(self, mutation: str) -> None:
+        raw = _valid_rankings(2, [1, 8])
+        raw[0]["relation"] = "context"
+        if mutation == "missing_relation":
+            del raw[0]["relation"]
+        elif mutation == "extra_field":
+            raw[0]["extra"] = "unexpected"
+        else:
+            raw[1]["index"] = 0
+        with pytest.raises(ValueError):
+            _parse_rankings(raw, [_make_signal(), _make_signal("https://example.com/2")], "claim", 5)
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +212,7 @@ class TestRankSignals:
 
     async def test_respects_top_signals_limit(self) -> None:
         signals = [_make_signal(f"https://{i}.com") for i in range(5)]
-        raw = [{"index": i, "score": 10, "reasoning": "great"} for i in range(5)]
+        raw = _valid_rankings(5, [10] * 5)
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
@@ -183,7 +232,7 @@ class TestRankSignals:
 
     async def test_score_5_passes_default_threshold(self) -> None:
         signals = [_make_signal("https://a.com")]
-        raw = [{"index": 0, "score": 5, "reasoning": "mild alternative"}]
+        raw = _valid_rankings(1, [5])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
@@ -191,6 +240,17 @@ class TestRankSignals:
 
         assert len(result) == 1
         assert result[0].score == 5
+
+    async def test_all_non_counter_relations_return_empty_without_another_request(self) -> None:
+        signals = [_make_signal(f"https://example.com/{index}") for index in range(3)]
+        raw = _valid_rankings(3, [10] * 3)
+        for item, relation in zip(raw, ["supports", "context", "insufficient"], strict=True):
+            item["relation"] = relation
+        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
+        with patch("digest.irritator.ranker.complete", mock_complete):
+            result = await rank_signals(_make_narrative(), signals, _make_config())
+        assert result == []
+        assert mock_complete.await_count == 1
 
     async def test_llm_failure_propagates(self) -> None:
         mock_complete = AsyncMock(side_effect=RuntimeError("fail"))

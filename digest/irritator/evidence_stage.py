@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -21,7 +21,7 @@ from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.ranker import RANK_RELATION_CONTRACT, RankedSignal
+from digest.irritator.ranker import RANK_RELATION_CONTRACT, RANK_RELATIONS, RankedSignal
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
@@ -134,7 +134,7 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Narrative quote is not in original evidence.", "Invalid narrative assumptions count.",
     "Narrative category is not in cited evidence.", "Invalid query fields.", "Duplicate query.",
     "Invalid ranking fields.", "Unknown or duplicate ranking URL.",
-    "Ranking score must be an integer from 1 through 10.", "Ranking relation must contradict or complicate.",
+    "Ranking score must be an integer from 1 through 10.", "Invalid ranking relation.",
     "Ranking quote ID is not bound to the supplied signal URL.", "Invalid source result fields.",
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
@@ -274,7 +274,7 @@ def _parse_rankings(
 ) -> tuple[list[EvidenceRankedSignal], list[str]]:
     entries, limitations = _response(text, "rankings", maximum)
     known = {signal.url: signal for signal in signals}
-    ranked = []
+    validated = []
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote_id"}:
@@ -284,8 +284,8 @@ def _parse_rankings(
             raise ValueError("Unknown or duplicate ranking URL.")
         if type(score) is not int or not 1 <= score <= 10:
             raise ValueError("Ranking score must be an integer from 1 through 10.")
-        if relation not in ("contradicts", "complicates"):
-            raise ValueError("Ranking relation must contradict or complicate.")
+        if not isinstance(relation, str) or relation not in RANK_RELATIONS:
+            raise ValueError("Invalid ranking relation.")
         signal = known[url]
         evidence = _ranking_signal_payload(signal)
         options = {item["id"]: item["text"] for field in ("title", "snippet") for item in evidence[field]}
@@ -295,8 +295,23 @@ def _parse_rankings(
         _bounded_text(quote, 200, field="source_quote")
         reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
-        if score >= min_score:
-            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, False))
+        validated.append((signal, score, reasoning, relation, quote))
+
+    ranked = []
+    omitted = dict.fromkeys(("supports", "context", "insufficient"), 0)
+    for signal, score, reasoning, relation, quote in validated:
+        if relation in omitted:
+            omitted[relation] += 1
+        elif relation in ("contradicts", "complicates") and score >= min_score:
+            ranked.append(EvidenceRankedSignal(
+                signal, score, reasoning, narrative.claim,
+                cast(Literal["contradicts", "complicates"], relation), quote, False,
+            ))
+    if any(omitted.values()):
+        limitations.append(
+            "Ranking omitted non-counter signals: "
+            + ", ".join(f"{relation}={count}" for relation, count in omitted.items()) + "."
+        )
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
     return ranked, limitations
 
@@ -520,16 +535,16 @@ async def _run_stages(
     if diagnostic.omitted_count:
         result.limitations.append(f"Ranking considered only {len(candidates)} of {len(signals)} validated signals.")
     text = await _model_text(diagnostic, LLMRole.RANK_SIGNALS, (
-        'Select up to max_ranked external signals that CONTRADICT or COMPLICATE the narrative. '
-        'Counter-evidence must be supported by supplied titles/snippets; do not infer a refutation from a '
-        'title alone when it does not support one. Return {"rankings": [...], "limitations": [...]}. '
+        'Classify up to max_ranked external signals against the narrative, prioritizing supported '
+        'counter-evidence. Return {"rankings": [...], "limitations": [...]}. '
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
-        'relation ("contradicts" or "complicates"), reasoning (concise text), quote_id (one exact ID '
+        'relation ("contradicts", "complicates", "supports", "context" or "insufficient"), '
+        'reasoning (concise text), quote_id (one exact ID '
         'from that same signal URL title/snippet segments). Select an ID; do not retype or repair source text. '
         'Ordered segments preserve the original field, including typos and whitespace. '
         'Use unique URLs only. 9-10 means strong '
         'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
-        'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
+        'Explain an empty ranking list in limitations (up to 5 concise strings). '
         'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
     ), {"narrative": narrative_input, "evidence": cited_evidence,
         "signals": [_ranking_signal_payload(s) for s in candidates],
