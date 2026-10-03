@@ -84,6 +84,37 @@ async def _openai_compat_call(
     return text, usage
 
 
+def _gemini_final_text(candidate: Any) -> str:
+    """Concatenate ordered final text like google-genai; never expose hidden parts.
+
+    https://github.com/googleapis/python-genai/blob/main/google/genai/types.py
+    Unsupported tool/media output fails closed instead of returning a partial answer.
+    """
+    if not isinstance(candidate, dict) or not isinstance(candidate.get("content"), dict):
+        raise ValueError("Gemini returned invalid content.")
+    parts = candidate["content"].get("parts")
+    if not isinstance(parts, list) or not parts:
+        raise ValueError("Gemini returned no final text.")
+    metadata = {"thought", "thoughtSignature", "thought_signature", "partMetadata"}
+    texts = []
+    for part in parts:
+        if not isinstance(part, dict) or not part or set(part) - (metadata | {"text"}):
+            raise ValueError("Gemini returned unsupported response parts.")
+        if "thought" in part and type(part["thought"]) is not bool:
+            raise ValueError("Gemini returned invalid thought metadata.")
+        if part.get("thought") is True:
+            continue
+        if "text" not in part:
+            continue  # Opaque signature/metadata-only parts have no final text.
+        if not isinstance(part["text"], str):
+            raise ValueError("Gemini returned invalid final text.")
+        texts.append(part["text"])
+    text = "".join(texts)
+    if not text.strip():
+        raise ValueError("Gemini returned no final text.")
+    return text
+
+
 async def _gemini_call(
     client: httpx.AsyncClient,
     api_key: str,
@@ -121,13 +152,10 @@ async def _gemini_call(
     )
     resp.raise_for_status()
     data = resp.json()
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise ValueError(f"Gemini returned no candidates: {str(data)[:200]}")
-    parts = candidates[0].get("content", {}).get("parts", [])
-    if not parts or not parts[0].get("text"):
-        raise ValueError(f"Gemini returned empty response: {str(data)[:200]}")
-    text: str = parts[0]["text"]
+    candidates = data.get("candidates") if isinstance(data, dict) else None
+    if not isinstance(candidates, list) or not candidates:
+        raise ValueError("Gemini returned no candidates.")
+    text = _gemini_final_text(candidates[0])
     usage_meta = data.get("usageMetadata", {})
     usage: dict[str, Any] = {
         "prompt_tokens": usage_meta.get("promptTokenCount", 0),
