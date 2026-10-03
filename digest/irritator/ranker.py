@@ -13,16 +13,15 @@ from digest.llm import LLMRole, _extract_json, complete
 
 logger = logging.getLogger(__name__)
 
+RANK_RELATIONS = ("contradicts", "complicates", "supports", "context", "insufficient")
 RANK_RELATION_CONTRACT = (
-    "Compare each source with the EXACT supplied narrative claim. Do not add a premise that a "
-    "solution is exclusive, sufficient, necessary or primary unless the claim actually states it. "
-    "A supporting example, adjacent tool or alternative implementation is not counter-evidence; omit it. "
-    "A complication requires an explicit material condition, tradeoff or limitation supported by the "
-    "supplied source and tied to what the actual claim asserts. A literal quote proves text identity, "
-    "not that the claimed contradiction or complication follows. Explain that relation using only the "
-    "supplied evidence. Return an empty list when no source establishes such a relation; do not manufacture one. "
+    "Classify each source against the exact supplied claim: contradicts = evidence against what it asserts; "
+    "complicates = an explicit material condition, tradeoff or limitation of that assertion; "
+    "supports = evidence consistent with it; context = related background or an alternative without a "
+    "counter-relation; insufficient = supplied evidence cannot establish a relation. "
+    "Explain the chosen relation from supplied evidence, keeping the claim's stated scope. "
+    "Only contradicts and complicates qualify as counter-signals. "
 )
-
 
 
 @dataclass
@@ -58,10 +57,11 @@ _USER_PROMPTS: dict[str, str] = {
         "9-10 = прямые доказательства того, что нарратив неверен или преувеличен\n"
         "7-8 = существенное осложнение или важная оговорка, которую нарратив игнорирует\n"
         "5-6 = ограниченная, но подтверждённая оговорка к данному утверждению\n"
-        "1-4 = согласуется с нарративом или повторяет его; такой сигнал пропусти\n\n"
-        "Для каждого подходящего сигнала верни JSON-объект с полями:\n"
+        "1-4 = слабая релевантность\n\n"
+        "Для каждого сигнала верни JSON-объект с полями:\n"
         '- "index" — порядковый номер сигнала (начиная с 0)\n'
         '- "score" — оценка от 1 до 10\n'
+        '- "relation" — contradicts, complicates, supports, context или insufficient\n'
         '- "reasoning" — обоснование оценки (1-2 предложения)\n\n'
         "Верни JSON-массив объектов. Ничего больше не добавляй."
     ),
@@ -72,10 +72,11 @@ _USER_PROMPTS: dict[str, str] = {
         "9-10 = direct evidence the narrative is wrong or overstated\n"
         "7-8 = significant complication or important caveat the narrative ignores\n"
         "5-6 = limited but supported qualification of this claim\n"
-        "1-4 = agrees with or restates the narrative; omit such signals\n\n"
-        "For each qualifying signal return a JSON object with fields:\n"
+        "1-4 = weak relevance\n\n"
+        "For each signal return a JSON object with fields:\n"
         '- "index" — signal index (starting from 0)\n'
         '- "score" — score from 1 to 10\n'
+        '- "relation" — contradicts, complicates, supports, context or insufficient\n'
         '- "reasoning" — justification for the score (1-2 sentences)\n\n'
         "Return a JSON array of objects. Return nothing else."
     ),
@@ -107,29 +108,29 @@ def _parse_rankings(
     narrative_claim: str,
     min_score: int,
 ) -> list[RankedSignal]:
-    """Parse LLM ranking response and filter by min_score."""
+    """Validate every entry, then keep counter-relations at or above min_score."""
     if not isinstance(raw, list):
         raise ValueError(f"Expected JSON array, got {type(raw).__name__}")
 
-    ranked: list[RankedSignal] = []
+    validated: list[tuple[str, RankedSignal]] = []
+    seen: set[int] = set()
     for item in raw:
-        if not isinstance(item, dict):
-            continue
-        idx = int(item.get("index", -1))
-        if idx < 0 or idx >= len(signals):
-            continue
-        score = int(item.get("score", 0))
-        if score < min_score:
-            continue
-        ranked.append(
-            RankedSignal(
-                signal=signals[idx],
-                score=score,
-                reasoning=str(item.get("reasoning", "")),
-                narrative_claim=narrative_claim,
-            )
-        )
+        if not isinstance(item, dict) or set(item) != {"index", "score", "reasoning", "relation"}:
+            raise ValueError("Invalid ranking fields.")
+        idx, score, relation, reasoning = (item[key] for key in ("index", "score", "relation", "reasoning"))
+        if type(idx) is not int or not 0 <= idx < len(signals) or idx in seen:
+            raise ValueError("Unknown or duplicate ranking index.")
+        if type(score) is not int or not 1 <= score <= 10:
+            raise ValueError("Ranking score must be an integer from 1 through 10.")
+        if not isinstance(relation, str) or relation not in RANK_RELATIONS:
+            raise ValueError("Invalid ranking relation.")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            raise ValueError("Ranking reasoning must be nonempty text.")
+        seen.add(idx)
+        validated.append((relation, RankedSignal(signals[idx], score, reasoning.strip(), narrative_claim)))
 
+    ranked = [signal for relation, signal in validated
+              if relation in ("contradicts", "complicates") and signal.score >= min_score]
     ranked.sort(key=lambda r: r.score, reverse=True)
     return ranked
 

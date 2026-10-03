@@ -315,7 +315,7 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
     elif mutation == "high_score":
         item["score"] = 11
     elif mutation == "bad_relation":
-        item["relation"] = "supports"
+        item["relation"] = "unknown"
     elif mutation == "too_many":
         ranking["rankings"] *= 4
     elif mutation == "extra_field":
@@ -335,6 +335,115 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
     assert result.status == "incomplete"
     assert not result.ranked_signals
     assert next(d for d in result.diagnostics if d.stage == "ranking").status == "error"
+    assert model.await_count == 3
+
+
+@pytest.mark.parametrize("relation", ["supports", "context", "insufficient"])
+def test_high_scoring_non_counter_relations_excluded(relation: str) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    ranking = _ranking()
+    ranking["rankings"][0].update(relation=relation, score=10)
+    ranked, limitations = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 1)
+    assert ranked == []
+    counts = ", ".join(f"{label}={int(label == relation)}" for label in ("supports", "context", "insufficient"))
+    assert limitations == [f"Ranking omitted non-counter signals: {counts}."]
+
+
+def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    supportive = make_signal(url="https://external.example/support", title="Staged rollout reduces failures")
+    complication = make_signal(url="https://external.example/caveat",
+                               title="Stateful services require a maintenance window for rollout")
+    low_score = make_signal(url="https://external.example/weak", title="Limited rollout caveat")
+    entries = []
+    for signal, relation, score, reason in [
+        (supportive, "supports", 10, "The measured failure reduction supports improved reliability."),
+        (complication, "complicates", 5, "The required maintenance window limits reliability during rollout."),
+        (low_score, "complicates", 4, "The caveat has limited relevance."),
+    ]:
+        entries.append({"url": signal.url, "relation": relation, "score": score, "reasoning": reason,
+                        "quote_id": _ranking_signal_payload(signal)["title"][0]["id"]})
+    ranked, limitations = _parse_rankings(json.dumps({"rankings": entries, "limitations": ["Search is limited."]}),
+                                          [supportive, complication, low_score], narrative, 3, 5)
+    assert len(ranked) == 1
+    assert ranked[0].signal == complication and ranked[0].relation == "complicates"
+    assert ranked[0].quote == complication.title and ranked[0].score == 5
+    assert set(asdict(ranked[0])) == {
+        "signal", "score", "reasoning", "narrative_claim", "relation", "quote", "typography_normalized",
+    }
+    assert limitations == ["Search is limited.",
+                           "Ranking omitted non-counter signals: supports=1, context=0, insufficient=0."]
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("quote_id", "unknown-id"), ("relation", "unknown"), ("score", True), ("reasoning", "  "),
+])
+def test_non_counter_entries_validated_before_filtering(field: str, value: Any) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signals = [make_signal(url=url, title="Deployment limitations")
+               for url in ("https://external.example/caveat", "https://external.example/other")]
+    ranking = _ranking(signals[0].url)
+    invalid = _ranking(signals[1].url)["rankings"][0]
+    invalid.update(relation="supports", score=1)
+    invalid[field] = value
+    ranking["rankings"].append(invalid)
+    with pytest.raises(ValueError):
+        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_url", "cross_url_quote", "missing_relation", "extra_field"])
+def test_non_counter_entries_preserve_identity_and_shape_checks(mutation: str) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signals = [make_signal(url=url, title="Deployment limitations")
+               for url in ("https://external.example/caveat", "https://external.example/other")]
+    ranking = _ranking(signals[0].url)
+    ranking["rankings"][0].update(relation="supports", score=1)
+    item = _ranking(signals[1].url)["rankings"][0]
+    if mutation == "duplicate_url":
+        item["url"] = signals[0].url
+    elif mutation == "cross_url_quote":
+        ranking["rankings"][0]["quote_id"] = item["quote_id"]
+    elif mutation == "missing_relation":
+        del ranking["rankings"][0]["relation"]
+    else:
+        ranking["rankings"][0]["extra"] = "unexpected"
+    ranking["rankings"].append(item)
+    with pytest.raises(ValueError):
+        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
+
+
+@pytest.mark.asyncio
+async def test_all_non_counter_relations_are_honest_empty_with_omission_counts() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    signals = [make_signal(url=f"https://external.example/{relation}", title="Deployment limitations")
+               for relation in ("supports", "context", "insufficient")]
+    entries = []
+    for signal, relation in zip(signals, ("supports", "context", "insufficient"), strict=True):
+        item = _ranking(signal.url)["rankings"][0]
+        item.update(relation=relation, score=10)
+        entries.append(item)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}),
+        (json.dumps({"rankings": entries, "limitations": []}), {}),
+    ])
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=signals)),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and result.ranked_signals == []
+    assert all(d.status not in {"error", "incomplete"} for d in result.diagnostics)
+    ranking_stage = next(d for d in result.diagnostics if d.stage == "ranking")
+    assert ranking_stage.status == "empty" and ranking_stage.output_count == 0
+    assert "Ranking omitted non-counter signals: supports=1, context=1, insufficient=1." in result.limitations
     assert model.await_count == 3
 
 
