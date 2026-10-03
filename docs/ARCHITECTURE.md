@@ -215,6 +215,25 @@ category mix, feedback and lifecycle state; they do not measure factual accuracy
 4. After `trial_days`, the current evaluator uses its source score threshold to graduate
    or demote the source. These operational observations are not editorial acceptance.
 
+Discovery keeps `pending_sources.json` compatible and stores delivery/history metadata
+separately in `discovery_delivery.json`. Preparation prunes expired proposals before
+deduplication and validates up to three feeds, including safe redirects and RSS/Atom
+content. Still-valid legacy pending proposals without a receipt get the first available
+offer slots; a full legacy batch uses no model call. Otherwise generation makes at
+most one configured-route request, with pending/rejected history and no retry/fallback.
+A valid empty result is distinct from feed-validation or delivery failure.
+
+Managed discovery uses `--discover --discovery-phase prepare`, commits/pushes both
+files, and verifies both hashes from the same remote revision before `--discovery-phase
+send --discovery-pending-sha ... --discovery-delivery-sha ...`. The sender binds the
+batch to its run/attempt, exact proposal identities and destination. It records
+uncertainty before each POST and confirms only an accepted Bot API message ID.
+Reserved/unknown offers are held for inspection, including a crash between reservation
+and send; no automatic replay or exactly-once promise is made. Final receipts must
+be persisted even after partial failure. Direct `--discover` provides local-file
+durability only. History is retained for the existing 30-day proposal horizon.
+The runtime keeps its weekly ten-minute job; this change adds no polling schedule.
+
 No source-discovery schedule is installed by the engine. The runtime owns its cadence
 and serialized access to the same state as the main digest.
 
