@@ -242,6 +242,13 @@ adapter availability and useful external evidence remain separate #77 acceptance
 
 ### Source and ranking outcomes
 
+Bounded query generation and ranking receive only the narrative claim, category,
+evidence IDs and validated literal quotes alongside cited RSS evidence. Generated
+assumptions and reasons to challenge remain in the original archived narrative but
+are excluded from these requests. Legacy query generation uses claim and category
+only; legacy ranking remains claim-only. This input boundary does not verify claim
+truth or semantic counter-evidence quality.
+
 Legacy synchronous Irritator processing retains its list-based source API but records
 successful, failed and unavailable source attempts separately. A valid empty response
 is a successful search; missing Reddit credentials or intentionally unsupported DEV.to

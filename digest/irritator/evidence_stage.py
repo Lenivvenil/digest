@@ -457,6 +457,10 @@ async def _run_stages(
         return
 
     narrative = result.narratives[0]
+    narrative_input = {
+        "claim": narrative.claim, "category": narrative.category,
+        "evidence_ids": narrative.evidence_ids, "quotes": narrative.quotes,
+    }
     cited_evidence = {
         "bundle_id": bundle.bundle_id, "evidence_kind": bundle.evidence_kind,
         "items": [asdict(item) for item in bundle.items if item.evidence_id in narrative.evidence_ids],
@@ -470,7 +474,7 @@ async def _run_stages(
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields. ' + QUERY_CONTRACT
-    ), {"narrative": asdict(narrative), "evidence": cited_evidence, "max_queries": maximum_queries}, config)
+    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.queries))
@@ -527,7 +531,7 @@ async def _run_stages(
         'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
         'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
         'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
-    ), {"narrative": asdict(narrative), "evidence": cited_evidence,
+    ), {"narrative": narrative_input, "evidence": cited_evidence,
         "signals": [_ranking_signal_payload(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
     result.ranked_signals, limitations = _parse_rankings(

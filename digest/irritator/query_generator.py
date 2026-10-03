@@ -47,9 +47,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
 _USER_PROMPTS: dict[str, str] = {
     "ru": (
         "Нарратив: {claim}\n"
-        "Категория: {category}\n"
-        "Неявные предположения:\n{assumptions}\n"
-        "Почему стоит оспорить: {why_worth_challenging}\n\n"
+        "Категория: {category}\n\n"
         "Составь {queries_per_narrative} кратких поисковых запросов по теме или сущности.\n"
         "Не закладывай желаемое опровержение в поисковые слова. Используй разные ракурсы темы.\n"
         "Контргипотезу и причину проверки укажи в intent; отношение найденного материала к нарративу "
@@ -61,9 +59,7 @@ _USER_PROMPTS: dict[str, str] = {
     ),
     "en": (
         "Narrative: {claim}\n"
-        "Category: {category}\n"
-        "Implicit assumptions:\n{assumptions}\n"
-        "Why worth challenging: {why_worth_challenging}\n\n"
+        "Category: {category}\n\n"
         "Craft {queries_per_narrative} concise topic/entity search queries from different angles.\n"
         "Do not require the desired counterclaim in search keywords. Put the counter-hypothesis "
         "and reason to investigate in intent; assess the retrieved material's relation after search.\n\n"
@@ -83,14 +79,11 @@ def _build_prompt(
     queries_per_narrative: int,
 ) -> list[dict[str, str]]:
     """Build LLM messages for adversarial query generation."""
-    assumptions = "\n".join(f"- {a}" for a in narrative.implicit_assumptions)
     system = _SYSTEM_PROMPTS.get(language, _SYSTEM_PROMPTS["ru"])
     user_tmpl = _USER_PROMPTS.get(language, _USER_PROMPTS["ru"])
     user = user_tmpl.format(
         claim=narrative.claim,
         category=narrative.category,
-        assumptions=assumptions,
-        why_worth_challenging=narrative.why_worth_challenging,
         queries_per_narrative=queries_per_narrative,
     )
     return [
