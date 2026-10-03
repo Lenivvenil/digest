@@ -20,7 +20,7 @@ See [ADR-0002](decisions/0002-engine-instance-split.md) and
 The package is 2.0.0. The older architecture document described v1 category summarization
 as the only execution path. The original is retained in git history; current behavior
 has a second, opt-in RSS-review path. Full-source enrichment in
-[draft #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
 not the operating architecture documented below.
 
 ## Data flow
@@ -310,6 +310,6 @@ complete text/source identity and confirmed per-article chunk coverage. See
 exactly-once delivery is not claimed.
 
 Retain configured translation and actual bounded Irritator/comparison processing.
-The initial compact presentation proposes archive-only optional outcomes, with honest
+The compact presentation keeps optional outcomes in the archive, with honest
 status, instead of extra Telegram pushes. No new receiver, queue or feedback polling
 cron is implied. Daily voting remains best effort under [ADR0006](decisions/0006-batch-message-voting.md).

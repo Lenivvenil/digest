@@ -57,15 +57,17 @@ article was understood. Read the [Digest domain overview](docs/domain/digest/ove
 The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
-[draft #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
 [#55](https://github.com/Lenivvenil/digest/issues/55) remains open: full-source support
 and useful factual output are current requirements, with no deferred-task status.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
 optional post translation, now implemented with explicit compatibility and recovery.
 The current priority is one compact daily edition within the documented
 [operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
-Schedule reduction alone does not provide the compact renderer. Presentation changes
-preserve the publication policy and do not enable the experimental editorial pipeline.
+Compact delivery is implemented and deployed: a production edition confirmed five
+articles in one Telegram chunk, with its archive and delivery state persisted.
+Translation and recovery acceptance covers the observed cases described below;
+full-source factual quality remains open in #55.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -423,8 +425,11 @@ checks preserve field IDs, numeric literals, URLs and recognized quotation/code 
 they cannot prove that every qualifier or meaning survived. Machine-translated text
 is labelled accordingly, and incomplete translation falls back to canonical English.
 A draft does not become fact-verified through translation. A narrow real fixture and
-ordinary translated output have been checked; this does not prove general fidelity,
-and source-scope/terminology quality remains part of output acceptance. This presentation feature
+an ordinary archived narrative using prompt v2 passed independent comparison. A
+production rate-limit failure preserved every canonical field and showed one fallback
+notice in the compact edition. That edition was delivered in English; this evidence
+does not claim a Russian Telegram delivery, general fidelity, or validation of every
+technical term and data-flow direction. This presentation feature
 does not require completing the separate #55 redesign, and does not claim to solve it.
 See [ADR-0005](docs/decisions/0005-optional-presentation-translation.md).
 
@@ -495,6 +500,12 @@ failure, even when Markdown can be saved.
 Use the package version, immutable commit and [changelog](CHANGELOG.md) together when
 upgrading; a historical release entry is not proof that every current quality gate has
 passed. Keep the previous engine pin and compatible runtime state for rollback.
+
+Before rolling back, verify that the chosen engine/configuration can interpret retained
+runtime state. Preserve delivery receipts, dedup/feedback state, translation records and
+compact issue reservations. Hold publication if compatibility is uncertain or an issue
+is unresolved; inspect confirmed and unknown delivery outcomes before proceeding.
+Rolling back is not a reason to reset state or resend an existing edition.
 
 **No software license grant is currently supplied.** This repository contains no
 LICENSE file or declared package license. This is the current release state, not an
