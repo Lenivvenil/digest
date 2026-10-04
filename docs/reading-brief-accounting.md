@@ -81,6 +81,8 @@ binding into a technical handoff; it never rerenders or publishes inside sender-
 operation. Existing accepted preparation takes precedence before source work.
 
 The in-process request reservation cap is at most ten, with no reset on fallback.
-Cross-job whole-cycle allocation and real capacity remain activation gates; this is
-not ten new requests per job. The prior twelve-request draft allowance is withdrawn.
+A per-GitHub-run stage claim/journal shares the same ten across separate model
+processes. Lost usage holds the lease; it is not ten new requests per job. Atomic
+compatible engine/workflow rollout and real capacity remain acceptance gates.
+The prior twelve-request draft allowance is withdrawn.
 See proposed [ADR0009](decisions/0009-selected-source-admission.md).

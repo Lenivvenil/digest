@@ -72,10 +72,61 @@ the 360-second application window less presentation reserve and 45 seconds for
 persistence; each call still checks pacing and remaining useful time. Exact Gemini
 counts and the pinned GPT estimate remain distinct accounting methods.
 
-The deployed ten-request whole-cycle envelope spans separate primary/optional jobs.
-An in-process cap alone does not prove that combined allocation: cross-job accounting
-and real capacity remain explicit activation blockers. No extra job, live probe,
-provider or monthly minutes are admitted by this draft. Reading remains off.
+### One allowance across separate processes
+
+The whole-cycle allowance is ten model-service request reservations, addressed by
+immutable GitHub run ID rather than publication date. A rerun cannot initialize or
+regrant it. The three fixed stages are preparation, Irritator and independent
+comparison. A remotely persisted stage claim exclusively holds the current remainder;
+no next stage can start while prior usage is active or unknown.
+
+After the existing Git/hash barrier, a one-use local begin marker binds an execution
+nonce and initially empty journal. The common LLM reservation point locks and atomically
+persists each count/generation/fallback attempt before adapter dispatch. A credential
+failure may conservatively consume a slot; the record never claims a POST receipt.
+Finalization after the original process exits requires its exact claim/attempt/nonce
+and journal. A fresh checkout of the initial remote claim, missing usage or corruption
+cannot be finalized as zero. There are no per-request Git pushes. Existing final stage
+persistence exposes only the verified remaining allowance to the next model process.
+
+One small file per run contains at most three stage records and ten attempts; prior
+cycles are not scanned or copied into new admission. Sequential model stages restore
+the preceding reservation time for pacing. This is not a general parallel-process
+rate limiter or an assertion of provider/account quota. An in-process cap remains a
+second bound. A typed shared-budget failure occurs before HTTP and therefore leaves
+source generation resumable; it is not confused with an ambiguous provider outcome.
+
+The runtime proposal reserves only after feedback. Failed budget setup still allows
+compatible preparation to reuse accepted/cached work with model dispatch denied.
+Frozen sending is independent, including when preparation fails. Optional claims share
+their existing marker pushes. Initial control commands must fit before the original
+preparation cutoff, and optional execution rechecks its remaining envelope after the
+barrier. Command timeouts include kill-after; no 8/12-minute job or monthly allocation
+is enlarged. Primary journal upload is best-effort only when its bounded upload window
+fits; otherwise the remote reservation remains held rather than guessing lost usage.
+
+Engine pin and workflow must deploy atomically. A small explicit protocol capability
+check prevents an old engine from ignoring the new model-budget environment. A missing
+capability blocks model-capable preparation/optional work while feedback and the
+independent sender remain available. This workflow is a reviewed proposal, not a
+current activation. Reading remains off and #55 acceptance is still required.
+
+### Continue other candidate work after a technical handoff
+
+The existing scheduler may skip an exact saved report only when all relevant selected
+source work has a verified immutable technical handoff or retained generation-unknown
+evidence that prohibits an automatic attempt. A genuinely resumable member keeps its
+packet eligible. Missing/corrupt proof or a missing handoff never implies completion.
+The filter does not change candidate status, mark preparation/delivery, or introduce
+another queue. It lets later unseen/technical candidates advance while preserved source
+work awaits #55 reconciliation or uncertainty recovery.
+
+Complete empty metadata packets have no source work and can release their temporary
+empty-result protection in reading mode. Resolved peers move through the existing
+verified index/archive path. Rehydration preserves actual recorded preparation handoff
+flags; retirement alone is not evidence that #120 accepted anything. Older index records
+without handoff provenance remain readable but do not gain a fabricated accepted flag.
+
 
 ## Verification and remaining acceptance
 

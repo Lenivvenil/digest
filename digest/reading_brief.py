@@ -22,6 +22,7 @@ import httpx
 from digest import llm
 from digest.article_source import FETCH_SECONDS, fetch_article
 from digest.config import Config, ProviderConfig
+from digest.model_budget import ModelBudgetError
 from digest.radar.collector import Article
 from digest.radar.summarizer import ArticleSummary
 from digest.reading_brief_state import (
@@ -338,6 +339,8 @@ def _generation_timeout(config: Config, deadline: float) -> float:
 
 
 def _error_class(exc: Exception, phase: str) -> str:
+    if isinstance(exc, ModelBudgetError):
+        return "technical_quota_or_budget"
     if isinstance(exc, TimeoutError):
         return "technical_deadline"
     if isinstance(exc, TokenProfileUnavailable):
@@ -354,7 +357,8 @@ def _error_class(exc: Exception, phase: str) -> str:
 def _reserve_attempt(
     state: BriefState, page: Page, route: Route, kind: Literal["count", "generate"], state_dir: Path,
 ) -> RequestAttempt:
-    assert state.source_sha256 is not None
+    if state.source_sha256 is None:
+        raise ValueError("missing_source")
     attempt = RequestAttempt(kind, route, page.start, page.stop, state.source_sha256, page.prompt_sha256, now())
     page.request_attempts.append(attempt)
     # The adapter may still wait for pacing, credentials or its shared request budget.
@@ -365,7 +369,8 @@ def _reserve_attempt(
 
 def _fail_attempt(state: BriefState, attempt: RequestAttempt | None, exc: Exception, state_dir: Path) -> None:
     if attempt is not None and attempt.status == "reserved":
-        attempt.status = "definite_failed" if _can_fallback(exc) else "unknown"
+        # The shared guard raises only before provider dispatch; it is not transport ambiguity.
+        attempt.status = "definite_failed" if _can_fallback(exc) or isinstance(exc, ModelBudgetError) else "unknown"
         attempt.finished_at = now()
         attempt.error_class = _error_class(exc, attempt.kind)
         save_state(state_dir, state)
@@ -561,7 +566,8 @@ def _render(state: BriefState, source: Source) -> tuple[ArticleSummary, str, str
     citations: list[str] = []
     for page in state.pages:
         result = page.result
-        assert result is not None
+        if result is None:
+            raise ValueError("unfinished_source_result")
         selected.update(result.selected_span_ids)
         qualifications.update(result.qualification_span_ids)
         cited.update(result.angle_span_ids)

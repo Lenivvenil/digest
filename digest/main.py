@@ -901,13 +901,17 @@ def _candidate_inputs(
         raise ValueError("Candidate preparation requires collection accounting.")
     merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
                      inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
-    report = pending_completed_report(progress)
+    from digest.reading_preparation import deferred_source_reports
+
+    deferred = (deferred_source_reports(progress, Path(cache_dir))
+                if getattr(getattr(config, "reading_brief", None), "enabled", False) else set())
+    report = pending_completed_report(progress, skip_reports=deferred)
     packet = (next(item for item in reversed(progress.packets) if item.report == report)
               if report is not None else plan_packet(progress, config))
     if packet is not None and report is None:
-        begin_packet(progress, packet, cache_dir)
+        begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
     else:
-        save_candidate_progress(progress, cache_dir)
+        save_candidate_progress(progress, cache_dir, skipped_empty_reports=deferred)
         if report is not None:
             ensure_report_accounting(progress, report, cache_dir)
     logging.getLogger(__name__).info(

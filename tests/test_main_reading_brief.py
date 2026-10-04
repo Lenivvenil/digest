@@ -20,7 +20,7 @@ from tests.test_reading_brief import fetched, response
 
 
 async def saved_selection(
-    tmp_path: Path, *, description: str | None = None,
+    tmp_path: Path, *, description: str | None = None, all_selected: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
     config, articles = population(2)
     if description is not None:
@@ -32,9 +32,10 @@ async def saved_selection(
     begin_packet(progress, packet, tmp_path)
 
     async def select(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
-        item = json.loads(messages[1]["content"])["evidence"]["items"][0]
+        items = json.loads(messages[1]["content"])["evidence"]["items"]
+        chosen = items if all_selected else items[:1]
         return json.dumps({"selections": [{"evidence_id": item["evidence_id"], "reason": "Useful mechanism",
-                                           "quote": item["title"], "confidence": "high"}],
+                                           "quote": item["title"], "confidence": "high"} for item in chosen],
                            "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
 
     with patch("digest.review.complete", side_effect=select):
@@ -115,7 +116,7 @@ async def test_reading_budget_keeps_existing_spend_and_dispatch_reserve(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_real_prepare_path_reuses_selection_and_source_without_accepting_prose(
+async def test_real_prepare_path_advances_after_source_handoff_without_accepting_prose(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.main import _run
@@ -148,8 +149,10 @@ async def test_real_prepare_path_reuses_selection_and_source_without_accepting_p
           patch("digest.edition_runtime.finish_preparation", side_effect=AssertionError("No semantic acceptance"))):
         first = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
         second = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
+        third = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
+    assert third.new_articles == 0
     assert first.edition_status == second.edition_status == "semantic_reconciliation_pending"
-    assert selection.call_count == fetch.call_count == count.call_count == model.call_count == 1
+    assert selection.call_count == fetch.call_count == count.call_count == model.call_count == 2
     assert not (tmp_path / ".cache" / "pending_preparation.json").exists()
     assert not first.telegram_sent and not second.telegram_sent
 
@@ -217,3 +220,101 @@ async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Pa
     with patch("digest.reading_preparation._advance", side_effect=AssertionError("No lost-state replay")):
         held = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
     assert held.pending == 1 and held.outcomes[0].reason == "technical_missing_reading_state"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state_kind", ["complete", "unknown", "missing_handoff"])
+async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidates(
+    tmp_path: Path, state_kind: str,
+) -> None:
+    from digest.candidate_review import pending_completed_report
+    from digest.reading_preparation import deferred_source_reports
+
+    config, progress, packet, report = await saved_selection(tmp_path)
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=TimeoutError if state_kind == "unknown" else generate)):
+        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    if state_kind == "missing_handoff":
+        Path(result.handoff_paths[0]).unlink()
+    before = json.dumps([item.report.__dict__ for item in progress.packets], default=str)
+    deferred = deferred_source_reports(progress, tmp_path)
+    recovered = pending_completed_report(progress, skip_reports=deferred)
+    assert (recovered is None) == (state_kind != "missing_handoff")
+    assert before == json.dumps([item.report.__dict__ for item in progress.packets], default=str)
+    assert not packet.handed_to_preparation
+    assert all(item.status != "delivered" for item in progress.candidates.values())
+
+
+@pytest.mark.asyncio
+async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _, _, _ = await saved_selection(tmp_path)
+    monkeypatch.setenv("PREPARATION_DEADLINE", "1100")
+    with patch("digest.reading_preparation.time.time", return_value=1000), patch(
+        "digest.reading_preparation.time.monotonic", return_value=500,
+    ):
+        assert reading_deadline(config, 490) == 555  # 100 seconds left, less45 for persistence.
+
+
+@pytest.mark.asyncio
+async def test_complete_empty_source_packet_retires_resolved_metadata_without_fake_preparation(tmp_path: Path) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.candidate_review import load_candidate_progress, save_candidate_progress
+    from digest.candidate_storage import load_candidate
+    from digest.reading_preparation import deferred_source_reports
+
+    config, articles = population(2)
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+
+    async def abstain(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
+        items = json.loads(messages[1]["content"])["evidence"]["items"]
+        return json.dumps({"selections": [], "limitations": ["Metadata judgment only"],
+                           "dispositions": [{"evidence_id": item["evidence_id"], "status": "not_selected",
+                                             "reason": "This fixture has no role-relevant technical mechanism."}
+                                            for item in items]}), {"finish_reason": "stop"}
+
+    capture = CandidateDispositionCapture()
+    with patch("digest.review.complete", side_effect=abstain):
+        report = await run_primary_review(articles, config, disposition_capture=capture)
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    identities = set(progress.candidates)
+    deferred = deferred_source_reports(progress, tmp_path)
+    assert deferred
+    save_candidate_progress(progress, tmp_path, skipped_empty_reports=deferred)
+    restored = load_candidate_progress(tmp_path)
+    assert not restored.candidates and not restored.packets and not packet.handed_to_preparation
+    assert all(load_candidate(identity, tmp_path).status == "not_selected" for identity in identities)
+    assert not (tmp_path / "pending_preparation.json").exists()
+    merge_candidates(restored, articles, config, {}, now=NOW, cache_dir=tmp_path)
+    assert restored.packets and all(not item.handed_to_preparation for item in restored.packets)
+    assert deferred_source_reports(restored, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_path: Path) -> None:
+    from digest.candidate_review import pending_completed_report
+    from digest.reading_preparation import deferred_source_reports
+
+    config, progress, packet, report = await saved_selection(tmp_path, all_selected=True)
+    calls = 0
+
+    async def partial(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("HTTP 503")
+        return response(messages)
+
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=partial)):
+        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert result.technical_complete == result.pending == 1
+    assert not deferred_source_reports(progress, tmp_path)
+    assert pending_completed_report(progress) == report

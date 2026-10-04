@@ -107,14 +107,17 @@ current-work admission and individual report size do not grow with resolved hist
 windows, including repeated revisions of one identity. The current 54-feed, 200-entry
 parser bounds describe a theoretical maximum, not measured eligible daily arrivals.
 
-Offline twenty-window verification with twenty newly resolved identities per window
+At the accepted PR #125 storage baseline, offline twenty-window verification with
+twenty newly resolved identities per window
 keeps the active root at 342 bytes and each packet object at 44,034 bytes. All source,
 packet, index and history objects total 2,239,214 bytes after window twenty. The prior
 full-snapshot design used 20,318,687 bytes for snapshots alone in the matched scenario
 shape (response wording differs). Eight revisions of one identity keep its latest
 index at 1,248 bytes, with one current proof and no obsolete alternate references;
-all original packet evidence remains readable. These fixtures establish removal of
+all original packet evidence remains readable. These baseline fixtures establish removal of
 the cumulative-copy defect, not production arrival rates or unlimited archive capacity.
+Later explicit handoff provenance adds fixed per-identity metadata; the current growth
+regression still requires constant active/per-packet size and linear total storage.
 
 Previously observed delivery-cache membership is retained as cache evidence, not
 retrospective proof of a Telegram receipt. It prevents recycling an old accepted

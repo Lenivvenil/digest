@@ -664,7 +664,7 @@ def test_consumed_resolved_packet_retires_active_work_and_preserves_indexed_deci
     assert pending_completed_report(restored) is None and plan_packet(restored, config, NOW) is None
     for identity, candidate in expected.items():
         assert load_candidate(identity, tmp_path) == candidate
-        assert load_candidate_packets(identity, tmp_path) == (replace(packet, handed_to_preparation=False),)
+        assert load_candidate_packets(identity, tmp_path) == (packet,)
         assert candidate.status == "not_selected" and candidate.disposition.reason
 
 

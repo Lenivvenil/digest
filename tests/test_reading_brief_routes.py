@@ -452,3 +452,27 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
     else:
         assert final.pending == 1 and not final.cards and call.call_count == 2
         assert load_state(tmp_path, path.stem).error_class == "technical_count_unknown"
+
+
+@pytest.mark.asyncio
+async def test_shared_budget_predispatch_failure_remains_resumable(tmp_path: Path) -> None:
+    from digest.model_budget import ModelBudgetError
+
+    cfg = config()
+    cfg.reading_brief = replace(cfg.reading_brief, provider=GROQ.name, model=GROQ.model)
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+          patch("digest.llm.complete", side_effect=ModelBudgetError("Local usage write failed before dispatch"))):
+        held = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
+    from digest.radar.collector import article_hash
+
+    identity = article_hash(make_article().title, make_article().link)
+    state = load_state(tmp_path, identity)
+    assert held.pending == 1 and state.error_class == "technical_quota_or_budget"
+    assert state.pages[0].request_attempts[-1].status == "definite_failed"
+
+    async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
+        return response(messages)
+
+    with patch("digest.llm.complete", side_effect=generate) as call:
+        resumed = await enrich_selected_cards([], cfg, tmp_path, time.monotonic() + 1000)
+    assert resumed.pending == 0 and call.call_count == 1

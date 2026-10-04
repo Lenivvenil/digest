@@ -177,10 +177,11 @@ The draft source-admission integration (#122, proposed ADR0009) uses at most ten
 in-process request reservations shared by selection, counting, fallback and reading.
 It preserves #121's validated-selection/disposition contract and does not enlarge the
 RSS packet. Missing or truncated output remains incomplete rather than rejection.
-This local cap does not establish the ten-request allocation across separate primary
-and optional jobs. That cross-job accounting, actual quota and capacity remain
-activation gates; the draft does not authorize the earlier proposed twelve-request
-primary allowance or additional optional calls. Reading remains off.
+A proposed per-run stage claim/journal shares that ten across separate primary and
+optional processes, with no regrant after unknown usage or reruns. Compatible
+engine/workflow rollout, actual quota and capacity remain acceptance gates; the draft
+does not authorize the earlier proposed twelve-request primary allowance or additional
+optional calls. Reading remains off.
 
 Its application budget is 360 seconds inside the unchanged 8-minute primary job.
 The reading stage subtracts the configured translation deadline and 45 seconds for

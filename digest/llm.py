@@ -22,6 +22,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Runtime capability guard: both counting and generation reserve the shared cycle.
+MODEL_BUDGET_PROTOCOL = 1
+
 # Registry of OpenAI-compatible providers
 _OPENAI_COMPAT: dict[str, dict[str, str]] = {
     "groq": {
@@ -337,26 +340,48 @@ def set_request_limit(config: Any, limit: int) -> None:
 def request_budget_remaining(config: Any) -> int | None:
     """Return remaining attempts, or None for the default unlimited runtime."""
     state = _request_state(config)
-    if state.request_limit is None:
-        return None
-    return max(0, state.request_limit - state.requests_attempted)
+    from digest.model_budget import ModelBudgetError, execution_from_env
+
+    local = max(0, state.request_limit - state.requests_attempted) if state.request_limit is not None else None
+    try:
+        shared = execution_from_env()
+    except ModelBudgetError:
+        return 0  # The reservation point still raises the precise error before dispatch.
+    return min(local, shared.remaining) if local is not None and shared is not None else (
+        shared.remaining if shared is not None else local)
 
 
 def request_wait_seconds(config: Any) -> float:
     """Return current pacing delay so a caller can respect its own deadline."""
     state = _request_state(config)
     interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
+    _sync_cycle_pacing(state)
     return max(0.0, _pacing_deadline(state, interval) - time.monotonic())
 
 
-def _reserve_request(state: _RequestState) -> None:
+def _reserve_request(
+    state: _RequestState, provider: str = "unspecified", model: str = "unspecified", kind: str = "generate",
+) -> None:
     """Reserve before dispatch; even missing credentials consume an attempt.
 
     No await occurs between checking and incrementing the per-loop counter.
     """
     if state.request_limit is not None and state.requests_attempted >= state.request_limit:
         raise RuntimeError("LLM request budget exhausted")
+    from digest.model_budget import reserve_request_from_env
+
+    reserve_request_from_env(provider=provider, model=model, kind=kind)
     state.requests_attempted += 1
+
+
+def _sync_cycle_pacing(state: _RequestState) -> None:
+    from digest.model_budget import execution_from_env
+
+    shared = execution_from_env()
+    if shared is not None and shared.last_reserved_at is not None:
+        elapsed = max(0.0, time.time() - shared.last_reserved_at.timestamp())
+        previous = time.monotonic() - elapsed
+        state.last_request_at = max(state.last_request_at or previous, previous)
 
 
 def _pacing_deadline(state: _RequestState, interval: float) -> float:
@@ -367,6 +392,7 @@ def _pacing_deadline(state: _RequestState, interval: float) -> float:
 
 async def _pace_request(state: _RequestState, interval: float) -> None:
     async with state.spacing_lock:
+        _sync_cycle_pacing(state)
         wait = _pacing_deadline(state, interval) - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
@@ -497,7 +523,7 @@ async def count_gemini_tokens(
         await _pace_request(state, interval)
         if state.unavailable_until.get(key, 0) > time.monotonic():
             raise RuntimeError("Gemini token preflight provider is unavailable for this run")
-        _reserve_request(state)
+        _reserve_request(state, provider.name, provider.model, "count")
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set for token preflight")
@@ -555,7 +581,7 @@ async def complete(
                 # A concurrent call may have received a backoff while this one queued.
                 if state.unavailable_until.get((provider.name, provider.model), 0) > time.monotonic():
                     break
-                _reserve_request(state)
+                _reserve_request(state, provider.name, provider.model, "generate")
                 t0 = time.monotonic()
                 try:
                     result = await _call_provider(

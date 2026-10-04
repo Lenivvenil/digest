@@ -85,7 +85,7 @@ for #55; they do not publish concatenated draft prose or create an accepted edit
 Unknown generation outcomes hold across later invocations and route changes. Known
 count uncertainty remains distinct from generation uncertainty. See proposed
 [ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
-reuse and the unresolved cross-job request allocation. The finite factual-quality,
+reuse and the proposed shared per-cycle request allocation. The finite factual-quality,
 reconciliation and throughput gates remain open; reading stays off.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,

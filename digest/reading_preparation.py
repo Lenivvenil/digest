@@ -7,13 +7,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 from digest._util import atomic_json_write
-from digest.candidate_review import Candidate, CandidateArticle, CandidatePacket, CandidateProgress, _proof_packets
+from digest.candidate_review import (
+    Candidate,
+    CandidateArticle,
+    CandidatePacket,
+    CandidateProgress,
+    _accepted_empty_packet,
+    _proof_packets,
+)
 from digest.config import Config
 from digest.llm import request_budget_remaining, set_request_limit
 from digest.preparation import _canonical, _restore, _safe
@@ -75,7 +83,12 @@ def _hash(value: object) -> str:
 
 def reading_deadline(config: Config, started: float) -> float:
     reserve = config.translation.timeout_seconds if config.translation.enabled else 0.0
-    return started + 360.0 - reserve - 45.0
+    deadline = started + 360.0 - reserve - 45.0
+    if managed := os.environ.get("PREPARATION_DEADLINE"):
+        if not managed.isdecimal() or len(managed) > 20:
+            raise ValueError("Managed preparation deadline must be a Unix timestamp.")
+        deadline = min(deadline, time.monotonic() + int(managed) - time.time() - reserve - 45.0)
+    return deadline
 
 
 def validate_reading_mode(config: Config, prepare_only: bool) -> None:
@@ -151,13 +164,17 @@ def _bound_state(
     return state, binding
 
 
-def _freeze_handoff(binding: ReadingBinding, state: BriefState, state_dir: Path) -> Path:
+def _handoff_body(binding: ReadingBinding, state: BriefState, state_dir: Path) -> dict[str, object]:
     source = load_source(state_dir, state)
     _validate_progress(state, source)
-    body = {"schema_version": 1, "status": "technical_complete_semantic_review_pending",
+    return {"schema_version": 1, "status": "technical_complete_semantic_review_pending",
             "binding": asdict(binding), "state": asdict(state), "source_sha256": state.source_sha256,
             "source_body_sha256": source.body_sha256,
             "source_path": str(state_root(state_dir) / "sources" / f"{state.source_sha256}.json")}
+
+
+def _freeze_handoff(binding: ReadingBinding, state: BriefState, state_dir: Path) -> Path:
+    body = _handoff_body(binding, state, state_dir)
     root = _safe(state_dir / "reading_handoffs")
     root.mkdir(exist_ok=True)
     path = _safe(root / f"{_hash(body)}.json")
@@ -177,6 +194,64 @@ def _currently_selected(
         return False
     proof = _proof_packets(candidate, progress.packets)
     return bool(proof and proof[0].report == report and proof[0].articles == packet.articles)
+
+
+def _deferred_source(
+    candidate: Candidate, packet: CandidatePacket, report: BlindReviewReport, state_dir: Path,
+) -> bool:
+    path = _safe(state_dir / "reading_bindings" / f"{candidate.identity}.json")
+    state_path = _safe(state_dir / "reading_briefs" / f"{candidate.identity}.json")
+    if not path.is_file() or not state_path.is_file():
+        return False
+    raw = json.loads(path.read_text())
+    if not isinstance(raw, dict) or raw.get("sha256") != _hash(raw.get("binding")):
+        return False
+    actual: ReadingBinding = _restore(raw["binding"], ReadingBinding)
+    state = load_state(state_dir, candidate.identity)
+    old_occurrence = CandidateArticle(state.selection.title, state.selection.link, state.selection.description,
+                                     state.selection.source, state.selection.category, state.selection.pub_date,
+                                     actual.source_url)
+    if actual.identity != candidate.identity or _hash(asdict(old_occurrence)) != actual.occurrence_sha256:
+        return False
+    _validate_progress(state, load_source(state_dir, state))
+    if has_unresolved_generation(state):
+        return True  # Retain the original unknown binding, including across a new RSS occurrence.
+    expected = _binding(packet, report, candidate.identity)
+    if (replace(actual, evidence_origin="current_selection_binding") != expected
+            or state.selection != Selection.from_article(candidate.article.article())
+            or state.status not in {"ready", "abstained"}):
+        return False
+    body = _handoff_body(actual, state, state_dir)
+    handoff = _safe(state_dir / "reading_handoffs" / f"{_hash(body)}.json")
+    return handoff.is_file() and json.loads(handoff.read_text()) == body
+
+
+def deferred_source_reports(progress: CandidateProgress, state_dir: Path) -> set[str]:
+    """Read current packet proofs only; completed/held source work never monopolizes selection."""
+    deferred: set[str] = set()
+    for packet in progress.packets:
+        report = packet.report
+        if report is None or not report.reviews:
+            continue
+        try:
+            selections, _ = _validated_cached_selections(
+                _delivery_review(report), packet.evidence, packet.max_selections)
+            if not selections:
+                if _accepted_empty_packet(packet):
+                    deferred.add(_hash(asdict(report)))
+                continue
+            for selected in selections:
+                candidate = progress.candidates.get(selected.evidence_id)
+                if (candidate is None or not _currently_selected(candidate, progress, packet, report)
+                        or _binding(packet, report, selected.evidence_id).occurrence_sha256
+                        != _hash(asdict(candidate.article))
+                        or not _deferred_source(candidate, packet, report, state_dir)):
+                    break
+            else:
+                deferred.add(_hash(asdict(report)))
+        except (OSError, ValueError, TypeError, KeyError):
+            continue  # Missing/corrupt evidence is never silently promoted to a completed handoff.
+    return deferred
 
 
 async def prepare_selected_sources(
