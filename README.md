@@ -493,11 +493,13 @@ Legacy responses retain their unselected-without-reason limitation. Feed parsing
 RSS metadata selection, not complete-source reading or proof that throughput matches
 incoming volume. Current source, recency, blocklist and delivered-history rules apply
 to saved candidates; no new retention TTL or extra model call is introduced. A candidate-specific 32 MB
-checkpoint safety limit fails explicitly rather than deleting evidence. Verified
-immutable references reduce resolved/excluded active payload duplication; selected,
-unknown and pending evidence stays materialized. Full historical archives still grow. See proposed
+current-work safety limit fails explicitly rather than deleting evidence. Exact source
+objects are stored once, and each immutable report contains only its own packet and
+current collection accounting. Per-identity history stays outside current-work admission;
+unresolved work and reversible policy exclusions remain recoverable. Total archive
+storage still grows with new evidence. See proposed
 [ADR0008](docs/decisions/0008-candidate-selection-progress.md) and #121 for remaining
-editorial accounting and capacity acceptance.
+semantic, ordinary-runtime and throughput acceptance.
 
 A valid primary abstention retains #120's accepted empty snapshot for its publication
 day. New candidate responses with only deferred/missing/invalid dispositions do not

@@ -253,7 +253,7 @@ and serialized access to the same state as the main digest.
 | `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
 | `pending_sources.json` | Proposed sources awaiting decisions |
 | `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
-| `candidate_progress.json`, `candidate_reports/*.json` | Candidate eligibility/history and frozen report-bound accounting; no delivered-state mutation |
+| `candidate_progress.json`, `candidate_sources/`, `candidate_reports/`, `candidate_index/`, `candidate_excluded/` | Current candidate work, immutable source/packet evidence and separately indexed history; no delivered-state mutation |
 | `digests/*.candidates.json` | Private inventory/selection coverage evidence bound into prepared-edition archive hashes |
 
 Atomic temporary-file replacement protects an individual JSON write; it does not make

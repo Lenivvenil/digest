@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
-from dataclasses import asdict, dataclass, field
+import re
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -35,10 +35,9 @@ from digest.review import (
 from digest.review_checkpoint import validate_evidence_bundle
 
 CANDIDATE_FILE = "candidate_progress.json"
-# Measured 54 feeds x 200 parsed entries x 500-character excerpts write about
-# 16 MB after deduplicating metadata. This is candidate-only transport capacity;
-# accepted preparation keeps its independent 4 MB bound. History can still fill
-# this bounded file; no truncation, TTL or automatic pruning is implied.
+# Candidate-only current-work capacity: source bodies and resolved history live
+# in independently verified objects. Accepted preparation keeps its 4 MB bound.
+# No identity truncation, TTL or automatic archive deletion is implied.
 MAX_BYTES = 32_000_000
 # Two 32K-character responses, up to 12 JSON bytes per astral Unicode character,
 # capture/report copies and duplicated 16K evidence plus metadata fit within 2MiB.
@@ -93,6 +92,7 @@ class CandidatePacket:
     report: BlindReviewReport | None = None
     handed_to_preparation: bool = False
     disposition_attempts: tuple[CandidateDispositionAttempt, ...] = ()
+    collection_json: str = "{}"
 
 
 @dataclass
@@ -101,6 +101,7 @@ class CandidateProgress:
     candidates: dict[str, Candidate] = field(default_factory=dict)
     packets: list[CandidatePacket] = field(default_factory=list)
     latest_collection_json: str = "{}"
+    policy_sha256: str = ""
 
 
 def packet_articles(packet: CandidatePacket) -> dict[str, list[Article]]:
@@ -110,11 +111,18 @@ def packet_articles(packet: CandidatePacket) -> dict[str, list[Article]]:
     return grouped
 
 
+def _persist_observed_source(article: CandidateArticle, cache_dir: str | Path | None) -> None:
+    if cache_dir is not None:
+        from digest.candidate_storage import put_article
+
+        put_article(article, cache_dir)
+
+
 def merge_candidates(
     progress: CandidateProgress, articles_by_category: dict[str, list[Article]], config: Config,
     delivered_cache: dict[str, str], effective_priorities: dict[str, int] | None = None,
     now: datetime | None = None, *, inventory: CollectionInventory | None = None,
-    delivery_history: dict[str, str] | None = None,
+    delivery_history: dict[str, str] | None = None, cache_dir: str | Path | None = None,
 ) -> CandidateProgress:
     """Merge observations; recheck old work without changing original timestamps.
 
@@ -124,6 +132,9 @@ def merge_candidates(
     Undated absent entries retain unknown publication age.
     """
     instant = _instant(now)
+    if cache_dir is not None:
+        _restore_relevant_history(progress, articles_by_category, config, cache_dir, instant)
+    progress.policy_sha256 = _eligibility_policy(config)
     sources = {source.name: source for source in config.enabled_sources}
     observed = [article for group in articles_by_category.values() for article in group]
     if inventory is not None:
@@ -136,17 +147,22 @@ def merge_candidates(
         saved = CandidateArticle(article.title, article.link, article.description, article.source,
                                  article.category, article.pub_date.isoformat() if article.pub_date else None,
                                  source.url)
+        _persist_observed_source(saved, cache_dir)
         if identity not in progress.candidates:
             progress.candidates[identity] = Candidate(identity, saved, instant.isoformat(), source.priority)
         candidate = progress.candidates[identity]
         if saved != candidate.article and saved not in candidate.occurrences:
             candidate.occurrences = (*candidate.occurrences, saved)
-            if candidate.status in {"not_selected", "duplicate"}:
+            same_binding = (saved.source, saved.source_url, saved.category) == (
+                candidate.article.source, candidate.article.source_url, candidate.article.category)
+            if (candidate.status in {"not_selected", "duplicate"}
+                    or same_binding and candidate.status in {"not_presented", "technical_pending"}):
                 old = candidate.article
                 candidate.article = saved
-                candidate.occurrences = tuple(item for item in (old, *candidate.occurrences) if item != saved)
+                candidate.occurrences = tuple(item for item in (*candidate.occurrences, old) if item != saved)
                 candidate.status = "not_presented"
                 _clear_disposition(candidate)
+        _current_occurrences(candidate)
 
     def exclusion(saved: CandidateArticle, identity: str) -> str:
         article = saved.article()
@@ -173,7 +189,7 @@ def merge_candidates(
                 pass  # Malformed raw-cache values are not delivery evidence.
         # Original and prior packet occurrences stay immutable; only unfinished
         # work may choose another eligible exact-identity occurrence.
-        if (candidate.status == "selected" and exclusion(candidate.article, identity)
+        if (candidate.status in {"selected", "not_selected", "duplicate"} and exclusion(candidate.article, identity)
                 and any(not exclusion(saved, identity) for saved in candidate.occurrences)):
             candidate.status = "technical_pending"
         if candidate.status in {"not_presented", "technical_pending"}:
@@ -191,7 +207,9 @@ def merge_candidates(
             candidate.priority = (effective_priorities or {}).get(source.name, source.priority)
     if inventory is not None:
         audit = asdict(inventory)
+        source_urls = {source.name: source.url for source in config.sources}
         for raw, observation in zip(audit["observations"], inventory.observations, strict=True):
+            raw["source_url"] = source_urls[observation.article.source]
             observed_candidate = progress.candidates.get(observation.identity)
             if observation.eligible and observed_candidate is not None:
                 article = observation.article
@@ -260,11 +278,20 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
                              {item.source: progress.candidates[article_hash(item.title, item.link)].priority
                               for item in selected}, _instant(now).isoformat())
     packet.evidence = build_evidence_bundle(packet_articles(packet), config.review)
+    packet.collection_json = progress.latest_collection_json
     validate_evidence_bundle(packet.evidence, config)
     packet.prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
         packet.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
     packet.max_selections = config.review.max_selections
     return packet
+
+
+def _current_occurrences(candidate: Candidate) -> None:
+    """Keep only the latest live alternative per source binding; history stays in objects."""
+    latest = {(item.source, item.source_url, item.category): item for item in candidate.occurrences}
+    if candidate.status != "selected":
+        latest.pop((candidate.article.source, candidate.article.source_url, candidate.article.category), None)
+    candidate.occurrences = tuple(item for item in latest.values() if item != candidate.article)
 
 
 def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache") -> Path:
@@ -273,11 +300,15 @@ def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir
         raise ValueError("Cannot begin an already completed candidate packet.")
     progress.packets.append(packet)
     for item in packet.evidence.items:
-        progress.candidates[item.evidence_id].status = "technical_pending"
+        candidate = progress.candidates[item.evidence_id]
+        if candidate.disposition is not None:
+            _index_candidate(candidate, progress, cache_dir)
+        _clear_disposition(candidate)
+        candidate.status = "technical_pending"
     path = save_candidate_progress(progress, cache_dir)
-    if progress_size(progress) + RESPONSE_STORAGE_RESERVE > MAX_BYTES:
+    if progress_size(progress, cache_dir) + RESPONSE_STORAGE_RESERVE > MAX_BYTES:
         raise ValueError(
-            "Insufficient materialized candidate archive capacity before model work; no input was truncated.")
+            "Insufficient candidate working-set capacity before model work; no input was truncated.")
     return path
 
 
@@ -346,7 +377,7 @@ def reconcile_packet(
             candidate.decision_prompt_hash = captured.prompt_hash
             candidate.decision_occurrence_sha256 = _digest(asdict(candidate.article))
     packet.report = report
-    path = save_candidate_progress(progress, cache_dir)
+    path = save_candidate_progress(progress, cache_dir, retire=False)
     ensure_report_accounting(progress, report, cache_dir)
     return path
 
@@ -369,7 +400,8 @@ def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport |
             capture = next((item for item in packet.disposition_attempts if item.slot == successful.slot), None)
             complete = not packet.disposition_attempts or capture is not None and capture.status == "complete"
             same_eligible_occurrences = all(
-                progress.candidates[article_hash(saved.title, saved.link)].eligible
+                article_hash(saved.title, saved.link) in progress.candidates
+                and progress.candidates[article_hash(saved.title, saved.link)].eligible
                 and progress.candidates[article_hash(saved.title, saved.link)].article == saved
                 for saved in packet.articles
             )
@@ -377,7 +409,8 @@ def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport |
                     and complete and same_eligible_occurrences):
                 return packet.report
             continue
-        eligible = [item for item in selections if progress.candidates[item.evidence_id].eligible
+        eligible = [item for item in selections if item.evidence_id in progress.candidates
+                    and progress.candidates[item.evidence_id].eligible
                     and progress.candidates[item.evidence_id].delivery_cache_observed_at is None
                     and progress.candidates[item.evidence_id].status in {"selected", "technical_pending"}]
         original = {article_hash(saved.title, saved.link): saved for saved in packet.articles}
@@ -444,6 +477,8 @@ def _validate(progress: CandidateProgress) -> None:
             raise ValueError("Candidate publication time requires a timezone.")
         _validate_decision(candidate, progress)
     for packet in progress.packets:
+        if not isinstance(json.loads(packet.collection_json), dict):
+            raise ValueError("Invalid packet collection accounting.")
         if len(packet.prompt_hash) != 64 or packet.max_selections < 1:
             raise ValueError("Invalid frozen candidate prompt contract.")
         if datetime.fromisoformat(packet.planned_at).tzinfo is None:
@@ -451,10 +486,6 @@ def _validate(progress: CandidateProgress) -> None:
         known = {article_hash(article.title, article.link): article for article in packet.articles}
         if len(known) != len(packet.articles) or set(known) != {item.evidence_id for item in packet.evidence.items}:
             raise ValueError("Candidate packet membership mismatch.")
-        if any(identity not in progress.candidates or article not in (
-                progress.candidates[identity].article, *progress.candidates[identity].occurrences)
-               for identity, article in known.items()):
-            raise ValueError("Candidate packet source metadata changed.")
         _validate_report(packet.report or BlindReviewReport(1, packet.evidence, [], "incomplete", None, [], ""))
         if packet.disposition_attempts and packet.report is None:
             raise ValueError("Candidate dispositions lack their saved report.")
@@ -479,204 +510,221 @@ def candidate_accounting(progress: CandidateProgress) -> dict[str, Any]:
     return asdict(progress)
 
 
-def _restore_progress(body: Any) -> CandidateProgress:
-    # Earlier candidate-only checkpoints lack side capture; accepted snapshots are unchanged.
-    from copy import deepcopy
-
-    body = deepcopy(body)
-    if isinstance(body, dict):
-        for candidate in body.get("candidates", {}).values():
-            if isinstance(candidate, dict):
-                for key in ("disposition", "decision_response_sha256", "decision_prompt_hash",
-                            "decision_occurrence_sha256"):
-                    candidate.setdefault(key, None)
-        for packet in body.get("packets", []):
-            if isinstance(packet, dict):
-                packet.setdefault("disposition_attempts", [])
-    progress: CandidateProgress = _restore(body, CandidateProgress)
-    return progress
+def _eligibility_policy(config: Config) -> str:
+    return _digest({"sources": [(source.name, source.url, source.category, source.enabled, source.recency_hours)
+                                for source in config.sources], "blocklist": config.filters.blocklist_keywords})
 
 
-def _compactable(candidate: Candidate) -> bool:
-    # A legacy omission is an unknown decision, and historical cache membership
-    # is not a Telegram receipt. Neither may retire unresolved source evidence.
-    return (candidate.status in {"not_selected", "duplicate"}
-            or candidate.status == "not_presented" and not candidate.eligible)
+def _restore_relevant_history(
+    progress: CandidateProgress, articles: dict[str, list[Article]], config: Config, cache_dir: str | Path,
+    now: datetime,
+) -> None:
+    from digest import candidate_storage as storage
+
+    identities = {article_hash(item.title, item.link) for group in articles.values() for item in group}
+    if storage.read_policy(cache_dir) != _eligibility_policy(config):
+        for identity in storage.list_excluded(cache_dir):
+            header = storage.read_candidate_header(identity, cache_dir)
+            if header is not None and _excluded_policy_relevant(header, config, now):
+                identities.add(identity)
+    known_packets = {storage.packet_key(packet) for packet in progress.packets}
+    for identity in sorted(identities - progress.candidates.keys()):
+        candidate = storage.load_candidate(identity, cache_dir)
+        if candidate is None:
+            continue
+        progress.candidates[identity] = candidate
+        for packet in storage.load_candidate_packets(identity, cache_dir):
+            key = storage.packet_key(packet)
+            if key not in known_packets:
+                packet.handed_to_preparation = True
+                progress.packets.append(packet)
+                known_packets.add(key)
 
 
-def _source_body(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {key: candidate[key] for key in ("article", "occurrences")}
+def _excluded_policy_relevant(header: dict[str, Any], config: Config, now: datetime) -> bool:
+    sources = {source.name: source for source in config.enabled_sources}
+    for fields in header["policy_fields"]:
+        source = sources.get(fields["source"])
+        if source is None or source.url != fields["source_url"] or source.category != fields["category"]:
+            continue
+        published = datetime.fromisoformat(fields["published"]) if fields["published"] is not None else None
+        if published is None or published >= now - timedelta(hours=source.recency_hours):
+            return True  # Current blocklist needs the exact source text, loaded only for relevant identities.
+    return False
 
 
-def _packet_body(packet: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in packet.items() if key != "handed_to_preparation"}
+def _proof_packets(candidate: Candidate, packets: list[CandidatePacket]) -> list[CandidatePacket]:
+    matches = [packet for packet in packets if any(item.evidence_id == candidate.identity
+                                                  for item in packet.evidence.items)]
+    if candidate.disposition is not None:
+        matches = [packet for packet in matches if any(
+            attempt.response_sha256 == candidate.decision_response_sha256
+            and attempt.prompt_hash == candidate.decision_prompt_hash
+            and candidate.disposition in attempt.dispositions for attempt in packet.disposition_attempts)]
+    return [max(reversed(matches), key=lambda packet: packet.planned_at)] if matches else []
+
+
+def _index_candidate(candidate: Candidate, progress: CandidateProgress, cache_dir: str | Path) -> None:
+    from digest import candidate_storage as storage
+
+    keys = []
+    for packet in _proof_packets(candidate, progress.packets):
+        storage.freeze_packet(packet, {}, cache_dir)
+        keys.append(storage.packet_key(packet))
+    storage.save_candidate(candidate, tuple(keys), cache_dir)
+
+
+def _retire_indexed_work(progress: CandidateProgress, cache_dir: str | Path) -> None:
+    """Verified index first, active removal last; excluded work is not completed work."""
+    from digest import candidate_storage as storage
+
+    retiring = []
+    for identity, candidate in progress.candidates.items():
+        proof = _proof_packets(candidate, progress.packets)
+        unconsumed = any(_accepted_empty_packet(packet) and not packet.handed_to_preparation for packet in proof)
+        if candidate.eligible and (candidate.status not in {"not_selected", "duplicate"} or unconsumed):
+            continue
+        _index_candidate(candidate, progress, cache_dir)
+        retiring.append(identity)
+    for identity in retiring:
+        del progress.candidates[identity]
+    required = {storage.packet_key(packet) for candidate in progress.candidates.values()
+                for packet in _proof_packets(candidate, progress.packets)}
+    retained = []
+    for packet in progress.packets:
+        if storage.packet_key(packet) in required:
+            retained.append(packet)
+        else:
+            storage.freeze_packet(packet, {}, cache_dir)
+    progress.packets = retained
+
+
+def _accepted_empty_packet(packet: CandidatePacket) -> bool:
+    if packet.report is None or not packet.report.reviews:
+        return False
+    review = _delivery_review(packet.report)
+    capture = next((item for item in packet.disposition_attempts if item.slot == review.slot), None)
+    return review.status == "abstained" and (
+        not packet.disposition_attempts or capture is not None and capture.status == "complete")
 
 
 def _digest(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
-def _compact_accounting(progress: CandidateProgress, cache_dir: str | Path) -> dict[str, Any]:
-    """Encode only proven metadata references; immutable archives remain complete.
-
-    This saves active-checkpoint duplication, not immutable archive storage. All
-    runtime objects stay materialized, so ordinary policy reconciliation uses the
-    original evidence. Never write an archive or invent a completion here.
-    """
-    body = candidate_accounting(progress)
-    if not any(_compactable(candidate) for candidate in progress.candidates.values()):
-        return body
-    archives: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    remaining_packets = iter(reversed(progress.packets))
-
-    def verified_archives() -> Iterator[dict[str, Any]]:
-        # Reuse verified snapshots, and only open older ones if an exact source
-        # occurrence/packet could not be found in newer retained evidence.
-        yield from archives
-        for packet in remaining_packets:
-            if packet.report is None:
-                continue
-            path = _report_accounting_path(packet.report, cache_dir)
-            if path.name in seen or not path.exists():
-                continue
-            seen.add(path.name)
-            archive = _read_report_accounting(path, packet.report)
-            archives.append(archive)
-            yield archive
-
-    compacted = False
-    for identity, candidate in progress.candidates.items():
-        if not _compactable(candidate):
-            continue
-        raw = body["candidates"][identity]
-        source_sha = _digest(_source_body(raw))
-        for archive in verified_archives():
-            archived = archive["candidate_accounting"]["candidates"].get(identity)
-            if archived is None or _digest(_source_body(archived)) != source_sha:
-                continue
-            raw.pop("article")
-            raw.pop("occurrences")
-            raw["evidence_reference"] = {
-                "report_sha256": archive["report_sha256"], "archive_sha256": archive["sha256"],
-                "identity": identity, "source_sha256": source_sha,
-            }
-            compacted = True
-            break
-    for index, packet in enumerate(progress.packets):
-        if (packet.report is None or not packet.handed_to_preparation
-                or not all(_compactable(progress.candidates[item.evidence_id]) for item in packet.evidence.items)):
-            continue
-        raw = body["packets"][index]
-        packet_sha = _digest(_packet_body(raw))
-        for archive in verified_archives():
-            if not any(_digest(_packet_body(saved)) == packet_sha
-                       for saved in archive["candidate_accounting"]["packets"]):
-                continue
-            body["packets"][index] = {
-                "archive_reference": {"report_sha256": archive["report_sha256"],
-                                      "archive_sha256": archive["sha256"], "packet_sha256": packet_sha},
-                "planned_at": packet.planned_at, "handed_to_preparation": packet.handed_to_preparation,
-            }
-            compacted = True
-            break
-    if compacted:
-        body["schema_version"] = 2
-    return body
+def _active_candidate_body(candidate: Candidate) -> dict[str, Any]:
+    raw = asdict(candidate)
+    del raw["article"], raw["occurrences"]
+    return {"candidate": raw, "article_ref": _digest(asdict(candidate.article)),
+            "occurrence_refs": [_digest(asdict(article)) for article in candidate.occurrences]}
 
 
-def _reference_archive(reference: dict[str, Any], cache_dir: str | Path) -> dict[str, Any]:
-    report_sha = reference.get("report_sha256")
-    if (not isinstance(report_sha, str) or len(report_sha) != 64
-            or any(char not in "0123456789abcdef" for char in report_sha)):
-        raise ValueError("Invalid compacted candidate archive reference.")
-    path = _safe(Path(cache_dir) / "candidate_reports" / f"{report_sha}.json")
-    if not path.exists():
-        raise ValueError(f"Compacted candidate evidence is missing: {path.name}; restore the retained archive.")
-    if path.stat().st_size > MAX_BYTES:
-        raise ValueError("Compacted candidate evidence archive exceeds its byte budget.")
-    record = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-    if (not isinstance(record, dict) or record.get("sha256") != reference.get("archive_sha256")
-            or record.get("sha256") != _digest({key: value for key, value in record.items() if key != "sha256"})):
-        raise ValueError("Compacted candidate archive hash mismatch.")
-    body = record.get("candidate_accounting")
-    # No reference chains: the proof must be a self-contained original snapshot.
-    archived = _restore_progress(body)
-    _validate(archived)
-    report = next((packet.report for packet in archived.packets
-                   if packet.report is not None and _digest(asdict(packet.report)) == report_sha), None)
-    if report is None:
-        raise ValueError("Compacted candidate archive report binding mismatch.")
-    return _read_report_accounting(path, report)
+def _active_packet_body(packet: CandidatePacket, cache_dir: str | Path | None) -> dict[str, Any]:
+    from digest.candidate_storage import packet_key, read_packet
+
+    key = packet_key(packet)
+    path = _safe(Path(cache_dir) / "candidate_reports" / f"{key}.json") if cache_dir is not None else None
+    if path is not None and cache_dir is not None and path.exists():
+        if read_packet(key, cache_dir) != replace(packet, handed_to_preparation=False):
+            raise ValueError("Active candidate packet differs from its frozen evidence.")
+        return {"packet_ref": key, "handed_to_preparation": packet.handed_to_preparation}
+    raw = asdict(packet)
+    del raw["articles"]
+    raw["article_refs"] = [_digest(asdict(article)) for article in packet.articles]
+    return {"packet": raw}
 
 
-def _expand_accounting(body: Any, cache_dir: str | Path) -> Any:
-    if not isinstance(body, dict) or body.get("schema_version") != 2:
-        return body  # Explicit compatibility with original materialized v1.
-    if type(body["schema_version"]) is not int:
-        raise ValueError("Invalid compacted candidate progress schema version.")
-    if set(body) != {"schema_version", "candidates", "packets", "latest_collection_json"}:
-        raise ValueError("Invalid compacted candidate progress fields.")
-    if not isinstance(body["candidates"], dict) or not isinstance(body["packets"], list):
-        raise ValueError("Invalid compacted candidate progress collections.")
-    verified: dict[tuple[str, str], dict[str, Any]] = {}
+def _working_set(progress: CandidateProgress, cache_dir: str | Path | None) -> dict[str, Any]:
+    _validate(progress)
+    return {"kind": "candidate_working_set", "schema_version": 1,
+            "candidates": {identity: _active_candidate_body(candidate)
+                           for identity, candidate in progress.candidates.items()},
+            "packets": [_active_packet_body(packet, cache_dir) for packet in progress.packets],
+            "latest_collection_json": progress.latest_collection_json, "policy_sha256": progress.policy_sha256}
 
-    def archive_for(reference: Any, keys: set[str]) -> dict[str, Any]:
-        if (not isinstance(reference, dict) or set(reference) != keys
-                or not all(isinstance(value, str) for value in reference.values())):
-            raise ValueError("Invalid compacted candidate evidence reference fields.")
-        key = (reference["report_sha256"], reference["archive_sha256"])
-        if key not in verified:
-            verified[key] = _reference_archive(reference, cache_dir)
-        return verified[key]["candidate_accounting"]  # type: ignore[no-any-return]
 
-    for identity, raw in body["candidates"].items():
-        if not isinstance(raw, dict) or "evidence_reference" not in raw:
-            continue
-        reference = raw.pop("evidence_reference")
-        archive = archive_for(reference, {"report_sha256", "archive_sha256", "identity", "source_sha256"})
-        saved = archive["candidates"].get(identity)
-        if (saved is None or reference["identity"] != identity
-                or _digest(_source_body(saved)) != reference["source_sha256"]
-                or "article" in raw or "occurrences" in raw):
-            raise ValueError("Compacted candidate source identity or occurrence hash mismatch.")
-        raw.update(_source_body(saved))
-    for index, raw in enumerate(body["packets"]):
-        if not isinstance(raw, dict) or "archive_reference" not in raw:
-            continue
-        if set(raw) != {"archive_reference", "planned_at", "handed_to_preparation"}:
-            raise ValueError("Invalid compacted candidate packet fields.")
-        reference = raw["archive_reference"]
-        archive = archive_for(reference, {"report_sha256", "archive_sha256", "packet_sha256"})
-        saved = next((packet for packet in archive["packets"]
-                      if _digest(_packet_body(packet)) == reference["packet_sha256"]), None)
-        if saved is None or saved["planned_at"] != raw["planned_at"]:
-            raise ValueError("Compacted candidate packet evidence or original time mismatch.")
-        body["packets"][index] = {**saved, "handed_to_preparation": raw["handed_to_preparation"]}
-    body["schema_version"] = 1
-    return body
+def _working_record(progress: CandidateProgress, cache_dir: str | Path | None) -> dict[str, Any]:
+    body = _working_set(progress, cache_dir)
+    return {"candidate_accounting": body, "sha256": _digest(body)}
 
 
 def progress_size(progress: CandidateProgress, cache_dir: str | Path | None = None) -> int:
-    """Return materialized bytes, or exact compact mutable bytes when cache_dir is supplied."""
-    body = candidate_accounting(progress) if cache_dir is None else _compact_accounting(progress, cache_dir)
-    record = {"candidate_accounting": body, "sha256": hashlib.sha256(_canonical(body)).hexdigest()}
-    return len(json.dumps(record, indent=2).encode("utf-8"))
+    """Measure only the current working checkpoint, never indexed historical bodies."""
+    return len(json.dumps(_working_record(progress, cache_dir), indent=2).encode("utf-8"))
 
 
-def save_candidate_progress(progress: CandidateProgress, cache_dir: str | Path = ".cache") -> Path:
-    body = _compact_accounting(progress, cache_dir)
-    record = {"candidate_accounting": body, "sha256": hashlib.sha256(_canonical(body)).hexdigest()}
+def save_candidate_progress(
+    progress: CandidateProgress, cache_dir: str | Path = ".cache", *, retire: bool = True,
+) -> Path:
+    from digest.candidate_storage import encode_active_candidate, put_article, write_policy
+
+    for candidate in progress.candidates.values():
+        encode_active_candidate(candidate, cache_dir)
+    for packet in progress.packets:
+        for article in packet.articles:
+            put_article(article, cache_dir)
+    progress.latest_collection_json = _materialize_collection(progress.latest_collection_json, cache_dir)
+    for packet in progress.packets:
+        packet.collection_json = _materialize_collection(packet.collection_json, cache_dir)
+    if retire:
+        _retire_indexed_work(progress, cache_dir)
+    record = _working_record(progress, cache_dir)
     if len(json.dumps(record, indent=2).encode("utf-8")) > MAX_BYTES:
         raise ValueError(f"Candidate progress exceeds {MAX_BYTES}-byte budget; no manifest was truncated.")
     path = _safe(Path(cache_dir) / CANDIDATE_FILE)
     _safe(path.with_suffix(path.suffix + ".tmp"))
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_json_write(path, record)
+    # The header cannot acknowledge a policy until reactivated active work is durable.
+    if progress.policy_sha256:
+        write_policy(progress.policy_sha256, cache_dir)
     return path
 
 
+def _materialize_collection(value: str, cache_dir: str | Path) -> str:
+    from digest.candidate_storage import put_article
+
+    raw = json.loads(value)
+    sources = {item["source"]: item["url"] for item in raw.get("sources", [])}
+    for observation in raw.get("observations", []):
+        article = observation.pop("article", None)
+        if article is not None:
+            saved = CandidateArticle(article["title"], article["link"], article["description"], article["source"],
+                                     article["category"], article["pub_date"],
+                                     observation.get("source_url") or sources[article["source"]])
+            observation["article_reference"] = {"identity": observation["identity"],
+                                                "occurrence_sha256": put_article(saved, cache_dir)}
+        reference = observation["article_reference"]
+        if (reference["identity"] != observation["identity"]
+                or not re.fullmatch(r"[0-9a-f]{64}", reference["occurrence_sha256"])):
+            raise ValueError("Collection accounting source identity mismatch.")
+    return json.dumps(raw, ensure_ascii=False, sort_keys=True)
+
+
+def _restore_active_packet(raw: Any, cache_dir: str | Path) -> CandidatePacket:
+    from digest.candidate_storage import read_article, read_packet
+
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid active candidate packet.")
+    if set(raw) == {"packet_ref", "handed_to_preparation"}:
+        if type(raw["handed_to_preparation"]) is not bool:
+            raise ValueError("Invalid candidate preparation handoff flag.")
+        return replace(read_packet(raw["packet_ref"], cache_dir),
+                       handed_to_preparation=raw["handed_to_preparation"])
+    if set(raw) != {"packet"} or not isinstance(raw["packet"], dict):
+        raise ValueError("Invalid active candidate packet fields.")
+    body = dict(raw["packet"])
+    refs = body.pop("article_refs", None)
+    if not isinstance(refs, list) or "articles" in body:
+        raise ValueError("Invalid active candidate source references.")
+    body["articles"] = [asdict(read_article(sha, cache_dir)) for sha in refs]
+    packet: CandidatePacket = _restore(body, CandidatePacket)
+    return packet
+
+
 def load_candidate_progress(cache_dir: str | Path = ".cache") -> CandidateProgress:
+    from digest.candidate_storage import decode_active_candidate
+
     path = _safe(Path(cache_dir) / CANDIDATE_FILE)
     if not path.exists():
         return CandidateProgress()
@@ -684,113 +732,112 @@ def load_candidate_progress(cache_dir: str | Path = ".cache") -> CandidateProgre
         raise ValueError(f"Candidate progress exceeds {MAX_BYTES}-byte budget.")
     record = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
     if (not isinstance(record, dict) or set(record) != {"candidate_accounting", "sha256"}
-            or record["sha256"] != hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()):
+            or record["sha256"] != _digest(record["candidate_accounting"])):
         raise ValueError("Candidate progress hash or envelope mismatch.")
-    body = _expand_accounting(record["candidate_accounting"], cache_dir)
-    progress = _restore_progress(body)
+    body = record["candidate_accounting"]
+    if (not isinstance(body, dict) or set(body) != {"kind", "schema_version", "candidates", "packets",
+                                                  "latest_collection_json", "policy_sha256"}
+            or body["kind"] != "candidate_working_set" or type(body["schema_version"]) is not int
+            or body["schema_version"] != 1 or not isinstance(body["candidates"], dict)
+            or not isinstance(body["packets"], list) or not isinstance(body["latest_collection_json"], str)
+            or not isinstance(body["policy_sha256"], str)):
+        raise ValueError("Unsupported candidate prototype checkpoint; regenerate draft candidate accounting.")
+    policy_sha = body["policy_sha256"]
+    if policy_sha and (len(policy_sha) != 64 or any(char not in "0123456789abcdef" for char in policy_sha)):
+        raise ValueError("Invalid active candidate policy hash.")
+    progress = CandidateProgress(
+        candidates={identity: decode_active_candidate(raw, cache_dir) for identity, raw in body["candidates"].items()},
+        packets=[_restore_active_packet(raw, cache_dir) for raw in body["packets"]],
+        latest_collection_json=body["latest_collection_json"], policy_sha256=policy_sha)
     _validate(progress)
     return progress
 
 
 def _report_accounting_path(report: BlindReviewReport, cache_dir: str | Path) -> Path:
-    digest = hashlib.sha256(_canonical(asdict(report))).hexdigest()
-    return _safe(Path(cache_dir) / "candidate_reports" / f"{digest}.json")
-
-
-def _read_report_accounting(path: Path, report: BlindReviewReport) -> dict[str, Any]:
-    if path.stat().st_size > MAX_BYTES:
-        raise ValueError(f"Candidate accounting archive exceeds {MAX_BYTES}-byte budget.")
-    record = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-    if (not isinstance(record, dict) or type(record.get("schema_version")) is not int
-            or record["schema_version"] != 1):
-        raise ValueError("Invalid frozen candidate accounting envelope or schema version.")
-    body = {key: value for key, value in record.items() if key != "sha256"}
-    if (record.get("sha256") != hashlib.sha256(_canonical(body)).hexdigest()
-            or record.get("report_sha256") != hashlib.sha256(_canonical(asdict(report))).hexdigest()
-            or record.get("report_bundle_id") != report.evidence.bundle_id):
-        raise ValueError("Frozen candidate accounting hash or report binding mismatch.")
-    progress = _restore_progress(record.get("candidate_accounting"))
-    _validate(progress)
-    if not any(packet.report == report for packet in progress.packets):
-        raise ValueError("Frozen candidate accounting has no matching report.")
-    return record
+    return _safe(Path(cache_dir) / "candidate_reports" / f"{_digest(asdict(report))}.json")
 
 
 def ensure_report_accounting(
     progress: CandidateProgress, report: BlindReviewReport, cache_dir: str | Path = ".cache",
 ) -> Path:
-    """Idempotently freeze saved report accounting, including after interrupted writes."""
-    if not any(packet.report == report for packet in progress.packets):
+    """Freeze only this saved report's packet; current counts are bounded as-of data."""
+    from digest.candidate_storage import freeze_packet
+
+    packet = next((item for item in reversed(progress.packets) if item.report == report), None)
+    if packet is None:
         raise ValueError("Candidate accounting cannot freeze an unrelated report.")
-    path = _report_accounting_path(report, cache_dir)
-    if path.exists():
-        _read_report_accounting(path, report)
-        return path
     instant = _instant(None)
     counts = {status: sum(candidate.status == status for candidate in progress.candidates.values())
               for status in ("selected", "not_selected", "duplicate", "not_selected_without_editorial_reason",
-                                 "not_presented", "technical_pending")}
+                             "not_presented", "technical_pending")}
     unfinished = [datetime.fromisoformat(candidate.first_observed_at) for candidate in progress.candidates.values()
                   if candidate.eligible and candidate.status in {"not_presented", "technical_pending"}]
-    inventory = json.loads(progress.latest_collection_json)
-    serialized_bytes = progress_size(progress)
-    packet = next(item for item in reversed(progress.packets) if item.report == report)
+    inventory = json.loads(packet.collection_json)
+    serialized_bytes = progress_size(progress, cache_dir)
     delivery = _delivery_review(report)
     attempt = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
     packet_ids = {item.evidence_id for item in packet.evidence.items}
-    payload = {
-        "schema_version": 1,
-        "report_bundle_id": report.evidence.bundle_id,
-        "report_sha256": hashlib.sha256(_canonical(asdict(report))).hexdigest(),
-        "accounted_at": instant.isoformat(),
-        "summary": {
-            "serialized_bytes": serialized_bytes,
-            "remaining_capacity_bytes": MAX_BYTES - serialized_bytes,
-            "capacity_bytes": MAX_BYTES,
-            "capacity_scope": "materialized evidence snapshot; compact active storage is reported separately",
-            "packet_response_coverage_complete": bool(attempt and not attempt.errors
-                and {item.evidence_id for item in attempt.dispositions} == packet_ids),
-            "packet_metadata_decisions_complete": bool(attempt and attempt.status == "complete"),
-            "eligible_metadata_decisions_complete": all(
-                item.disposition is not None and item.status in {"selected", "not_selected", "duplicate"}
-                for item in progress.candidates.values() if item.eligible),
-            "registered_identities": len(progress.candidates),
-            "eligible_identities": sum(candidate.eligible for candidate in progress.candidates.values()),
-            "statuses": counts,
-            "oldest_eligible_unfinished_observed_at": min(unfinished).isoformat() if unfinished else None,
-            "oldest_eligible_unfinished_age_hours":
-                max(0, (instant - min(unfinished)).total_seconds() / 3600) if unfinished else None,
-            "latest_observed_occurrences": len(inventory.get("observations", [])),
-            "limits": "Model judgments over RSS metadata; not semantic correctness or full-source reading",
-        },
-        "candidate_accounting": candidate_accounting(progress),
+    summary = {
+        "accounted_at": instant.isoformat(), "serialized_bytes": serialized_bytes,
+        "remaining_capacity_bytes": MAX_BYTES - serialized_bytes, "capacity_bytes": MAX_BYTES,
+        "capacity_scope": "current active working set; immutable source and packet objects are stored separately",
+        "packet_response_coverage_complete": bool(attempt and not attempt.errors
+            and {item.evidence_id for item in attempt.dispositions} == packet_ids),
+        "packet_metadata_decisions_complete": bool(attempt and attempt.status == "complete"),
+        "eligible_metadata_decisions_complete": all(
+            item.disposition is not None and item.status in {"selected", "not_selected", "duplicate"}
+            for item in progress.candidates.values() if item.eligible),
+        "registered_identities": len(progress.candidates),
+        "eligible_identities": sum(candidate.eligible for candidate in progress.candidates.values()),
+        "statuses": counts,
+        "oldest_eligible_unfinished_observed_at": min(unfinished).isoformat() if unfinished else None,
+        "oldest_eligible_unfinished_age_hours":
+            max(0, (instant - min(unfinished)).total_seconds() / 3600) if unfinished else None,
+        "latest_observed_occurrences": len(inventory.get("observations", [])),
+        "current_collection": inventory,
+        "limits": "Model judgments over RSS metadata; not semantic correctness or full-source reading",
     }
-    payload["sha256"] = hashlib.sha256(_canonical(payload)).hexdigest()
-    if len(json.dumps(payload, indent=2).encode("utf-8")) > MAX_BYTES:
-        raise ValueError(f"Candidate accounting archive exceeds {MAX_BYTES}-byte budget.")
-    _safe(path.with_suffix(path.suffix + ".tmp"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_json_write(path, payload)
-    return path
+    return freeze_packet(packet, summary, cache_dir)
+
+
+def candidate_accounting_sources(
+    report: BlindReviewReport, cache_dir: str | Path = ".cache",
+) -> list[Path]:
+    """Verify and enumerate exact source objects for accepted checkpoint hash refs."""
+    from digest.candidate_storage import read_report_record
+
+    if not _report_accounting_path(report, cache_dir).exists():
+        return []
+    record = read_report_record(_digest(asdict(report)), cache_dir)
+    collection = json.loads(record["packet"]["collection_json"])
+    keys = [*record["packet"]["article_refs"], *(item["article_reference"]["occurrence_sha256"]
+             for item in collection.get("observations", []))]
+    from digest.candidate_storage import read_article
+
+    for key in keys:
+        read_article(key, cache_dir)
+    return [_safe(Path(cache_dir) / "candidate_sources" / f"{sha}.json")
+            for sha in dict.fromkeys(keys)]
 
 
 def archive_candidate_accounting(
     report: BlindReviewReport, archive: Path, cache_dir: str | Path = ".cache",
 ) -> Path | None:
-    """Copy frozen exact-report accounting; unrelated mutable progress is irrelevant.
+    """Copy exact immutable packet accounting; legacy accepted reports need none."""
+    from digest.candidate_storage import read_report_record
 
-    An absent report-bound record is a legacy report. Corruption of this exact
-    accepted report's record fails closed without consulting current settings.
-    """
     frozen = _report_accounting_path(report, cache_dir)
     if not frozen.exists():
         return None
-    payload = _read_report_accounting(frozen, report)
+    payload = read_report_record(_digest(asdict(report)), cache_dir)
     path = _safe(Path(str(archive) + ".candidates.json"))
     _safe(path.with_suffix(path.suffix + ".tmp"))
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        if _read_report_accounting(path, report) != payload:
+        if path.stat().st_size > MAX_BYTES:
+            raise ValueError("Existing candidate accounting archive exceeds its byte budget.")
+        saved = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+        if saved != payload:
             raise ValueError("Existing candidate accounting archive differs from frozen report accounting.")
         return path
     atomic_json_write(path, payload)

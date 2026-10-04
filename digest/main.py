@@ -900,7 +900,7 @@ def _candidate_inputs(
     if inventory is None:
         raise ValueError("Candidate preparation requires collection accounting.")
     merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
-                     inventory=inventory, delivery_history=delivered)
+                     inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
     report = pending_completed_report(progress)
     packet = (next(item for item in reversed(progress.packets) if item.report == report)
               if report is not None else plan_packet(progress, config))

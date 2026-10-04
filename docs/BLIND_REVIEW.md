@@ -430,13 +430,13 @@ are not duplicated. Duplicate references must retain a validated selected identi
 from the same request; shared topic alone is insufficient and contrary accounts must
 remain eligible. Structural checks do not certify semantic correctness.
 
-The active candidate checkpoint may use reference encoding v2; loaders also read
-materialized v1. References point directly to hash-verified, self-contained immutable
-report evidence. Missing/corrupt references stop with a recovery error and are never
-silently dropped. Current policy can rehydrate excluded candidates; changed source
-occurrences reopen resolved metadata decisions while preserving old evidence.
-Selected/unknown/pending records are not retired by compaction. This reduces active
-duplication, not total archive growth. A pre-call materialized-size reserve prevents
-known archive-capacity exhaustion from consuming another model attempt. Rolling back
-to an earlier candidate reader requires restoring a verified materialized checkpoint;
-do not delete evidence or delivery markers to bypass a compatibility error.
+The candidate working set uses direct verified source and packet references. Each
+report preserves only its own packet and current collection accounting; resolved
+historical bodies are not expanded for unrelated packet admission. Per-identity
+indexes retain exact decisions, while reversible policy exclusions remain enumerable
+for reapproval/unblocking. Current alternate occurrences are bounded by source binding;
+older revisions remain immutable evidence. Unknown or undelivered selected work stays
+recoverable. Missing/corrupt required objects fail explicitly; unrelated historical
+objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
+deployed accepted preparation and ready-edition formats remain compatible. Do not
+delete evidence or delivery markers to bypass a recovery error.

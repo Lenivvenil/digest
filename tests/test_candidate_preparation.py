@@ -106,7 +106,8 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
     assert first.edition_status == 'ready'
     first_manifest = json.loads(Path('.cache', READY_FILE).read_text())
     assert any(path.endswith('.candidates.json') for path in first_manifest['checkpoint_refs'])
-    assert len(load_candidate_progress().candidates) == 47
+    assert len(load_candidate_progress().candidates) == 28
+    assert len(list(Path('.cache/candidate_index').glob('*.json'))) == 19
     assert await delivery_phase('claim', 'config.yaml', first.ready_sha256, None) == 0
     claim_sha = hashlib.sha256(Path('.cache', CLAIM_FILE).read_bytes()).hexdigest()
     with respx.mock(assert_all_called=True) as router:
@@ -124,7 +125,11 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         item['link'] for item in first_manifest['canonical_metadata']['cards']}
     state = load_candidate_progress()
     assert sum(item.status == 'not_presented' for item in state.candidates.values()) == 7
-    assert sum(item.status == 'not_selected' for item in state.candidates.values()) == 38
+    from digest.candidate_storage import read_candidate_header
+
+    indexed = [read_candidate_header(path.stem, '.cache') for path in Path('.cache/candidate_index').glob('*.json')]
+    assert sum(item is not None and item['status'] == 'not_selected' for item in indexed) == 38
+    assert len(state.candidates) + len(indexed) == 47
 
     if failed_feeds:
         from digest.source_scorer import load_stats

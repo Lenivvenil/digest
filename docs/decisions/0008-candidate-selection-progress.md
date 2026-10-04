@@ -72,24 +72,45 @@ eligibility changes need explicit checks. Final review, ordinary-runtime accepta
 and sustainable throughput remain separate from these local fixtures.
 
 
-### Local sizing evidence and proposed storage boundary
+### Current-work storage boundary
 
-The current runtime has 54 enabled feeds, each with the existing 200-entry parser
-boundary; 10,800 is a theoretical observed population, not measured eligible daily
-arrival volume. The old 55-item runtime sample was already source-allocated and
-cannot estimate the full pre-slot population. After removing repeated article bodies
-from occurrence and observation records, a synthetic 10,800-item population with
-500-character descriptions occupies 18,103,615 serialized bytes, including the
-decision and historical-cache provenance fields. This leaves 13,896,385 bytes before packet/history
-growth under a candidate-only 32,000,000-byte safety
-ceiling; the accepted-preparation snapshot's existing 4 MB bound is unchanged.
+The candidate-only 32,000,000-byte safety ceiling applies to the current working
+set and current collection accounting, not accumulated historical source bodies.
+The accepted-preparation snapshot's existing 4 MB bound remains unchanged. Record
+used and remaining capacity before model work, with a 2 MiB reserve for the existing
+primary/fallback responses, escaped Unicode, captures and report metadata. This is
+storage admission, not a token estimate or editorial quota. No identities are
+silently truncated when capacity is exhausted.
 
-Record used and remaining storage capacity and fail before model work without
-truncating identities. Historical packet and immutable report evidence still consumes
-space; this ceiling is not an unlimited-retention or sustainable-throughput solution.
-The active-reference encoding below is a reviewed implementation proposal for reducing
-duplication. It does not delete archives or supply the still-unresolved retention policy.
+Each exact source occurrence is stored once by content hash. Each immutable report
+contains only its own packet, bound decisions, source references and the current
+collection's fetch/exclusion observations. It never embeds prior packets or the
+whole candidate ledger. The ready edition binds all referenced source objects through
+its existing persistence/hash barrier.
 
+The active root retains current pending work and recoverable results. Resolved
+metadata decisions move into separately addressed per-identity records, after their
+source and packet objects have been written and verified. Active entries take
+precedence after an interrupted retirement. Policy-excluded saved work remains
+enumerable and can return after source reapproval or unblocking even when RSS has
+rotated it out. Historical resolved bodies are read only for identities being
+reconsidered. Current alternates retain the latest occurrence per source binding;
+older versions remain in immutable evidence rather than being re-expanded each day.
+
+Total archive storage still grows with new evidence. This proposal introduces no TTL,
+archive deletion or unlimited-retention promise. Finite verification must show that
+current-work admission and individual report size do not grow with resolved historical
+windows, including repeated revisions of one identity. The current 54-feed, 200-entry
+parser bounds describe a theoretical maximum, not measured eligible daily arrivals.
+
+Offline twenty-window verification with twenty newly resolved identities per window
+keeps the active root at 342 bytes and each packet object at 44,034 bytes. All source,
+packet, index and history objects total 2,239,214 bytes after window twenty. The prior
+full-snapshot design used 20,318,687 bytes for snapshots alone in the matched scenario
+shape (response wording differs). Eight revisions of one identity keep its latest
+index at 1,248 bytes, with one current proof and no obsolete alternate references;
+all original packet evidence remains readable. These fixtures establish removal of
+the cumulative-copy defect, not production arrival rates or unlimited archive capacity.
 
 Previously observed delivery-cache membership is retained as cache evidence, not
 retrospective proof of a Telegram receipt. It prevents recycling an old accepted
@@ -118,23 +139,14 @@ The inherited selection response allowance is not an editorial rejection rule:
 useful overflow must be deferred. The existing output ceiling and call count remain.
 Reasons are RSS metadata judgments, not proof of full-source irrelevance or fidelity.
 
-For active storage, reference encoding v2 replaces only resolved or reversible-policy-
-excluded payloads with direct identity/occurrence hashes and verified immutable report
-archive references. Materialized v1 remains readable. No reference chains, TTL or
-archive deletion are introduced. Write/verify the immutable evidence before atomically
-replacing active bytes; missing/tampered references stop explicitly. Hydration restores
-exact source occurrences before policy reconciliation. Selected, unknown and pending
-work remains materialized; preparation handoff and legacy cache observations do not
-constitute confirmed delivery proof. Original timestamps and decisions remain traceable.
-
-Full immutable snapshots remain self-contained and can still grow quadratically with
-history. Active compaction alone is not sustainable retention. The candidate-only 32 MB
-ceiling applies separately to materialized report evidence; a conservative 2 MiB response
-storage reserve before a provider call accounts for the existing two 32K-character
-primary/fallback responses, up to 12 JSON bytes per astral Unicode character,
-capture/report copies, evidence duplication and metadata. This reserve is
-not a provider token estimate or editorial quota. Rollback to an old candidate reader
-requires a verified materialized checkpoint; accepted edition/sender schemas are unchanged.
+The new draft codec replaces the undeployed prototype formats; unsupported prototype
+files fail explicitly rather than invoking a migration framework. Deployed accepted
+preparation, ready edition and model-review schemas remain unchanged. Old accepted
+reports without candidate sidecars continue to work. A completed result is persisted
+in the active root before immutable freezing, so an interrupted archive write can
+resume without repeating its model call. Direct references are verified before active
+replacement; unknown or undelivered work is not retired merely because preparation
+accepted it. Cache membership remains cache evidence, never a fabricated receipt.
 
 Offline 20-ID/5-card examples count 926 English, 976 Cyrillic and 2991 JSON-escaped
 Cyrillic content tokens with the existing official o200k asset. They establish finite
