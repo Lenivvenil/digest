@@ -1,6 +1,6 @@
 # ADR-0007: Compact daily presentation with a coarse publication reservation
 
-Status: accepted for local implementation under the owner-requested daily operating envelope; rollout and real-output acceptance remain open.
+Status: compact transport deployed; the 2026-10-04 ready-edition boundary update is accepted for implementation under #120, pending rollout and natural-release acceptance.
 Date: 2026-10-02. Work order: #91; presentation scope: #94.
 
 ## Context
@@ -78,3 +78,54 @@ config integrity, pre-POST write failure, clean no-POST exit and next-day unreso
 holds. The actual managed reserve→push→dispatch boundary must be reviewed and replayed
 offline before rollout. Public CI is required; transport success alone does not close
 the full-source, translation-fidelity, feedback-application or counter-evidence gates.
+
+## 2026-10-04 amendment: freeze readiness before claiming delivery (#120)
+
+The previous coarse reservation before preparation is superseded for the managed
+workflow by a versioned ready-edition boundary. Preparation saves accepted canonical
+cards and review evidence in one publication-day-bound checkpoint before translation/rendering.
+Unavailable analysis is not cached as a successful empty decision. The ready manifest
+then freezes exact ordered Telegram payloads, buttons, complete article-to-chunk
+coverage, canonical/presentation hashes, producing engine provenance, archive hashes,
+recipient and UTC publication window/expiry. There is no new editorial certification.
+
+The runtime commits/pushes preparation and readiness before a sender may claim them.
+A separate immutable claim binds to the ready-file hash and recipient; its own remote
+hash barrier precedes any POST. Sender code never loads feeds, calls a model, translates
+or re-renders. Current model/prompt and unrelated config changes do not invalidate a
+supported frozen manifest. Recipient, bot username and enabled delivery policy still
+apply. Readiness expires at the end of its intended UTC publication day; no silent stale send.
+
+Each accepted chunk must contain Telegram's positive message ID and matching chat.
+Exact receipts and complete article coverage are saved. The sender reloads current
+feedback/dedup state, merges confirmed attribution, then marks coverage applied.
+A failure between those writes leaves an unapplied receipt hold. This deliberately
+requires inspection rather than automatic reconciliation of partially saved counters.
+The final Git commit/push persists those changes together; a failed/non-fast-forward
+push leaves the remote claim held. Never automatically rebase operational state.
+
+The existing two jobs retain their 8/12-minute ceilings and shared concurrency. The
+first prepares; the second sends first and may inspect an older eligible ready edition
+when preparation failed. Optional work runs only from the confirmed delivery checkpoint
+and remains archive-only within the job's remaining time. Failure of an optional stage
+must not be described as failure of already-confirmed primary delivery.
+
+Migration preserves legacy confirmed current-day markers and delivered article hashes.
+Legacy reserved/sending/partial/unknown markers remain holds. A legacy clean not_sent
+record is not evidence of a Telegram attempt; the new protocol may prepare an edition.
+No automatic deletion/reset of uncertain state, new cron, service or extra live test
+message is introduced. Keep one active ready edition; eligible or held data cannot be
+replaced by a newer preparation. Inspect expiry/missing readiness explicitly.
+
+Local failure injection covers the preparation/persistence/claim/transport boundaries.
+The existing confirmed daily edition is never replayed as a test. Operational acceptance
+requires the next natural new edition's receipts and remote state, separately from #55
+and #77 semantic quality. Exact-once delivery remains impossible to promise.
+
+The default intended publication day is today in UTC. `--edition-date YYYY-MM-DD`
+explicitly prepares a later UTC day's edition, including after today's delivery is
+confirmed. Its creation timestamp is separate from its publication window: it remains
+`pending_window` and cannot be claimed or sent before that day's 00:00 UTC. Expiry is
+the end of the intended day, not creation plus 24 hours. A current-day edition prepared
+at 23:59 expires at 00:00; a tomorrow edition remains eligible through tomorrow. No
+new schedule or automatic choice of a future publication day is introduced.

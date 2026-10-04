@@ -366,3 +366,27 @@ into misleading prefixes. Exact quote IDs preserve source characters and do not
 certify semantic relevance. Source text remains untrusted data, with existing URL,
 network-response, request-count and deadline boundaries. No additional model pass
 is introduced, and offline checks do not establish live editorial quality.
+
+
+## Prepared editions and delivery recovery (#120)
+
+The managed compact path persists accepted canonical cards/review evidence before
+presentation, then freezes a versioned ready edition. Optional review resumes only
+from the checkpoint of a confirmed, durably persisted delivery. Sender eligibility
+uses the frozen manifest and does not re-run current review validation or generation.
+
+Preparation defaults to today's UTC publication window. An explicit
+`--prepare-edition --edition-date YYYY-MM-DD` can prepare a later day; the sender
+reports `pending_window` until that day begins. The canonical preparation checkpoint
+retains the same intended date across midnight. Future readiness never authorizes
+early delivery. See the [README commands](../README.md#compact-daily-presentation)
+and [ADR0007](decisions/0007-compact-issue-reservation.md) for the remote barriers.
+
+If preparation fails, inspect its accepted checkpoint and any existing ready edition.
+If delivery is held, retain the claim, exact ready payload and per-chunk receipt file;
+compare accepted Telegram message IDs before authorizing recovery. Unapplied coverage
+can mean transport succeeded but feedback/dedup persistence did not. Never reset the
+claim or interpret optional-stage failure as evidence that primary sending failed.
+On a rejected Git push, retained private diagnostics preserve the same three files;
+no automatic rebase or resend is allowed. This recovery contract does not certify
+full-source factual quality or independent counter-evidence.

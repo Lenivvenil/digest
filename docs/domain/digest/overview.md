@@ -87,7 +87,7 @@ credential or background receiver is introduced.
 **Reviewed operating allocation:** one daily cycle at `17 2 * * *` (02:17 UTC),
 retaining the existing primary/optional job ceilings of 8/12 minutes. The runtime
 schedule reduction was applied separately on 2026-10-02; compact publication requires
-the managed reservation and explicit presentation-mode configuration. This is
+the managed persistence boundary and explicit presentation-mode configuration. This is
 an intended start time, not a delivery-time guarantee. GitHub may delay or drop
 scheduled work. Keep the separately configured weekly discovery budget visible;
 do not hide it inside the daily estimate. No additional feedback-only cron is proposed.
@@ -694,3 +694,14 @@ Mechanically verifiable constraints only:
 2. **Article lacks an explicit lifecycle**: there are no typed states between ingestion and archival. → Issue #39.
 3. **Feedback decay owner**: decay logic is distributed between Delivery and Radar. → Issue #40.
 4. **Radar→Delivery contract drift**: no explicit intra-phase contract between Radar and Delivery. → Issue #29.
+
+### Ready-edition boundary (#120)
+
+Preparation owns source work, accepted canonical analysis and presentation. A versioned
+immutable edition transfers exact Telegram payloads, article coverage, recipient/window
+and provenance to Delivery. Delivery owns only validation, persisted claim, one-attempt
+transport receipts and confirmed coverage. Generation failure cannot consume a send
+reservation. An eligible saved edition can be sent without repeating generation; no
+ready edition is an explicit pending/unavailable state, never permission to publish raw
+RSS. [ADR0007](../../decisions/0007-compact-issue-reservation.md) defines migration,
+expiry and conservative unknown-send recovery within the existing operating allocation.
