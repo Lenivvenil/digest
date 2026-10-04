@@ -165,7 +165,50 @@ The full serialized contextual evidence envelope, including IDs and provenance, 
 fit the existing 16,000-character evidence bound. An oversized envelope holds optional
 query/search/ranking as technical incomplete without truncating known conditions. This
 is a conservative transport bound, not token counting or provider quota admission.
-Route-specific complete-request admission remains a #77/#122 integration requirement
-before activation. Existing RSS input, request ceilings and primary delivery remain
-unchanged. This correction does not repair the saved RSS-only Progent applicability
+The shared request-admission integration below supplies route-specific input checks;
+account quota and operational acceptance remain unverified. Existing RSS input,
+request ceilings and primary delivery remain unchanged. This correction does not repair the saved RSS-only Progent applicability
 error or establish automatic counter-signal quality.
+
+### Reuse admission for complete optional-stage requests
+
+The source reader and full-source Irritator now share the same profile lookup, wire
+serialization and local estimate formula. For each full-source extraction, query and
+ranking request, admission binds the actual provider/model, complete serialized wire
+body, temperature and output reserve. Dispatch checks that binding again and uses the
+same explicit provider override. It cannot count one route and silently dispatch another.
+The source reader's configured fallback continues to admit each actual route separately.
+
+The supported Groq route retains its pinned tokenizer estimate, 20% margin, 256 framing
+reserve and 8,000-token local allowance. Gemini retains its exact matching-request count
+API and input profile. These methods remain distinct and neither proves remaining
+account quota. Unsupported routes, unavailable accounting, unknown counts and oversized
+requests hold optional analysis without removing source context. Counting shares the
+existing request counter/pacing and the same absolute stage deadline; it reserves room
+for a generation request instead of spending the last slot on an unusable count.
+No additional retry, fallback, provider or allowance is introduced.
+
+Stage diagnostics gain optional admission evidence with a request hash and safe
+exact/estimated values; old diagnostic records without it remain readable. Actual
+provider usage remains separate. The source reader's stored admission dictionaries,
+request hashes, completed page evidence and #120 accepted/ready schemas retain their
+existing format. Tests patch the newly shared helper owner rather than changing their
+expected reading behavior. The legacy RSS Irritator path adds no count/admission calls.
+
+This is local implementation under proposed ADR0009, not runtime activation, semantic
+acceptance or proof of free account capacity. The historical optional-stage 65-second override originated in the
+[primary-first implementation](https://github.com/Lenivvenil/digest/commit/d8b6250cc5a9444971af5f122f92e2c14c49118e)
+and is documented as conservative Groq spacing in [the review protocol](../BLIND_REVIEW.md).
+It is not a Gemini quota or an owner requirement for every provider. The legacy RSS
+path retains that policy. The full-source path uses the explicitly selected route:
+Gemini respects the configured interval; Groq uses the greater of that interval and
+65 seconds. Source-reader fallback rebinds both admission and pacing to each actual
+route, preserving the shared counter and prior request timing.
+
+A nonempty Gemini extraction/query/ranking path needs six physical count/generation
+requests. At a configured 20-second interval their start-time floor is 100 seconds;
+blindly applying the old Groq 65-second floor would make it 325 seconds. The supported
+Groq route uses local admission and three generation requests. Neither arithmetic
+establishes provider/account RPM or token quota, and count/generation entitlements must
+not be conflated. Actual latency or a slower configured interval can still leave the
+unchanged 180-second window incomplete. The primary sender remains independent.

@@ -29,7 +29,10 @@ original narrative citations for query generation and ranking. Only passages fro
 exact cited article and source/body snapshot can be added; the claim and its quotations
 remain unchanged. Oversized complete context is technical incomplete under the existing
 evidence-envelope bound, not silently shortened. This bound is not provider admission.
-See [proposed ADR0009](../../decisions/0009-selected-source-admission.md).
+The full-source path separately reuses the reader's exact Gemini or labelled local Groq
+admission on each actual stage request, sharing its existing counter and deadline.
+Unknown/oversized admission holds optional analysis; legacy RSS behavior is unchanged.
+Account quota and live acceptance remain unverified. See [proposed ADR0009](../../decisions/0009-selected-source-admission.md).
 
 This fixes loss of supplied evidence, not the model's ability to judge applicability.
 The saved Apple/Progent explanation still invented a necessity comparison absent from

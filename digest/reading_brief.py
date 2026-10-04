@@ -42,20 +42,22 @@ from digest.reading_brief_state import (
     save_state,
     state_root,
 )
-from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable, count_gpt_input
+from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable
+from digest.source_admission import (
+    estimate_record as _admission_record,
+)
+from digest.source_admission import (
+    estimate_request as _estimate,
+)
+from digest.source_admission import request_interval
+from digest.source_admission import (
+    route_profile as _route,
+)
+from digest.source_admission import (
+    wire_request as _wire_request,
+)
 
 logger = logging.getLogger(__name__)
-# Capability, not an assertion of account quota. Unknown routes remain pending.
-# https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash
-INPUT_LIMITS = {("gemini", "gemini-3.8-flash"): 1_048_576}
-# Published model capabilities and conservative free-tier request allowance.
-# https://console.groq.com/docs/models
-# https://console.groq.com/docs/rate-limits
-# The 8000-token envelope is a local admission policy, NOT remaining account quota.
-GROQ_CONTEXT = {"openai/gpt-oss-120b": 131_072}
-GROQ_REQUEST_ALLOWANCE = 8_000
-GROQ_FRAMING_RESERVE = 256
-GROQ_MIN_INTERVAL_SECONDS = 65.0
 COUNT_SECONDS = 10.0
 GENERATION_SECONDS = 120.0
 # A shorter remaining window can be useful, but never start a near-deadline POST.
@@ -124,14 +126,6 @@ def _messages(state: BriefState, source: Source, page: Page) -> list[dict[str, s
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)}]
 
 
-def _wire_request(route: Route, messages: list[dict[str, str]]) -> dict[str, Any]:
-    if route.provider == "gemini":
-        return llm.gemini_request_body(messages, TEMPERATURE, route.max_output_tokens)
-    if route.provider == "groq" and route.model in GROQ_CONTEXT:
-        return llm.openai_request_body(route.model, messages, TEMPERATURE, route.max_output_tokens, groq=True)
-    raise ValueError("unknown_reading_profile")
-
-
 def _prompt_sha(state: BriefState, messages: list[dict[str, str]], route: Route | None = None) -> str:
     route = route or state.route
     identity: dict[str, Any] = {"route": asdict(route), "request": _wire_request(route, messages)}
@@ -146,16 +140,6 @@ def _response_sha(state: BriefState, page: Page) -> str:
                      "finish_reason": page.finish_reason, "usage": page.usage})
 
 
-def _route(provider: str, model: str, output: int) -> Route | None:
-    if provider == "gemini" and (provider, model) in INPUT_LIMITS:
-        return Route(provider, model, INPUT_LIMITS[provider, model], output)
-    if provider == "groq" and model in GROQ_CONTEXT:
-        allowance = min(GROQ_CONTEXT[model], GROQ_REQUEST_ALLOWANCE) - output
-        if allowance > 0:
-            return Route(provider, model, allowance, output)
-    return None
-
-
 def _routes(config: Config) -> list[Route]:
     settings = config.reading_brief
     primary = _route(settings.provider, settings.model, settings.max_output_tokens)
@@ -168,19 +152,6 @@ def _routes(config: Config) -> list[Route]:
             routes.append(candidate)
             break
     return routes
-
-
-def _estimate(route: Route, messages: list[dict[str, str]]) -> dict[str, int | str]:
-    # Provider-side framing is not fully published. Reserve 20% plus 256 tokens
-    # over the pinned local content/minimal Harmony count; reserve output separately.
-    return _admission_record(route, count_gpt_input(messages))
-
-
-def _admission_record(route: Route, count: int) -> dict[str, int | str]:
-    return {"method": ESTIMATOR_VERSION, "tokenizer_sha256": GPT_HASH, "local_input_count": count,
-            "input_estimate": (count * 6 + 4) // 5 + GROQ_FRAMING_RESERVE,
-            "framing_reserve": GROQ_FRAMING_RESERVE, "output_reserve": route.max_output_tokens,
-            "request_allowance": min(GROQ_CONTEXT[route.model], GROQ_REQUEST_ALLOWANCE)}
 
 
 def _admitted(state: BriefState, page: Page, messages: list[dict[str, str]]) -> bool:
@@ -434,10 +405,6 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
         call_config.llm = copy.copy(config.llm)
         call_config.llm.max_retries = 0
         routes = _routes(config)
-        if any(route.provider == "groq" for route in routes):
-            call_config.llm.min_request_interval_seconds = max(
-                config.llm.min_request_interval_seconds, GROQ_MIN_INTERVAL_SECONDS,
-            )
         index = 0
         while index < len(state.pages):
             page = state.pages[index]
@@ -450,6 +417,9 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                 candidates.insert(0, page.route)
             split = False
             for candidate_index, route in enumerate(candidates):
+                call_config.llm.min_request_interval_seconds = request_interval(
+                    route.provider, config.llm.min_request_interval_seconds,
+                )
                 attempt = None
                 page.route = route if route != state.route else None
                 messages = _messages(state, source, page)

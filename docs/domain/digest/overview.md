@@ -170,7 +170,9 @@ primary/fallback reviews, one primary translation, three Irritator phases, one o
 translation and three independent-review slots. Runtime retries are zero. Review
 outputs are capped at 4,096 tokens; Irritator/translation outputs at 2,048. The current
 20 × 500-character RSS evidence allocation plus metadata is not full-article coverage.
-Primary pacing is configured separately from optional stages' 65-second pacing.
+Primary pacing is configured separately from legacy optional stages' 65-second Groq
+policy. Proposed full-source admission uses route-specific configured pacing under
+[ADR0009](../../decisions/0009-selected-source-admission.md), not a universal Gemini rate.
 These are execution constraints, not an editorial rule to prefer shorter articles.
 
 The draft source-admission integration (#122, proposed ADR0009) uses at most ten

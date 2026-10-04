@@ -113,7 +113,7 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
             raise RuntimeError("HTTP 429 code=RESOURCE_EXHAUSTED")
         return response(messages)
 
-    with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 121}),
+    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 121}),
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
@@ -426,7 +426,7 @@ async def test_abstaining_later_page_qualification_remains_literal_in_retained_e
         }), {"finish_reason": "STOP"}
 
     cfg = config()
-    with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):

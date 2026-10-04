@@ -67,8 +67,11 @@ and selected qualifications remain inspectable. This is not #55 semantic publica
 acceptance. Known 429/503/unavailable route failures may
 try one supported configured fallback; ambiguous timeout and invalid output stay
 held across later invocations and route changes. An unresolved counting request is
-not repeated, but does not imply that generation occurred. Fallback shares the deadline and request counter, applies a 65-second minimum
-pacing interval when Groq is eligible, and disables stage retries. Already completed
+not repeated, but does not imply that generation occurred. Fallback shares the deadline and request counter and disables stage retries. Each
+actual route rebinds pacing before counting/generation: Groq uses the greater of the
+configured interval and 65 seconds; Gemini retains the configured interval. The common
+pacer preserves prior request timing across a switch. These are local policies, not
+verified provider/account quotas. Already completed
 checksum-bound evidence can be validated without the optional tokenizer assets. A provider rejection does not trigger truncation or claim success.
 
 See [third-party notice](../THIRD_PARTY_NOTICES.md) for reused tokenizer code.

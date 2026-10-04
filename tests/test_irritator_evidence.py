@@ -869,7 +869,8 @@ async def test_full_source_narrative_uses_late_literal_passages_instead_of_rss(t
         (json.dumps({"queries": [], "limitations": ["No useful external query was identified."]}), {}),
     ])
     before = asdict(source_evidence)
-    with patch("digest.irritator.evidence_stage.complete", model):
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000)):
         async with _offline_client() as client:
             result = await run_evidence_irritator(
                 rss_bundle, config, client, source_evidence=source_evidence, require_full_source=True,
@@ -1037,6 +1038,7 @@ async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Pa
     ])
     before = asdict(source)
     with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
               make_signal(url="https://external.example/caveat", title="Deployment limitations"),
           ]))):
@@ -1106,6 +1108,7 @@ async def test_oversized_complete_context_stops_before_optional_queries(tmp_path
     model = AsyncMock(return_value=(json.dumps(response), {}))
     before = hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest()
     with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
         async with _offline_client() as client:
             result = await run_evidence_irritator(rss, config, client, source_evidence=source)
@@ -1115,3 +1118,143 @@ async def test_oversized_complete_context_stops_before_optional_queries(tmp_path
     assert next(d for d in result.diagnostics if d.stage == "queries").error == "QualificationContextBudget"
     assert any("not provider token admission" in item for item in result.limitations)
     assert hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold", ["unsupported", "oversized", "budget"])
+async def test_full_source_stage_holds_before_unadmitted_generation(tmp_path: Path, hold: str) -> None:
+    from digest import llm
+    from digest.config import ReviewModelConfig
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    if hold == "unsupported":
+        config.review.secondary = ReviewModelConfig("groq", "unverified-model")
+    if hold == "budget":
+        llm.set_request_limit(config, 0)
+    with (patch("digest.source_admission.count_gpt_input", return_value=100_000 if hold == "oversized" else 1000),
+          patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate,
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete"
+    generate.assert_not_awaited()
+    search.assert_not_awaited()
+    diagnostic = next(item for item in result.diagnostics if item.stage == "narrative")
+    assert diagnostic.admission is not None and not diagnostic.admission.admitted
+    assert diagnostic.error == {
+        "unsupported": "technical_unknown_profile", "oversized": "technical_admission_capacity",
+        "budget": "technical_request_budget",
+    }[hold]
+    assert diagnostic.admission.output_reserve == MAX_OUTPUT_TOKENS
+    if hold == "oversized":
+        assert diagnostic.admission.method == "estimated" and diagnostic.admission.exact_count is None
+        assert diagnostic.admission.input_estimate is not None
+    if hold == "budget":
+        assert llm.request_budget_remaining(config) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["provider", "model", "output_reserve", "request_sha256"])
+async def test_full_source_dispatch_requires_exact_admission_binding(tmp_path: Path, mutation: str) -> None:
+    from digest.source_admission import RequestAdmission, admit_request
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+
+    async def changed(*args: Any, **kwargs: Any) -> RequestAdmission:
+        record = await admit_request(*args, **kwargs)
+        assert record.admitted
+        return replace(record, **{mutation: 1 if mutation == "output_reserve" else "different"})
+
+    with (patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.admit_request", side_effect=changed),
+          patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete"
+    generate.assert_not_awaited()
+    assert next(item for item in result.diagnostics if item.stage == "narrative").error == "technical_request_binding"
+
+
+@pytest.mark.asyncio
+async def test_legacy_rss_path_does_not_add_source_count_or_admission() -> None:
+    config = fixture_config()
+    rss = _bundle(config)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(rss)), {}),
+        (json.dumps({"queries": [], "limitations": ["No useful query."]}), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.admit_request", side_effect=AssertionError("No source admission"))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client)
+    assert result.status == "empty" and model.await_count == 2
+    assert all(item.admission is None for item in result.diagnostics)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,configured,expected,attempts", [
+    ("gemini", 20.0, 20.0, 6), ("groq", 20.0, 65.0, 3),
+    ("gemini", 90.0, 90.0, 6), ("groq", 90.0, 90.0, 3),
+])
+async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
+    tmp_path: Path, provider: str, configured: float, expected: float, attempts: int,
+) -> None:
+    import time
+
+    from digest import llm
+    from digest.config import ReviewModelConfig
+    from digest.source_admission import RequestAdmission, admit_request
+
+    config = fixture_config()
+    config.review.secondary = ReviewModelConfig(
+        provider, "gemini-3.8-flash" if provider == "gemini" else "openai/gpt-oss-120b",
+    )
+    config.llm.min_request_interval_seconds = configured
+    config.irritator.sources = ["hackernews"]
+    llm.set_request_limit(config, 10)
+    shared = llm._request_state(config)
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
+    responses = iter([narrative, _queries(), _ranking()])
+    deadlines: list[float] = []
+
+    async def admission(messages: Any, bounded: Any, **kwargs: Any) -> RequestAdmission:
+        assert llm._request_state(bounded) is shared
+        assert bounded.llm.min_request_interval_seconds == expected
+        deadlines.append(kwargs["deadline"])
+        return await admit_request(messages, bounded, **kwargs)
+
+    async def count(messages: Any, bounded: Any, **kwargs: Any) -> int:
+        actual = kwargs["provider_override"]
+        assert actual.name == provider and actual.model == config.review.secondary.model
+        await llm._pace_request(shared, bounded.llm.min_request_interval_seconds)
+        llm._reserve_request(shared, actual.name, actual.model, "count")
+        return 1000
+
+    async def generate(client: Any, actual: Any, messages: Any, *args: Any, **kwargs: Any) -> Any:
+        assert actual.name == provider and actual.model == config.review.secondary.model
+        return json.dumps(next(responses)), {"finish_reason": "stop"}
+
+    started = time.monotonic()
+    with (patch("digest.irritator.evidence_stage.admit_request", side_effect=admission),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.llm.count_gemini_tokens", side_effect=count),
+          patch("digest.llm._pace_request", AsyncMock()) as pace,
+          patch("digest.llm._call_provider", side_effect=generate),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url="https://external.example/caveat", title="Deployment limitations"),
+          ]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete"
+    assert len(deadlines) == 3 and len(set(deadlines)) == 1
+    assert started + 180 <= deadlines[0] <= started + 181
+    assert llm.request_budget_remaining(config) == 10 - attempts
+    assert [call.args[1] for call in pace.call_args_list] == [expected] * attempts
+    assert config.llm.min_request_interval_seconds == configured

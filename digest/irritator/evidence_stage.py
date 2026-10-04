@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import math
+import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
@@ -34,6 +35,13 @@ from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, _extract_json, complete
 from digest.review import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundle, validate_full_source_evidence
+from digest.source_admission import (
+    RequestAdmission,
+    admit_request,
+    request_interval,
+    request_sha256,
+    route_profile,
+)
 
 MAX_QUERIES = 3
 MAX_SOURCE_RESULTS = 10
@@ -107,6 +115,11 @@ class StageDiagnostic:
     response_sha256: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
     rejected_quote: RejectedEvidenceQuote | None = None
+    admission: RequestAdmission | None = None
+
+
+class SourceAdmissionHeld(ValueError):
+    """Optional source analysis cannot dispatch an unadmitted model request."""
 
 
 @dataclass
@@ -342,6 +355,7 @@ def _parse_rankings(
 
 async def _model_text(
     diagnostic: StageDiagnostic, role: LLMRole, instruction: str, payload: dict[str, Any], config: Config,
+    *, admission_deadline: float | None = None,
 ) -> str:
     model = config.review.secondary
     diagnostic.provider, diagnostic.model = model.provider, model.model
@@ -354,10 +368,27 @@ async def _model_text(
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
     ]
     diagnostic.prompt_sha256 = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    provider = ProviderConfig(model.provider, model.model, [role.value])
+    output_tokens = min(MAX_OUTPUT_TOKENS, config.review.max_output_tokens)
+    if admission_deadline is not None:
+        diagnostic.admission = await admit_request(
+            messages, config, provider_override=provider, temperature=0.2,
+            max_output_tokens=output_tokens, deadline=admission_deadline,
+        )
+        if not diagnostic.admission.admitted:
+            raise SourceAdmissionHeld("Full-source request admission is incomplete.")
+        route = route_profile(provider.name, provider.model, output_tokens)
+        if (route is None or diagnostic.admission.provider != provider.name
+                or diagnostic.admission.model != provider.model
+                or diagnostic.admission.output_reserve != output_tokens
+                or diagnostic.admission.request_sha256 != request_sha256(route, messages, 0.2)):
+            diagnostic.admission = replace(
+                diagnostic.admission, status="unverified", error_class="technical_request_binding",
+            )
+            raise SourceAdmissionHeld("Full-source request binding changed after admission.")
     text, usage = await complete(
-        role, messages, config, temperature=0.2,
-        provider_override=ProviderConfig(model.provider, model.model, [role.value]),
-        max_output_tokens=min(MAX_OUTPUT_TOKENS, config.review.max_output_tokens),
+        role, messages, config, temperature=0.2, provider_override=provider,
+        max_output_tokens=output_tokens,
     )
     diagnostic.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
     resolved = usage.get("resolved_model")
@@ -494,8 +525,10 @@ def _narrative_context(
 
 async def _run_stages(
     bundle: EvidenceBundle, config: Config, client: httpx.AsyncClient, result: EvidenceIrritatorResult,
-    source_evidence: FullSourceEvidence | None = None,
+    source_evidence: FullSourceEvidence | None = None, *, admission_deadline: float | None = None,
 ) -> None:
+    if source_evidence is not None and admission_deadline is None:
+        raise SourceAdmissionHeld("Full-source request deadline is unavailable.")
     diagnostic = _stage(result, "evidence", len(bundle.items))
     validate_evidence_bundle(bundle, config)
     evidence: EvidenceBundle | FullSourceEvidence = bundle
@@ -535,7 +568,8 @@ async def _run_stages(
         'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
         'supplied evidence unchanged, in their original language; never translate a literal quote. '
         + source_instruction
-    ), {"evidence": asdict(evidence), "language": config.radar.language, "coverage": result.coverage}, config)
+    ), {"evidence": asdict(evidence), "language": config.radar.language, "coverage": result.coverage}, config,
+        admission_deadline=admission_deadline)
     result.narratives, limitations = _parse_narrative(text, evidence)
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.narratives))
@@ -572,7 +606,8 @@ async def _run_stages(
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields. ' + QUERY_CONTRACT + context_instruction
-    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config)
+    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config,
+        admission_deadline=admission_deadline)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.queries))
@@ -635,7 +670,8 @@ async def _run_stages(
         'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT + context_instruction
     ), {"narrative": narrative_input, "evidence": cited_evidence,
         "signals": [_ranking_signal_payload(s) for s in candidates],
-        "max_ranked": maximum_ranked, "language": config.radar.language}, config)
+        "max_ranked": maximum_ranked, "language": config.radar.language}, config,
+        admission_deadline=admission_deadline)
     result.ranked_signals, limitations = _parse_rankings(
         text, candidates, narrative, maximum_ranked, config.irritator.min_signal_score,
     )
@@ -649,7 +685,7 @@ async def run_evidence_irritator(
     bundle: EvidenceBundle, config: Config, client: httpx.AsyncClient, *, timeout_seconds: float = MAX_SECONDS,
     source_evidence: FullSourceEvidence | None = None, require_full_source: bool = False,
 ) -> EvidenceIrritatorResult:
-    """Return serializable diagnostics after at most three single-provider LLM calls.
+    """Return diagnostics after at most three generations plus admitted source counts.
 
     The caller supplies already frozen evidence, never model reviews or summary
     prose. No collection, cache writes, delivery or fallback calls occur here.
@@ -670,21 +706,27 @@ async def run_evidence_irritator(
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         result.diagnostics[0].status, result.diagnostics[0].error = "error", "InvalidDeadline"
         return result
+    interval = (request_interval(config.review.secondary.provider, config.llm.min_request_interval_seconds)
+                if source_evidence is not None else 65.0)
     bounded_config = replace(config, llm=replace(
-        config.llm, max_retries=0, max_concurrent_requests=1, min_request_interval_seconds=65.0,
+        config.llm, max_retries=0, max_concurrent_requests=1, min_request_interval_seconds=interval,
     ))
-    if config.translation.enabled:
+    if config.translation.enabled or source_evidence is not None:
         from digest.llm import _request_state
 
-        # Dataclass replacement otherwise drops this dynamic runtime. Preserve the
-        # actual pacing/cooldown observed by analysis for optional presentation.
+        # Preserve the actual shared count/pacing state for source admission and
+        # optional presentation; dataclass replacement drops this dynamic runtime.
         bounded_config.llm.__dict__["_runtime"] = _request_state(config)
+    deadline = time.monotonic() + min(timeout_seconds, MAX_SECONDS)
     try:
-        async with asyncio.timeout(min(timeout_seconds, MAX_SECONDS)):
+        async with asyncio.timeout_at(deadline):
             if source_evidence is None:
                 await _run_stages(bundle, bounded_config, client, result)
             else:
-                await _run_stages(bundle, bounded_config, client, result, source_evidence)
+                await _run_stages(
+                    bundle, bounded_config, client, result, source_evidence,
+                    admission_deadline=deadline,
+                )
     except Exception as exc:
         current = next((item for item in result.diagnostics if item.status == "running"), None)
         if current is not None:
@@ -695,5 +737,14 @@ async def run_evidence_irritator(
         # No full provider responses, prompts, HTTP headers or credentials are retained.
         # Only a quote bounded by its validated evidence title/excerpt length may be saved
         # in the private result archive; exception text/logging remains fixed.
-        result.status = "incomplete" if result.narratives else "error"
+        if isinstance(exc, SourceAdmissionHeld):
+            result.status = "incomplete"
+            if current is not None:
+                current.status = "incomplete"
+                current.error = (current.admission.error_class if current.admission else None) or "SourceAdmissionHeld"
+            result.limitations.append(
+                "Full-source model request was not admitted; optional analysis remains incomplete."
+            )
+        else:
+            result.status = "incomplete" if result.narratives else "error"
     return result

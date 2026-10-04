@@ -24,7 +24,7 @@ from tests.test_reading_brief import config, fetched, payload, response
 @pytest.fixture(autouse=True)
 def offline_counter() -> Any:
     # Route contracts do not depend on optional assets; tokenizer contracts are separate.
-    with patch("digest.reading_brief.count_gpt_input", return_value=1000):
+    with patch("digest.source_admission.count_gpt_input", return_value=1000):
         yield
 
 
@@ -61,7 +61,7 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
         assert record["output_reserve"] == cfg.reading_brief.max_output_tokens
         assert record["request_allowance"] == 8000
         assert "FINAL QUALIFICATION" in result.quotations[identity]
-        with patch("digest.reading_brief.count_gpt_input", side_effect=AssertionError("assets unavailable")):
+        with patch("digest.source_admission.count_gpt_input", side_effect=AssertionError("assets unavailable")):
             again = await enrich_selected_cards([], cfg, tmp_path, time.monotonic() + 1000)
             ready_brief_evidence(tmp_path, identity)
         assert again.cards == result.cards and call.call_count == 1 and count.call_count == 0
@@ -69,10 +69,12 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", [429, 503])
+@pytest.mark.parametrize("interval", [20.0, 90.0])
 async def test_known_provider_failure_falls_back_without_resetting_runtime_or_retrying(
-    tmp_path: Path, code: int,
+    tmp_path: Path, code: int, interval: float,
 ) -> None:
     cfg = config()
+    cfg.llm.min_request_interval_seconds = interval
     cfg.llm.providers = [GROQ, ProviderConfig("groq", "qwen/qwen3.8-27b")]
     cfg.llm.max_retries = 3
     llm.set_request_limit(cfg, 3)
@@ -99,7 +101,7 @@ async def test_known_provider_failure_falls_back_without_resetting_runtime_or_re
     assert len(result.cards) == 1 and result.pending == 0
     assert calls == ["gemini-3.8-flash", GROQ.model]
     assert llm.request_budget_remaining(cfg) == 0 and cfg.llm.max_retries == 3
-    assert all(call.args[1] == 65 for call in pace.call_args_list)
+    assert [call.args[1] for call in pace.call_args_list] == [interval, max(interval, 65)]
     state, _ = ready_brief_evidence(tmp_path, next(iter(result.quotations)))
     assert state.route.provider == "gemini" and state.pages[0].route.provider == "groq"
     assert len(state.exact_counts) == len(state.admissions) == 1
@@ -166,7 +168,7 @@ async def test_changed_primary_resumes_immutable_source_and_keeps_completed_page
         usage["finish_reason"] = "stop" if kwargs["provider_override"].name == "groq" else "STOP"
         return text, usage
 
-    with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))) as fetch,
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
