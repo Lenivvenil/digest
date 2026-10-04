@@ -390,3 +390,53 @@ claim or interpret optional-stage failure as evidence that primary sending faile
 On a rejected Git push, retained private diagnostics preserve the same three files;
 no automatic rebase or resend is allowed. This recovery contract does not certify
 full-source factual quality or independent counter-evidence.
+
+
+## Ordinary preparation candidate accounting
+
+`--prepare-edition` with review-led mode captures the collector inventory before
+source allocation and saves candidate progress before its existing primary call.
+One fresh preparation window retains the existing primary/fallback request ceiling. Later fresh
+preparations choose unseen eligible work before technical retries; presentation of
+already accepted work takes precedence and adds no selection request.
+
+The mutable progress file is `.cache/candidate_progress.json`. Frozen report-bound
+accounting is archived as `<edition>.md.candidates.json` and included in ready-edition
+archive hashes. Keep the existing runtime `.cache`/archive persistence step: local
+writes are not proof of remote durability. A planned record alone is not proof a
+request reached a provider. The same response now includes typed per-ID dispositions. A missing or invalid
+entry supplies no editorial rejection reason; capacity-only omission is deferred.
+Reasons are judgments over the supplied RSS occurrence, not full-source conclusions. Feed failures, parser limits, source changes and age exclusions are separate.
+
+Do not clear progress to claim complete coverage. Capacity overflow fails without
+truncation; retention and sustainable throughput require the #121/#55 acceptance
+review. Sender claims, receipts, feedback attribution and delivered caches remain
+under ADR0007. Candidate accounting grants no permission to replay a held edition.
+
+
+A valid primary abstention retains #120's accepted empty snapshot for its publication
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
+advance another packet. Unseen work can advance in a later fresh preparation window.
+This inherited limit is part of the remaining throughput acceptance, not a claim
+that all observed candidates received an editorial decision.
+
+
+Disposition capture is bound to the exact delivery-used provider/model, evidence
+bundle, prompt and raw-response hash. It is separate from legacy ModelReview and
+accepted PreparationSnapshot fields. Old reports remain readable with unavailable
+per-item reasons; a changed prompt cannot claim same-prompt reuse. Selected reasons
+are not duplicated. Duplicate references must retain a validated selected identity
+from the same request; shared topic alone is insufficient and contrary accounts must
+remain eligible. Structural checks do not certify semantic correctness.
+
+The candidate working set uses direct verified source and packet references. Each
+report preserves only its own packet and current collection accounting; resolved
+historical bodies are not expanded for unrelated packet admission. Per-identity
+indexes retain exact decisions, while reversible policy exclusions remain enumerable
+for reapproval/unblocking. Current alternate occurrences are bounded by source binding;
+older revisions remain immutable evidence. Unknown or undelivered selected work stays
+recoverable. Missing/corrupt required objects fail explicitly; unrelated historical
+objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
+deployed accepted preparation and ready-edition formats remain compatible. Do not
+delete evidence or delivery markers to bypass a recovery error.

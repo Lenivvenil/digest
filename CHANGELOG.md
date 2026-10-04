@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Candidate accounting (#121): ordinary review-led preparation captures pre-slot
+  identities and resumes later bounded packets through persisted selection evidence.
+  Existing accepted editions still take precedence. Same-response typed per-ID
+  dispositions distinguish metadata reasons/duplicates from capacity-deferred work;
+  old missing reasons remain unresolved. Exact source objects and packet-local archives
+  keep resolved history outside current-work admission, with reversible exclusions
+  and unsent selections recoverable. Real-output and sustained throughput acceptance
+  remain open.
+
 - Prepared-edition boundary (#120): accepted canonical analysis is resumable before
   presentation; exact Telegram payloads are frozen and remotely persisted before a
   separate sender claims them. Message IDs and complete article coverage are retained;

@@ -274,6 +274,20 @@ boundary explicitly; do not silently delete the boundary or infer a retention po
 4. Record owner/editorial review and remaining gaps before automatic-card rollout.
    Keep useful delivery, semantic quality and independent-review success separate.
 
+### Proposed #121 preparation integration
+
+[ADR0008](../../decisions/0008-candidate-selection-progress.md) proposes identity-level
+capture before source allocation and one existing bounded review packet per fresh
+preparation window. Its persisted accounting distinguishes source exclusions,
+unpresented work, technical failures and same-response metadata dispositions.
+Legacy nonselection still lacks a per-item reason; missing or invalid new dispositions
+remain unresolved. Hash-verified references reduce resolved active-state duplication
+without defining archive retention or certifying the model's semantic judgments. Later packets can reach the actual prepared-edition path
+without blocking selected cards on whole-cohort completion. Existing accepted/ready
+work retains precedence. This proposed mechanism adds neither a retention policy nor
+a claim of complete-source quality or sustainable capacity; those remain explicit
+acceptance work. The owner requirements above are unchanged.
+
 ## Historical domain snapshot — April 2026
 
 The following material records the earlier interview/code-derived model. It remains

@@ -32,3 +32,8 @@ and computed priority influence are verified; daily retention limitations remain
 [0007](0007-compact-issue-reservation.md) records compact daily presentation and its
 coarse pre-publication reservation. Local implementation is under review; no automatic
 resend lifecycle or exactly-once guarantee is implied.
+
+
+[0008](0008-candidate-selection-progress.md) proposes candidate accounting and
+continuation within ordinary bounded preparation under #121. It is not a deployment
+or editorial-quality approval.

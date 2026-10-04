@@ -25,11 +25,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from digest.candidate_review import CandidatePacket, CandidateProgress
+    from digest.config import Config
     from digest.delivery.issue_guard import IssueGuard
     from digest.delivery.telegram import IssueDeliveryResult
     from digest.feedback import FeedbackStore
     from digest.irritator import IrritatorStatus
-    from digest.radar.collector import Article, SourceFetchMetrics
+    from digest.preparation import PreparationSnapshot
+    from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
     from digest.review import BlindReviewReport
     from digest.source_scorer import SourceStats
@@ -850,6 +853,150 @@ def _validate_compact_run(
         raise ValueError("Compact publication requires an externally persisted issue reservation.")
 
 
+def _candidate_setup(
+    prepare_only: bool, review_led_only: bool, cache_dir: str,
+) -> tuple[CandidateProgress | None, CollectionInventory | None, dict[str, str]]:
+    if not (prepare_only and review_led_only):
+        return None, None, {}
+    from digest.candidate_review import load_candidate_progress
+    from digest.edition_runtime import _strict_cache
+    from digest.radar.collector import CollectionInventory
+
+    return (load_candidate_progress(cache_dir), CollectionInventory(),
+            _strict_cache(Path(cache_dir) / "seen_articles.json"))
+
+
+def _require_candidate_recovery(progress: CandidateProgress | None) -> None:
+    if progress is None:
+        raise  # Preserve the original AllFeedsFailedError outside candidate preparation.
+
+
+def _inventory_kwargs(inventory: CollectionInventory | None) -> dict[str, CollectionInventory]:
+    return {"inventory": inventory} if inventory is not None else {}
+
+
+def _candidate_inputs(
+    progress: CandidateProgress | None, inventory: CollectionInventory | None,
+    run_config: Config, config: Config, delivered: dict[str, str],
+    priorities: dict[str, int], cache_dir: str, collection_failed: bool,
+    allocated: dict[str, list[Article]],
+) -> tuple[CandidatePacket | None, BlindReviewReport | None, dict[str, list[Article]]]:
+    if progress is None:
+        return None, None, allocated
+    from digest.candidate_review import (
+        MAX_BYTES,
+        begin_packet,
+        ensure_report_accounting,
+        merge_candidates,
+        packet_articles,
+        pending_completed_report,
+        plan_packet,
+        progress_size,
+        save_candidate_progress,
+    )
+    from digest.radar import AllFeedsFailedError
+    from digest.radar.collector import _prune_cache
+
+    if inventory is None:
+        raise ValueError("Candidate preparation requires collection accounting.")
+    merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
+                     inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
+    report = pending_completed_report(progress)
+    packet = (next(item for item in reversed(progress.packets) if item.report == report)
+              if report is not None else plan_packet(progress, config))
+    if packet is not None and report is None:
+        begin_packet(progress, packet, cache_dir)
+    else:
+        save_candidate_progress(progress, cache_dir)
+        if report is not None:
+            ensure_report_accounting(progress, report, cache_dir)
+    logging.getLogger(__name__).info(
+        "Candidate accounting: %d registered, %d eligible, %d never planned, %d technical pending, "
+        "%d unselected without editorial reason, %d metadata not-selected, %d duplicates; next packet %d items",
+        len(progress.candidates), sum(item.eligible for item in progress.candidates.values()),
+        sum(item.status == "not_presented" for item in progress.candidates.values()),
+        sum(item.status == "technical_pending" for item in progress.candidates.values()),
+        sum(item.status == "not_selected_without_editorial_reason" for item in progress.candidates.values()),
+        sum(item.status == "not_selected" for item in progress.candidates.values()),
+        sum(item.status == "duplicate" for item in progress.candidates.values()),
+        len(packet.evidence.items) if packet is not None else 0,
+    )
+    stored_bytes = progress_size(progress, cache_dir)
+    logging.getLogger(__name__).info("Candidate storage: %d bytes used; %d bytes remaining",
+                                    stored_bytes, MAX_BYTES - stored_bytes)
+    articles = packet_articles(packet) if packet is not None else {}
+    if collection_failed and packet is None:
+        raise AllFeedsFailedError("All feeds failed and no eligible saved candidate packet is available.")
+    return packet, report, articles
+
+
+async def _analyze_candidate_articles(
+    articles: dict[str, list[Article]], config: Config, progress: CandidateProgress | None,
+    packet: CandidatePacket | None,
+    cached_report: BlindReviewReport | None, cache_dir: str,
+) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
+    if cached_report is not None:
+        from digest.review import primary_cards
+
+        cards = primary_cards(cached_report, articles, config.radar.language,
+                              include_attribution=config.telegram.delivery_mode != "compact")
+        return [], None, cards, cached_report
+    if progress is None or packet is None:
+        return await _analyze_articles(articles, config)
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.candidate_review import reconcile_packet
+    from digest.review import primary_cards, run_primary_review
+
+    capture = CandidateDispositionCapture()
+    report = await run_primary_review(articles, config, disposition_capture=capture)
+    reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
+    cards = primary_cards(report, articles, config.radar.language,
+                          include_attribution=config.telegram.delivery_mode != "compact")
+    return [], None, cards, report
+
+
+def _save_prepared_fetch_stats(
+    source_stats: dict[str, SourceStats], fetch_metrics: dict[str, SourceFetchMetrics],
+    articles: dict[str, list[Article]],
+    config: Config, cache_dir: str, already_failed: bool,
+) -> None:
+    from digest.source_scorer import save_stats
+
+    if not already_failed:
+        _record_source_stats(source_stats, fetch_metrics, articles, set())
+        save_stats(source_stats, cache_dir, active_sources={source.name for source in config.enabled_sources})
+
+
+def _save_candidate_preparation(
+    snapshot: PreparationSnapshot, packet: CandidatePacket | None,
+    cache_dir: str, publication_date: date | None,
+) -> None:
+    from digest.edition_runtime import save_accepted_preparation
+    from digest.review import _delivery_review
+
+    if not snapshot.top_articles and packet is not None and packet.disposition_attempts:
+        report = snapshot.review_report
+        if report is None:
+            return
+        delivery = _delivery_review(report)
+        capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
+        if capture is None or capture.status != "complete":
+            return  # Deferred or malformed metadata is not an accepted empty editorial decision.
+    save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+
+
+def _handoff_candidate(
+    progress: CandidateProgress | None, packet: CandidatePacket | None, report: BlindReviewReport | None,
+    cache_dir: str, publication_date: date | None,
+) -> None:
+    from digest.candidate_review import mark_prepared
+    from digest.preparation import load_preparation
+
+    if (progress is not None and packet is not None and report is not None
+            and load_preparation(cache_dir, publication_date=publication_date) is not None):
+        mark_prepared(progress, packet.evidence.bundle_id, cache_dir)
+
+
 async def _run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
     issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
@@ -918,21 +1065,34 @@ async def _run(
         sources=[s for s in config.sources if s.enabled and not source_state.is_demoted(s.name)],
     )
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
+    candidate_progress, inventory, delivered_before_collection = _candidate_setup(
+        prepare_only, review_led_only, cache_dir,
+    )
+    candidate_packet = candidate_cached_report = None
+    collection_failed = False
     try:
         articles_by_category, cache = await collect(
             run_config, effective_priorities=effective_priorities, fetch_metrics=fetch_metrics,
+            **_inventory_kwargs(inventory),
         )
     except AllFeedsFailedError:
         _save_failed_run_stats(
             source_stats, fetch_metrics, cache_dir,
             {s.name for s in config.enabled_sources}, dry_run=dry_run,
         )
-        raise
+        _require_candidate_recovery(candidate_progress)
+        collection_failed = True
+        articles_by_category, cache = {}, dict(delivered_before_collection)
+
+    candidate_packet, candidate_cached_report, articles_by_category = _candidate_inputs(
+        candidate_progress, inventory, run_config, config, delivered_before_collection,
+        effective_priorities, cache_dir, collection_failed, articles_by_category,
+    )
 
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     if not articles_by_category:
-        logger.info("No new articles found. Nothing to summarize.")
+        logger.info("No eligible articles in this processing packet. Nothing to summarize.")
         if not dry_run:
             _save_empty_cache(cache, compact, cache_dir, prepare_only)
             _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
@@ -945,7 +1105,9 @@ async def _run(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
-    summaries, trends, top_articles, review_report = await _analyze_articles(articles_by_category, config)
+    summaries, trends, top_articles, review_report = await _analyze_candidate_articles(
+        articles_by_category, config, candidate_progress, candidate_packet, candidate_cached_report, cache_dir,
+    )
     if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         _save_failed_run_stats(
@@ -961,7 +1123,7 @@ async def _run(
     combined = _publication_intro(combined, review_report, config)
 
     if prepare_only:
-        from digest.edition_runtime import finish_preparation, save_accepted_preparation
+        from digest.edition_runtime import finish_preparation
         from digest.preparation import PreparationSnapshot
 
         snapshot = PreparationSnapshot(
@@ -969,9 +1131,10 @@ async def _run(
             review_report=review_report, source_count=len(articles_by_category),
             article_count=total_articles, contributing_sources=contributing_sources,
         )
-        save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=edition_date)
-        _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
-        save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
+        _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
+        _handoff_candidate(candidate_progress, candidate_packet, review_report, cache_dir, edition_date)
+        _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
+                                   config, cache_dir, collection_failed)
         save_source_category_map(config.enabled_sources, cache_dir)
         return await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
                                         publication_date=edition_date)
