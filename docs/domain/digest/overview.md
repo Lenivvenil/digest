@@ -196,17 +196,22 @@ request usage and technical pending outcomes must remain observable.
 
 Whole-body input is preferred on the explicitly configured supported route. Exact
 counting uses the same Gemini generation payload, including system instructions;
-only verified context overflow creates a complete ordered page sweep. Quota failure
-never causes context splitting. Every page must finish before an article is ready,
+the supported Groq route uses its labelled local estimate. Only route-bound input
+admission overflow creates a complete ordered page sweep; an estimate is not a measured
+provider-context failure. Quota failure never causes context splitting. Every page must finish before a technical reading handoff is complete,
 and all nominated material-qualification passages remain in the original-language
-archive appendix and evidence checkpoint. Publication carries the generated substantive
-brief with essential conditions and unresolved source contradictions, followed by
-short source/date/citation notes. Translation includes the entire generated brief;
-it does not rewrite the literal evidence archive. For multi-page sources, publication
-also retains every nominated material-qualification passage verbatim, including
-qualifications from abstaining pages. This deliberately trades compactness for visible
-cross-page conditions without adding a synthesis request. Prompt-version binding prevents
-reuse of older generated reading angles as current briefs.
+archive appendix and evidence checkpoint. The retained diagnostic renderer also keeps
+these passages in its presentation provenance for both single-page and multi-page
+sources, including qualifications from abstaining pages. Translation does not rewrite
+these literal passages. This preserves selected evidence; it does not repair unsupported
+claims in generated prose or reconcile conflicting statements across pages.
+
+The candidate-bound integration freezes source/page evidence for #55 and does not
+publish the diagnostic reading-angle cards. A publication mechanism still needs to
+produce a useful whole-article brief with essential conditions and unresolved source
+contradictions intact. Per-page prose concatenation and a union of quotation IDs do not
+establish that requirement. Prompt-version binding prevents silent reuse of old model
+outputs under a changed reading contract.
 Neither full input coverage nor literal citation validation proves semantic completeness.
 The configured model's advertised context is not evidence of free-account entitlement.
 This path remains off pending the finite #55 quality/cost acceptance gate; no new live

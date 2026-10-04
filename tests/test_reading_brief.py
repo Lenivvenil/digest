@@ -77,7 +77,7 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
         assert "2026-09-20T09:00:00+00:00" in run.quotations[identity]
         assert "source metadata" in run.quotations[identity]
         assert "Conditions/limitations from the source" in run.quotations[identity]
-        assert "FINAL QUALIFICATION" not in run.provenance[identity]
+        assert "FINAL QUALIFICATION" in run.provenance[identity]
         assert "Published: 2026-09-20 (source)" in run.provenance[identity]
         assert "Images not assessed." in run.provenance[identity]
         assert fetch.call_count == count.call_count == call.call_count == 1
@@ -373,7 +373,8 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
     assert run.cards[0].summary == f"Reading brief: {brief}"
     assert all(part in run.quotations[identity] for part in text.split("\n\n"))
     assert "Citations: [S1-S4]" in run.provenance[identity]
-    assert not any(part in run.provenance[identity] for part in text.split("\n\n"))
+    assert all(part in run.provenance[identity] for part in text.split("\n\n")[1:])
+    assert text.split("\n\n")[0] not in run.provenance[identity]
     assert count.call_count == call.call_count == 1
 
 

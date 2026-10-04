@@ -137,3 +137,16 @@ uncertainty, legacy evidence and shared limits. Preserve actual source/response 
 mock success is not semantic fidelity, quota availability or sustainable throughput.
 Owner decision and review apply before merging this proposed cross-context contract.
 #55 remains open for global qualification/contradiction reconciliation and useful output.
+
+## Known publication failure retained for #55
+
+The saved Citi result selected the scope footnotes but the single-page renderer omitted
+them from presentation provenance. Retain every selected qualification there regardless
+of page count. This is an evidence-preservation correction, not semantic acceptance:
+the same generated prose still incorrectly generalized Citi's offering to the entire
+Swift network. Adding the correct footnote does not make that assertion correct.
+
+Multi-page completion remains a technical handoff. Neither concatenated page summaries
+nor appended quotations establish an accurate whole-article brief. A changed publication
+algorithm or source-unit selection prompt requires its own proposed decision and real-source
+acceptance; this integration does not authorize it or activate source reading.

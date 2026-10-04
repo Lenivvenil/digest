@@ -598,8 +598,8 @@ def _render(state: BriefState, source: Source) -> tuple[ArticleSummary, str, str
                   + f". Citations: {_citation_note(selected | qualifications | cited)}")
     if any("uninspected" in note.lower() for note in source.coverage_notes):
         provenance += ". Images not assessed."
-    if len(state.pages) > 1 and qualifications:
-        # A later page may qualify an earlier brief even when that page abstains.
+    if qualifications:
+        # Selected conditions remain visible for one page and across page boundaries.
         # These original passages are appended after translation, without reduction.
         conditions = ["Conditions/limitations from the source (original text)"]
         for identity in sorted(qualifications):
