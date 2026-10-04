@@ -65,6 +65,7 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
 | `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
 | `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
+| `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
 | `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
@@ -252,6 +253,8 @@ and serialized access to the same state as the main digest.
 | `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
 | `pending_sources.json` | Proposed sources awaiting decisions |
 | `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
+| `candidate_progress.json`, `candidate_reports/*.json` | Candidate eligibility/history and frozen report-bound accounting; no delivered-state mutation |
+| `digests/*.candidates.json` | Private inventory/selection coverage evidence bound into prepared-edition archive hashes |
 
 Atomic temporary-file replacement protects an individual JSON write; it does not make
 several files a transaction or prove remote persistence. The runtime must retain state

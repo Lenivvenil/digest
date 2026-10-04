@@ -390,3 +390,31 @@ claim or interpret optional-stage failure as evidence that primary sending faile
 On a rejected Git push, retained private diagnostics preserve the same three files;
 no automatic rebase or resend is allowed. This recovery contract does not certify
 full-source factual quality or independent counter-evidence.
+
+
+## Ordinary preparation candidate accounting
+
+`--prepare-edition` with review-led mode captures the collector inventory before
+source allocation and saves candidate progress before its existing primary call.
+One fresh preparation window retains the existing primary/fallback request ceiling. Later fresh
+preparations choose unseen eligible work before technical retries; presentation of
+already accepted work takes precedence and adds no selection request.
+
+The mutable progress file is `.cache/candidate_progress.json`. Frozen report-bound
+accounting is archived as `<edition>.md.candidates.json` and included in ready-edition
+archive hashes. Keep the existing runtime `.cache`/archive persistence step: local
+writes are not proof of remote durability. A planned record alone is not proof a
+request reached a provider. Successful omission supplies no editorial rejection
+reason. Feed failures, parser limits, source changes and age exclusions are separate.
+
+Do not clear progress to claim complete coverage. Capacity overflow fails without
+truncation; retention and sustainable throughput require the #121/#55 acceptance
+review. Sender claims, receipts, feedback attribution and delivered caches remain
+under ADR0007. Candidate accounting grants no permission to replay a held edition.
+
+
+A valid primary abstention retains #120's accepted empty snapshot for its publication
+day. Repeating preparation in that window returns no ready edition; it does not
+advance another packet. Unseen work can advance in a later fresh preparation window.
+This inherited limit is part of the remaining throughput acceptance, not a claim
+that all observed candidates received an editorial decision.

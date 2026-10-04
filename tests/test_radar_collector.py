@@ -1268,3 +1268,90 @@ async def test_feedback_allocation_changes_candidates_seen_by_review(
     settings = ReviewConfig(max_evidence_articles=2)
     assert [item.source for item in build_evidence_bundle(neutral, settings).items] == ["A", "B"]
     assert [item.source for item in build_evidence_bundle(weighted, settings).items] == ["A", "A"]
+
+
+@pytest.mark.asyncio
+async def test_inventory_preserves_preallocation_candidates_and_legacy_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.radar.collector import CollectionInventory
+
+    monkeypatch.chdir(tmp_path)
+    sources = [make_source(name="A"), make_source(name="B")]
+    config = _make_config(sources=sources, max_articles_per_category=1)
+    now = datetime.now(timezone.utc)
+    first = Article("Same", "https://example.com/same", "original", "A", "Tech", now)
+    repeated = Article("Same", first.link, "other source description", "B", "Tech", now)
+    related = Article("Related", "https://example.com/related", "original", "A", "Tech", now)
+    raw = [[first, related], [repeated]]
+    inventory = CollectionInventory()
+    with patch("digest.radar.collector._fetch_feed", AsyncMock(side_effect=raw)):
+        legacy, legacy_cache = await collect(config)
+    with patch("digest.radar.collector._fetch_feed", AsyncMock(side_effect=raw)):
+        captured, captured_cache = await collect(config, {"A": 2, "B": 2}, inventory=inventory)
+    assert captured == legacy
+    assert captured_cache.keys() == legacy_cache.keys()
+    assert len(inventory.observations) == 3
+    assert all(item.eligible for item in inventory.observations)
+    assert [item.repeated_of for item in inventory.observations] == [None, None, 0]
+    assert inventory.observations[2].article == repeated
+    assert inventory.observations[0].source_names == ("A", "B")
+    assert inventory.observations[2].source_names == ("A", "B")
+    assert inventory.eligible_articles() == {"Tech": [first, related]}
+    assert all(item.effective_priority == 2 for item in inventory.observations)
+    assert all(item.fetch_ok for item in inventory.sources)
+    assert all(item.omitted_entry_count is None for item in inventory.sources)
+
+
+@pytest.mark.asyncio
+async def test_inventory_records_exclusions_failures_and_resets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.radar.collector import CollectionInventory
+
+    monkeypatch.chdir(tmp_path)
+    config = _make_config(sources=[make_source(name="A"), make_source(name="B")],
+                          blocklist_keywords=["blocked"])
+    now = datetime.now(timezone.utc)
+    excluded = Article("blocked", "https://example.com/old", "evidence", "A", "Tech",
+                       now - timedelta(days=3))
+    identity = article_hash(excluded.title, excluded.link)
+    inventory = CollectionInventory()
+    with patch("digest.radar.collector._load_cache", return_value={identity: now.isoformat()}), patch(
+        "digest.radar.collector._fetch_feed", AsyncMock(side_effect=[[excluded], None]),
+    ):
+        grouped, _ = await collect(config, inventory=inventory)
+    assert grouped == {}
+    assert inventory.eligible_articles() == {}
+    assert inventory.observations[0].exclusion_reasons == ("age", "blocklist", "seen_cache")
+    assert not inventory.observations[0].eligible
+    assert inventory.sources[0].observed_articles == 1
+    assert not inventory.sources[1].fetch_ok
+    with patch("digest.radar.collector._fetch_feed", AsyncMock(return_value=None)):
+        with pytest.raises(AllFeedsFailedError):
+            await collect(config, inventory=inventory)
+    assert inventory.observations == []
+    assert len(inventory.sources) == 2
+    assert all(not source.fetch_ok for source in inventory.sources)
+
+
+@pytest.mark.asyncio
+async def test_inventory_reports_parser_bound_without_inventing_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.radar.collector import FEED_ENTRY_LIMIT, CollectionInventory
+
+    monkeypatch.chdir(tmp_path)
+    config = _make_config(sources=[make_source()], max_articles_per_category=1)
+    items = "".join(f"<item><title>Article {i}</title><link>https://example.com/{i}</link></item>"
+                    for i in range(FEED_ENTRY_LIMIT + 3))
+    rss = f"<rss version='2.0'><channel><title>Feed</title>{items}</channel></rss>".encode()
+    inventory = CollectionInventory()
+    with patch("httpx.AsyncClient.get", AsyncMock(return_value=make_http_response(rss))):
+        grouped, _ = await collect(config, inventory=inventory)
+    assert sum(map(len, grouped.values())) == 1
+    assert len(inventory.observations) == FEED_ENTRY_LIMIT
+    assert inventory.sources[0].entry_limit == FEED_ENTRY_LIMIT
+    assert inventory.sources[0].omitted_entry_count == 3
+    assert inventory.sources[0].skipped_empty_entries == 0
+    assert sum(map(len, inventory.eligible_articles().values())) == FEED_ENTRY_LIMIT

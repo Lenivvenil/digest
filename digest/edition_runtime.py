@@ -86,7 +86,12 @@ async def finish_preparation(
     if archive is not None:
         paths = [archive]
         if snapshot.review_report is not None:
+            from digest.candidate_review import archive_candidate_accounting
+
             paths.append(archive.with_suffix(".review.json"))
+            accounting_path = archive_candidate_accounting(snapshot.review_report, archive)
+            if accounting_path is not None:
+                paths.append(accounting_path)
         for path in paths:
             relative = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
             references[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
