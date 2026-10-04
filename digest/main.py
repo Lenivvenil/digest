@@ -903,7 +903,7 @@ def _candidate_inputs(
                      inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
     from digest.reading_preparation import deferred_source_reports
 
-    deferred = (deferred_source_reports(progress, Path(cache_dir))
+    deferred = (deferred_source_reports(progress, Path(cache_dir), config)
                 if getattr(getattr(config, "reading_brief", None), "enabled", False) else set())
     report = pending_completed_report(progress, skip_reports=deferred)
     packet = (next(item for item in reversed(progress.packets) if item.report == report)

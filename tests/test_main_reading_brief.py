@@ -238,7 +238,7 @@ async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidate
     if state_kind == "missing_handoff":
         Path(result.handoff_paths[0]).unlink()
     before = json.dumps([item.report.__dict__ for item in progress.packets], default=str)
-    deferred = deferred_source_reports(progress, tmp_path)
+    deferred = deferred_source_reports(progress, tmp_path, config)
     recovered = pending_completed_report(progress, skip_reports=deferred)
     assert (recovered is None) == (state_kind != "missing_handoff")
     assert before == json.dumps([item.report.__dict__ for item in progress.packets], default=str)
@@ -284,7 +284,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
         report = await run_primary_review(articles, config, disposition_capture=capture)
     reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
     identities = set(progress.candidates)
-    deferred = deferred_source_reports(progress, tmp_path)
+    deferred = deferred_source_reports(progress, tmp_path, config)
     assert deferred
     save_candidate_progress(progress, tmp_path, skipped_empty_reports=deferred)
     restored = load_candidate_progress(tmp_path)
@@ -293,7 +293,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
     assert not (tmp_path / "pending_preparation.json").exists()
     merge_candidates(restored, articles, config, {}, now=NOW, cache_dir=tmp_path)
     assert restored.packets and all(not item.handed_to_preparation for item in restored.packets)
-    assert deferred_source_reports(restored, tmp_path)
+    assert deferred_source_reports(restored, tmp_path, config)
 
 
 @pytest.mark.asyncio
@@ -316,5 +316,5 @@ async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_pat
           patch("digest.llm.complete", side_effect=partial)):
         result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
     assert result.technical_complete == result.pending == 1
-    assert not deferred_source_reports(progress, tmp_path)
+    assert not deferred_source_reports(progress, tmp_path, config)
     assert pending_completed_report(progress) == report

@@ -363,14 +363,52 @@ def _accept_generation(
     save_state(state_dir, state)
 
 
+def _legacy_count_request(state: BriefState, page: Page) -> str:
+    if (page.result is None and page.request_history_version == 0
+            and page.prompt_sha256 and not page.request_attempts
+            and (page.route or state.route).provider == "gemini"
+            and page.prompt_sha256 not in state.exact_counts):
+        return page.prompt_sha256
+    return page.legacy_count_request_sha256
+
+
+def _count_held(state: BriefState, page: Page, route: Route, prompt_sha: str) -> bool:
+    """Apply the current same-request count hold, including unmigrated legacy evidence."""
+    return (route.provider == "gemini" and prompt_sha not in state.exact_counts
+            and (_legacy_count_request(state, page) == prompt_sha
+                 or any(previous.kind == "count" and previous.request_sha256 == prompt_sha
+                        and previous.status != "definite_failed" for previous in page.request_attempts)))
+
+
+def _count_routes_held(state: BriefState, source: Source, routes: list[Route]) -> bool:
+    """Check exact count holds and local admission availability without provider calls."""
+    if state.status != "pending" or not routes:
+        return False
+    page = next((page for page in state.pages if page.result is None), None)
+    if page is None:
+        return False
+    messages = _messages(state, source, page)
+    held = {route for route in routes if _count_held(state, page, route, _prompt_sha(state, messages, route))}
+    if not held:
+        return False
+    for route in routes:
+        if route in held:
+            continue
+        if route.provider != "groq":
+            return False
+        try:
+            _estimate(route, messages)
+        except TokenProfileUnavailable:
+            continue
+        return False  # An oversized estimate can still advance through paging.
+    return True
+
+
 def _track_legacy_pages(state: BriefState, state_dir: Path) -> None:
     for page in state.pages:
         if page.result is None and page.request_history_version == 0:
-            if (page.prompt_sha256 and not page.request_attempts
-                    and (page.route or state.route).provider == "gemini"
-                    and page.prompt_sha256 not in state.exact_counts):
-                # Preserve the unrecorded old count without inventing its dispatch or timestamp.
-                page.legacy_count_request_sha256 = page.prompt_sha256
+            # Preserve the unrecorded old count without inventing its dispatch or timestamp.
+            page.legacy_count_request_sha256 = _legacy_count_request(state, page)
             page.request_history_version = 1
     save_state(state_dir, state)
 
@@ -429,9 +467,7 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                 try:
                     phase = "count"
                     if route.provider == "gemini" and prompt_sha not in state.exact_counts:
-                        if (page.legacy_count_request_sha256 == prompt_sha
-                                or any(previous.kind == "count" and previous.request_sha256 == prompt_sha
-                                       and previous.status != "definite_failed" for previous in page.request_attempts)):
+                        if _count_held(state, page, route, prompt_sha):
                             state.error_class = "technical_count_unknown"
                             save_state(state_dir, state)
                             if candidate_index + 1 < len(candidates):

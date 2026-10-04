@@ -25,7 +25,7 @@ from digest.candidate_review import (
 from digest.config import Config
 from digest.llm import request_budget_remaining, set_request_limit
 from digest.preparation import _canonical, _restore, _safe
-from digest.reading_brief import _advance, _routes, _validate_progress
+from digest.reading_brief import _advance, _count_routes_held, _routes, _validate_progress
 from digest.reading_brief_state import (
     BriefState,
     Route,
@@ -197,7 +197,7 @@ def _currently_selected(
 
 
 def _deferred_source(
-    candidate: Candidate, packet: CandidatePacket, report: BlindReviewReport, state_dir: Path,
+    candidate: Candidate, packet: CandidatePacket, report: BlindReviewReport, state_dir: Path, config: Config,
 ) -> bool:
     path = _safe(state_dir / "reading_bindings" / f"{candidate.identity}.json")
     state_path = _safe(state_dir / "reading_briefs" / f"{candidate.identity}.json")
@@ -213,21 +213,25 @@ def _deferred_source(
                                      actual.source_url)
     if actual.identity != candidate.identity or _hash(asdict(old_occurrence)) != actual.occurrence_sha256:
         return False
-    _validate_progress(state, load_source(state_dir, state))
+    source = load_source(state_dir, state)
+    _validate_progress(state, source)
     if has_unresolved_generation(state):
         return True  # Retain the original unknown binding, including across a new RSS occurrence.
     expected = _binding(packet, report, candidate.identity)
     if (replace(actual, evidence_origin="current_selection_binding") != expected
-            or state.selection != Selection.from_article(candidate.article.article())
-            or state.status not in {"ready", "abstained"}):
+            or state.selection != Selection.from_article(candidate.article.article())):
+        return False
+    if _count_routes_held(state, source, _routes(config)):
+        return True
+    if state.status not in {"ready", "abstained"}:
         return False
     body = _handoff_body(actual, state, state_dir)
     handoff = _safe(state_dir / "reading_handoffs" / f"{_hash(body)}.json")
     return handoff.is_file() and json.loads(handoff.read_text()) == body
 
 
-def deferred_source_reports(progress: CandidateProgress, state_dir: Path) -> set[str]:
-    """Read current packet proofs only; completed/held source work never monopolizes selection."""
+def deferred_source_reports(progress: CandidateProgress, state_dir: Path, config: Config) -> set[str]:
+    """Skip verified technical handoffs and explicitly non-resumable current-route holds."""
     deferred: set[str] = set()
     for packet in progress.packets:
         report = packet.report
@@ -245,7 +249,7 @@ def deferred_source_reports(progress: CandidateProgress, state_dir: Path) -> set
                 if (candidate is None or not _currently_selected(candidate, progress, packet, report)
                         or _binding(packet, report, selected.evidence_id).occurrence_sha256
                         != _hash(asdict(candidate.article))
-                        or not _deferred_source(candidate, packet, report, state_dir)):
+                        or not _deferred_source(candidate, packet, report, state_dir, config)):
                     break
             else:
                 deferred.add(_hash(asdict(report)))
