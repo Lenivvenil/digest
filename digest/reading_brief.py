@@ -1,13 +1,14 @@
 """Full-source, source-attributed briefs; technical holds are resumable work.
 
-An exact count of the complete request is required before generating. Only a
-real profile overflow permits a contiguous page sweep. No subsequent model
-selects, ranks, repairs, or drops the union of the nominated source passages.
+The complete request needs exact or conservative admission before generating.
+An admission overflow permits a contiguous page sweep without source omission.
+No subsequent model selects, ranks, repairs, or drops the nominated source passages.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -38,11 +39,20 @@ from digest.reading_brief_state import (
     save_state,
     state_root,
 )
+from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable, count_gpt_input
 
 logger = logging.getLogger(__name__)
 # Capability, not an assertion of account quota. Unknown routes remain pending.
 # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash
 INPUT_LIMITS = {("gemini", "gemini-3.8-flash"): 1_048_576}
+# Published model capabilities and conservative free-tier request allowance.
+# https://console.groq.com/docs/models
+# https://console.groq.com/docs/rate-limits
+# The 8000-token envelope is a local admission policy, NOT remaining account quota.
+GROQ_CONTEXT = {"openai/gpt-oss-120b": 131_072}
+GROQ_REQUEST_ALLOWANCE = 8_000
+GROQ_FRAMING_RESERVE = 256
+GROQ_MIN_INTERVAL_SECONDS = 65.0
 COUNT_SECONDS = 10.0
 GENERATION_SECONDS = 120.0
 # A shorter remaining window can be useful, but never start a near-deadline POST.
@@ -111,15 +121,89 @@ def _messages(state: BriefState, source: Source, page: Page) -> list[dict[str, s
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)}]
 
 
-def _prompt_sha(state: BriefState, messages: list[dict[str, str]]) -> str:
-    return checksum({"route": asdict(state.route),
-                     "request": llm.gemini_request_body(messages, TEMPERATURE, state.route.max_output_tokens)})
+def _wire_request(route: Route, messages: list[dict[str, str]]) -> dict[str, Any]:
+    if route.provider == "gemini":
+        return llm.gemini_request_body(messages, TEMPERATURE, route.max_output_tokens)
+    if route.provider == "groq" and route.model in GROQ_CONTEXT:
+        return llm.openai_request_body(route.model, messages, TEMPERATURE, route.max_output_tokens, groq=True)
+    raise ValueError("unknown_reading_profile")
+
+
+def _prompt_sha(state: BriefState, messages: list[dict[str, str]], route: Route | None = None) -> str:
+    route = route or state.route
+    identity: dict[str, Any] = {"route": asdict(route), "request": _wire_request(route, messages)}
+    if route.provider == "groq":
+        identity["accounting"] = {"method": ESTIMATOR_VERSION, "tokenizer_sha256": GPT_HASH}
+    return checksum(identity)
 
 
 def _response_sha(state: BriefState, page: Page) -> str:
-    return checksum({"source": state.source_sha256, "route": asdict(state.route),
+    return checksum({"source": state.source_sha256, "route": asdict(page.route or state.route),
                      "prompt": page.prompt_sha256, "response": page.response,
                      "finish_reason": page.finish_reason, "usage": page.usage})
+
+
+def _route(provider: str, model: str, output: int) -> Route | None:
+    if provider == "gemini" and (provider, model) in INPUT_LIMITS:
+        return Route(provider, model, INPUT_LIMITS[provider, model], output)
+    if provider == "groq" and model in GROQ_CONTEXT:
+        allowance = min(GROQ_CONTEXT[model], GROQ_REQUEST_ALLOWANCE) - output
+        if allowance > 0:
+            return Route(provider, model, allowance, output)
+    return None
+
+
+def _routes(config: Config) -> list[Route]:
+    settings = config.reading_brief
+    primary = _route(settings.provider, settings.model, settings.max_output_tokens)
+    if primary is None:
+        return []
+    routes = [primary]
+    for provider in config.llm.providers:
+        candidate = _route(provider.name, provider.model, settings.max_output_tokens)
+        if candidate is not None and candidate != primary:
+            routes.append(candidate)
+            break
+    return routes
+
+
+def _estimate(route: Route, messages: list[dict[str, str]]) -> dict[str, int | str]:
+    # Provider-side framing is not fully published. Reserve 20% plus 256 tokens
+    # over the pinned local content/minimal Harmony count; reserve output separately.
+    return _admission_record(route, count_gpt_input(messages))
+
+
+def _admission_record(route: Route, count: int) -> dict[str, int | str]:
+    return {"method": ESTIMATOR_VERSION, "tokenizer_sha256": GPT_HASH, "local_input_count": count,
+            "input_estimate": (count * 6 + 4) // 5 + GROQ_FRAMING_RESERVE,
+            "framing_reserve": GROQ_FRAMING_RESERVE, "output_reserve": route.max_output_tokens,
+            "request_allowance": min(GROQ_CONTEXT[route.model], GROQ_REQUEST_ALLOWANCE)}
+
+
+def _admitted(state: BriefState, page: Page, messages: list[dict[str, str]]) -> bool:
+    route = page.route or state.route
+    prompt = _prompt_sha(state, messages, route)
+    if route.provider == "gemini":
+        return prompt in state.exact_counts and state.exact_counts[prompt] <= route.input_tokens
+    saved = state.admissions.get(prompt)
+    if saved is None:
+        return False
+    # Completed evidence remains verifiable without optional runtime assets. The
+    # versioned record is checksum-bound to the full prompt and validated on load.
+    expected = _admission_record(route, int(saved["local_input_count"]))
+    return (saved == expected
+            and int(expected["input_estimate"]) <= route.input_tokens
+            and route == _route(route.provider, route.model, route.max_output_tokens))
+
+
+def _can_fallback(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {429, 503}
+    # llm's public methods deliberately redact provider error bodies into these forms.
+    return isinstance(exc, RuntimeError) and any(
+        marker in str(exc) for marker in ("HTTP 429", "HTTP 503", "provider is unavailable for this run",
+                                         "providers unavailable or credentials missing")
+    )
 
 
 def _ids(value: Any, available: set[int], *, required: bool = False) -> list[int]:
@@ -148,7 +232,7 @@ def _validate_result(result: PageResult, page: Page, source: Source) -> None:
 
 
 def _parse_result(text: str, usage: dict[str, Any], page: Page, source: Source) -> PageResult:
-    if usage.get("finish_reason") != "STOP":
+    if usage.get("finish_reason") not in {"STOP", "stop"}:
         raise ValueError("incomplete_generation")
     data = json.loads(text)
     keys = {"coverage", "selected_span_ids", "qualification_span_ids", "reading_angle", "abstain"}
@@ -176,12 +260,16 @@ def _validate_progress(state: BriefState, source: Source) -> None:
         if page.start != expected_start or page.stop > len(source.spans):
             raise ValueError("noncontiguous_page_coverage")
         expected_start = page.stop
-        prompt_sha = _prompt_sha(state, _messages(state, source, page))
+        if not page.prompt_sha256 and page.result is None:
+            # No provider request exists yet to bind. A former unknown-profile
+            # hold may now use the explicitly configured supported route.
+            continue
+        messages = _messages(state, source, page)
+        prompt_sha = _prompt_sha(state, messages, page.route)
         if page.prompt_sha256 and page.prompt_sha256 != prompt_sha:
             raise ValueError("page_prompt_mismatch")
         if page.result is not None:
-            if (page.prompt_sha256 != prompt_sha or prompt_sha not in state.exact_counts
-                    or state.exact_counts[prompt_sha] > state.route.input_tokens):
+            if page.prompt_sha256 != prompt_sha or not _admitted(state, page, messages):
                 raise ValueError("uncounted_completed_page")
             _validate_result(page.result, page, source)
             if not isinstance(page.response, str) or page.response_sha256 != _response_sha(state, page):
@@ -228,6 +316,8 @@ def _generation_timeout(config: Config, deadline: float) -> float:
 def _error_class(exc: Exception, phase: str) -> str:
     if isinstance(exc, TimeoutError):
         return "technical_deadline"
+    if isinstance(exc, TokenProfileUnavailable):
+        return "technical_tokenizer_profile"
     if isinstance(exc, ValueError):
         return {"fetch": "technical_fetch_incomplete", "generate": "technical_invalid_output"}.get(
             phase, "technical_state")
@@ -255,56 +345,96 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
             source = load_source(state_dir, state)
         phase = "state"
         _validate_progress(state, source)
-        provider = ProviderConfig(state.route.provider, state.route.model)
+        # A shallow copy shares the initialized request runtime and pacing, but disables
+        # retries only for this stage without changing other stages' configuration.
+        llm.request_budget_remaining(config)
+        call_config = copy.copy(config)
+        call_config.llm = copy.copy(config.llm)
+        call_config.llm.max_retries = 0
+        routes = _routes(config)
+        if any(route.provider == "groq" for route in routes):
+            call_config.llm.min_request_interval_seconds = max(
+                config.llm.min_request_interval_seconds, GROQ_MIN_INTERVAL_SECONDS,
+            )
         index = 0
         while index < len(state.pages):
             page = state.pages[index]
             if page.result is not None:
                 index += 1
                 continue
-            messages = _messages(state, source, page)
-            prompt_sha = _prompt_sha(state, messages)
-            page.prompt_sha256 = prompt_sha
-            if prompt_sha not in state.exact_counts:
-                phase = "count"
-                _preflight(config, deadline, COUNT_SECONDS)
-                save_state(state_dir, state)
-                async with asyncio.timeout(min(llm.request_wait_seconds(config) + COUNT_SECONDS,
-                                               max(0, deadline - time.monotonic()))):
-                    count = await llm.count_gemini_tokens(
-                        messages, config, provider_override=provider, temperature=TEMPERATURE,
-                        max_output_tokens=state.route.max_output_tokens,
-                    )
-                if type(count) is not int or count <= 0:
-                    raise ValueError("invalid_exact_token_count")
-                state.exact_counts[prompt_sha] = count
-                save_state(state_dir, state)
-            if state.exact_counts[prompt_sha] > state.route.input_tokens:
-                if page.stop - page.start < 2:
-                    state.error_class = "technical_context_capacity"
+            candidates = list(routes)
+            if page.route in candidates:
+                candidates.remove(page.route)
+                candidates.insert(0, page.route)
+            split = False
+            for candidate_index, route in enumerate(candidates):
+                page.route = route if route != state.route else None
+                messages = _messages(state, source, page)
+                prompt_sha = _prompt_sha(state, messages, route)
+                page.prompt_sha256 = prompt_sha
+                provider = ProviderConfig(route.provider, route.model)
+                try:
+                    phase = "count"
+                    if route.provider == "gemini" and prompt_sha not in state.exact_counts:
+                        _preflight(call_config, deadline, COUNT_SECONDS)
+                        save_state(state_dir, state)
+                        async with asyncio.timeout(min(llm.request_wait_seconds(call_config) + COUNT_SECONDS,
+                                                       max(0, deadline - time.monotonic()))):
+                            count = await llm.count_gemini_tokens(
+                                messages, call_config, provider_override=provider, temperature=TEMPERATURE,
+                                max_output_tokens=route.max_output_tokens,
+                            )
+                        if type(count) is not int or count <= 0:
+                            raise ValueError("invalid_exact_token_count")
+                        state.exact_counts[prompt_sha] = count
+                    elif route.provider == "groq":
+                        state.admissions[prompt_sha] = _estimate(route, messages)
                     save_state(state_dir, state)
-                    return
-                middle = (page.start + page.stop) // 2
-                state.pages[index:index + 1] = [Page(page.start, middle), Page(middle, page.stop)]
-                save_state(state_dir, state)
-                continue
-            phase = "generate"
-            save_state(state_dir, state)
-            request_timeout = _generation_timeout(config, deadline)
-            async with asyncio.timeout(max(0, deadline - time.monotonic())):
-                text, usage = await llm.complete(
-                    llm.LLMRole.SUMMARIZE, messages, config, provider_override=provider,
-                    temperature=TEMPERATURE, max_output_tokens=state.route.max_output_tokens,
-                    request_timeout_seconds=request_timeout,
-                )
-            page.result = _parse_result(text, usage, page, source)
-            page.response = text
-            page.finish_reason = usage["finish_reason"]
-            page.usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                          if type(usage.get(key)) is int and usage[key] >= 0}
-            page.response_sha256 = _response_sha(state, page)
-            save_state(state_dir, state)
-            index += 1
+                    if not _admitted(state, page, messages):
+                        if page.stop - page.start < 2:
+                            state.error_class = "technical_admission_capacity"
+                            save_state(state_dir, state)
+                            return
+                        middle = (page.start + page.stop) // 2
+                        state.pages[index:index + 1] = [Page(page.start, middle, route=page.route),
+                                                       Page(middle, page.stop, route=page.route)]
+                        save_state(state_dir, state)
+                        split = True
+                        break
+                    phase = "generate"
+                    request_timeout = _generation_timeout(call_config, deadline)
+                    async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                        text, usage = await llm.complete(
+                            llm.LLMRole.SUMMARIZE, messages, call_config, provider_override=provider,
+                            temperature=TEMPERATURE, max_output_tokens=route.max_output_tokens,
+                            request_timeout_seconds=request_timeout,
+                        )
+                    page.result = _parse_result(text, usage, page, source)
+                    page.response = text
+                    page.finish_reason = usage["finish_reason"]
+                    page.usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                                  if type(usage.get(key)) is int and usage[key] >= 0}
+                    if route.provider == "groq" and "prompt_tokens" in page.usage:
+                        admission = state.admissions[prompt_sha]
+                        actual = page.usage["prompt_tokens"]
+                        logger.info(
+                            "Reading admission %s/%s local=%s estimate=%s actual=%s "
+                            "actual_minus_local=%+d actual_minus_estimate=%+d output_reserve=%s",
+                            route.provider, route.model, admission["local_input_count"], admission["input_estimate"],
+                            actual, actual - int(admission["local_input_count"]),
+                            actual - int(admission["input_estimate"]), admission["output_reserve"],
+                        )
+                    page.response_sha256 = _response_sha(state, page)
+                    save_state(state_dir, state)
+                    break
+                except (RuntimeError, httpx.HTTPError) as exc:
+                    if candidate_index + 1 >= len(candidates) or not _can_fallback(exc):
+                        raise
+                    # The same immutable source page is offered to the next configured route.
+                    # No retry, prompt repair, deadline reset or hidden provider dispatch.
+                    continue
+            if not split:
+                index += 1
         state.status = "abstained" if all(page.result and page.result.abstain for page in state.pages) else "ready"
         state.error_class = None
         save_state(state_dir, state)
@@ -383,8 +513,8 @@ async def enrich_selected_cards(
     settings = config.reading_brief
     if not settings.enabled:
         return BriefRun([], {}, [], 0, 0, None)
-    limit = INPUT_LIMITS.get((settings.provider, settings.model), 0)
-    route = Route(settings.provider, settings.model, limit or 1, settings.max_output_tokens)
+    routes = _routes(config)
+    route = routes[0] if routes else Route(settings.provider, settings.model, 1, settings.max_output_tokens)
     states: dict[str, BriefState] = {}
     invalid: set[str] = set()
     for path in sorted(state_root(state_dir).glob("*.json")):
@@ -414,7 +544,7 @@ async def enrich_selected_cards(
         identity = state.selection.identity
         if identity in invalid or state.status == "delivered":
             continue
-        if not limit or state.route != route:
+        if not routes:
             state.status = "pending"
             state.error_class = "technical_profile_mismatch"
             save_state(state_dir, state)

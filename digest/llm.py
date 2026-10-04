@@ -57,6 +57,18 @@ def _request_timeout(default: float, requested: float | None) -> float:
     return min(default, requested)
 
 
+def openai_request_body(
+    model: str, messages: list[dict[str, str]], temperature: float,
+    max_output_tokens: int | None = None, *, groq: bool = False,
+) -> dict[str, Any]:
+    """Share the complete wire payload with full-source admission accounting."""
+    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
+    if max_output_tokens is not None:
+        token_field = "max_completion_tokens" if groq else "max_tokens"
+        body[token_field] = max_output_tokens
+    return body
+
+
 async def _openai_compat_call(
     client: httpx.AsyncClient,
     base_url: str,
@@ -69,10 +81,7 @@ async def _openai_compat_call(
     request_timeout_seconds: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Single call to an OpenAI-compatible chat/completions endpoint."""
-    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
-    if max_output_tokens is not None:
-        token_field = "max_completion_tokens" if "api.groq.com" in base_url else "max_tokens"
-        body[token_field] = max_output_tokens
+    body = openai_request_body(model, messages, temperature, max_output_tokens, groq="api.groq.com" in base_url)
     resp = await client.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -301,6 +310,7 @@ class _RequestState:
     semaphore: asyncio.Semaphore
     spacing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     next_request_at: float = 0.0
+    last_request_at: float | None = None
     unavailable_until: dict[tuple[str, str], float] = field(default_factory=dict)
     request_limit: int | None = None
     requests_attempted: int = 0
@@ -334,7 +344,9 @@ def request_budget_remaining(config: Any) -> int | None:
 
 def request_wait_seconds(config: Any) -> float:
     """Return current pacing delay so a caller can respect its own deadline."""
-    return max(0.0, _request_state(config).next_request_at - time.monotonic())
+    state = _request_state(config)
+    interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
+    return max(0.0, _pacing_deadline(state, interval) - time.monotonic())
 
 
 def _reserve_request(state: _RequestState) -> None:
@@ -347,12 +359,19 @@ def _reserve_request(state: _RequestState) -> None:
     state.requests_attempted += 1
 
 
+def _pacing_deadline(state: _RequestState, interval: float) -> float:
+    # A stricter stage interval applies to the preceding shared request too.
+    current_floor = state.last_request_at + interval if state.last_request_at is not None else 0.0
+    return max(state.next_request_at, current_floor)
+
+
 async def _pace_request(state: _RequestState, interval: float) -> None:
     async with state.spacing_lock:
-        wait = state.next_request_at - time.monotonic()
+        wait = _pacing_deadline(state, interval) - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
-        state.next_request_at = time.monotonic() + interval
+        state.last_request_at = time.monotonic()
+        state.next_request_at = state.last_request_at + interval
 
 
 async def _call_provider(

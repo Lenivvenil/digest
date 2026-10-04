@@ -75,8 +75,8 @@ async def search_arxiv(
         signals.append(
             Signal(
                 url=entry.get("link", ""),
-                title=entry.get("title", "").replace("\n", " "),
-                snippet=entry.get("summary", "")[:500],
+                title=entry.get("title", ""),
+                snippet=entry.get("summary", ""),
                 source_name="arxiv",
                 published=entry.get("published", ""),
                 score=0.0,

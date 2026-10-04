@@ -14,6 +14,7 @@ from typing import Any
 
 from digest.article_source import FetchedArticle
 from digest.radar.collector import Article, article_hash
+from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH
 
 VERSION = 1
 PROMPT_VERSION = "source-passages-v4"
@@ -102,6 +103,7 @@ class Page:
     response_sha256: str = ""
     finish_reason: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    route: Route | None = None
 
 
 @dataclass
@@ -118,6 +120,8 @@ class BriefState:
     exact_counts: dict[str, int] = field(default_factory=dict)
     delivered_at: str | None = None
     version: int = VERSION
+    # Versioned estimates are never reinterpreted as exact tokenizer counts.
+    admissions: dict[str, dict[str, int | str]] = field(default_factory=dict)
 
 
 def state_root(state_dir: Path) -> Path:
@@ -271,7 +275,24 @@ def _validate_state(state: BriefState) -> None:
         not _HASH.fullmatch(key) or type(count) is not int or count <= 0 for key, count in state.exact_counts.items()
     ):
         raise ValueError("invalid_exact_count")
+    if not isinstance(state.admissions, dict):
+        raise ValueError("invalid_admission")
+    for digest, record in state.admissions.items():
+        if (not isinstance(digest, str) or not _HASH.fullmatch(digest)
+                or not isinstance(record, dict)
+                or set(record) != {"method", "tokenizer_sha256", "local_input_count", "input_estimate",
+                                   "framing_reserve", "output_reserve", "request_allowance"}
+                or record["method"] != ESTIMATOR_VERSION or record["tokenizer_sha256"] != GPT_HASH
+                or any(type(value) is not int or value <= 0 for key, value in record.items()
+                       if key not in {"method", "tokenizer_sha256"})):
+            raise ValueError("invalid_admission")
     for page in state.pages:
+        if page.route is not None and (
+            page.route.prompt_version != PROMPT_VERSION or type(page.route.input_tokens) is not int
+            or page.route.input_tokens <= 0 or type(page.route.max_output_tokens) is not int
+            or page.route.max_output_tokens <= 0
+        ):
+            raise ValueError("invalid_page_route")
         if type(page.start) is not int or type(page.stop) is not int or page.start < 0 or page.stop <= page.start:
             raise ValueError("invalid_page_range")
         if page.prompt_sha256 and not _HASH.fullmatch(page.prompt_sha256):
@@ -280,7 +301,9 @@ def _validate_state(state: BriefState) -> None:
         if (not isinstance(page.usage, dict) or not set(page.usage) <= allowed_usage
                 or any(type(count) is not int or count < 0 for count in page.usage.values())):
             raise ValueError("invalid_page_usage")
-    if state.source_sha256 is None and (state.pages or state.exact_counts or state.status != "pending"):
+    if state.source_sha256 is None and (
+        state.pages or state.exact_counts or state.admissions or state.status != "pending"
+    ):
         raise ValueError("missing_source")
 
 
@@ -291,7 +314,8 @@ def load_state(state_dir: Path, identity: str) -> BriefState:
     payload = envelope["payload"]
     if checksum(payload) != envelope["sha256"]:
         raise ValueError("state_checksum_mismatch")
-    pages = [Page(**{**page, "result": PageResult(**page["result"]) if page["result"] is not None else None})
+    pages = [Page(**{**page, "route": Route(**page["route"]) if page.get("route") else None,
+                    "result": PageResult(**page["result"]) if page["result"] is not None else None})
              for page in payload["pages"]]
     state = BriefState(**{**payload, "selection": Selection(**payload["selection"]),
                           "route": Route(**payload["route"]), "pages": pages})

@@ -242,6 +242,25 @@ adapter availability and useful external evidence remain separate #77 acceptance
 
 ### Source and ranking outcomes
 
+Bounded query generation and ranking receive only the narrative claim, category,
+evidence IDs and validated literal quotes alongside cited RSS evidence. Generated
+assumptions and reasons to challenge remain in the original archived narrative but
+are excluded from these requests. Legacy query generation uses claim and category
+only; legacy ranking remains claim-only. This input boundary does not verify claim
+truth or semantic counter-evidence quality.
+
+Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
+`context` or `insufficient` against the supplied claim. Every entry must pass field,
+identity, score, relation and reasoning validation before filtering; bounded ranking
+also verifies its URL-bound quote ID. Only `contradicts` and `complicates` at the
+existing minimum score reach public results, even when another relation has a high
+score. Bounded results record fixed omission counts for the three non-counter
+relations in the existing limitations list. An all-non-counter response is `empty`,
+not a ranking failure; an unknown relation fails the response closed. Public and
+archived result shapes, quote identity, request counts and ranking caps are unchanged.
+This filter enforces the declared classification; it cannot prove that the model
+assigned the semantically correct relation.
+
 Legacy synchronous Irritator processing retains its list-based source API but records
 successful, failed and unavailable source attempts separately. A valid empty response
 is a successful search; missing Reddit credentials or intentionally unsupported DEV.to
@@ -320,3 +339,30 @@ quote, including source typos. Unknown or cross-source IDs fail closed. The exis
 visible in diagnostics. Archived ranked results retain their existing literal quote shape.
 This prevents transcription errors; it does not establish that a claimed counter-relation
 is semantically justified. Scores, relation criteria and request counts are unchanged.
+
+
+### Grounded Irritator targets and complete abstract evidence
+
+The extraction call selects one concrete source-attributed assertion or announced
+decision from its supplied evidence. Reported framing and inferred assumptions
+remain visible archive context, not the assertion challenged by search/ranking.
+Duplicate reports of one event do not establish independent consensus. The legacy
+summary path must abstain if its summary does not support an attributed target;
+its summaries are not full primary sources.
+
+A contradiction concerns what that assertion actually states. A complication may
+instead identify a sourced implementation cost, condition or tradeoff relevant to
+the announced decision. Its explanation distinguishes the external finding from
+the editorial relevance link and preserves favourable results and limitations.
+It must not invent a simplicity, necessity, primary-solution or sufficiency premise.
+An empty result is legitimate, but a source cohort is not predetermined negative:
+a faithfully stated material tradeoff can be useful without refuting an announcement.
+Previous controlled explanations that introduced unsupported premises remain failures.
+
+Available arXiv abstracts are retained whole and as exact source text. They are not
+full papers. Whole candidates are admitted within the existing ranking packet
+budget; omitted candidates remain visible in diagnostics rather than being turned
+into misleading prefixes. Exact quote IDs preserve source characters and do not
+certify semantic relevance. Source text remains untrusted data, with existing URL,
+network-response, request-count and deadline boundaries. No additional model pass
+is introduced, and offline checks do not establish live editorial quality.

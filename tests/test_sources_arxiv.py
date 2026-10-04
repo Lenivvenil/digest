@@ -51,6 +51,23 @@ class TestSearchArxiv:
 
         assert signals == []
 
+    async def test_complete_abstract_keeps_late_condition(self) -> None:
+        abstract = "Observed benefits in the evaluated sample. " * 20
+        abstract += "\nThese benefits apply only when an expert reviews every proposed action."
+        title = "Limits of LLM\nReasoning"
+        feed = (_ARXIV_ATOM.replace("This paper challenges the assumption that...", abstract)
+                .replace("Limits of LLM Reasoning", title))
+        with respx.mock:
+            respx.get("https://export.arxiv.org/api/query").mock(
+                return_value=httpx.Response(200, text=feed)
+            )
+            async with httpx.AsyncClient() as client:
+                signals = await search_arxiv("agent review", None, client)
+
+        assert len(abstract) > 500
+        assert signals[0].snippet == abstract
+        assert signals[0].title == title
+
     async def test_http_error_raises(self) -> None:
         with respx.mock:
             respx.get("https://export.arxiv.org/api/query").mock(

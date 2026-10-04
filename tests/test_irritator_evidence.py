@@ -19,6 +19,7 @@ from digest.irritator.evidence_stage import (
     MAX_RANKING_CANDIDATES,
     MAX_RANKING_JSON_CHARS,
     MAX_SOURCE_RESULTS,
+    _bounded_signals,
     _parse_narrative,
     _parse_rankings,
     _ranking_signal_payload,
@@ -83,6 +84,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
     original_bundle, original_config = asdict(bundle), asdict(config)
+    original_narrative = _narrative(bundle)["narratives"][0]
     model = _mock_model(bundle)
     signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
     with (
@@ -97,6 +99,9 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     assert result.ranked_signals[0].quote == signal.title
     assert model.await_count == 3
     assert RANK_RELATION_CONTRACT in model.await_args_list[2].args[1][0]["content"]
+    extraction = model.await_args_list[0].args[1][0]["content"]
+    assert "source-attributed assertion or announced decision" in extraction
+    assert "Duplicate reports of one event are not independent support" in extraction
     assert asdict(bundle) == original_bundle
     assert asdict(config) == original_config
     assert result.bundle_id == bundle.bundle_id
@@ -110,6 +115,13 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         if index == 0:
             assert payload["evidence"] == json.loads(json.dumps(original_bundle))
         else:
+            assert payload["narrative"] == {
+                "claim": original_narrative["claim"], "category": original_narrative["category"],
+                "evidence_ids": original_narrative["evidence_ids"], "quotes": original_narrative["quotes"],
+            }
+            for hypothesis in [*original_narrative["implicit_assumptions"],
+                               original_narrative["why_worth_challenging"]]:
+                assert hypothesis not in call.args[1][1]["content"]
             assert payload["evidence"]["bundle_id"] == bundle.bundle_id
             assert payload["evidence"]["items"] == [asdict(bundle.items[0])]
             assert payload["evidence"]["limited_to_narrative_citations"] is True
@@ -123,8 +135,9 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         override = call.kwargs["provider_override"]
         assert (override.name, override.model) == (config.review.secondary.provider, config.review.secondary.model)
     assert all(item is copied_configs[0] for item in copied_configs)
+    assert asdict(result.narratives[0]) == {**original_narrative, "typography_normalized": []}
     serialized = json.loads(json.dumps(asdict(result)))
-    assert serialized["narratives"][0]["evidence_ids"] == [bundle.items[0].evidence_id]
+    assert serialized["narratives"][0] == {**original_narrative, "typography_normalized": []}
     assert len(serialized["diagnostics"]) == 6
     assert next(d for d in result.diagnostics if d.stage == "narrative").resolved_model == "approved-model"
 
@@ -309,7 +322,7 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
     elif mutation == "high_score":
         item["score"] = 11
     elif mutation == "bad_relation":
-        item["relation"] = "supports"
+        item["relation"] = "unknown"
     elif mutation == "too_many":
         ranking["rankings"] *= 4
     elif mutation == "extra_field":
@@ -329,6 +342,115 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
     assert result.status == "incomplete"
     assert not result.ranked_signals
     assert next(d for d in result.diagnostics if d.stage == "ranking").status == "error"
+    assert model.await_count == 3
+
+
+@pytest.mark.parametrize("relation", ["supports", "context", "insufficient"])
+def test_high_scoring_non_counter_relations_excluded(relation: str) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    ranking = _ranking()
+    ranking["rankings"][0].update(relation=relation, score=10)
+    ranked, limitations = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 1)
+    assert ranked == []
+    counts = ", ".join(f"{label}={int(label == relation)}" for label in ("supports", "context", "insufficient"))
+    assert limitations == [f"Ranking omitted non-counter signals: {counts}."]
+
+
+def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    supportive = make_signal(url="https://external.example/support", title="Staged rollout reduces failures")
+    complication = make_signal(url="https://external.example/caveat",
+                               title="Stateful services require a maintenance window for rollout")
+    low_score = make_signal(url="https://external.example/weak", title="Limited rollout caveat")
+    entries = []
+    for signal, relation, score, reason in [
+        (supportive, "supports", 10, "The measured failure reduction supports improved reliability."),
+        (complication, "complicates", 5, "The required maintenance window limits reliability during rollout."),
+        (low_score, "complicates", 4, "The caveat has limited relevance."),
+    ]:
+        entries.append({"url": signal.url, "relation": relation, "score": score, "reasoning": reason,
+                        "quote_id": _ranking_signal_payload(signal)["title"][0]["id"]})
+    ranked, limitations = _parse_rankings(json.dumps({"rankings": entries, "limitations": ["Search is limited."]}),
+                                          [supportive, complication, low_score], narrative, 3, 5)
+    assert len(ranked) == 1
+    assert ranked[0].signal == complication and ranked[0].relation == "complicates"
+    assert ranked[0].quote == complication.title and ranked[0].score == 5
+    assert set(asdict(ranked[0])) == {
+        "signal", "score", "reasoning", "narrative_claim", "relation", "quote", "typography_normalized",
+    }
+    assert limitations == ["Search is limited.",
+                           "Ranking omitted non-counter signals: supports=1, context=0, insufficient=0."]
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("quote_id", "unknown-id"), ("relation", "unknown"), ("score", True), ("reasoning", "  "),
+])
+def test_non_counter_entries_validated_before_filtering(field: str, value: Any) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signals = [make_signal(url=url, title="Deployment limitations")
+               for url in ("https://external.example/caveat", "https://external.example/other")]
+    ranking = _ranking(signals[0].url)
+    invalid = _ranking(signals[1].url)["rankings"][0]
+    invalid.update(relation="supports", score=1)
+    invalid[field] = value
+    ranking["rankings"].append(invalid)
+    with pytest.raises(ValueError):
+        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_url", "cross_url_quote", "missing_relation", "extra_field"])
+def test_non_counter_entries_preserve_identity_and_shape_checks(mutation: str) -> None:
+    bundle = _bundle(fixture_config())
+    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
+    signals = [make_signal(url=url, title="Deployment limitations")
+               for url in ("https://external.example/caveat", "https://external.example/other")]
+    ranking = _ranking(signals[0].url)
+    ranking["rankings"][0].update(relation="supports", score=1)
+    item = _ranking(signals[1].url)["rankings"][0]
+    if mutation == "duplicate_url":
+        item["url"] = signals[0].url
+    elif mutation == "cross_url_quote":
+        ranking["rankings"][0]["quote_id"] = item["quote_id"]
+    elif mutation == "missing_relation":
+        del ranking["rankings"][0]["relation"]
+    else:
+        ranking["rankings"][0]["extra"] = "unexpected"
+    ranking["rankings"].append(item)
+    with pytest.raises(ValueError):
+        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
+
+
+@pytest.mark.asyncio
+async def test_all_non_counter_relations_are_honest_empty_with_omission_counts() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    signals = [make_signal(url=f"https://external.example/{relation}", title="Deployment limitations")
+               for relation in ("supports", "context", "insufficient")]
+    entries = []
+    for signal, relation in zip(signals, ("supports", "context", "insufficient"), strict=True):
+        item = _ranking(signal.url)["rankings"][0]
+        item.update(relation=relation, score=10)
+        entries.append(item)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}),
+        (json.dumps({"rankings": entries, "limitations": []}), {}),
+    ])
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=signals)),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and result.ranked_signals == []
+    assert all(d.status not in {"error", "incomplete"} for d in result.diagnostics)
+    ranking_stage = next(d for d in result.diagnostics if d.stage == "ranking")
+    assert ranking_stage.status == "empty" and ranking_stage.output_count == 0
+    assert "Ranking omitted non-counter signals: supports=1, context=1, insufficient=1." in result.limitations
     assert model.await_count == 3
 
 
@@ -517,9 +639,9 @@ async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
     payload = json.loads(model.await_args_list[2].args[1][1]["content"])
     assert len(json.dumps(payload["signals"], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
     assert 0 < len(payload["signals"]) < 10
+    assert result.status == "incomplete"
     diagnostic = next(item for item in result.diagnostics if item.stage == "ranking")
     assert diagnostic.omitted_count == len(raw) - len(payload["signals"])
-    assert result.status == "empty"
 
 
 @pytest.mark.asyncio
@@ -544,7 +666,9 @@ async def test_quote_failure_preserves_bounded_private_evidence_but_no_raw_respo
     assert "Fabricated source quotation" not in caplog.text
     assert "raw_response" not in asdict(diagnostic) and diagnostic.response_sha256
     # Unknown IDs and overlong fields are rejected before a quote diagnostic exists.
-    for identity, quote in (("unknown-source", "Synthetic quote"), (bundle.items[0].evidence_id, "x" * 201)):
+    evidence = bundle.items[0]
+    overlong = "x" * (max(len(evidence.title), len(evidence.excerpt)) + 1)
+    for identity, quote in (("unknown-source", "Synthetic quote"), (evidence.evidence_id, overlong)):
         rejected = _narrative(bundle)
         rejected["narratives"][0]["evidence_ids"] = [identity]
         rejected["narratives"][0]["quotes"] = {identity: quote}
@@ -634,7 +758,7 @@ def test_ranking_selected_id_preserves_exact_source_text(text: str) -> None:
 ])
 def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quote: str) -> None:
     config = fixture_config()
-    article = make_article(title="API-powered systems")
+    article = make_article(title="API-powered systems", description="Original evidence describing API-powered systems.")
     bundle = build_evidence_bundle({article.category: [article]}, config.review)
     response = _narrative(bundle)
     narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
@@ -648,13 +772,20 @@ def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quo
         _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
-def test_quote_length_is_checked_before_typography_repair() -> None:
+@pytest.mark.parametrize("model_hyphen", ["-", "\u2011"])
+def test_narrative_quote_length_is_bound_to_source_before_typography_repair(model_hyphen: str) -> None:
     config = fixture_config()
-    article = make_article(description="a" * 199 + "-z")
+    article = make_article(description="API-powered systems " * 10 + "end.")
     bundle = build_evidence_bundle({article.category: [article]}, config.review)
     response = _narrative(bundle)
+    identity = bundle.items[0].evidence_id
+    quote = article.description.replace("-", model_hyphen)
+    assert len(quote) == len(bundle.items[0].excerpt) == 204
+    response["narratives"][0]["quotes"][identity] = quote
     narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
-    response["narratives"][0]["quotes"][bundle.items[0].evidence_id] = article.description.replace("-", "\u2011")
+    assert narrative.quotes[identity] == bundle.items[0].excerpt
+    assert narrative.typography_normalized == ([identity] if model_hyphen != "-" else [])
+    response["narratives"][0]["quotes"][identity] = quote + "!"
     signal = make_signal(url="https://external.example/caveat", snippet=article.description)
     ranking = _ranking(signal.url)
     ranking["rankings"][0]["quote"] = article.description.replace("-", "\u2011")
@@ -851,3 +982,42 @@ def test_rank_segments_preserve_whole_fields_and_bind_changed_evidence() -> None
     assert payload == _ranking_signal_payload(signal) and asdict(signal) == before
     changed = _ranking_signal_payload(replace(signal, snippet=text.replace("tradeofff", "tradeoff")))
     assert payload["snippet"][0]["id"] != changed["snippet"][0]["id"]
+
+
+def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission() -> None:
+    from digest.irritator.evidence_stage import _ranking_candidates
+
+    abstract = ("Background  with exact spacing. " * 30
+                + "Our evaluation preserves utility while reducing the measured attacks. "
+                + "Only the tested deployment was evaluated; tradeofff remains workload dependent.")
+    signal = make_signal(title="Exact  title", snippet=abstract)
+    validated = _bounded_signals([signal], "arxiv")
+    assert validated[0].title == signal.title
+    assert validated[0].snippet == abstract
+    candidates = _ranking_candidates(validated)
+    assert len(candidates) == 1
+    payload = _ranking_signal_payload(candidates[0])
+    assert "".join(part["text"] for part in payload["snippet"]) == abstract
+    assert len(json.dumps([payload], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
+    oversized = make_signal(url="https://example.org/too-large", snippet="x" * 9000)
+    assert _ranking_candidates(_bounded_signals([oversized, signal], "arxiv")) == validated
+
+
+@pytest.mark.asyncio
+async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["arxiv"]
+    bundle = _bundle(config)
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {})])
+    signal = make_signal(snippet="x" * 9000)
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert model.await_count == 2
+    assert result.status == "incomplete"
+    ranking = next(item for item in result.diagnostics if item.stage == "ranking")
+    assert ranking.status == "incomplete" and ranking.omitted_count == 1
+    assert result.ranked_signals == []

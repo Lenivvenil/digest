@@ -789,3 +789,38 @@ def test_gemini_final_parts_fail_closed_without_disclosing_response(parts) -> No
         _gemini_final_text({"content": {"parts": parts}})
     assert "synthetic" not in str(error.value) and "do_not_execute" not in str(error.value)
     assert "partial" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_stricter_stage_pacing_covers_previous_start_and_deadline_without_reset() -> None:
+    import copy
+
+    from digest import llm
+    from digest.reading_brief import _generation_timeout
+
+    config = _make_config([{"name": "gemini", "model": "fixture", "role": ["summarize"]}])
+    config.llm.min_request_interval_seconds = 20
+    llm.set_request_limit(config, 2)
+    state = llm._request_state(config)
+    stage = copy.copy(config)
+    stage.llm = copy.copy(config.llm)
+    stage.llm.min_request_interval_seconds = 65
+    clock = [1000.0]
+    waits = []
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+        clock[0] += delay
+
+    with (patch("digest.llm.time.monotonic", side_effect=lambda: clock[0]),
+          patch("digest.llm.asyncio.sleep", side_effect=sleep)):
+        await llm._pace_request(state, 20)
+        llm._reserve_request(state)
+        clock[0] = 1005
+        assert llm.request_wait_seconds(stage) == 60
+        with pytest.raises(TimeoutError, match="technical_deadline"):
+            _generation_timeout(stage, 1090)
+        assert not waits and llm.request_budget_remaining(stage) == 1
+        await llm._pace_request(state, 65)
+        assert clock[0] == state.last_request_at == 1065 and waits == [60]
+        assert state.next_request_at == 1130 and llm.request_budget_remaining(config) == 1

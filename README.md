@@ -71,9 +71,13 @@ full-source factual quality remains open in #55.
 
 Full-source reading briefs are off by default. The `reading_brief` setting requires
 English canonical text, review-led selection, and an explicitly configured model
-route. The implemented exact-count profile is Gemini 3.8 Flash; unknown profiles
-remain technical pending. Advertised context does not establish your free-account
-quota. Pending selected articles retain complete-source progress and resume on later
+route. Gemini 3.8 Flash uses an exact count; Groq GPT-OSS 120B supports a pinned
+local tokenizer estimate with explicit framing headroom and output reserve. Unknown
+profiles (including Qwen without a verified current framing profile) remain technical
+pending. An unavailable route may use at most one other supported route already in
+`llm.providers`, within the same deadline, pacing and request cap, without retries.
+See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
+Advertised context and the local request allowance do not establish your free-account quota. Pending selected articles retain complete-source progress and resume on later
 runs, including empty-feed days. Cards carry a concise source-cited brief, including
 material conditions and unresolved source contradictions, plus source/date notes.
 The complete selected quotations stay in an original-language archive appendix and

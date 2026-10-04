@@ -11,17 +11,21 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 import httpx
 
-from digest._sanitize import sanitize_article
 from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
 from digest.irritator.query_generator import SearchQuery
-from digest.irritator.ranker import RANK_RELATION_CONTRACT, RankedSignal
+from digest.irritator.ranker import (
+    MAX_RANKING_JSON_CHARS,
+    RANK_RELATION_CONTRACT,
+    RANK_RELATIONS,
+    RankedSignal,
+)
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
@@ -34,7 +38,6 @@ from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundl
 MAX_QUERIES = 3
 MAX_SOURCE_RESULTS = 10
 MAX_RANKING_CANDIDATES = 12
-MAX_RANKING_JSON_CHARS = 8000
 MAX_SOURCE_RESPONSE_BYTES = 512000
 MAX_RANKED_SIGNALS = 3
 MAX_OUTPUT_TOKENS = 2048
@@ -43,13 +46,15 @@ MAX_SECONDS = 180.0
 SAFE_SOURCES = ("hackernews", "arxiv", "lobsters")
 COVERAGE = (
     "Limited coverage: at most one narrative from sanitized RSS excerpts, three queries, "
-    "and the configured Hacker News/arXiv/Lobsters sources. Search snippets are not full articles; "
+    "and the configured Hacker News/arXiv/Lobsters sources. "
+    "Search snippets and complete arXiv abstracts are not full articles; "
     "absence of a counter-signal is not confirmation of the narrative."
 )
 FULL_SOURCE_COVERAGE = (
     "Limited coverage: at most one narrative from selected literal full-source passages, three queries, "
     "and the configured Hacker News/arXiv/Lobsters sources. Passage selection is model-generated, "
-    "not independent corroboration or complete article coverage. Search snippets are not full articles; "
+    "not independent corroboration or complete article coverage. "
+    "Search snippets and complete arXiv abstracts are not full articles; "
     "absence of a counter-signal is not confirmation of the narrative."
 )
 
@@ -141,7 +146,7 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Narrative quote is not in original evidence.", "Invalid narrative assumptions count.",
     "Narrative category is not in cited evidence.", "Invalid query fields.", "Duplicate query.",
     "Invalid ranking fields.", "Unknown or duplicate ranking URL.",
-    "Ranking score must be an integer from 1 through 10.", "Ranking relation must contradict or complicate.",
+    "Ranking score must be an integer from 1 through 10.", "Invalid ranking relation.",
     "Ranking quote ID is not bound to the supplied signal URL.", "Invalid source result fields.",
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
@@ -216,8 +221,9 @@ def _parse_narrative(
         canonical_quotes: dict[str, str] = {}
         typography_normalized: list[str] = []
         for identity, quote in quotes.items():
-            _bounded_text(quote, 200, field="source_quote")
             evidence = known[identity]
+            quote_limit = max(len(evidence.title), len(evidence.excerpt))
+            _bounded_text(quote, quote_limit, field="source_quote")
             try:
                 if isinstance(bundle, FullSourceEvidence):
                     # A title, model angle or typography repair cannot substitute
@@ -227,7 +233,7 @@ def _parse_narrative(
                     canonical_quotes[identity], normalized = quote, False
                 else:
                     canonical_quotes[identity], normalized = canonical_evidence_quote(
-                        quote, evidence.title, evidence.excerpt,
+                        quote, evidence.title, evidence.excerpt, max_length=quote_limit,
                     )
             except ValueError as exc:
                 raise NarrativeQuoteMismatch(RejectedEvidenceQuote(bundle.bundle_id, identity, quote)) from exc
@@ -292,7 +298,7 @@ def _parse_rankings(
 ) -> tuple[list[EvidenceRankedSignal], list[str]]:
     entries, limitations = _response(text, "rankings", maximum)
     known = {signal.url: signal for signal in signals}
-    ranked = []
+    validated = []
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote_id"}:
@@ -302,8 +308,8 @@ def _parse_rankings(
             raise ValueError("Unknown or duplicate ranking URL.")
         if type(score) is not int or not 1 <= score <= 10:
             raise ValueError("Ranking score must be an integer from 1 through 10.")
-        if relation not in ("contradicts", "complicates"):
-            raise ValueError("Ranking relation must contradict or complicate.")
+        if not isinstance(relation, str) or relation not in RANK_RELATIONS:
+            raise ValueError("Invalid ranking relation.")
         signal = known[url]
         evidence = _ranking_signal_payload(signal)
         options = {item["id"]: item["text"] for field in ("title", "snippet") for item in evidence[field]}
@@ -313,8 +319,23 @@ def _parse_rankings(
         _bounded_text(quote, 200, field="source_quote")
         reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
-        if score >= min_score:
-            ranked.append(EvidenceRankedSignal(signal, score, reasoning, narrative.claim, relation, quote, False))
+        validated.append((signal, score, reasoning, relation, quote))
+
+    ranked = []
+    omitted = dict.fromkeys(("supports", "context", "insufficient"), 0)
+    for signal, score, reasoning, relation, quote in validated:
+        if relation in omitted:
+            omitted[relation] += 1
+        elif relation in ("contradicts", "complicates") and score >= min_score:
+            ranked.append(EvidenceRankedSignal(
+                signal, score, reasoning, narrative.claim,
+                cast(Literal["contradicts", "complicates"], relation), quote, False,
+            ))
+    if any(omitted.values()):
+        limitations.append(
+            "Ranking omitted non-counter signals: "
+            + ", ".join(f"{relation}={count}" for relation, count in omitted.items()) + "."
+        )
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
     return ranked, limitations
 
@@ -347,7 +368,7 @@ async def _model_text(
 
 
 def _bounded_signals(signals: list[Signal], source: str) -> list[Signal]:
-    """Keep adapter data bounded and sanitized, preserving the actual external URL."""
+    """Validate adapter metadata; retain exact evidence until whole-packet admission."""
     bounded = []
     for signal in signals[:MAX_SOURCE_RESULTS]:
         if not isinstance(signal, Signal) or not all(isinstance(value, str) for value in (
@@ -360,8 +381,9 @@ def _bounded_signals(signals: list[Signal], source: str) -> list[Signal]:
             raise ValueError("Invalid source result URL.")
         if type(signal.score) not in {int, float} or not math.isfinite(signal.score):
             raise ValueError("Invalid source score.")
-        title, snippet, _ = sanitize_article(signal.title, signal.snippet, source)
-        bounded.append(Signal(signal.url, title[:400], snippet[:800], source, signal.published[:80], signal.score))
+        # Source text is untrusted data, not executable instructions. Rewriting or
+        # prefix-cutting it would change the evidence later certified by quote IDs.
+        bounded.append(Signal(signal.url, signal.title, signal.snippet, source, signal.published[:80], signal.score))
     return bounded
 
 
@@ -472,14 +494,22 @@ async def _run_stages(
         if source_evidence is not None else ""
     )
     grounding = "selected original full-source passages" if source_evidence is not None else "original RSS evidence"
-    quoted_field = "excerpt" if source_evidence is not None else "title/excerpt"
+    quoted_field = "excerpt" if source_evidence is not None else "title or excerpt"
     text = await _model_text(diagnostic, LLMRole.EXTRACT_NARRATIVES, (
-        f'Identify at most ONE potentially dominant narrative to challenge, grounded in the {grounding}. '
-        'Treat dominance as a limited hypothesis, not a corpus-wide finding. Return {"narratives": [...], '
+        f'Select at most ONE concrete source-attributed assertion or announced decision from the {grounding}. '
+        'The claim must name its source or actor and preserve the stated scope, timing and uncertainty. '
+        'Do not turn reported framing into an imminent threat, necessity, consensus or exclusive solution. '
+        'Duplicate reports of one event are not independent support; '
+        'do not merge unrelated announcements into a claim. '
+        'Keep inferred framing only in implicit_assumptions or why_worth_challenging, labelled as hypotheses; '
+        'those fields are not the target of external checking. '
+        'If no concrete target is supported, return no narratives. '
+        'Return {"narratives": [...], '
         '"limitations": [short strings]}. Each narrative has exactly claim (concise text), category '
         '(an exact cited category), implicit_assumptions (1-3 concise strings), why_worth_challenging '
         '(concise text), evidence_ids (1-3 unique known IDs), quotes (an object mapping each cited ID to one '
-        f'exact nonempty substring of its {quoted_field} <=200 chars). No other fields. At most 5 limitations '
+        f'exact nonempty substring of its supplied {quoted_field}, up to the full field length). '
+        'No other fields. At most 5 limitations '
         '(concise strings); explain any empty list. Use the requested language only for claim, '
         'implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the '
         'supplied evidence unchanged, in their original language; never translate a literal quote. '
@@ -493,6 +523,10 @@ async def _run_stages(
         return
 
     narrative = result.narratives[0]
+    narrative_input = {
+        "claim": narrative.claim, "category": narrative.category,
+        "evidence_ids": narrative.evidence_ids, "quotes": narrative.quotes,
+    }
     cited_evidence = {
         "bundle_id": evidence.bundle_id, "evidence_kind": evidence.evidence_kind,
         "items": [asdict(item) for item in evidence.items if item.evidence_id in narrative.evidence_ids],
@@ -506,7 +540,7 @@ async def _run_stages(
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields. ' + QUERY_CONTRACT
-    ), {"narrative": asdict(narrative), "evidence": cited_evidence, "max_queries": maximum_queries}, config)
+    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.queries))
@@ -551,19 +585,23 @@ async def _run_stages(
     diagnostic.omitted_count = len(signals) - len(candidates)
     if diagnostic.omitted_count:
         result.limitations.append(f"Ranking considered only {len(candidates)} of {len(signals)} validated signals.")
+    if not candidates:
+        diagnostic.status = "incomplete"
+        result.status = "incomplete"
+        return
     text = await _model_text(diagnostic, LLMRole.RANK_SIGNALS, (
-        'Select up to max_ranked external signals that CONTRADICT or COMPLICATE the narrative. '
-        'Counter-evidence must be supported by supplied titles/snippets; do not infer a refutation from a '
-        'title alone when it does not support one. Return {"rankings": [...], "limitations": [...]}. '
+        'Classify up to max_ranked external signals against the narrative, prioritizing supported '
+        'counter-evidence. Return {"rankings": [...], "limitations": [...]}. '
         'Each ranking has exactly url (an exact supplied external signal URL), score (integer 1-10), '
-        'relation ("contradicts" or "complicates"), reasoning (concise text), quote_id (one exact ID '
+        'relation ("contradicts", "complicates", "supports", "context" or "insufficient"), '
+        'reasoning (concise text), quote_id (one exact ID '
         'from that same signal URL title/snippet segments). Select an ID; do not retype or repair source text. '
         'Ordered segments preserve the original field, including typos and whitespace. '
         'Use unique URLs only. 9-10 means strong '
         'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
-        'Return no rankings if unsupported and explain why in limitations (up to 5 concise strings). '
+        'Explain an empty ranking list in limitations (up to 5 concise strings). '
         'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
-    ), {"narrative": asdict(narrative), "evidence": cited_evidence,
+    ), {"narrative": narrative_input, "evidence": cited_evidence,
         "signals": [_ranking_signal_payload(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)
     result.ranked_signals, limitations = _parse_rankings(
@@ -571,7 +609,8 @@ async def _run_stages(
     )
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.ranked_signals))
-    result.status = "incomplete" if failed else "complete" if result.ranked_signals else "empty"
+    result.status = ("incomplete" if failed or diagnostic.omitted_count
+                     else "complete" if result.ranked_signals else "empty")
 
 
 async def run_evidence_irritator(
@@ -622,7 +661,7 @@ async def run_evidence_irritator(
             if isinstance(exc, NarrativeQuoteMismatch):
                 current.rejected_quote = exc.rejection
         # No full provider responses, prompts, HTTP headers or credentials are retained.
-        # Only a <=200-character quote tied to a validated evidence ID may be saved
+        # Only a quote bounded by its validated evidence title/excerpt length may be saved
         # in the private result archive; exception text/logging remains fixed.
         result.status = "incomplete" if result.narratives else "error"
     return result

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -94,31 +95,33 @@ class TestBuildPrompt:
         assert n.claim in messages[1]["content"]
         assert "5" in messages[1]["content"]
 
-    def test_includes_assumptions(self) -> None:
+    @pytest.mark.parametrize("language", ["en", "ru", "fr"])
+    def test_uses_claim_and_category_without_hypotheses(self, language: str) -> None:
         n = _make_narrative()
-        messages = _build_prompt(n, "en", 3)
-        assert "AI is infallible" in messages[1]["content"]
-        assert "Developer skills are commoditized" in messages[1]["content"]
+        original_narrative = asdict(n)
+        messages = _build_prompt(n, language, 3)
+        content = messages[1]["content"]
+        assert n.claim in content
+        assert n.category in content
+        assert all(assumption not in content for assumption in n.implicit_assumptions)
+        assert n.why_worth_challenging not in content
+        assert asdict(n) == original_narrative
 
     def test_unknown_language_falls_back_to_ru(self) -> None:
         messages = _build_prompt(_make_narrative(), "fr", 3)
         assert "поисковый аналитик" in messages[0]["content"]
 
-    def test_adversarial_instruction_in_english_prompt(self) -> None:
+    def test_counter_hypothesis_belongs_in_intent_in_english_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), "en", 3)
         user_content = messages[1]["content"]
-        adversarial_markers = ["failure", "didn't work", "criticism", "wrong", "limitations"]
-        assert any(m in user_content for m in adversarial_markers), (
-            f"Expected adversarial instruction in prompt, got: {user_content[:300]}"
-        )
+        assert "Do not require the desired counterclaim in search keywords" in user_content
+        assert "counter-hypothesis and reason to investigate in intent" in user_content
 
-    def test_adversarial_instruction_in_russian_prompt(self) -> None:
+    def test_counter_hypothesis_belongs_in_intent_in_russian_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), "ru", 3)
         user_content = messages[1]["content"]
-        adversarial_markers = ["failure", "criticism", "wrong", "провал", "критик"]
-        assert any(m in user_content for m in adversarial_markers), (
-            f"Expected adversarial instruction in prompt, got: {user_content[:300]}"
-        )
+        assert "Не закладывай желаемое опровержение в поисковые слова" in user_content
+        assert "Контргипотезу и причину проверки укажи в intent" in user_content
 
     def test_no_target_source_in_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), "en", 3)
@@ -247,18 +250,24 @@ class TestGenerateQueries:
 
         assert len(list(result.values())[0]) == 2
 
-    async def test_prompt_sent_to_llm_contains_adversarial_instruction(self) -> None:
+    async def test_prompt_sent_to_llm_excludes_narrative_hypotheses(self) -> None:
         dicts = _valid_query_dicts(1)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
+        narrative = _make_narrative()
+        original_narrative = asdict(narrative)
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            await generate_queries([_make_narrative()], _make_config(language="en"))
+            await generate_queries([narrative], _make_config(language="en"))
 
         call_args = mock_complete.call_args
         messages = call_args[0][1]
         user_content = next(m["content"] for m in messages if m["role"] == "user")
-        adversarial_markers = ["failure", "criticism", "wrong", "didn't work", "limitations"]
-        assert any(m in user_content for m in adversarial_markers)
+        assert narrative.claim in user_content
+        assert narrative.category in user_content
+        assert all(assumption not in user_content for assumption in narrative.implicit_assumptions)
+        assert narrative.why_worth_challenging not in user_content
+        assert "counter-hypothesis and reason to investigate in intent" in user_content
+        assert asdict(narrative) == original_narrative
 
 
 @pytest.mark.parametrize("query", [
