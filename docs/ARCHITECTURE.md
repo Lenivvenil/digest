@@ -70,6 +70,7 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
 | `delivery/telegram.py` | Telegram article cards, vote buttons and confirmed transport accounting |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
+| `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
 | `feedback.py` | Telegram polling, vote parsing, article/source mapping and bot commands |
 | `source_scorer.py` | Source metrics, effective priorities, trial lifecycle state and bubble diagnostics |
 | `discovery.py` | Proposed feeds, URL validation, approval cards and approved additions to runtime config |
@@ -326,10 +327,12 @@ records the measured cost, applied daily schedule, proposed operating allocation
 maintenance reserve, account-quota
 uncertainty and retention risks. This architecture page does not duplicate that budget.
 A cron change alone does not implement compact output. Legacy card mode can retry
-uncertain requests; explicit compact mode uses a coarse durable issue reservation,
-complete text/source identity and confirmed per-article chunk coverage. See
+uncertain requests; the deployed compact mode initially used a coarse durable issue
+reservation with complete text/source identity and confirmed per-article chunk coverage. See
 [ADR0007](decisions/0007-compact-issue-reservation.md) for the hold-after-crash policy;
-exactly-once delivery is not claimed.
+exactly-once delivery is not claimed. The #120 amendment moves this claim after
+immutable readiness: preparation can target a later UTC publication day, while the
+sender validates frozen payloads and window without running generation.
 
 Retain configured translation and actual bounded Irritator/comparison processing.
 The compact presentation keeps optional outcomes in the archive, with honest

@@ -442,23 +442,40 @@ vote buttons keep the same article identity and URL → Start interaction. Trans
 and model-attribution notices appear once per issue. Optional Irritator/comparison
 work remains in the archive with its real status, without extra Telegram pushes.
 
-Managed compact publication requires a durable reservation before the primary CLI:
+Managed compact delivery separates preparation from sending:
 
 ```sh
-python -m digest --config config.yaml --reserve-issue
-# Commit/push .cache/compact_issue.json and verify its exact remote SHA256.
-python -m digest --config config.yaml --feedback-precollected --issue-reservation-sha "$PERSISTED_ISSUE_SHA"
-# Persist the resulting marker, confirmed dedup/feedback state and archives together.
+python -m digest --config config.yaml --feedback-precollected --prepare-edition
+# Commit/push preparation, archive and .cache/prepared_edition.json; verify its remote SHA256.
+python -m digest --config config.yaml --edition-phase claim --ready-sha "$READY_SHA"
+# Commit/push .cache/prepared_edition_claim.json; verify ready + claim hashes from the same revision.
+python -m digest --config config.yaml --edition-phase send --ready-sha "$READY_SHA" --claim-sha "$CLAIM_SHA"
+# Commit/push receipts and confirmed feedback/dedup state together.
 ```
 
-The managed workflow owns the Git barrier; a locally calculated hash alone does not
-prove remote persistence. Collect/persist/ack feedback before this publication guard.
-An unresolved issue holds future automatic publication, even on a later day, until
-inspection. Do not blindly reset it or rerun an uncertain send. Preview with
-`--dry-run --radar-only` does not reserve/send, but can still use source/model quotas.
-See [ADR0007](docs/decisions/0007-compact-issue-reservation.md) for the intentional
-availability tradeoff and recovery boundary. This mode does not enable experimental
-full-source analysis or claim to complete its quality gate.
+Preparation saves accepted canonical analysis before presentation, then freezes exact
+Telegram payloads, buttons, article coverage, archive hashes, recipient and UTC expiry.
+The sender performs no collection, model request, translation or rendering. A supported
+manifest survives model/prompt changes; an expired, corrupt or wrong-recipient edition
+cannot send. No ready edition produces an explicit status, without a raw-feed fallback.
+
+The default intended publication day is today in UTC. `--edition-date YYYY-MM-DD`
+explicitly prepares a later UTC day's edition, including after today's delivery is
+confirmed. Its creation timestamp is separate from its publication window: it remains
+`pending_window` and cannot be claimed or sent before that day's 00:00 UTC. Expiry is
+the end of the intended day, not creation plus 24 hours. A current-day edition prepared
+at 23:59 expires at 00:00; a tomorrow edition remains eligible through tomorrow. No
+new schedule or automatic choice of a future publication day is introduced.
+
+The managed workflow owns the remote Git barriers. A local hash alone proves no remote
+durability. Its second job can inspect a previously persisted eligible edition after
+preparation fails. Feedback collection/persistence/acknowledgement remains independent.
+Claims are created only after readiness. A claim with unknown transport or unfinished
+state persistence holds publication for inspection. Confirmed current-day editions
+are no-ops. Legacy unresolved compact markers also remain holds during migration.
+Do not delete a marker or replay uncertain delivery. Exact-once delivery is not promised.
+See [ADR0007](docs/decisions/0007-compact-issue-reservation.md) for migration and recovery.
+The ready boundary does not activate experimental full-source analysis.
 
 ## Development
 

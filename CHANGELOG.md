@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Prepared-edition boundary (#120): accepted canonical analysis is resumable before
+  presentation; exact Telegram payloads are frozen and remotely persisted before a
+  separate sender claims them. Message IDs and complete article coverage are retained;
+  ambiguous sends or incomplete state persistence hold replay. Existing daily schedule
+  and job ceilings remain unchanged; natural-release acceptance is still required.
+
 - English current documentation and safe onboarding; historical records retain their
   original language, and no software-license grant is supplied.
 - Configurable generated-text translation with a pinned route, bounded requests,

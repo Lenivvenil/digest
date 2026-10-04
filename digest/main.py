@@ -20,7 +20,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -130,6 +130,8 @@ class RunStats:
     required_delivery_failed: bool = False
     review_status: str = "not_requested"
     review_checkpoint: str = ""
+    edition_status: str = ""
+    ready_sha256: str = ""
 
 
 async def _send_status_message(text: str) -> bool:
@@ -824,9 +826,33 @@ async def _deliver_compact(
     return await send_compact_issue(articles, config, notice=notice, before_send=guard.mark_sending)
 
 
+def _empty_run_stats(feeds: int, feedback: int, articles: int = 0) -> RunStats:
+    return RunStats(feeds, articles, 0, False, False, False, "", feedback_collected=feedback)
+
+
+def _analysis_missing(summaries: list[Any], cards: list[Any], report: Any) -> bool:
+    return not summaries and not cards and report is None
+
+
+def _review_led(config: Any) -> bool:
+    return bool(getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only)
+
+
+def _save_empty_cache(cache: dict[str, str], compact: bool, cache_dir: str, prepare_only: bool) -> None:
+    if not prepare_only:
+        _save_delivery_cache(cache, compact, cache_dir)
+
+
+def _validate_compact_run(
+    compact: bool, dry_run: bool, radar_only: bool, guard: IssueGuard | None, prepare_only: bool,
+) -> None:
+    if compact and not dry_run and not radar_only and guard is None and not prepare_only:
+        raise ValueError("Compact publication requires an externally persisted issue reservation.")
+
+
 async def _run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None,
+    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
     from digest._util import cleanup_stale_tmp
@@ -852,11 +878,8 @@ async def _run(
     _t_run_start = time.monotonic()
     config = load_config(config_path)
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
-    if compact and not dry_run and not radar_only and issue_guard is None:
-        raise ValueError("Compact publication requires an externally persisted issue reservation.")
-    review_led_only = bool(
-        getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only
-    )
+    _validate_compact_run(compact, dry_run, radar_only, issue_guard, prepare_only)
+    review_led_only = _review_led(config)
     logger = logging.getLogger(__name__)
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
@@ -870,6 +893,11 @@ async def _run(
         config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
     )
     feeds_count = len(config.enabled_sources)
+    if prepare_only:
+        from digest.edition_runtime import resume_preparation
+        resumed = await resume_preparation(config, feedback_collected, verbose=verbose, publication_date=edition_date)
+        if resumed is not None:
+            return resumed
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
@@ -903,30 +931,22 @@ async def _run(
 
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
-    def _empty_stats(n_articles: int = 0) -> RunStats:
-        return RunStats(
-            feeds_fetched=feeds_count, new_articles=n_articles, digest_length=0,
-            telegram_sent=False, telegram_partial=False,
-            markdown_saved=False, markdown_path="",
-            feedback_collected=feedback_collected,
-        )
-
     if not articles_by_category:
         logger.info("No new articles found. Nothing to summarize.")
         if not dry_run:
-            _save_delivery_cache(cache, compact, cache_dir)
+            _save_empty_cache(cache, compact, cache_dir, prepare_only)
             _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
             save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
             if feedback_usable:
                 save_feedback(feedback_store, cache_dir)
-        return _empty_stats()
+        return _empty_run_stats(feeds_count, feedback_collected)
 
     contributing_sources = sorted(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
     summaries, trends, top_articles, review_report = await _analyze_articles(articles_by_category, config)
-    if not summaries and not top_articles and review_report is None:
+    if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         _save_failed_run_stats(
             source_stats, fetch_metrics, cache_dir,
@@ -935,10 +955,26 @@ async def _run(
         await _notify_summaries_failed(
             dry_run=dry_run, telegram_enabled=config.telegram.enabled and not compact,
         )
-        return _empty_stats(total_articles)
+        return _empty_run_stats(feeds_count, feedback_collected, total_articles)
 
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
     combined = _publication_intro(combined, review_report, config)
+
+    if prepare_only:
+        from digest.edition_runtime import finish_preparation, save_accepted_preparation
+        from digest.preparation import PreparationSnapshot
+
+        snapshot = PreparationSnapshot(
+            top_articles=top_articles, summaries=summaries, combined=combined,
+            review_report=review_report, source_count=len(articles_by_category),
+            article_count=total_articles, contributing_sources=contributing_sources,
+        )
+        save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=edition_date)
+        _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
+        save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
+        save_source_category_map(config.enabled_sources, cache_dir)
+        return await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
+                                        publication_date=edition_date)
 
     if radar_only:
         combined, top_articles = await _primary_presentation(
@@ -1091,12 +1127,13 @@ async def _run(
 
 async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None,
+    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
 ) -> RunStats:
     """Finalize coarse issue state even when analysis or delivery exits early."""
     try:
         return await _run(config_path, dry_run, radar_only, verbose,
-                          feedback_precollected=feedback_precollected, issue_guard=issue_guard)
+                          feedback_precollected=feedback_precollected, issue_guard=issue_guard,
+                          prepare_only=prepare_only, edition_date=edition_date)
     finally:
         if issue_guard is not None:
             if issue_guard.state == "reserved":
@@ -1171,10 +1208,22 @@ async def main(argv: list[str] | None = None) -> int:
                         help="Reserve one compact issue locally; managed runtime must commit/push before publication")
     parser.add_argument("--issue-reservation-sha",
                         help="SHA256 of the externally persisted compact issue reservation")
+    parser.add_argument("--prepare-edition", action="store_true",
+                        help="Prepare and freeze an edition without claiming or sending it")
+    parser.add_argument("--edition-date", help="Intended UTC publication date YYYY-MM-DD (prepare only)")
+    parser.add_argument("--edition-phase", choices=("inspect", "claim", "send"),
+                        help="Inspect or deliver an already prepared immutable edition")
+    parser.add_argument("--ready-sha", help="SHA256 of the remotely persisted ready edition")
+    parser.add_argument("--claim-sha", help="SHA256 of the remotely persisted delivery claim")
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
     try:
+        from digest.edition_runtime import validate_cli
+        validate_cli(args)
+        if args.edition_phase:
+            from digest.edition_runtime import delivery_phase
+            return await delivery_phase(args.edition_phase, args.config, args.ready_sha, args.claim_sha)
         if ((args.discovery_phase != "all" or args.discovery_pending_sha or args.discovery_delivery_sha)
                 and not args.discover):
             raise ValueError("Discovery phases require --discover.")
@@ -1207,10 +1256,17 @@ async def main(argv: list[str] | None = None) -> int:
             from digest.delivery.issue_guard import load_guard
             issue_guard = load_guard(args.config, args.issue_reservation_sha)
         run_options: dict[str, Any] = {"feedback_precollected": args.feedback_precollected}
+        if args.prepare_edition:
+            run_options["prepare_only"] = True
+            run_options["edition_date"] = date.fromisoformat(args.edition_date) if args.edition_date else None
         if issue_guard is not None:
             run_options["issue_guard"] = issue_guard
         stats = await run(args.config, args.dry_run, args.radar_only, args.verbose, **run_options)
         _print_stats(stats)
+        if args.prepare_edition:
+            from digest.edition_runtime import publish_outputs
+            publish_outputs(edition_status=stats.edition_status or "no_ready", ready_sha256=stats.ready_sha256)
+            return 1 if stats.edition_status == "held" else 0
 
         if stats.required_delivery_failed:
             logging.getLogger(__name__).error("Required Telegram article delivery did not complete.")
