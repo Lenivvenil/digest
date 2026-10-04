@@ -497,7 +497,9 @@ async def test_mutable_evidence_item_container_is_rejected_before_model_calls() 
     complete.assert_not_called()
 
 
-def _full_source_evidence(tmp_path: Path, bundle: EvidenceBundle) -> FullSourceEvidence:
+def _full_source_evidence(
+    tmp_path: Path, bundle: EvidenceBundle, *, fallback: bool = False,
+) -> FullSourceEvidence:
     from digest.article_source import FetchedArticle
     from digest.reading_brief_state import BriefState, Page, PageResult, Route, Selection, save_source
     from digest.review_checkpoint import build_full_source_evidence
@@ -517,6 +519,8 @@ def _full_source_evidence(tmp_path: Path, bundle: EvidenceBundle) -> FullSourceE
     state = BriefState(selection, Route("gemini", "exact-source-reader", 10000, 2000),
                        "2026-10-02T12:00:00+00:00", "2026-10-02T12:00:00+00:00",
                        status="ready", source_sha256=snapshot, pages=[page])
+    if fallback:
+        page.route = Route("groq", "actual-fallback", 8000, 2000)
     # Reading-brief validation is tested by its owner; this adapter receives only checked states.
     with patch("digest.reading_brief.ready_brief_evidence", return_value=(state, source)):
         result = build_full_source_evidence(bundle, tmp_path, [selection.identity])
@@ -622,3 +626,14 @@ def test_full_source_transport_budget_rejects_without_truncating(tmp_path: Path)
         with pytest.raises(ValueError, match="exceeds checkpoint budget"):
             validate_full_source_evidence(evidence, rss_bundle)
     assert asdict(evidence) == before
+
+
+def test_full_source_provenance_names_actual_page_fallback(tmp_path: Path) -> None:
+    from digest.review import build_evidence_bundle
+
+    config = _trial_config()
+    bundle = build_evidence_bundle(fixture_articles(), config.review)
+    evidence = _full_source_evidence(tmp_path, bundle, fallback=True)
+    assert evidence.items
+    assert all(item.selection_provider == "groq" and item.selection_model == "actual-fallback"
+               for item in evidence.items)

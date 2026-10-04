@@ -110,7 +110,7 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
         generated.append(ids)
         if ids == [3, 4] and fail:
             fail = False
-            raise RuntimeError("429 quota")
+            raise RuntimeError("HTTP 429 code=RESOURCE_EXHAUSTED")
         return response(messages)
 
     with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 121}),
@@ -403,9 +403,7 @@ async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
 
 
 @pytest.mark.asyncio
-async def test_abstaining_later_page_qualification_remains_literal_in_published_presentation(tmp_path: Path) -> None:
-    from digest.main import _append_source_provenance, _primary_presentation
-
+async def test_abstaining_later_page_qualification_remains_literal_in_retained_evidence(tmp_path: Path) -> None:
     claim = "The cache accelerates every read."
     condition = "The result applies only to the pilot deployment; production traffic was not evaluated."
     text = claim + "\n\n" + condition
@@ -426,25 +424,15 @@ async def test_abstaining_later_page_qualification_remains_literal_in_published_
             "abstain": is_qualification,
         }), {"finish_reason": "STOP"}
 
-    async def translate(combined: str, cards: list[Any], *_args: Any, **_kwargs: Any) -> Any:
-        assert all(condition not in card.summary for card in cards)
-        return combined, [replace(card, summary="Обзор: кэш ускоряет чтение.") for card in cards]
-
     cfg = config()
-    cfg.translation = replace(cfg.translation, enabled=True, target_language="ru")
     with (patch("digest.reading_brief.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate),
-          patch("digest.translation.translate_primary_presentation", side_effect=translate) as translation):
+          patch("digest.llm.complete", side_effect=generate)):
         run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
-        _, translated = await _primary_presentation("", run.cards, cfg, tmp_path, False)
-        publication = _append_source_provenance(translated, run.provenance)
     identity = next(iter(run.quotations))
     assert generated_pages == [[1], [2]] and run.pending == 0 and len(run.cards) == 1
     assert load_state(tmp_path, identity).pages[1].result.abstain is True
-    assert translation.call_count == 1
-    assert publication[0].summary.startswith("Обзор:")
-    assert "Conditions/limitations from the source (original text)" in publication[0].summary
-    assert f"[S2]\n{condition}" in publication[0].summary
+    assert "Conditions/limitations from the source (original text)" in run.provenance[identity]
+    assert f"[S2]\n{condition}" in run.provenance[identity]
     assert claim in run.quotations[identity] and condition in run.quotations[identity]

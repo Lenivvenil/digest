@@ -14,8 +14,8 @@ These historical records retain their original language and decision context. Cu
 English explanations are in the [architecture guide](../ARCHITECTURE.md) and canonical
 [domain overview](../domain/digest/overview.md).
 
-ADR0004 was proposed in [PR #93](https://github.com/Lenivvenil/digest/pull/93), which was
-closed without merging. It is not an accepted main-branch implementation.
+ADR0004 is proposed/implemented in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93),
+which is not merged into main. Its existence in a draft is not a release approval.
 
 Choose the next unused sequence number after checking open PRs. If the local claude-mini
 skill package is installed, its `next_adr_number.sh` helper can assist; that private tool
@@ -30,6 +30,13 @@ verification and ordinary translated output do not establish universal semantic 
 and computed priority influence are verified; daily retention limitations remain explicit.
 
 [0007](0007-compact-issue-reservation.md) records compact daily presentation and its
-coarse pre-publication reservation. Implementation is merged and runtime activation is
-deployed; ordinary-output acceptance remains open. No automatic resend lifecycle or
-exactly-once guarantee is implied.
+coarse pre-publication reservation. Local implementation is under review; no automatic
+resend lifecycle or exactly-once guarantee is implied.
+
+
+[0008](0008-candidate-selection-progress.md) proposes candidate accounting and
+continuation within ordinary bounded preparation under #121. It is not a deployment
+or editorial-quality approval.
+
+[0009](0009-selected-source-admission.md) proposes candidate-bound source admission
+and technical handoff under #122; it does not approve semantic publication or runtime activation.

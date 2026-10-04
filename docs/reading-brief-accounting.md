@@ -62,11 +62,25 @@ same immutable source without discarding already completed pages.
 
 Accounting overflow may split the complete contiguous source manifest. An estimate
 split is conservative admission/budget splitting, not measured context overflow.
-No source prefix is dropped; all pages must complete before publication, and the
-qualification union remains intact. Known 429/503/unavailable route failures may
+No source prefix is dropped; all pages must complete before a technical handoff,
+and selected qualifications remain inspectable. This is not #55 semantic publication
+acceptance. Known 429/503/unavailable route failures may
 try one supported configured fallback; ambiguous timeout and invalid output stay
-pending. Fallback shares the deadline and request counter, applies a 65-second minimum
+held across later invocations and route changes. An unresolved counting request is
+not repeated, but does not imply that generation occurred. Fallback shares the deadline and request counter, applies a 65-second minimum
 pacing interval when Groq is eligible, and disables stage retries. Already completed
 checksum-bound evidence can be validated without the optional tokenizer assets. A provider rejection does not trigger truncation or claim success.
 
 See [third-party notice](../THIRD_PARTY_NOTICES.md) for reused tokenizer code.
+
+## Candidate and preparation boundary
+
+The #122 integration admits exact saved candidate selections under current source,
+occurrence, recency, blocklist and cache policy. It freezes the source/page/selection
+binding into a technical handoff; it never rerenders or publishes inside sender-only
+operation. Existing accepted preparation takes precedence before source work.
+
+The in-process request reservation cap is at most ten, with no reset on fallback.
+Cross-job whole-cycle allocation and real capacity remain activation gates; this is
+not ten new requests per job. The prior twelve-request draft allowance is withdrawn.
+See proposed [ADR0009](decisions/0009-selected-source-admission.md).

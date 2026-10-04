@@ -624,9 +624,8 @@ def test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes(tmp_pa
     })
     path.write_text(yaml.safe_dump(base))
     loaded = load_config(path)
-    assert loaded.review.select_from_entire_packet
     settings = loaded.reading_brief
-    assert settings.max_requests_per_run == 12 and settings.max_output_tokens == 2048
+    assert settings.max_requests_per_run == 10 and settings.max_output_tokens == 2048
     assert (settings.provider, settings.model) == ('gemini', 'gemini-3.8-flash')
     base['reading_brief']['model'] = 'unconfigured-model'
     path.write_text(yaml.safe_dump(base))

@@ -77,15 +77,16 @@ profiles (including Qwen without a verified current framing profile) remain tech
 pending. An unavailable route may use at most one other supported route already in
 `llm.providers`, within the same deadline, pacing and request cap, without retries.
 See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
-Advertised context and the local request allowance do not establish your free-account quota. Pending selected articles retain complete-source progress and resume on later
-runs, including empty-feed days. Cards carry a concise source-cited brief, including
-material conditions and unresolved source contradictions, plus source/date notes.
-The complete selected quotations stay in an original-language archive appendix and
-evidence checkpoint; translation covers the generated brief and its caveats. Literal
-citations and completed input coverage do not certify that every important qualification
-was recognized. The finite
-quality and throughput gate in #55 remains open; see the
-[request envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
+Advertised context and the local request allowance do not establish free-account quota.
+The draft integration runs only through `--prepare-edition`; unsupported preview/direct
+publish modes stop before source/model work. It uses exact saved candidate selections and current occurrence
+eligibility before source work. Completed pages become a technical evidence handoff
+for #55; they do not publish concatenated draft prose or create an accepted edition.
+Unknown generation outcomes hold across later invocations and route changes. Known
+count uncertainty remains distinct from generation uncertainty. See proposed
+[ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
+reuse and the unresolved cross-job request allocation. The finite factual-quality,
+reconciliation and throughput gates remain open; reading stays off.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -460,23 +461,71 @@ vote buttons keep the same article identity and URL → Start interaction. Trans
 and model-attribution notices appear once per issue. Optional Irritator/comparison
 work remains in the archive with its real status, without extra Telegram pushes.
 
-Managed compact publication requires a durable reservation before the primary CLI:
+Managed compact delivery separates preparation from sending:
 
 ```sh
-python -m digest --config config.yaml --reserve-issue
-# Commit/push .cache/compact_issue.json and verify its exact remote SHA256.
-python -m digest --config config.yaml --feedback-precollected --issue-reservation-sha "$PERSISTED_ISSUE_SHA"
-# Persist the resulting marker, confirmed dedup/feedback state and archives together.
+python -m digest --config config.yaml --feedback-precollected --prepare-edition
+# Commit/push preparation, archive and .cache/prepared_edition.json; verify its remote SHA256.
+python -m digest --config config.yaml --edition-phase claim --ready-sha "$READY_SHA"
+# Commit/push .cache/prepared_edition_claim.json; verify ready + claim hashes from the same revision.
+python -m digest --config config.yaml --edition-phase send --ready-sha "$READY_SHA" --claim-sha "$CLAIM_SHA"
+# Commit/push receipts and confirmed feedback/dedup state together.
 ```
 
-The managed workflow owns the Git barrier; a locally calculated hash alone does not
-prove remote persistence. Collect/persist/ack feedback before this publication guard.
-An unresolved issue holds future automatic publication, even on a later day, until
-inspection. Do not blindly reset it or rerun an uncertain send. Preview with
-`--dry-run --radar-only` does not reserve/send, but can still use source/model quotas.
-See [ADR0007](docs/decisions/0007-compact-issue-reservation.md) for the intentional
-availability tradeoff and recovery boundary. This mode does not enable experimental
-full-source analysis or claim to complete its quality gate.
+Preparation saves accepted canonical analysis before presentation, then freezes exact
+Telegram payloads, buttons, article coverage, archive hashes, recipient and UTC expiry.
+The sender performs no collection, model request, translation or rendering. A supported
+manifest survives model/prompt changes; an expired, corrupt or wrong-recipient edition
+cannot send. No ready edition produces an explicit status, without a raw-feed fallback.
+
+The default intended publication day is today in UTC. `--edition-date YYYY-MM-DD`
+explicitly prepares a later UTC day's edition, including after today's delivery is
+confirmed. Its creation timestamp is separate from its publication window: it remains
+`pending_window` and cannot be claimed or sent before that day's 00:00 UTC. Expiry is
+the end of the intended day, not creation plus 24 hours. A current-day edition prepared
+at 23:59 expires at 00:00; a tomorrow edition remains eligible through tomorrow. No
+new schedule or automatic choice of a future publication day is introduced.
+
+The managed workflow owns the remote Git barriers. A local hash alone proves no remote
+durability. Its second job can inspect a previously persisted eligible edition after
+preparation fails. Feedback collection/persistence/acknowledgement remains independent.
+Claims are created only after readiness. A claim with unknown transport or unfinished
+state persistence holds publication for inspection. Confirmed current-day editions
+are no-ops. Legacy unresolved compact markers also remain holds during migration.
+Do not delete a marker or replay uncertain delivery. Exact-once delivery is not promised.
+See [ADR0007](docs/decisions/0007-compact-issue-reservation.md) for migration and recovery.
+The ready boundary does not activate experimental full-source analysis.
+
+### Candidate coverage during preparation
+
+Review-led edition preparation records every observed eligible RSS identity before
+source-slot and review-packet limits. It uses one existing bounded primary packet per
+fresh preparation window, saves its exact result, and continues later eligible candidates on a
+subsequent fresh preparation. An existing accepted snapshot or ready/held edition
+still takes precedence. Selected cards can proceed without waiting for all candidates.
+
+Private `.cache/candidate_progress.json` and the archive's `.candidates.json` sibling
+separate observed, planned, selected, metadata-rejected, duplicate and technically
+unfinished records. The same model response supplies per-item reasons and retained
+IDs; missing/invalid dispositions and capacity-only omissions stay unfinished.
+Legacy responses retain their unselected-without-reason limitation. Feed parsing limits and exclusions remain explicit. This is
+RSS metadata selection, not complete-source reading or proof that throughput matches
+incoming volume. Current source, recency, blocklist and delivered-history rules apply
+to saved candidates; no new retention TTL or extra model call is introduced. A candidate-specific 32 MB
+current-work safety limit fails explicitly rather than deleting evidence. Exact source
+objects are stored once, and each immutable report contains only its own packet and
+current collection accounting. Per-identity history stays outside current-work admission;
+unresolved work and reversible policy exclusions remain recoverable. Total archive
+storage still grows with new evidence. See proposed
+[ADR0008](docs/decisions/0008-candidate-selection-progress.md) and #121 for remaining
+semantic, ordinary-runtime and throughput acceptance.
+
+A valid primary abstention retains #120's accepted empty snapshot for its publication
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
+advance another packet. Unseen work can advance in a later fresh preparation window.
+This inherited limit is part of the remaining throughput acceptance, not a claim
+that all observed candidates received an editorial decision.
 
 ## Development
 

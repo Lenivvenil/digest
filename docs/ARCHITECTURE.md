@@ -23,12 +23,13 @@ has a second, opt-in RSS-review path. Full-source enrichment in
 [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
 not the operating architecture documented below.
 
-The opt-in reading-brief stage reuses safe article acquisition and durable selected-work
-progress, with exact model-request counting and literal source passages. It shares the
-primary request/deadline budget and preserves separate full-source provenance for
-optional narrative extraction. It does not reuse PR #93's writer/critic approval
-mechanism or mark independent comparison complete. Source completeness and editorial
-usefulness remain acceptance gates under #55; runtime activation remains off.
+The draft source-admission adapter reuses safe acquisition and contiguous page progress.
+It admits only current candidate occurrences with exact saved selection proof, and
+freezes technical source evidence before accepted preparation. It does not publish the
+draft reading-angle concatenation or mark independent comparison complete. Request
+intents preserve ambiguous generation holds; count uncertainty is separate. Proposed
+[ADR0009](decisions/0009-selected-source-admission.md) records this integration. #55
+still owns source reconciliation and factual presentation; runtime activation is off.
 
 ## Data flow
 
@@ -72,11 +73,13 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
 | `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
 | `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
+| `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
 | `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
 | `delivery/telegram.py` | Telegram article cards, vote buttons and confirmed transport accounting |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
+| `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
 | `feedback.py` | Telegram polling, vote parsing, article/source mapping and bot commands |
 | `source_scorer.py` | Source metrics, effective priorities, trial lifecycle state and bubble diagnostics |
 | `discovery.py` | Proposed feeds, URL validation, approval cards and approved additions to runtime config |
@@ -258,6 +261,8 @@ and serialized access to the same state as the main digest.
 | `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
 | `pending_sources.json` | Proposed sources awaiting decisions |
 | `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
+| `candidate_progress.json`, `candidate_sources/`, `candidate_reports/`, `candidate_index/`, `candidate_excluded/` | Current candidate work, immutable source/packet evidence and separately indexed history; no delivered-state mutation |
+| `digests/*.candidates.json` | Private inventory/selection coverage evidence bound into prepared-edition archive hashes |
 
 Atomic temporary-file replacement protects an individual JSON write; it does not make
 several files a transaction or prove remote persistence. The runtime must retain state
@@ -333,10 +338,12 @@ records the measured cost, applied daily schedule, proposed operating allocation
 maintenance reserve, account-quota
 uncertainty and retention risks. This architecture page does not duplicate that budget.
 A cron change alone does not implement compact output. Legacy card mode can retry
-uncertain requests; explicit compact mode uses a coarse durable issue reservation,
-complete text/source identity and confirmed per-article chunk coverage. See
+uncertain requests; the deployed compact mode initially used a coarse durable issue
+reservation with complete text/source identity and confirmed per-article chunk coverage. See
 [ADR0007](decisions/0007-compact-issue-reservation.md) for the hold-after-crash policy;
-exactly-once delivery is not claimed.
+exactly-once delivery is not claimed. The #120 amendment moves this claim after
+immutable readiness: preparation can target a later UTC publication day, while the
+sender validates frozen payloads and window without running generation.
 
 Retain configured translation and actual bounded Irritator/comparison processing.
 The compact presentation keeps optional outcomes in the archive, with honest

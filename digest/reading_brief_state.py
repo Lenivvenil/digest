@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from digest.article_source import FetchedArticle
 from digest.radar.collector import Article, article_hash
@@ -94,6 +94,26 @@ class PageResult:
 
 
 @dataclass
+class RequestAttempt:
+    """Durable adapter intent; reservation does not prove a POST was sent."""
+
+    kind: Literal["count", "generate"]
+    route: Route
+    start: int
+    stop: int
+    source_sha256: str
+    request_sha256: str
+    reserved_at: str
+    status: Literal["reserved", "accepted", "definite_failed", "unknown"] = "reserved"
+    finished_at: str | None = None
+    error_class: str | None = None
+    response_sha256: str = ""
+    finish_reason: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    exact_count: int | None = None
+
+
+@dataclass
 class Page:
     start: int
     stop: int
@@ -104,6 +124,9 @@ class Page:
     finish_reason: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
     route: Route | None = None
+    request_attempts: list[RequestAttempt] = field(default_factory=list)
+    request_history_version: int = 1
+    legacy_count_request_sha256: str = ""
 
 
 @dataclass
@@ -122,6 +145,27 @@ class BriefState:
     version: int = VERSION
     # Versioned estimates are never reinterpreted as exact tokenizer counts.
     admissions: dict[str, dict[str, int | str]] = field(default_factory=dict)
+
+
+def _legacy_generation_unknown(state: BriefState, page: Page) -> bool:
+    if page.request_history_version != 0 or not page.prompt_sha256 or page.request_attempts:
+        return False
+    route = page.route or state.route
+    if route.provider == "gemini":
+        count = state.exact_counts.get(page.prompt_sha256, route.input_tokens + 1)
+    else:
+        admission = state.admissions.get(page.prompt_sha256, {})
+        count = int(admission.get("input_estimate", route.input_tokens + 1))
+    # The old writer persisted admission before generation, but not generation
+    # intent. A successfully admitted unfinished page has an unrecorded outcome.
+    return count <= route.input_tokens
+
+
+def has_unresolved_generation(state: BriefState) -> bool:
+    """A generation intent or accepted response cannot authorize another call."""
+    return any(page.result is None and (_legacy_generation_unknown(state, page)
+               or any(attempt.kind == "generate" and attempt.status != "definite_failed"
+                      for attempt in page.request_attempts)) for page in state.pages)
 
 
 def state_root(state_dir: Path) -> Path:
@@ -252,6 +296,36 @@ def load_source(state_dir: Path, state: BriefState) -> Source:
     return source
 
 
+def _validate_attempt(attempt: RequestAttempt, state: BriefState) -> None:
+    if attempt.kind not in {"count", "generate"} or attempt.status not in {
+        "reserved", "accepted", "definite_failed", "unknown",
+    }:
+        raise ValueError("invalid_request_attempt")
+    if (type(attempt.start) is not int or type(attempt.stop) is not int
+            or attempt.start < 0 or attempt.stop <= attempt.start
+            or attempt.source_sha256 != state.source_sha256
+            or not isinstance(attempt.request_sha256, str) or not _HASH.fullmatch(attempt.request_sha256)):
+        raise ValueError("invalid_request_binding")
+    route = attempt.route
+    if (route.prompt_version != PROMPT_VERSION or not isinstance(route.provider, str)
+            or not isinstance(route.model, str) or type(route.input_tokens) is not int or route.input_tokens <= 0
+            or type(route.max_output_tokens) is not int or route.max_output_tokens <= 0):
+        raise ValueError("invalid_request_route")
+    datetime.fromisoformat(attempt.reserved_at)
+    if attempt.finished_at is not None:
+        datetime.fromisoformat(attempt.finished_at)
+    if (attempt.status == "reserved") != (attempt.finished_at is None):
+        raise ValueError("invalid_request_completion")
+    if (attempt.error_class is not None and not isinstance(attempt.error_class, str)
+            or attempt.finish_reason is not None and not isinstance(attempt.finish_reason, str)
+            or attempt.response_sha256 and not _HASH.fullmatch(attempt.response_sha256)
+            or attempt.exact_count is not None and (type(attempt.exact_count) is not int or attempt.exact_count <= 0)
+            or not isinstance(attempt.usage, dict)
+            or not set(attempt.usage) <= {"prompt_tokens", "completion_tokens", "total_tokens"}
+            or any(type(count) is not int or count < 0 for count in attempt.usage.values())):
+        raise ValueError("invalid_request_metadata")
+
+
 def _validate_state(state: BriefState) -> None:
     _validate_selection(state.selection)
     if state.version != VERSION or state.status not in {"pending", "ready", "abstained", "delivered"}:
@@ -287,6 +361,12 @@ def _validate_state(state: BriefState) -> None:
                        if key not in {"method", "tokenizer_sha256"})):
             raise ValueError("invalid_admission")
     for page in state.pages:
+        if type(page.request_history_version) is not int or page.request_history_version not in {0, 1}:
+            raise ValueError("invalid_request_history_version")
+        if page.legacy_count_request_sha256 and not _HASH.fullmatch(page.legacy_count_request_sha256):
+            raise ValueError("invalid_legacy_count_request")
+        for attempt in page.request_attempts:
+            _validate_attempt(attempt, state)
         if page.route is not None and (
             page.route.prompt_version != PROMPT_VERSION or type(page.route.input_tokens) is not int
             or page.route.input_tokens <= 0 or type(page.route.max_output_tokens) is not int
@@ -315,6 +395,10 @@ def load_state(state_dir: Path, identity: str) -> BriefState:
     if checksum(payload) != envelope["sha256"]:
         raise ValueError("state_checksum_mismatch")
     pages = [Page(**{**page, "route": Route(**page["route"]) if page.get("route") else None,
+                    "request_attempts": [RequestAttempt(**{**attempt, "route": Route(**attempt["route"])})
+                                         for attempt in page.get("request_attempts", [])],
+                    "request_history_version": page.get("request_history_version",
+                                                        1 if "request_attempts" in page else 0),
                     "result": PageResult(**page["result"]) if page["result"] is not None else None})
              for page in payload["pages"]]
     state = BriefState(**{**payload, "selection": Selection(**payload["selection"]),

@@ -26,7 +26,6 @@ from digest.review import (
     build_review_messages,
     render_review,
     run_evidence_review,
-    selection_limit,
 )
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_trial import _ALLOWED_MODELS
@@ -99,7 +98,7 @@ def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: 
                 or (review.provider, review.model, review.bundle_id, review.prompt_hash)
                 != (model.provider, model.model, bundle.bundle_id, prompt_hash)):
             continue
-        _validated_cached_selections(review, bundle, selection_limit(bundle, config.review))
+        _validated_cached_selections(review, bundle, config.review.max_selections)
         slots.add(review.slot)
     return slots
 

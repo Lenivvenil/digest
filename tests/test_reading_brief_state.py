@@ -10,9 +10,11 @@ from digest.article_source import FetchedArticle
 from digest.reading_brief_state import (
     BriefState,
     Page,
+    RequestAttempt,
     Route,
     Selection,
     checksum,
+    has_unresolved_generation,
     load_source,
     load_state,
     make_spans,
@@ -91,3 +93,56 @@ def test_source_span_tamper_is_rejected_even_if_snapshot_name_is_rehashed(tmp_pa
     (root / f"{item.source_sha256}.json").write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="span_manifest_mismatch"):
         load_source(tmp_path, item)
+
+
+def test_request_intents_roundtrip_and_hold_unfinished_generation(tmp_path: Path) -> None:
+    item = state()
+    item.source_sha256, source = save_source(tmp_path, item.selection,
+                                           FetchedArticle("Complete source.", "https://example.com", now(), None,
+                                                          "article"))
+    count = RequestAttempt("count", item.route, 0, len(source.spans), item.source_sha256, "0" * 64, now(),
+                           status="unknown", finished_at=now(), error_class="technical_deadline")
+    page = Page(0, len(source.spans), request_attempts=[count])
+    item.pages = [page]
+    assert not has_unresolved_generation(item)
+    generate = RequestAttempt("generate", item.route, 0, len(source.spans), item.source_sha256, "0" * 64, now())
+    page.request_attempts.append(generate)
+    save_state(tmp_path, item)
+    restored = load_state(tmp_path, item.selection.identity)
+    assert restored == item and has_unresolved_generation(restored)
+    generate.status = "definite_failed"
+    generate.finished_at = now()
+    assert not has_unresolved_generation(item)
+
+
+@pytest.mark.parametrize("damage", ["source", "range", "status", "completion", "usage", "hash", "route"])
+def test_invalid_request_intent_metadata_is_rejected(tmp_path: Path, damage: str) -> None:
+    item = state()
+    item.source_sha256, source = save_source(tmp_path, item.selection,
+                                           FetchedArticle("Complete source.", "https://example.com", now(), None,
+                                                          "article"))
+    item.pages = [Page(0, len(source.spans), request_attempts=[
+        RequestAttempt("generate", item.route, 0, len(source.spans), item.source_sha256, "0" * 64, now()),
+    ])]
+    save_state(tmp_path, item)
+    path = state_root(tmp_path) / f"{item.selection.identity}.json"
+    envelope = json.loads(path.read_text())
+    attempt = envelope["payload"]["pages"][0]["request_attempts"][0]
+    if damage == "source":
+        attempt["source_sha256"] = "1" * 64
+    elif damage == "range":
+        attempt["start"] = attempt["stop"]
+    elif damage == "status":
+        attempt["status"] = "retryable"
+    elif damage == "completion":
+        attempt["finished_at"] = now()
+    elif damage == "usage":
+        attempt["usage"] = {"thoughts": "private text"}
+    elif damage == "hash":
+        attempt["request_sha256"] = "invalid"
+    else:
+        attempt["route"]["max_output_tokens"] = 0
+    envelope["sha256"] = checksum(envelope["payload"])
+    path.write_text(json.dumps(envelope))
+    with pytest.raises(ValueError, match="invalid_request"):
+        load_state(tmp_path, item.selection.identity)

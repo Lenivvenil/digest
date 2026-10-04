@@ -426,16 +426,13 @@ async def test_compact_translation_has_one_global_notice_and_keeps_article_ident
 
 
 @pytest.mark.asyncio
-async def test_substantive_reading_brief_conditions_and_conflict_share_translation_field(tmp_path: Path) -> None:
-    from digest.main import _append_source_provenance
-
+async def test_generated_card_conditions_and_conflict_share_translation_field(tmp_path: Path) -> None:
     cfg = config()
     cfg.telegram.delivery_mode = "compact"
     brief = ("Reading brief: The proxy is the sole database boundary. Only pilot clients can use it. "
              "The source contradicts itself about payload logging; this remains unresolved.")
     card = ArticleSummary("Title", "https://example.com/a", "Source", "Category", brief)
     identity = article_hash(card.title, card.link)
-    provenance = {identity: "Source: Source. Published: 2026-10-02 (source). Citations: [S1-S3]."}
     translated = "Прокси ограничивает доступ к базе. Только пилотные клиенты. Противоречие о логировании не разрешено."
     supplied_fields = []
 
@@ -448,6 +445,5 @@ async def test_substantive_reading_brief_conditions_and_conflict_share_translati
 
     with patch("digest.translation.complete", side_effect=complete):
         _, cards = await translate_primary_presentation("", [card], cfg, tmp_path)
-    presented = _append_source_provenance(cards, provenance)
-    assert presented[0].summary == translated + "\n\n" + provenance[identity]
+    assert cards[0].summary == translated
     assert card.summary == brief

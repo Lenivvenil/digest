@@ -1,0 +1,88 @@
+# 0009. Bind resumable source admission to validated candidate work
+
+Status: proposed; local integration under review
+
+Refs [#122](https://github.com/Lenivvenil/digest/issues/122),
+[#55](https://github.com/Lenivvenil/digest/issues/55),
+[ADR0007](0007-compact-issue-reservation.md), and
+[ADR0008](0008-candidate-selection-progress.md).
+
+## Existing requirements
+
+Reuse draft #107's acquisition, exact/conservative request admission and contiguous
+page progress. Preserve the current candidate scheduler, accepted preparation and
+model-free sender. Technical limits must remain technical pending, and uncertainty
+must not cause an automatic repeated generation. Complete pages are not a semantic
+quality verdict. These requirements do not authorize a provider, allowance or schedule
+change, or activation of the draft reading path.
+
+## Proposed integration
+
+The current eligible chosen occurrence and its exact saved delivery-used selection
+report authorize source work. Bind the stable article identity to occurrence/feed URL,
+bundle, prompt and response hashes. A changed policy alone does not discard compatible
+work; current source, blocklist, age and delivery boundaries are checked by candidate
+reconciliation. A different occurrence cannot silently inherit an old selection.
+This uses the existing candidate scheduler, without a second independently scanned queue.
+
+Source work runs before accepted preparation. A completed source record and every page
+result are frozen with their original source reference and selection binding as a
+technical handoff for #55. They do not create a PreparationSnapshot, ready edition,
+editorial acceptance or delivered marker. Accepted presentation retains precedence and does not repeat source acquisition,
+source counting or source generation. It may still use the existing presentation
+translator if its cache is missing. The sender performs no model calls. The draft concatenated
+reading-angle renderer is not used by ordinary publication; #55 still owns global
+reconciliation and useful factual presentation.
+
+Write a request intent before each counting/generation adapter invocation. This is
+not proof of a POST: pacing or local checks may stop dispatch. Bind each record to the
+actual route, request hash, source and page range; retain only safe completion/usage
+metadata. An unresolved generation intent, ambiguous failure or accepted invalid output
+holds later invocation and route changes. A known explicit rejection may use the
+existing configured fallback within the same allowance. An unknown count is not an
+unknown generation: its identical remote count is not repeated, but a supported
+configured local-admission route can proceed without claiming that count succeeded.
+
+Old completed evidence can be reused when the full saved Selection exactly matches
+the current proved occurrence and source/page/response checks pass. Record this as
+current adoption with unknown historical feed binding, not retrospective proof that
+the new selection authorized the old request. Preserve previous bindings and state
+before a new revision. An unresolved generation cannot be bypassed by changing only
+RSS description or fetch timestamp. Untouched old pages remain resumable; old pending
+pages lacking outcome tracking are conservatively held where dispatch is uncertain.
+
+The actual supplying page route labels quoted source evidence, including fallback;
+the configured first route must not be presented as the actual source of all results.
+
+## Compatibility and budget
+
+Keep deployed ModelReview, BlindReviewReport, PreparationSnapshot and ready-edition
+schemas unchanged. Preserve #125's valid-selection salvage and typed disposition
+capture. The superseded #107 tests required every selection to be discarded when
+finish reason was absent or MAX_TOKENS. #125 instead retains individually validated
+selections while missing/truncated dispositions remain incomplete and cannot create
+editorial rejection. Reading mode therefore retains that contract and the existing
+selection-response allowance; useful overflow remains deferred. No additional model
+call or prompt-repair cycle follows an incomplete disposition.
+
+Replace the draft default of twelve with an in-process ceiling of at most ten request
+reservations, shared by selection, counting, fallback and reading without resetting
+spent requests. Reservation counts are not provider receipts or account quota. Keep
+the 360-second application window less presentation reserve and 45 seconds for
+persistence; each call still checks pacing and remaining useful time. Exact Gemini
+counts and the pinned GPT estimate remain distinct accounting methods.
+
+The deployed ten-request whole-cycle envelope spans separate primary/optional jobs.
+An in-process cap alone does not prove that combined allocation: cross-job accounting
+and real capacity remain explicit activation blockers. No extra job, live probe,
+provider or monthly minutes are admitted by this draft. Reading remains off.
+
+## Verification and remaining acceptance
+
+Offline checks cover exact saved selection reuse, current occurrence/policy rejection,
+full-source technical handoff without presentation, accepted-state precedence, actual
+fallback provenance, unknown generation across invocations/config changes, count-only
+uncertainty, legacy evidence and shared limits. Preserve actual source/response records;
+mock success is not semantic fidelity, quota availability or sustainable throughput.
+Owner decision and review apply before merging this proposed cross-context contract.
+#55 remains open for global qualification/contradiction reconciliation and useful output.

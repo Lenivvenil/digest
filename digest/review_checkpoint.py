@@ -142,6 +142,7 @@ def build_full_source_evidence(
         state, source = ready_brief_evidence(state_dir, identity)
         roles: dict[int, set[str]] = {}
         prompts: dict[int, set[str]] = {}
+        routes: dict[int, tuple[str, str]] = {}
         for page in state.pages:
             if page.result is None:
                 raise ValueError("Incomplete full-source reading brief.")
@@ -151,6 +152,8 @@ def build_full_source_evidence(
                 for span_id in selected:
                     roles.setdefault(span_id, set()).add(role)
                     prompts.setdefault(span_id, set()).add(page.prompt_sha256)
+                    actual_route = page.route or state.route
+                    routes[span_id] = (actual_route.provider, actual_route.model)
         for span_id in sorted(roles):
             span = source.spans[span_id - 1]
             excerpt = source.text[span.start:span.end]
@@ -160,7 +163,7 @@ def build_full_source_evidence(
                 state.source_sha256 or "", source.body_sha256, len(source.text), source.final_url,
                 source.fetched_at, source.extraction_status, span.id, span.start, span.end, excerpt,
                 hashlib.sha256(excerpt.encode()).hexdigest(), tuple(sorted(roles[span_id])),
-                state.route.provider, state.route.model, tuple(sorted(prompts[span_id])),
+                *routes[span_id], tuple(sorted(prompts[span_id])),
             )
             items.append(replace(item, evidence_id=_identity_hash(item, "evidence_id")))
     bundle = FullSourceEvidence(SCHEMA_VERSION, "", FULL_SOURCE_KIND, rss_bundle.bundle_id, tuple(items))

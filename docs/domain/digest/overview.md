@@ -87,7 +87,7 @@ credential or background receiver is introduced.
 **Reviewed operating allocation:** one daily cycle at `17 2 * * *` (02:17 UTC),
 retaining the existing primary/optional job ceilings of 8/12 minutes. The runtime
 schedule reduction was applied separately on 2026-10-02; compact publication requires
-the managed reservation and explicit presentation-mode configuration. This is
+the managed persistence boundary and explicit presentation-mode configuration. This is
 an intended start time, not a delivery-time guarantee. GitHub may delay or drop
 scheduled work. Keep the separately configured weekly discovery budget visible;
 do not hide it inside the daily estimate. No additional feedback-only cron is proposed.
@@ -173,23 +173,21 @@ outputs are capped at 4,096 tokens; Irritator/translation outputs at 2,048. The 
 Primary pacing is configured separately from optional stages' 65-second pacing.
 These are execution constraints, not an editorial rule to prefer shorter articles.
 
-The opt-in full-source reading-brief path changes this envelope: a default shared ceiling of
-12 primary model-service HTTP attempts includes primary selection/fallback, exact token preflights,
-source reading and presentation translation. In this mode, primary selection may choose
-any useful item in the actual supplied RSS packet; the legacy max_selections card
-quota does not constrain it. The packet is not enlarged, omitted candidates remain
-unreviewed, and output-token truncation is incomplete work rather than rejection.
-Existing optional-stage requests remain
-separate (at most seven in the current pipeline); the old ten-request whole-cycle
-estimate must not be reused for this mode. Cache hits consume no request, and no
-automatic retries or paid fallbacks are added.
+The draft source-admission integration (#122, proposed ADR0009) uses at most ten
+in-process request reservations shared by selection, counting, fallback and reading.
+It preserves #121's validated-selection/disposition contract and does not enlarge the
+RSS packet. Missing or truncated output remains incomplete rather than rejection.
+This local cap does not establish the ten-request allocation across separate primary
+and optional jobs. That cross-job accounting, actual quota and capacity remain
+activation gates; the draft does not authorize the earlier proposed twelve-request
+primary allowance or additional optional calls. Reading remains off.
 
 Its application budget is 360 seconds inside the unchanged 8-minute primary job.
 The reading stage subtracts the configured translation deadline and 45 seconds for
 transport/persistence, then checks that pacing plus the acquisition/count timeout fits before each call.
 A generation needs at least 30 useful seconds after pacing; its adapter HTTP timeout
 is clipped to the remaining reading window, at most 120 seconds, with an absolute
-outer deadline as a second bound. A timed-out request is not retried in that pass. A normal uncached article needs at most 20 seconds to
+outer deadline as a second bound. An uncertain generation is held across later invocations and route changes. A normal uncached article needs at most 20 seconds to
 fetch, 10 seconds for exact counting and 120 seconds for one generation, plus pacing.
 Five worst-case articles therefore do not fit by assumption. Previously selected
 unfinished work resumes before fresh work, including on empty RSS days; backlog age,
@@ -313,6 +311,20 @@ boundary explicitly; do not silently delete the boundary or infer a retention po
    unresolved work. A fully mocked model response is not this evidence.
 4. Record owner/editorial review and remaining gaps before automatic-card rollout.
    Keep useful delivery, semantic quality and independent-review success separate.
+
+### Proposed #121 preparation integration
+
+[ADR0008](../../decisions/0008-candidate-selection-progress.md) proposes identity-level
+capture before source allocation and one existing bounded review packet per fresh
+preparation window. Its persisted accounting distinguishes source exclusions,
+unpresented work, technical failures and same-response metadata dispositions.
+Legacy nonselection still lacks a per-item reason; missing or invalid new dispositions
+remain unresolved. Hash-verified references reduce resolved active-state duplication
+without defining archive retention or certifying the model's semantic judgments. Later packets can reach the actual prepared-edition path
+without blocking selected cards on whole-cohort completion. Existing accepted/ready
+work retains precedence. This proposed mechanism adds neither a retention policy nor
+a claim of complete-source quality or sustainable capacity; those remain explicit
+acceptance work. The owner requirements above are unchanged.
 
 ## Historical domain snapshot — April 2026
 
@@ -734,3 +746,14 @@ Mechanically verifiable constraints only:
 2. **Article lacks an explicit lifecycle**: there are no typed states between ingestion and archival. → Issue #39.
 3. **Feedback decay owner**: decay logic is distributed between Delivery and Radar. → Issue #40.
 4. **Radar→Delivery contract drift**: no explicit intra-phase contract between Radar and Delivery. → Issue #29.
+
+### Ready-edition boundary (#120)
+
+Preparation owns source work, accepted canonical analysis and presentation. A versioned
+immutable edition transfers exact Telegram payloads, article coverage, recipient/window
+and provenance to Delivery. Delivery owns only validation, persisted claim, one-attempt
+transport receipts and confirmed coverage. Generation failure cannot consume a send
+reservation. An eligible saved edition can be sent without repeating generation; no
+ready edition is an explicit pending/unavailable state, never permission to publish raw
+RSS. [ADR0007](../../decisions/0007-compact-issue-reservation.md) defines migration,
+expiry and conservative unknown-send recovery within the existing operating allocation.

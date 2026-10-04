@@ -8,10 +8,10 @@ import html as html_lib
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import feedparser
 import httpx
@@ -36,6 +36,7 @@ USER_AGENT = "DailyDigestBot/1.0 (https://github.com/lenivvenil/digest)"
 CACHE_MAX_AGE_DAYS = 7
 CACHE_MAX_ENTRIES = 5000
 DESCRIPTION_MAX_CHARS = 500
+FEED_ENTRY_LIMIT = 200
 
 
 @dataclass
@@ -55,6 +56,95 @@ class SourceFetchMetrics:
     fetch_ok: bool
     articles_found: int
     avg_description_length: float
+
+
+@dataclass
+class SourceCollectionOutcome:
+    """Source fetch and parser boundary; omitted entries were not observed articles."""
+
+    source: str
+    url: str
+    category: str
+    effective_priority: int
+    fetch_ok: bool = False
+    observed_articles: int = 0
+    entry_limit: int = FEED_ENTRY_LIMIT
+    omitted_entry_count: int | None = None
+    skipped_empty_entries: int | None = None
+
+
+@dataclass
+class CandidateObservation:
+    """One parsed occurrence, before allocation; eligibility is not editorial judgment."""
+
+    article: Article
+    identity: str
+    effective_priority: int
+    exclusion_reasons: tuple[Literal["age", "blocklist", "seen_cache"], ...]
+    repeated_of: int | None = None
+    source_names: tuple[str, ...] = ()
+
+    @property
+    def eligible(self) -> bool:
+        return not self.exclusion_reasons
+
+
+@dataclass
+class CollectionInventory:
+    """Per-run observed inventory, without claiming full article reading or feed coverage."""
+
+    observations: list[CandidateObservation] = field(default_factory=list)
+    sources: list[SourceCollectionOutcome] = field(default_factory=list)
+
+    def eligible_articles(self) -> dict[str, list[Article]]:
+        """Return eligible identities before source slots, preserving observation order."""
+        grouped: dict[str, list[Article]] = {}
+        seen: set[str] = set()
+        for observation in self.observations:
+            if observation.eligible and observation.identity not in seen:
+                seen.add(observation.identity)
+                article = observation.article
+                grouped.setdefault(article.category, []).append(article)
+        return grouped
+
+
+def _capture_candidates(
+    inventory: CollectionInventory,
+    sources: list[SourceConfig],
+    results: list[list[Article] | None],
+    cache: dict[str, str],
+    now: datetime,
+    blocklist: list[str],
+    effective_priorities: dict[str, int] | None,
+) -> None:
+    first_observation: dict[str, int] = {}
+    memberships: dict[str, list[str]] = {}
+    for source, articles, outcome in zip(sources, results, inventory.sources, strict=True):
+        outcome.fetch_ok = articles is not None
+        outcome.observed_articles = len(articles) if articles is not None else 0
+        cutoff = now - timedelta(hours=source.recency_hours)
+        for article in articles or []:
+            identity = article_hash(article.title, article.link)
+            reasons: list[Literal["age", "blocklist", "seen_cache"]] = []
+            if not _is_recent(article, cutoff):
+                reasons.append("age")
+            if is_blocked(article.title, blocklist) or is_blocked(article.description, blocklist):
+                reasons.append("blocklist")
+            if identity in cache:
+                reasons.append("seen_cache")
+            names = memberships.setdefault(identity, [])
+            if source.name not in names:
+                names.append(source.name)
+            inventory.observations.append(CandidateObservation(
+                article=article,
+                identity=identity,
+                effective_priority=(effective_priorities or {}).get(source.name, source.priority),
+                exclusion_reasons=tuple(reasons),
+                repeated_of=first_observation.get(identity),
+            ))
+            first_observation.setdefault(identity, len(inventory.observations) - 1)
+    for observation in inventory.observations:
+        observation.source_names = tuple(memberships[observation.identity])
 
 
 def _strip_html(text: str) -> str:
@@ -154,7 +244,8 @@ _MAX_RETRY_AFTER_SECS = 300
 
 
 async def _fetch_feed(
-    client: httpx.AsyncClient, source: SourceConfig
+    client: httpx.AsyncClient, source: SourceConfig,
+    *, outcome: SourceCollectionOutcome | None = None,
 ) -> list[Article] | None:
     """Fetch and parse a single RSS/Atom feed.
 
@@ -249,10 +340,16 @@ async def _fetch_feed(
         return None
 
     articles: list[Article] = []
-    for entry in feed.entries[:200]:
+    if outcome is not None:
+        outcome.omitted_entry_count = max(0, len(feed.entries) - FEED_ENTRY_LIMIT)
+        outcome.skipped_empty_entries = 0
+    for entry in feed.entries[:FEED_ENTRY_LIMIT]:
         title = getattr(entry, "title", "") or ""
         link = getattr(entry, "link", "") or ""
         if not title and not link:
+            if outcome is not None:
+                assert outcome.skipped_empty_entries is not None
+                outcome.skipped_empty_entries += 1
             continue
 
         raw_desc = ""
@@ -348,6 +445,7 @@ async def collect(
     effective_priorities: dict[str, int] | None = None,
     *,
     fetch_metrics: dict[str, SourceFetchMetrics] | None = None,
+    inventory: CollectionInventory | None = None,
 ) -> tuple[dict[str, list[Article]], dict[str, str]]:
     """Fetch all enabled feeds and return articles grouped by category.
 
@@ -359,6 +457,9 @@ async def collect(
 
     If supplied, *fetch_metrics* receives per-source fetch observations for
     the orchestrator to combine with confirmed delivery counts.
+
+    If supplied, *inventory* is reset and captures parsed occurrences and eligibility
+    before allocation. Feed entry bounds are explicit; this does not read full articles.
 
     Returns:
         A tuple of (articles_by_category, updated_cache). The caller is
@@ -372,16 +473,29 @@ async def collect(
 
     blocklist = config.filters.blocklist_keywords
 
+    if inventory is not None:
+        inventory.observations.clear()
+        inventory.sources = [
+            SourceCollectionOutcome(s.name, s.url, s.category,
+                                    (effective_priorities or {}).get(s.name, s.priority))
+            for s in config.enabled_sources
+        ]
+
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
         sem = asyncio.Semaphore(20)
 
-        async def _limited(src: SourceConfig) -> list[Article] | None:
+        async def _limited(index: int, src: SourceConfig) -> list[Article] | None:
             async with sem:
+                if inventory is not None:
+                    return await _fetch_feed(client, src, outcome=inventory.sources[index])
                 return await _fetch_feed(client, src)
 
-        tasks = [_limited(source) for source in config.enabled_sources]
+        tasks = [_limited(index, source) for index, source in enumerate(config.enabled_sources)]
         results = await asyncio.gather(*tasks)
+
+    if inventory is not None:
+        _capture_candidates(inventory, config.enabled_sources, results, cache, now, blocklist, effective_priorities)
 
     if fetch_metrics is not None:
         for source, raw_articles in zip(config.enabled_sources, results, strict=True):

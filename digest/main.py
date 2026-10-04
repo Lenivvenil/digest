@@ -15,24 +15,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
-import json
 import logging
 import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from digest.candidate_review import CandidatePacket, CandidateProgress
+    from digest.config import Config
     from digest.delivery.issue_guard import IssueGuard
     from digest.delivery.telegram import IssueDeliveryResult
     from digest.feedback import FeedbackStore
     from digest.irritator import IrritatorStatus
-    from digest.radar.collector import Article, SourceFetchMetrics
+    from digest.preparation import PreparationSnapshot
+    from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
-    from digest.reading_brief import BriefRun
     from digest.review import BlindReviewReport
     from digest.source_scorer import SourceStats
 
@@ -132,10 +133,8 @@ class RunStats:
     required_delivery_failed: bool = False
     review_status: str = "not_requested"
     review_checkpoint: str = ""
-    reading_pending: int | None = 0
-    reading_abstained: int | None = 0
-    reading_oldest_pending: str | None = None
-    reading_state: str = "not_requested"
+    edition_status: str = ""
+    ready_sha256: str = ""
 
 
 async def _send_status_message(text: str) -> bool:
@@ -204,12 +203,6 @@ def _print_stats(stats: RunStats) -> None:
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
     print(f"Blind review:       {stats.review_status}")
-    if stats.reading_state == "unavailable":
-        print("Reading briefs:    unavailable; saved backlog count unknown")
-    elif stats.reading_pending or stats.reading_abstained:
-        print(f"Reading briefs:    {stats.reading_pending} pending / {stats.reading_abstained} abstained")
-        if stats.reading_oldest_pending:
-            print(f"Oldest pending:    {stats.reading_oldest_pending}")
     if stats.telegram_partial:
         print("Telegram sent:      partial (some chunks failed)")
     else:
@@ -707,8 +700,7 @@ async def _analyze_articles(
 
 def _print_radar_presentation(combined: str, cards: list[ArticleSummary], config: Any) -> None:
     print(combined)
-    if (getattr(getattr(config, "translation", None), "enabled", False)
-            or getattr(getattr(config, "reading_brief", None), "enabled", False)):
+    if getattr(getattr(config, "translation", None), "enabled", False):
         for card in cards:
             print(f"\n{card.title}\n{card.link}\n{card.summary}")
 
@@ -777,195 +769,16 @@ async def _collect_run_feedback(
 
 
 def _publication_intro(combined: str, report: BlindReviewReport | None, config: Any) -> str:
-    if getattr(getattr(config, "reading_brief", None), "enabled", False):
-        return combined
-    if (getattr(config.telegram, "delivery_mode", "cards") == "compact"
-            and report is not None and report.reviews):
+    if getattr(config.telegram, "delivery_mode", "cards") == "compact" and report is not None:
         from digest.review import primary_notice
 
         return primary_notice(report, config.radar.language) + "\n\n" + combined
     return combined
 
 
-def _append_source_provenance(
-    cards: list[ArticleSummary], provenance: dict[str, str],
-) -> list[ArticleSummary]:
-    """Attach short source/date/citation notes after all brief prose is translated."""
-    from digest.radar.collector import article_hash
-
-    if not provenance:
-        return cards
-    return [dataclasses.replace(card, summary="\n\n".join(part for part in (
-        card.summary, provenance[article_hash(card.title, card.link)],
-    ) if part)) for card in cards]
-
-
-async def _enrich_reading_briefs(
-    selected: list[Article], config: Any, state_dir: Path, deadline: float, preview: bool,
-    confirmed_history: set[str],
-) -> BriefRun:
-    from digest.reading_brief import enrich_selected_cards, reconcile_briefs_delivered
-
-    if not preview:
-        reconcile_briefs_delivered(state_dir, confirmed_history)
-        return await enrich_selected_cards(selected, config, state_dir, deadline)
-    # Preview can use existing progress, but cannot consume or change durable work.
-    import shutil
-    from tempfile import TemporaryDirectory
-
-    with TemporaryDirectory(prefix="digest-reading-preview-") as temporary:
-        preview_root = Path(temporary)
-        existing = state_dir / "reading_briefs"
-        if existing.exists() and not existing.is_symlink():
-            shutil.copytree(existing, preview_root / "reading_briefs", symlinks=True)
-        reconcile_briefs_delivered(preview_root, confirmed_history)
-        return await enrich_selected_cards(selected, config, preview_root, deadline)
-
-
-def _confirmed_reading_cache(state_dir: Path) -> dict[str, str]:
-    """Read the durable delivery ledger before collection adds provisional entries."""
-    path = state_dir / "seen_articles.json"
-    if path.is_symlink():
-        raise ValueError("Reading brief reconciliation requires a plain delivery ledger.")
-    if not path.exists():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or any(
-        not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{32}", identity)
-        or not isinstance(stamp, str) for identity, stamp in payload.items()
-    ):
-        raise ValueError("Reading brief reconciliation requires a valid delivery ledger.")
-    return payload
-
-
-async def _analyze_publication(
-    articles: dict[str, list[Article]], config: Any, state_dir: Path, started: float, preview: bool,
-    confirmed_history: set[str],
-) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None, BriefRun | None]:
-    """Keep the existing RSS selection report separate from full-source reading."""
-    if not getattr(getattr(config, "reading_brief", None), "enabled", False):
-        summaries, trends, cards, report = await _analyze_articles(articles, config)
-        return summaries, trends, cards, report, None
-    from digest.radar.collector import article_hash
-    from digest.review import SCHEMA_VERSION, BlindReviewReport, build_evidence_bundle
-
-    logger = logging.getLogger(__name__)
-    translation = getattr(config, "translation", None)
-    presentation_seconds = (translation.timeout_seconds if translation is not None and translation.enabled
-                            and translation.target_language != "en" else 0.0)
-    deadline = started + 360.0 - presentation_seconds - 45.0
-    selected_cards: list[ArticleSummary] = []
-    report = None
-    if articles:
-        try:
-            async with asyncio.timeout_at(deadline):
-                _, _, selected_cards, report = await _analyze_articles(articles, config)
-        except Exception as exc:
-            logger.warning("Primary selection unavailable (%s); checking saved reading briefs", type(exc).__name__)
-    identities = {article_hash(card.title, card.link) for card in selected_cards}
-    selected = [article for group in articles.values() for article in group
-                if article_hash(article.title, article.link) in identities]
-    try:
-        result = await _enrich_reading_briefs(selected, config, state_dir, deadline, preview, confirmed_history)
-    except Exception as exc:
-        logger.warning("Reading brief stage unavailable (%s); saved backlog count unknown, no issue sent",
-                       type(exc).__name__)
-        return [], None, [], report, None
-    logger.info("Reading briefs: %d ready, %d pending, %d abstained; oldest pending: %s",
-                len(result.cards), result.pending, result.abstained, result.oldest_pending or "none")
-    if report is None and result.cards:
-        ready_articles: dict[str, list[Article]] = {}
-        for article in result.articles:
-            ready_articles.setdefault(article.category, []).append(article)
-        report = BlindReviewReport(
-            SCHEMA_VERSION, build_evidence_bundle(ready_articles, config.review), [],
-            "incomplete", None, [], "pending_independent_review",
-        )
-    return [], None, result.cards, report, result
-
-
-def _reading_summary(result: BriefRun | None, config: Any) -> tuple[dict[str, str], dict[str, Any], str]:
-    status: dict[str, Any] = {"pending": 0, "abstained": 0, "oldest_pending": None, "state": "not_requested"}
-    if result is None:
-        if getattr(getattr(config, "reading_brief", None), "enabled", False):
-            status.update(state="unavailable", pending=None, abstained=None)
-        return {}, status, ""
-    status.update(pending=result.pending, abstained=result.abstained, oldest_pending=result.oldest_pending,
-                  state="available")
-    notice = (f"\n\nReading brief model: {config.reading_brief.provider}/{config.reading_brief.model}.\n"
-              f"Reading briefs: {len(result.cards)} ready; {result.pending} pending; "
-              f"{result.abstained} abstained. Oldest pending: {result.oldest_pending or 'none'}.")
-    return result.provenance, status, notice
-
-
-def _setup_reading_budget(config: Any, state_dir: Path) -> dict[str, str]:
-    if not getattr(getattr(config, "reading_brief", None), "enabled", False):
-        return {}
-    from digest.llm import set_request_limit
-
-    config.llm.max_retries = 0
-    set_request_limit(config, config.reading_brief.max_requests_per_run)
-    return _confirmed_reading_cache(state_dir)
-
-
-def _reading_backlog_after_feed_failure(
-    error: Exception, enabled: bool, confirmed_cache: dict[str, str],
-) -> tuple[dict[str, list[Article]], dict[str, str]]:
-    if not enabled:
-        raise error
-    logging.getLogger(__name__).warning("All feeds failed; continuing saved reading briefs without fresh selection.")
-    return {}, dict(confirmed_cache)
-
-
-def _acknowledge_reading_delivery(enabled: bool, state_dir: Path, delivered: set[str]) -> None:
-    if enabled and delivered:
-        from digest.reading_brief import mark_briefs_delivered
-
-        mark_briefs_delivered(state_dir, delivered)
-
-
-def _committed_delivery_cache(
-    cache: dict[str, str], collected: set[str], delivered: set[str], reading_enabled: bool,
-) -> dict[str, str]:
-    """Commit confirmed coverage only, including resumed articles absent today's RSS."""
-    committed = {identity: stamp for identity, stamp in cache.items()
-                 if identity not in collected or identity in delivered}
-    if reading_enabled:
-        committed.update({identity: datetime.now(tz=timezone.utc).isoformat()
-                          for identity in delivered if identity not in committed})
-    return committed
-
-
-def _archive_source_evidence(
-    markdown: Path | None, report: BlindReviewReport | None, cards: list[ArticleSummary], state_dir: Path,
-    reading_status: dict[str, Any], enabled: bool,
-) -> None:
-    """Bind optional full-source provenance without changing the RSS review report."""
-    from digest._util import atomic_json_write
-    from digest.radar.collector import article_hash
-    from digest.review_checkpoint import build_full_source_evidence
-
-    if not enabled or markdown is None or report is None:
-        return
-    payload = dataclasses.asdict(report)
-    payload.update(full_source_required=True, reading_brief_status=reading_status)
-    try:
-        source = build_full_source_evidence(
-            report.evidence, state_dir, [article_hash(card.title, card.link) for card in cards],
-        )
-        payload["full_source_evidence"] = dataclasses.asdict(source)
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        # Primary quoted briefs stay usable; optional analysis must abstain rather
-        # than silently reverting to the RSS excerpts if provenance is unavailable.
-        payload["full_source_error"] = type(exc).__name__
-        logging.getLogger(__name__).warning("Full-source checkpoint unavailable (%s)", type(exc).__name__)
-    atomic_json_write(markdown.with_suffix(".review.json"), payload)
-
-
 async def _legacy_delivery_extras(
     cards: list[ArticleSummary], ranked: list[Any], irritator_status: IrritatorStatus,
     review_report: BlindReviewReport | None, config: Any, review_led_only: bool, nano_status: str,
-    reading_notice: str = "",
 ) -> None:
     from digest.delivery import send_counter_signals
     from digest.delivery.telegram import _send_chunk, escape_markdownv2
@@ -974,7 +787,6 @@ async def _legacy_delivery_extras(
         await _notify_skipped_cards(cards)
         await send_counter_signals(ranked, config, irritator_status=irritator_status)
     nano_status += _review_status_line(review_report, config.radar.language)
-    nano_status += reading_notice
     if review_led_only:
         nano_status += "\n" + irritator_status.text
     token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -1017,9 +829,187 @@ async def _deliver_compact(
     return await send_compact_issue(articles, config, notice=notice, before_send=guard.mark_sending)
 
 
+def _empty_run_stats(feeds: int, feedback: int, articles: int = 0) -> RunStats:
+    return RunStats(feeds, articles, 0, False, False, False, "", feedback_collected=feedback)
+
+
+def _analysis_missing(summaries: list[Any], cards: list[Any], report: Any) -> bool:
+    return not summaries and not cards and report is None
+
+
+def _review_led(config: Any) -> bool:
+    return bool(getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only)
+
+
+def _save_empty_cache(cache: dict[str, str], compact: bool, cache_dir: str, prepare_only: bool) -> None:
+    if not prepare_only:
+        _save_delivery_cache(cache, compact, cache_dir)
+
+
+def _validate_compact_run(
+    compact: bool, dry_run: bool, radar_only: bool, guard: IssueGuard | None, prepare_only: bool,
+) -> None:
+    if compact and not dry_run and not radar_only and guard is None and not prepare_only:
+        raise ValueError("Compact publication requires an externally persisted issue reservation.")
+
+
+def _candidate_setup(
+    prepare_only: bool, review_led_only: bool, cache_dir: str,
+) -> tuple[CandidateProgress | None, CollectionInventory | None, dict[str, str]]:
+    if not (prepare_only and review_led_only):
+        return None, None, {}
+    from digest.candidate_review import load_candidate_progress
+    from digest.edition_runtime import _strict_cache
+    from digest.radar.collector import CollectionInventory
+
+    return (load_candidate_progress(cache_dir), CollectionInventory(),
+            _strict_cache(Path(cache_dir) / "seen_articles.json"))
+
+
+def _require_candidate_recovery(progress: CandidateProgress | None) -> None:
+    if progress is None:
+        raise  # Preserve the original AllFeedsFailedError outside candidate preparation.
+
+
+def _inventory_kwargs(inventory: CollectionInventory | None) -> dict[str, CollectionInventory]:
+    return {"inventory": inventory} if inventory is not None else {}
+
+
+def _candidate_inputs(
+    progress: CandidateProgress | None, inventory: CollectionInventory | None,
+    run_config: Config, config: Config, delivered: dict[str, str],
+    priorities: dict[str, int], cache_dir: str, collection_failed: bool,
+    allocated: dict[str, list[Article]],
+) -> tuple[CandidatePacket | None, BlindReviewReport | None, dict[str, list[Article]]]:
+    if progress is None:
+        return None, None, allocated
+    from digest.candidate_review import (
+        MAX_BYTES,
+        begin_packet,
+        ensure_report_accounting,
+        merge_candidates,
+        packet_articles,
+        pending_completed_report,
+        plan_packet,
+        progress_size,
+        save_candidate_progress,
+    )
+    from digest.radar import AllFeedsFailedError
+    from digest.radar.collector import _prune_cache
+
+    if inventory is None:
+        raise ValueError("Candidate preparation requires collection accounting.")
+    merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
+                     inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
+    report = pending_completed_report(progress)
+    packet = (next(item for item in reversed(progress.packets) if item.report == report)
+              if report is not None else plan_packet(progress, config))
+    if packet is not None and report is None:
+        begin_packet(progress, packet, cache_dir)
+    else:
+        save_candidate_progress(progress, cache_dir)
+        if report is not None:
+            ensure_report_accounting(progress, report, cache_dir)
+    logging.getLogger(__name__).info(
+        "Candidate accounting: %d registered, %d eligible, %d never planned, %d technical pending, "
+        "%d unselected without editorial reason, %d metadata not-selected, %d duplicates; next packet %d items",
+        len(progress.candidates), sum(item.eligible for item in progress.candidates.values()),
+        sum(item.status == "not_presented" for item in progress.candidates.values()),
+        sum(item.status == "technical_pending" for item in progress.candidates.values()),
+        sum(item.status == "not_selected_without_editorial_reason" for item in progress.candidates.values()),
+        sum(item.status == "not_selected" for item in progress.candidates.values()),
+        sum(item.status == "duplicate" for item in progress.candidates.values()),
+        len(packet.evidence.items) if packet is not None else 0,
+    )
+    stored_bytes = progress_size(progress, cache_dir)
+    logging.getLogger(__name__).info("Candidate storage: %d bytes used; %d bytes remaining",
+                                    stored_bytes, MAX_BYTES - stored_bytes)
+    articles = packet_articles(packet) if packet is not None else {}
+    if collection_failed and packet is None:
+        raise AllFeedsFailedError("All feeds failed and no eligible saved candidate packet is available.")
+    return packet, report, articles
+
+
+async def _analyze_candidate_articles(
+    articles: dict[str, list[Article]], config: Config, progress: CandidateProgress | None,
+    packet: CandidatePacket | None,
+    cached_report: BlindReviewReport | None, cache_dir: str,
+) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
+    if cached_report is not None:
+        from digest.review import primary_cards
+
+        cards = primary_cards(cached_report, articles, config.radar.language,
+                              include_attribution=config.telegram.delivery_mode != "compact")
+        return [], None, cards, cached_report
+    if progress is None or packet is None:
+        return await _analyze_articles(articles, config)
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.candidate_review import reconcile_packet
+    from digest.review import primary_cards, run_primary_review
+
+    capture = CandidateDispositionCapture()
+    report = await run_primary_review(articles, config, disposition_capture=capture)
+    reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
+    cards = primary_cards(report, articles, config.radar.language,
+                          include_attribution=config.telegram.delivery_mode != "compact")
+    return [], None, cards, report
+
+
+def _save_prepared_fetch_stats(
+    source_stats: dict[str, SourceStats], fetch_metrics: dict[str, SourceFetchMetrics],
+    articles: dict[str, list[Article]],
+    config: Config, cache_dir: str, already_failed: bool,
+) -> None:
+    from digest.source_scorer import save_stats
+
+    if not already_failed:
+        _record_source_stats(source_stats, fetch_metrics, articles, set())
+        save_stats(source_stats, cache_dir, active_sources={source.name for source in config.enabled_sources})
+
+
+def _save_candidate_preparation(
+    snapshot: PreparationSnapshot, packet: CandidatePacket | None,
+    cache_dir: str, publication_date: date | None,
+) -> None:
+    from digest.edition_runtime import save_accepted_preparation
+    from digest.review import _delivery_review
+
+    if not snapshot.top_articles and packet is not None and packet.disposition_attempts:
+        report = snapshot.review_report
+        if report is None:
+            return
+        delivery = _delivery_review(report)
+        capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
+        if capture is None or capture.status != "complete":
+            return  # Deferred or malformed metadata is not an accepted empty editorial decision.
+    save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+
+
+def _handoff_candidate(
+    progress: CandidateProgress | None, packet: CandidatePacket | None, report: BlindReviewReport | None,
+    cache_dir: str, publication_date: date | None,
+) -> None:
+    from digest.candidate_review import mark_prepared
+    from digest.preparation import load_preparation
+
+    if (progress is not None and packet is not None and report is not None
+            and load_preparation(cache_dir, publication_date=publication_date) is not None):
+        mark_prepared(progress, packet.evidence.bundle_id, cache_dir)
+
+
+async def _resume_if_preparing(
+    prepare_only: bool, config: Config, feedback_collected: int, verbose: bool, edition_date: date | None,
+) -> RunStats | None:
+    if not prepare_only:
+        return None
+    from digest.edition_runtime import resume_preparation
+
+    return await resume_preparation(config, feedback_collected, verbose=verbose, publication_date=edition_date)
+
+
 async def _run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None,
+    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
     from digest._util import cleanup_stale_tmp
@@ -1044,12 +1034,12 @@ async def _run(
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
+    from digest.reading_preparation import validate_reading_mode
+
+    validate_reading_mode(config, prepare_only)
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
-    if compact and not dry_run and not radar_only and issue_guard is None:
-        raise ValueError("Compact publication requires an externally persisted issue reservation.")
-    review_led_only = bool(
-        getattr(getattr(config, "review", None), "enabled", False) and config.review.review_led_only
-    )
+    _validate_compact_run(compact, dry_run, radar_only, issue_guard, prepare_only)
+    review_led_only = _review_led(config)
     logger = logging.getLogger(__name__)
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
@@ -1062,10 +1052,13 @@ async def _run(
     config = _apply_pending_approvals(
         config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
     )
-    reading_enabled = getattr(getattr(config, "reading_brief", None), "enabled", False)
-    reading_status: dict[str, Any] = {"pending": 0, "abstained": 0, "oldest_pending": None, "state": "not_requested"}
-    confirmed_cache = _setup_reading_budget(config, Path(cache_dir))
     feeds_count = len(config.enabled_sources)
+    resumed = await _resume_if_preparing(prepare_only, config, feedback_collected, verbose, edition_date)
+    if resumed is not None:
+        return resumed
+    from digest.reading_preparation import setup_reading_budget
+
+    setup_reading_budget(config)
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
@@ -1086,59 +1079,55 @@ async def _run(
         sources=[s for s in config.sources if s.enabled and not source_state.is_demoted(s.name)],
     )
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
+    candidate_progress, inventory, delivered_before_collection = _candidate_setup(
+        prepare_only, review_led_only, cache_dir,
+    )
+    candidate_packet = candidate_cached_report = None
+    collection_failed = False
     try:
         articles_by_category, cache = await collect(
             run_config, effective_priorities=effective_priorities, fetch_metrics=fetch_metrics,
+            **_inventory_kwargs(inventory),
         )
-    except AllFeedsFailedError as exc:
-        from copy import deepcopy
-
-        # Persist failed-feed health now; a continuing run records these same
-        # observations once when finalizing, rather than double-counting them.
+    except AllFeedsFailedError:
         _save_failed_run_stats(
-            deepcopy(source_stats) if reading_enabled else source_stats, fetch_metrics, cache_dir,
+            source_stats, fetch_metrics, cache_dir,
             {s.name for s in config.enabled_sources}, dry_run=dry_run,
         )
-        articles_by_category, cache = _reading_backlog_after_feed_failure(exc, reading_enabled, confirmed_cache)
+        _require_candidate_recovery(candidate_progress)
+        collection_failed = True
+        articles_by_category, cache = {}, dict(delivered_before_collection)
+
+    candidate_packet, candidate_cached_report, articles_by_category = _candidate_inputs(
+        candidate_progress, inventory, run_config, config, delivered_before_collection,
+        effective_priorities, cache_dir, collection_failed, articles_by_category,
+    )
 
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
-    def _empty_stats(n_articles: int = 0) -> RunStats:
-        return RunStats(
-            feeds_fetched=feeds_count, new_articles=n_articles, digest_length=0,
-            telegram_sent=False, telegram_partial=False,
-            markdown_saved=False, markdown_path="",
-            feedback_collected=feedback_collected,
-            reading_pending=reading_status["pending"], reading_abstained=reading_status["abstained"],
-            reading_oldest_pending=reading_status["oldest_pending"],
-            reading_state=reading_status["state"],
-        )
-
-    if not articles_by_category and not reading_enabled:
-        logger.info("No new articles found. Nothing to summarize.")
+    if not articles_by_category:
+        logger.info("No eligible articles in this processing packet. Nothing to summarize.")
         if not dry_run:
-            _save_delivery_cache(cache, compact, cache_dir)
+            _save_empty_cache(cache, compact, cache_dir, prepare_only)
             _record_source_stats(source_stats, fetch_metrics, articles_by_category, set())
             save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
             if feedback_usable:
                 save_feedback(feedback_store, cache_dir)
-        return _empty_stats()
+        return _empty_run_stats(feeds_count, feedback_collected)
 
     contributing_sources = sorted(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
-    summaries, trends, top_articles, review_report, brief_run = await _analyze_publication(
-        articles_by_category, config, Path(cache_dir), _t_run_start, dry_run or radar_only, set(confirmed_cache),
-    )
-    provenance, reading_status, reading_notice = _reading_summary(brief_run, config)
-    if reading_enabled and not top_articles:
-        logger.info("No ready reading briefs; primary issue was not published.")
-        _save_failed_run_stats(source_stats, fetch_metrics, cache_dir,
-                               {s.name for s in config.enabled_sources}, dry_run=dry_run or radar_only)
-        return _empty_stats(total_articles)
-    contributing_sources = sorted({card.source for card in top_articles}) if reading_enabled else contributing_sources
-    if not reading_enabled and not summaries and not top_articles and review_report is None:
+    from digest.reading_preparation import reading_deadline
+
+    selection_deadline = (reading_deadline(config, _t_run_start)
+                          if getattr(getattr(config, "reading_brief", None), "enabled", False) else None)
+    async with asyncio.timeout_at(selection_deadline):
+        summaries, trends, top_articles, review_report = await _analyze_candidate_articles(
+            articles_by_category, config, candidate_progress, candidate_packet, candidate_cached_report, cache_dir,
+        )
+    if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         _save_failed_run_stats(
             source_stats, fetch_metrics, cache_dir,
@@ -1147,17 +1136,47 @@ async def _run(
         await _notify_summaries_failed(
             dry_run=dry_run, telegram_enabled=config.telegram.enabled and not compact,
         )
-        return _empty_stats(total_articles)
+        return _empty_run_stats(feeds_count, feedback_collected, total_articles)
+
+    if getattr(getattr(config, "reading_brief", None), "enabled", False):
+        from digest.reading_preparation import prepare_selected_sources
+
+        result = await prepare_selected_sources(
+            candidate_progress, candidate_packet, review_report, run_config, Path(cache_dir),
+            reading_deadline(config, _t_run_start), prepare_only=prepare_only,
+        )
+        _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
+                                   config, cache_dir, collection_failed)
+        logger.info("Source preparation: %d selected, %d technically complete, %d pending; %s",
+                    result.selected, result.technical_complete, result.pending, result.status)
+        stats = _empty_run_stats(feeds_count, feedback_collected, total_articles)
+        stats.edition_status = result.status
+        return stats
 
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
     combined = _publication_intro(combined, review_report, config)
-    combined += reading_notice
+
+    if prepare_only:
+        from digest.edition_runtime import finish_preparation
+        from digest.preparation import PreparationSnapshot
+
+        snapshot = PreparationSnapshot(
+            top_articles=top_articles, summaries=summaries, combined=combined,
+            review_report=review_report, source_count=len(articles_by_category),
+            article_count=total_articles, contributing_sources=contributing_sources,
+        )
+        _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
+        _handoff_candidate(candidate_progress, candidate_packet, review_report, cache_dir, edition_date)
+        _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
+                                   config, cache_dir, collection_failed)
+        save_source_category_map(config.enabled_sources, cache_dir)
+        return await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
+                                        publication_date=edition_date)
 
     if radar_only:
         combined, top_articles = await _primary_presentation(
             combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
         )
-        top_articles = _append_source_provenance(top_articles, provenance)
         _print_radar_presentation(combined, top_articles, config)
         return RunStats(
             feeds_fetched=feeds_count, new_articles=total_articles,
@@ -1178,7 +1197,6 @@ async def _run(
     combined, top_articles, all_ranked = await _publication_presentation(
         combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
     )
-    top_articles = _append_source_provenance(top_articles, provenance)
 
     # Dry-run output
     if dry_run:
@@ -1200,11 +1218,9 @@ async def _run(
         review_report=review_report,
         irritator_status=irritator_status,
         sources_count=len(articles_by_category), articles_count=total_articles,
-        source_quotations=brief_run.quotations if brief_run is not None else None,
     )
     markdown_saved = md_path is not None
     markdown_path = str(md_path) if md_path else ""
-    _archive_source_evidence(md_path, review_report, top_articles, Path(cache_dir), reading_status, reading_enabled)
 
     telegram_sent = False
     telegram_partial = False
@@ -1239,7 +1255,6 @@ async def _run(
                 )
                 await _legacy_delivery_extras(
                     top_articles, all_ranked, irritator_status, review_report, config, review_led_only, nano_status,
-                    reading_notice,
                 )
 
         except Exception as exc:
@@ -1261,14 +1276,17 @@ async def _run(
         for articles in articles_by_category.values() for a in articles
     }
     # Preserve old entries, but commit new entries only for confirmed output.
-    delivered_cache = _committed_delivery_cache(cache, collected_hashes, delivered_hashes, reading_enabled)
+    delivered_cache = {
+        key: timestamp for key, timestamp in cache.items()
+        if key not in collected_hashes or key in delivered_hashes
+    }
     _record_source_stats(source_stats, fetch_metrics, articles_by_category, delivered_hashes)
     delivery_ok = card_delivery.sent > 0 or markdown_saved
     sources_promoted = 0
     sources_demoted = 0
 
     if delivery_ok:
-        _save_delivery_cache(delivered_cache, compact or reading_enabled, cache_dir)
+        _save_delivery_cache(delivered_cache, compact, cache_dir)
 
         if config.adaptive.enabled:
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
@@ -1285,11 +1303,10 @@ async def _run(
         feedback_store.article_source_map = saved_article_source_map
 
     if feedback_usable:
-        save_feedback(feedback_store, cache_dir, strict=compact or reading_enabled)
+        save_feedback(feedback_store, cache_dir, strict=compact)
     save_source_state(source_state, cache_dir)
     save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
     save_source_category_map(config.enabled_sources, cache_dir)
-    _acknowledge_reading_delivery(reading_enabled, Path(cache_dir), delivered_hashes)
     _finish_compact(issue_guard, issue_delivery)
 
     return RunStats(
@@ -1302,20 +1319,18 @@ async def _run(
         required_delivery_failed=telegram_required and not telegram_sent,
         review_status=review_report.status if review_report is not None else "not_requested",
         review_checkpoint=str(md_path.with_suffix(".review.json")) if md_path and review_report is not None else "",
-        reading_pending=reading_status["pending"], reading_abstained=reading_status["abstained"],
-        reading_oldest_pending=reading_status["oldest_pending"],
-        reading_state=reading_status["state"],
     )
 
 
 async def run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None,
+    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
 ) -> RunStats:
     """Finalize coarse issue state even when analysis or delivery exits early."""
     try:
         return await _run(config_path, dry_run, radar_only, verbose,
-                          feedback_precollected=feedback_precollected, issue_guard=issue_guard)
+                          feedback_precollected=feedback_precollected, issue_guard=issue_guard,
+                          prepare_only=prepare_only, edition_date=edition_date)
     finally:
         if issue_guard is not None:
             if issue_guard.state == "reserved":
@@ -1390,10 +1405,22 @@ async def main(argv: list[str] | None = None) -> int:
                         help="Reserve one compact issue locally; managed runtime must commit/push before publication")
     parser.add_argument("--issue-reservation-sha",
                         help="SHA256 of the externally persisted compact issue reservation")
+    parser.add_argument("--prepare-edition", action="store_true",
+                        help="Prepare and freeze an edition without claiming or sending it")
+    parser.add_argument("--edition-date", help="Intended UTC publication date YYYY-MM-DD (prepare only)")
+    parser.add_argument("--edition-phase", choices=("inspect", "claim", "send"),
+                        help="Inspect or deliver an already prepared immutable edition")
+    parser.add_argument("--ready-sha", help="SHA256 of the remotely persisted ready edition")
+    parser.add_argument("--claim-sha", help="SHA256 of the remotely persisted delivery claim")
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
     try:
+        from digest.edition_runtime import validate_cli
+        validate_cli(args)
+        if args.edition_phase:
+            from digest.edition_runtime import delivery_phase
+            return await delivery_phase(args.edition_phase, args.config, args.ready_sha, args.claim_sha)
         if ((args.discovery_phase != "all" or args.discovery_pending_sha or args.discovery_delivery_sha)
                 and not args.discover):
             raise ValueError("Discovery phases require --discover.")
@@ -1426,10 +1453,17 @@ async def main(argv: list[str] | None = None) -> int:
             from digest.delivery.issue_guard import load_guard
             issue_guard = load_guard(args.config, args.issue_reservation_sha)
         run_options: dict[str, Any] = {"feedback_precollected": args.feedback_precollected}
+        if args.prepare_edition:
+            run_options["prepare_only"] = True
+            run_options["edition_date"] = date.fromisoformat(args.edition_date) if args.edition_date else None
         if issue_guard is not None:
             run_options["issue_guard"] = issue_guard
         stats = await run(args.config, args.dry_run, args.radar_only, args.verbose, **run_options)
         _print_stats(stats)
+        if args.prepare_edition:
+            from digest.edition_runtime import publish_outputs
+            publish_outputs(edition_status=stats.edition_status or "no_ready", ready_sha256=stats.ready_sha256)
+            return 1 if stats.edition_status == "held" else 0
 
         if stats.required_delivery_failed:
             logging.getLogger(__name__).error("Required Telegram article delivery did not complete.")

@@ -2,9 +2,24 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
-- Opt-in source-cited reading briefs reuse safe full-article acquisition, exact request
-  counting, immutable source spans and durable selected-work progress. Literal passage
-  checks are not semantic certification; the finite quality/cost gate remains open.
+- Draft source admission (#122) reuses complete-source acquisition and exact/estimated
+  request accounting from #107, bound to current saved candidate selections. Durable
+  generation-intent holds and actual per-page fallback provenance remain separate from
+  #55 semantic acceptance; technical completion does not publish draft prose.
+- Candidate accounting (#121): ordinary review-led preparation captures pre-slot
+  identities and resumes later bounded packets through persisted selection evidence.
+  Existing accepted editions still take precedence. Same-response typed per-ID
+  dispositions distinguish metadata reasons/duplicates from capacity-deferred work;
+  old missing reasons remain unresolved. Exact source objects and packet-local archives
+  keep resolved history outside current-work admission, with reversible exclusions
+  and unsent selections recoverable. Real-output and sustained throughput acceptance
+  remain open.
+
+- Prepared-edition boundary (#120): accepted canonical analysis is resumable before
+  presentation; exact Telegram payloads are frozen and remotely persisted before a
+  separate sender claims them. Message IDs and complete article coverage are retained;
+  ambiguous sends or incomplete state persistence hold replay. Existing daily schedule
+  and job ceilings remain unchanged; natural-release acceptance is still required.
 
 - English current documentation and safe onboarding; historical records retain their
   original language, and no software-license grant is supplied.

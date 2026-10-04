@@ -366,3 +366,77 @@ into misleading prefixes. Exact quote IDs preserve source characters and do not
 certify semantic relevance. Source text remains untrusted data, with existing URL,
 network-response, request-count and deadline boundaries. No additional model pass
 is introduced, and offline checks do not establish live editorial quality.
+
+
+## Prepared editions and delivery recovery (#120)
+
+The managed compact path persists accepted canonical cards/review evidence before
+presentation, then freezes a versioned ready edition. Optional review resumes only
+from the checkpoint of a confirmed, durably persisted delivery. Sender eligibility
+uses the frozen manifest and does not re-run current review validation or generation.
+
+Preparation defaults to today's UTC publication window. An explicit
+`--prepare-edition --edition-date YYYY-MM-DD` can prepare a later day; the sender
+reports `pending_window` until that day begins. The canonical preparation checkpoint
+retains the same intended date across midnight. Future readiness never authorizes
+early delivery. See the [README commands](../README.md#compact-daily-presentation)
+and [ADR0007](decisions/0007-compact-issue-reservation.md) for the remote barriers.
+
+If preparation fails, inspect its accepted checkpoint and any existing ready edition.
+If delivery is held, retain the claim, exact ready payload and per-chunk receipt file;
+compare accepted Telegram message IDs before authorizing recovery. Unapplied coverage
+can mean transport succeeded but feedback/dedup persistence did not. Never reset the
+claim or interpret optional-stage failure as evidence that primary sending failed.
+On a rejected Git push, retained private diagnostics preserve the same three files;
+no automatic rebase or resend is allowed. This recovery contract does not certify
+full-source factual quality or independent counter-evidence.
+
+
+## Ordinary preparation candidate accounting
+
+`--prepare-edition` with review-led mode captures the collector inventory before
+source allocation and saves candidate progress before its existing primary call.
+One fresh preparation window retains the existing primary/fallback request ceiling. Later fresh
+preparations choose unseen eligible work before technical retries; presentation of
+already accepted work takes precedence and adds no selection request.
+
+The mutable progress file is `.cache/candidate_progress.json`. Frozen report-bound
+accounting is archived as `<edition>.md.candidates.json` and included in ready-edition
+archive hashes. Keep the existing runtime `.cache`/archive persistence step: local
+writes are not proof of remote durability. A planned record alone is not proof a
+request reached a provider. The same response now includes typed per-ID dispositions. A missing or invalid
+entry supplies no editorial rejection reason; capacity-only omission is deferred.
+Reasons are judgments over the supplied RSS occurrence, not full-source conclusions. Feed failures, parser limits, source changes and age exclusions are separate.
+
+Do not clear progress to claim complete coverage. Capacity overflow fails without
+truncation; retention and sustainable throughput require the #121/#55 acceptance
+review. Sender claims, receipts, feedback attribution and delivered caches remain
+under ADR0007. Candidate accounting grants no permission to replay a held edition.
+
+
+A valid primary abstention retains #120's accepted empty snapshot for its publication
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
+advance another packet. Unseen work can advance in a later fresh preparation window.
+This inherited limit is part of the remaining throughput acceptance, not a claim
+that all observed candidates received an editorial decision.
+
+
+Disposition capture is bound to the exact delivery-used provider/model, evidence
+bundle, prompt and raw-response hash. It is separate from legacy ModelReview and
+accepted PreparationSnapshot fields. Old reports remain readable with unavailable
+per-item reasons; a changed prompt cannot claim same-prompt reuse. Selected reasons
+are not duplicated. Duplicate references must retain a validated selected identity
+from the same request; shared topic alone is insufficient and contrary accounts must
+remain eligible. Structural checks do not certify semantic correctness.
+
+The candidate working set uses direct verified source and packet references. Each
+report preserves only its own packet and current collection accounting; resolved
+historical bodies are not expanded for unrelated packet admission. Per-identity
+indexes retain exact decisions, while reversible policy exclusions remain enumerable
+for reapproval/unblocking. Current alternate occurrences are bounded by source binding;
+older revisions remain immutable evidence. Unknown or undelivered selected work stays
+recoverable. Missing/corrupt required objects fail explicitly; unrelated historical
+objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
+deployed accepted preparation and ready-edition formats remain compatible. Do not
+delete evidence or delivery markers to bypass a recovery error.

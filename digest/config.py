@@ -152,7 +152,6 @@ class ReviewConfig:
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
-    select_from_entire_packet: bool = False  # Derived from reading_brief.enabled, not a separate setting.
 
 
 @dataclass(frozen=True)
@@ -177,7 +176,7 @@ class ReadingBriefConfig:
     provider: str = ""
     model: str = ""
     max_output_tokens: int = 2048
-    max_requests_per_run: int = 12
+    max_requests_per_run: int = 10
 
 
 @dataclass
@@ -723,7 +722,7 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, review_led_only=review_led_only, select_from_entire_packet=False, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
     )
 
 
@@ -796,7 +795,7 @@ def _load_reading_brief(
         raise ValueError("reading_brief provider/model must be strings.")
     values: dict[str, int] = {}
     for key, default, lower, upper in (("max_output_tokens", 2048, 256, 4096),
-                                       ("max_requests_per_run", 12, 1, 20)):
+                                       ("max_requests_per_run", 10, 1, 10)):
         value = section.get(key, default)
         if type(value) is not int or not lower <= value <= upper:
             raise ValueError(f"reading_brief.{key} must be an integer between {lower} and {upper}.")
@@ -847,7 +846,6 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     review = _load_review(data)
     translation = _load_translation(data, llm, radar, review)
     reading_brief = _load_reading_brief(data, llm, radar, review)
-    review.select_from_entire_packet = reading_brief.enabled
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",

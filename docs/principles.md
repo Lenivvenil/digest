@@ -46,12 +46,14 @@ Everything significant belongs in git (`docs/adr/`, `docs/domain/`, the `CLAUDE.
 
 A change is **Done** when all conditions are true:
 
+Owner clarification, 2026-10-04: Claude review is optional.
+
 - [ ] An ADR has been opened and merged if the change is architecturally significant
 - [ ] Domain documentation is updated if a BC boundary or term has changed
 - [ ] Unit tests are written; integration tests cover cross-BC paths; coverage ≥ the project floor (80% by default)
-- [ ] `/review` (Claude) has approved
+- Optional: `/review` (Claude) may provide an additional review; its absence does not block completion
 - [ ] `/codex-review` (Codex) has approved OR a `type:deferred-review` issue records the rationale for graceful degradation
-- [ ] Disagreements between Claude and Codex are resolved in the PR thread (consensus or a recorded disagreement)
+- [ ] When both reviews are performed, disagreements between Claude and Codex are resolved in the PR thread (consensus or a recorded disagreement)
 - [ ] Human self-review is complete
 - [ ] Security scans are clean: `uv pip audit` / `cargo audit` / `npm audit --audit-level=high` / `govulncheck`, depending on the language
 - [ ] Documentation is updated: README (for public changes), the relevant runbook, and CHANGELOG (through release-please)

@@ -65,4 +65,4 @@ reading_brief:
   provider: gemini
   model: YOUR_GEMINI_MODEL_ID
   max_output_tokens: 2048
-  max_requests_per_run: 12
+  max_requests_per_run: 10

@@ -15,7 +15,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -28,10 +28,12 @@ from digest.reading_brief_state import (
     BriefState,
     Page,
     PageResult,
+    RequestAttempt,
     Route,
     Selection,
     Source,
     checksum,
+    has_unresolved_generation,
     load_source,
     load_state,
     now,
@@ -254,12 +256,33 @@ def _parse_result(text: str, usage: dict[str, Any], page: Page, source: Source) 
     return result
 
 
+def _validate_completed_attempt(state: BriefState, page: Page) -> None:
+    if page.request_history_version == 0 and not page.request_attempts:
+        return
+    attempts = [attempt for attempt in page.request_attempts
+                if attempt.kind == "generate" and attempt.status != "definite_failed"]
+    if len(attempts) != 1:
+        raise ValueError("result_attempt_binding_mismatch")
+    attempt = attempts[0]
+    if (attempt.status != "accepted" or (attempt.start, attempt.stop) != (page.start, page.stop)
+            or attempt.route != (page.route or state.route) or attempt.request_sha256 != page.prompt_sha256
+            or attempt.response_sha256 != checksum(page.response) or attempt.finish_reason != page.finish_reason
+            or attempt.usage != page.usage):
+        raise ValueError("result_attempt_binding_mismatch")
+
+
 def _validate_progress(state: BriefState, source: Source) -> None:
     expected_start = 0
     for page in state.pages:
         if page.start != expected_start or page.stop > len(source.spans):
             raise ValueError("noncontiguous_page_coverage")
         expected_start = page.stop
+        for attempt in page.request_attempts:
+            if attempt.stop > len(source.spans):
+                raise ValueError("invalid_request_page_range")
+            original_page = Page(attempt.start, attempt.stop)
+            if attempt.request_sha256 != _prompt_sha(state, _messages(state, source, original_page), attempt.route):
+                raise ValueError("request_prompt_mismatch")
         if not page.prompt_sha256 and page.result is None:
             # No provider request exists yet to bind. A former unknown-profile
             # hold may now use the explicitly configured supported route.
@@ -274,6 +297,7 @@ def _validate_progress(state: BriefState, source: Source) -> None:
             _validate_result(page.result, page, source)
             if not isinstance(page.response, str) or page.response_sha256 != _response_sha(state, page):
                 raise ValueError("result_response_binding_mismatch")
+            _validate_completed_attempt(state, page)
             reparsed = _parse_result(page.response, {"finish_reason": page.finish_reason}, page, source)
             if reparsed != page.result:
                 raise ValueError("result_response_binding_mismatch")
@@ -327,6 +351,54 @@ def _error_class(exc: Exception, phase: str) -> str:
     return "technical_provider_unavailable" if phase in {"count", "generate"} else "technical_fetch_failed"
 
 
+def _reserve_attempt(
+    state: BriefState, page: Page, route: Route, kind: Literal["count", "generate"], state_dir: Path,
+) -> RequestAttempt:
+    assert state.source_sha256 is not None
+    attempt = RequestAttempt(kind, route, page.start, page.stop, state.source_sha256, page.prompt_sha256, now())
+    page.request_attempts.append(attempt)
+    # The adapter may still wait for pacing, credentials or its shared request budget.
+    # This is durable intent, not evidence that a physical request was sent.
+    save_state(state_dir, state)
+    return attempt
+
+
+def _fail_attempt(state: BriefState, attempt: RequestAttempt | None, exc: Exception, state_dir: Path) -> None:
+    if attempt is not None and attempt.status == "reserved":
+        attempt.status = "definite_failed" if _can_fallback(exc) else "unknown"
+        attempt.finished_at = now()
+        attempt.error_class = _error_class(exc, attempt.kind)
+        save_state(state_dir, state)
+
+
+def _accept_generation(
+    state: BriefState, attempt: RequestAttempt, text: str, usage: dict[str, Any], state_dir: Path,
+) -> None:
+    attempt.status = "accepted"
+    attempt.finished_at = now()
+    attempt.response_sha256 = checksum(text)
+    ending = usage.get("finish_reason")
+    attempt.finish_reason = ending if ending in {"STOP", "stop", "length", "MAX_TOKENS", "tool_calls",
+                                                "content_filter", "SAFETY", "RECITATION", "OTHER", "error"} else None
+    attempt.usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                     if type(usage.get(key)) is int and usage[key] >= 0}
+    # Save acceptance before validation; bad or incomplete output must not buy a second generation.
+    # Retain hashes and bounded metadata, never an invalid response body or hidden provider thoughts.
+    save_state(state_dir, state)
+
+
+def _track_legacy_pages(state: BriefState, state_dir: Path) -> None:
+    for page in state.pages:
+        if page.result is None and page.request_history_version == 0:
+            if (page.prompt_sha256 and not page.request_attempts
+                    and (page.route or state.route).provider == "gemini"
+                    and page.prompt_sha256 not in state.exact_counts):
+                # Preserve the unrecorded old count without inventing its dispatch or timestamp.
+                page.legacy_count_request_sha256 = page.prompt_sha256
+            page.request_history_version = 1
+    save_state(state_dir, state)
+
+
 async def _advance(state: BriefState, config: Config, state_dir: Path, deadline: float) -> None:
     phase = "state"
     try:
@@ -345,6 +417,11 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
             source = load_source(state_dir, state)
         phase = "state"
         _validate_progress(state, source)
+        if has_unresolved_generation(state):
+            state.error_class = "technical_generation_unknown"
+            save_state(state_dir, state)
+            return
+        _track_legacy_pages(state, state_dir)
         # A shallow copy shares the initialized request runtime and pacing, but disables
         # retries only for this stage without changing other stages' configuration.
         llm.request_budget_remaining(config)
@@ -368,6 +445,7 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                 candidates.insert(0, page.route)
             split = False
             for candidate_index, route in enumerate(candidates):
+                attempt = None
                 page.route = route if route != state.route else None
                 messages = _messages(state, source, page)
                 prompt_sha = _prompt_sha(state, messages, route)
@@ -376,17 +454,31 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                 try:
                     phase = "count"
                     if route.provider == "gemini" and prompt_sha not in state.exact_counts:
+                        if (page.legacy_count_request_sha256 == prompt_sha
+                                or any(previous.kind == "count" and previous.request_sha256 == prompt_sha
+                                       and previous.status != "definite_failed" for previous in page.request_attempts)):
+                            state.error_class = "technical_count_unknown"
+                            save_state(state_dir, state)
+                            if candidate_index + 1 < len(candidates):
+                                continue
+                            return
                         _preflight(call_config, deadline, COUNT_SECONDS)
-                        save_state(state_dir, state)
+                        attempt = _reserve_attempt(state, page, route, "count", state_dir)
                         async with asyncio.timeout(min(llm.request_wait_seconds(call_config) + COUNT_SECONDS,
                                                        max(0, deadline - time.monotonic()))):
                             count = await llm.count_gemini_tokens(
                                 messages, call_config, provider_override=provider, temperature=TEMPERATURE,
                                 max_output_tokens=route.max_output_tokens,
                             )
+                        attempt.status = "accepted"
+                        attempt.finished_at = now()
+                        if type(count) is int and count > 0:
+                            attempt.exact_count = count
+                            attempt.response_sha256 = checksum(count)
+                            state.exact_counts[prompt_sha] = count
+                        save_state(state_dir, state)
                         if type(count) is not int or count <= 0:
                             raise ValueError("invalid_exact_token_count")
-                        state.exact_counts[prompt_sha] = count
                     elif route.provider == "groq":
                         state.admissions[prompt_sha] = _estimate(route, messages)
                     save_state(state_dir, state)
@@ -396,24 +488,28 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                             save_state(state_dir, state)
                             return
                         middle = (page.start + page.stop) // 2
-                        state.pages[index:index + 1] = [Page(page.start, middle, route=page.route),
+                        # Keep the historical parent-page intents when its admitted range splits.
+                        state.pages[index:index + 1] = [Page(page.start, middle, route=page.route,
+                                                            request_attempts=page.request_attempts,
+                                                            legacy_count_request_sha256=page.legacy_count_request_sha256),
                                                        Page(middle, page.stop, route=page.route)]
                         save_state(state_dir, state)
                         split = True
                         break
                     phase = "generate"
                     request_timeout = _generation_timeout(call_config, deadline)
+                    attempt = _reserve_attempt(state, page, route, "generate", state_dir)
                     async with asyncio.timeout(max(0, deadline - time.monotonic())):
                         text, usage = await llm.complete(
                             llm.LLMRole.SUMMARIZE, messages, call_config, provider_override=provider,
                             temperature=TEMPERATURE, max_output_tokens=route.max_output_tokens,
                             request_timeout_seconds=request_timeout,
                         )
+                    _accept_generation(state, attempt, text, usage, state_dir)
                     page.result = _parse_result(text, usage, page, source)
                     page.response = text
-                    page.finish_reason = usage["finish_reason"]
-                    page.usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                                  if type(usage.get(key)) is int and usage[key] >= 0}
+                    page.finish_reason = attempt.finish_reason
+                    page.usage = dict(attempt.usage)
                     if route.provider == "groq" and "prompt_tokens" in page.usage:
                         admission = state.admissions[prompt_sha]
                         actual = page.usage["prompt_tokens"]
@@ -427,7 +523,8 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                     page.response_sha256 = _response_sha(state, page)
                     save_state(state_dir, state)
                     break
-                except (RuntimeError, httpx.HTTPError) as exc:
+                except (OSError, RuntimeError, ValueError, TypeError, KeyError, TimeoutError, httpx.HTTPError) as exc:
+                    _fail_attempt(state, attempt, exc, state_dir)
                     if candidate_index + 1 >= len(candidates) or not _can_fallback(exc):
                         raise
                     # The same immutable source page is offered to the next configured route.

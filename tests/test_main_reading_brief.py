@@ -1,390 +1,219 @@
-"""Offline main-pipeline integration: full-source cards and durable delivery."""
+"""Source-work integration preserves the deployed accepted-preparation boundary."""
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
-from digest.config import Config, ProviderConfig, ReadingBriefConfig, TranslationConfig
-from digest.delivery import ArticleDeliveryResult
-from digest.delivery.telegram import IssueDeliveryResult
-from digest.main import _analyze_publication, _setup_reading_budget, run
-from digest.radar.collector import Article, article_hash
-from digest.radar.summarizer import ArticleSummary
-from digest.reading_brief import BriefRun, enrich_selected_cards
-from digest.reading_brief_state import load_state, state_root
-from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
-from tests.factories import make_article
+from digest.candidate_review import CandidateProgress, begin_packet, merge_candidates, plan_packet, reconcile_packet
+from digest.config import ReadingBriefConfig
+from digest.main import _resume_if_preparing
+from digest.reading_preparation import prepare_selected_sources, reading_deadline, setup_reading_budget
+from digest.review import run_primary_review
+from tests.test_candidate_review import NOW, population
 from tests.test_reading_brief import fetched, response
 
 
-def _config(tmp_path: Path) -> Config:
-    config = fixture_config()
-    config.review.review_led_only = True
+async def saved_selection(
+    tmp_path: Path, *, description: str | None = None,
+) -> tuple[Any, Any, Any, Any]:
+    config, articles = population(2)
+    if description is not None:
+        articles["tech"][0].description = description
     config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
-    config.telegram.enabled = config.telegram.required = config.obsidian.enabled = True
-    config.obsidian.output_dir = str(tmp_path / "digests")
-    return config
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+
+    async def select(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        item = json.loads(messages[1]["content"])["evidence"]["items"][0]
+        return json.dumps({"selections": [{"evidence_id": item["evidence_id"], "reason": "Useful mechanism",
+                                           "quote": item["title"], "confidence": "high"}],
+                           "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
+
+    with patch("digest.review.complete", side_effect=select):
+        report = await run_primary_review(articles, config)
+    reconcile_packet(progress, packet, report, config, tmp_path)
+    return config, progress, packet, report
 
 
-@pytest.fixture(autouse=True)
-def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    with patch("httpx.AsyncClient", side_effect=AssertionError("No live HTTP")):
-        yield
-
-
-async def _selection_response(*args: Any, **kwargs: Any) -> Any:
-    text, usage = await fixture_response(*args, **kwargs)
-    return text, usage | {"finish_reason": "STOP"}
-
-
-async def _generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
     return response(messages)
 
 
-async def _seed(
-    config: Config, article: Article, *, brief: str | None = None, restriction: str | None = None,
-) -> BriefRun:
-    async def generate(*args: Any, **kwargs: Any) -> Any:
-        spans = json.loads(args[1][1]["content"])["spans"]
-        if restriction is not None and spans[0]["id"] > 1:
-            return response(args[1], abstain=True)
-        text, usage = await _generate(*args, **kwargs)
-        if brief is not None:
-            payload = json.loads(text)
-            payload["reading_angle"]["text"] = brief
-            text = json.dumps(payload)
-        return text, usage
-
-    async def count(messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> int:
-        return 1_048_577 if len(json.loads(messages[1]["content"])["spans"]) > 1 else 100
-
-    source = "Source wording stays verbatim." + ("\n\n" + restriction if restriction is not None else "")
+@pytest.mark.asyncio
+async def test_saved_candidate_selection_becomes_technical_handoff_without_presentation(tmp_path: Path) -> None:
+    config, progress, packet, report = await saved_selection(tmp_path)
     with (patch("digest.reading_brief.fetch_article",
-                AsyncMock(return_value=fetched(source))),
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate)):
-        return await enrich_selected_cards([article], config, Path(".cache"), time.monotonic() + 1000)
-
-
-async def _confirmed(_articles: Any, _config: Any, *, top_articles: list[ArticleSummary]) -> ArticleDeliveryResult:
-    hashes = {article_hash(card.title, card.link) for card in top_articles}
-    return ArticleDeliveryResult(attempted=len(hashes), sent=len(hashes), delivered_hashes=hashes,
-                                 article_source_map={article_hash(card.title, card.link)[:8]: card.source
-                                                     for card in top_articles})
-
-
-@pytest.mark.asyncio
-async def test_selected_articles_only_become_full_source_cards_and_checkpoint(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    articles = fixture_articles()
-    collected = {article_hash(a.title, a.link): "2026-10-02T12:00:00+00:00"
-                 for group in articles.values() for a in group}
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=(articles, collected))),
-          patch("digest.review.complete", side_effect=_selection_response),
-          patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Source wording stays verbatim.")))
-          as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=_generate),
-          patch("digest.delivery.send_article_cards", side_effect=_confirmed) as delivery):
-        result = await run("fixture.yaml", False, False, False)
-    cards = delivery.call_args.kwargs["top_articles"]
-    assert len(cards) == fetch.await_count == 2 < len(collected)
-    assert result.telegram_sent and result.markdown_saved
-    assert "Reading brief model: gemini/gemini-3.8-flash" in Path(result.markdown_path).read_text()
-    payload = json.loads(Path(result.review_checkpoint).read_text())
-    assert payload["full_source_required"] is True and payload["status"] == "incomplete"
-    assert payload["full_source_evidence"]["rss_bundle_id"] == payload["evidence"]["bundle_id"]
-    assert all("Source wording stays verbatim." not in card.summary for card in cards)
-    assert "Source wording stays verbatim." in Path(result.markdown_path).read_text().split(
-        "## Original source evidence (archive only)",
-    )[1]
-    assert all(item["excerpt"] == "Source wording stays verbatim."
-               for item in payload["full_source_evidence"]["items"])
-    assert {call.args[0] for call in fetch.call_args_list} == {card.link for card in cards}
-    committed = json.loads(Path(".cache/seen_articles.json").read_text())
-    assert set(committed) == {article_hash(card.title, card.link) for card in cards}
-    assert all(load_state(Path(".cache"), identity).status == "delivered" for identity in committed)
+                AsyncMock(return_value=fetched("Complete source mechanism."))) as fetch,
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+          patch("digest.llm.complete", side_effect=generate) as model,
+          patch("digest.review.complete", side_effect=AssertionError("No repeated RSS selection")),
+          patch("digest.translation.translate_primary_presentation", side_effect=AssertionError("No presentation"))):
+        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        second = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert first.technical_complete == second.technical_complete == 1
+    assert first.status == "semantic_reconciliation_pending"
+    assert fetch.call_count == count.call_count == model.call_count == 1
+    assert not (tmp_path / "pending_preparation.json").exists()
+    assert not (tmp_path / "prepared_edition.json").exists()
+    handoff = json.loads(Path(first.handoff_paths[0]).read_text())
+    assert handoff["status"] == "technical_complete_semantic_review_pending"
+    assert handoff["binding"]["response_sha256"] == report.reviews[0].response_sha256
+    assert Path(handoff["source_path"]).exists()
 
 
 @pytest.mark.asyncio
-async def test_pending_only_never_sends_notice_archive_or_consumes_dedup(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    old = {"a" * 32: "2026-10-01T12:00:00+00:00"}
-    Path(".cache").mkdir()
-    Path(".cache/seen_articles.json").write_text(json.dumps(old))
-    before = Path(".cache/seen_articles.json").read_bytes()
-    articles = fixture_articles()
-    provisional = old | {article_hash(a.title, a.link): "2026-10-02T12:00:00+00:00"
-                         for group in articles.values() for a in group}
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=(articles, provisional))),
-          patch("digest.review.complete", side_effect=_selection_response),
-          patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=OSError("unavailable"))),
-          patch("digest.delivery.send_article_cards", AsyncMock()) as cards,
-          patch("digest.main._send_status_message", AsyncMock()) as notice,
-          patch("digest.delivery.write_digest") as archive):
-        result = await run("fixture.yaml", False, False, False)
-    assert result.reading_pending == 2 and result.reading_abstained == 0 and result.reading_oldest_pending
-    assert not result.telegram_sent and not result.markdown_saved and result.digest_length == 0
-    cards.assert_not_called()
-    notice.assert_not_called()
-    archive.assert_not_called()
-    assert Path(".cache/seen_articles.json").read_bytes() == before
-    assert len(list(state_root(Path(".cache")).glob("*.json"))) == 2
+@pytest.mark.parametrize("change", ["excluded", "occurrence", "proof", "newer_decision"])
+async def test_current_selection_policy_and_exact_lineage_gate_before_calls(tmp_path: Path, change: str) -> None:
+    config, progress, packet, report = await saved_selection(tmp_path)
+    identity = report.reviews[0].selections[0].evidence_id
+    candidate = progress.candidates[identity]
+    if change == "excluded":
+        candidate.eligible = False
+    elif change == "occurrence":
+        candidate.article = replace(candidate.article, description="Different current occurrence")
+    elif change == "newer_decision":
+        candidate.status = "not_selected"
+    else:
+        report.reviews[0].response_sha256 = None
+    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No unbound request")):
+        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert result.technical_complete == 0 and result.outcomes[0].state == "held"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("multi_page", [False, True])
-async def test_empty_rss_brief_translates_all_caveats_and_archives_original_quotes(
-    tmp_path: Path, multi_page: bool,
-) -> None:
-    config = _config(tmp_path)
-    article = make_article()
-    brief = ("The proxy is the sole database boundary. Access is limited to pilot tenants. "
-             "The source is inconsistent about payload logging; that conflict remains unresolved.")
-    restriction = "QUALIFICATION: the results exclude shared production accounts." if multi_page else None
-    seeded = await _seed(config, article, brief=brief, restriction=restriction)
-    quote = seeded.quotations[article_hash(article.title, article.link)]
-    provenance = seeded.provenance[article_hash(article.title, article.link)]
-    config.translation = TranslationConfig(enabled=True, provider="groq", model="openai/gpt-oss-120b")
-
-    async def translate(summary: str, cards: list[ArticleSummary], ranked: list[Any], *_args: Any) -> Any:
-        assert "Source wording stays verbatim." not in summary
-        assert all("Source wording stays verbatim." not in card.summary for card in cards)
-        assert all(brief in card.summary for card in cards)
-        if restriction is not None:
-            assert restriction not in summary and all(restriction not in card.summary for card in cards)
-        return summary, [replace(card, summary="Прокси ограничивает доступ; только пилот. "
-                                 "Противоречие источника о логировании не разрешено.") for card in cards], ranked
-
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=({}, {}))),
-          patch("digest.main._analyze_articles",
-                AsyncMock(side_effect=AssertionError("No fresh RSS analysis"))) as analysis,
-          patch("digest.main._publication_presentation", side_effect=translate),
-          patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=AssertionError("Already read"))) as fetch,
-          patch("digest.llm.complete", AsyncMock(side_effect=AssertionError("Already ready"))) as model,
-          patch("digest.delivery.send_article_cards", side_effect=_confirmed) as delivery):
-        result = await run("fixture.yaml", False, False, False)
-    analysis.assert_not_called()
-    fetch.assert_not_called()
-    model.assert_not_called()
-    assert result.new_articles == 0 and result.telegram_sent and result.markdown_saved
-    card = delivery.call_args.kwargs["top_articles"][0]
-    assert card.summary == ("Прокси ограничивает доступ; только пилот. "
-                            "Противоречие источника о логировании не разрешено.\n\n" + provenance)
-    assert quote not in card.summary
-    if restriction is not None:
-        assert "Conditions/limitations from the source (original text)" in card.summary
-        assert restriction in card.summary and restriction in provenance
-    markdown = Path(result.markdown_path).read_text()
-    assert all("> " + line in markdown for line in card.summary.split("\n"))
-    brief_section, appendix = markdown.split("## Original source evidence (archive only)")
-    assert "Source wording stays verbatim." not in brief_section
-    assert quote in appendix
-    payload = json.loads(Path(result.review_checkpoint).read_text())
-    assert payload["reviews"] == [] and payload["status"] == "incomplete"
-    assert payload["evidence"]["items"][0]["evidence_id"] == article_hash(article.title, article.link)
-    assert payload["full_source_evidence"]["items"][0]["article_id"] == article_hash(article.title, article.link)
-    assert "Model view" not in markdown
+async def test_accepted_preparation_resume_never_reenters_reading(tmp_path: Path) -> None:
+    config, _, _, _ = await saved_selection(tmp_path)
+    expected = object()
+    with (patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)) as resume,
+          patch("digest.reading_preparation.prepare_selected_sources", side_effect=AssertionError("No source work"))):
+        assert await _resume_if_preparing(True, config, 0, False, None) is expected
+    resume.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_unexpected_stage_failure_preserves_saved_progress_and_has_no_rss_fallback(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    article = make_article()
-    await _seed(config, article)
-    identity = article_hash(article.title, article.link)
-    before = (state_root(Path(".cache")) / f"{identity}.json").read_bytes()
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-          patch("digest.review.complete", side_effect=_selection_response),
-          patch("digest.reading_brief.enrich_selected_cards", AsyncMock(side_effect=OSError("disk unavailable"))),
-          patch("digest.delivery.send_article_cards", AsyncMock()) as delivery):
-        result = await run("fixture.yaml", False, False, False)
-    assert not result.markdown_saved and not result.telegram_sent
-    assert result.reading_state == "unavailable" and result.reading_pending is result.reading_abstained is None
-    delivery.assert_not_called()
-    assert (state_root(Path(".cache")) / f"{identity}.json").read_bytes() == before
-    assert not Path(".cache/seen_articles.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_saved_delivery_ledger_reconciles_ready_brief_before_new_collection_entries(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    article = make_article()
-    await _seed(config, article)
-    identity = article_hash(article.title, article.link)
-    Path(".cache/seen_articles.json").write_text(json.dumps({identity: "2026-10-01T12:00:00+00:00"}))
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=({}, {identity: "2026-10-01T12:00:00+00:00"}))),
-          patch("digest.delivery.send_article_cards", AsyncMock()) as delivery):
-        result = await run("fixture.yaml", False, False, False)
-    delivery.assert_not_called()
-    assert not result.markdown_saved and load_state(Path(".cache"), identity).status == "delivered"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["none", "feedback", "ack"])
-async def test_compact_ack_after_durable_saves_before_confirmation(tmp_path: Path, failure: str) -> None:
-    config = _config(tmp_path)
-    config.telegram.delivery_mode = "compact"
-    article = make_article()
-    await _seed(config, article)
-    identity = article_hash(article.title, article.link)
-    guard = MagicMock(state="reserved")
-    events: list[str] = []
-
-    async def deliver(*_args: Any) -> IssueDeliveryResult:
-        guard.state = "sending"
-        events.append("sent")
-        return IssueDeliveryResult(attempted=1, sent=1, delivered_hashes={identity},
-                                   article_source_map={identity[:8]: article.source}, outcome="sent",
-                                   total_chunks=1, confirmed_chunks=1, attempted_chunks=1)
-
-    def finish(outcome: str, **_kwargs: Any) -> None:
-        events.append(outcome)
-        guard.state = outcome
-
-    from digest.feedback import save_feedback
-    from digest.reading_brief import mark_briefs_delivered
-
-    def feedback(*args: Any, **kwargs: Any) -> None:
-        assert Path(".cache/seen_articles.json").exists()
-        assert kwargs["strict"] is True
-        events.append("feedback")
-        if failure == "feedback":
-            raise OSError("feedback persistence failed")
-        save_feedback(*args, **kwargs)
-
-    def ack(*args: Any) -> None:
-        assert events == ["sent", "feedback"] and Path(".cache/feedback.json").exists()
-        events.append("ack")
-        if failure == "ack":
-            raise OSError("brief acknowledgement failed")
-        mark_briefs_delivered(*args)
-
-    guard.finish.side_effect = finish
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(return_value=({}, {}))),
-          patch("digest.main._deliver_compact", side_effect=deliver),
-          patch("digest.feedback.save_feedback", side_effect=feedback),
-          patch("digest.reading_brief.mark_briefs_delivered", side_effect=ack)):
-        if failure == "none":
-            await run("fixture.yaml", False, False, False, issue_guard=guard)
-        else:
-            with pytest.raises(OSError):
-                await run("fixture.yaml", False, False, False, issue_guard=guard)
-    assert events == (["sent", "feedback", "ack", "confirmed"] if failure == "none"
-                      else ["sent", "feedback", "unknown"] if failure == "feedback"
-                      else ["sent", "feedback", "ack", "unknown"])
-    assert load_state(Path(".cache"), identity).status == ("delivered" if failure == "none" else "ready")
-
-
-@pytest.mark.asyncio
-async def test_application_deadline_reserves_translation_and_dispatch_without_resetting(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    config.translation = TranslationConfig(enabled=True, provider="groq", model="openai/gpt-oss-120b",
-                                           timeout_seconds=30)
-    started = time.monotonic() - 20
-    with (patch("digest.main._analyze_articles", AsyncMock(return_value=([], None, [], None))),
-          patch("digest.main._enrich_reading_briefs",
-                AsyncMock(return_value=BriefRun([], {}, [], 0, 0, None))) as enrich):
-        await _analyze_publication(fixture_articles(), config, tmp_path, started, False, set())
-    assert enrich.call_args.args[3] == started + 360 - 30 - 45
-
-    async def too_slow(*_args: Any) -> Any:
-        await asyncio.sleep(1)
-        raise AssertionError("Primary should have timed out")
-
-    with (patch("digest.main._analyze_articles", side_effect=too_slow),
-          patch("digest.main._enrich_reading_briefs",
-                AsyncMock(return_value=BriefRun([], {}, [], 1, 0, "old"))) as enrich):
-        _, _, cards, report, stage = await _analyze_publication(
-            fixture_articles(), config, tmp_path, time.monotonic() - 400, False, set(),
-        )
-    assert not cards and report is None and stage.pending == 1
-    assert enrich.call_args.args[0] == []
-
-
-@pytest.mark.asyncio
-async def test_shared_request_cap_counts_primary_fallback_preflight_reading_and_translation(tmp_path: Path) -> None:
+async def test_reading_budget_keeps_existing_spend_and_dispatch_reserve(tmp_path: Path) -> None:
     from digest import llm
-    from digest.review import run_primary_review
-    from digest.translation import translate_fields
 
-    config = _config(tmp_path)
-    config.reading_brief = replace(config.reading_brief, max_requests_per_run=5)
-    config.translation = TranslationConfig(enabled=True, provider="groq", model="openai/gpt-oss-120b")
-    _setup_reading_budget(config, tmp_path)
-    requests: list[str] = []
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    client.post.return_value = httpx.Response(200, json={"totalTokens": 100},
-                                            request=httpx.Request("POST", "https://example.com/countTokens"))
-
-    async def provider(_client: Any, route: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
-        payload = json.loads(messages[1]["content"])
-        requests.append("primary" if "evidence" in payload else "reading" if "spans" in payload else "translation")
-        if len(requests) == 1:
-            raise RuntimeError("primary unavailable")
-        if "evidence" in payload:
-            return await _selection_response(None, messages, config, provider_override=route)
-        if "spans" in payload:
-            return response(messages)
-        return json.dumps({"translations": [{"id": field["id"], "text": "Перевод"}
-                                            for field in payload["fields"]]}), {"finish_reason": "stop"}
-
-    with (patch("httpx.AsyncClient", return_value=client),
-          patch("digest.llm._call_provider", side_effect=provider),
-          patch.dict("os.environ", {"GEMINI_API_KEY": "fake-key"}),
-          patch("digest.reading_brief.fetch_article",
-                AsyncMock(return_value=fetched("Source wording stays verbatim.")))):
-        report = await run_primary_review(fixture_articles(), config)
-        assert report.reviews[0].status == "unavailable" and report.reviews[1].status == "ok"
-        ready = await enrich_selected_cards([make_article()], config, tmp_path, time.monotonic() + 1000)
-        assert len(ready.cards) == 1
-        translated = await translate_fields({"angle": "Reading angle"}, config, tmp_path / "translations")
-        assert translated.status == "translated"
-        assert llm.request_budget_remaining(config) == 0
-        with pytest.raises(RuntimeError):
-            await llm.complete(llm.LLMRole.SUMMARIZE, [], config,
-                               provider_override=ProviderConfig("gemini", "gemini-3.8-flash"))
-    assert requests == ["primary", "primary", "reading", "translation"]
-    assert client.post.await_count == 1
+    config, _, _, _ = await saved_selection(tmp_path)
+    state = llm._request_state(config)
+    state.requests_attempted = 2
+    setup_reading_budget(config)
+    assert llm.request_budget_remaining(config) == 8
+    config.translation = replace(config.translation, enabled=True, timeout_seconds=90)
+    assert reading_deadline(config, 100) == 325
+    state.requests_attempted += 1
+    setup_reading_budget(config)
+    assert llm.request_budget_remaining(config) == 7
 
 
 @pytest.mark.asyncio
-async def test_failed_feeds_still_deliver_ready_backlog_without_fresh_selection(tmp_path: Path) -> None:
-    from digest.radar import AllFeedsFailedError
+async def test_real_prepare_path_reuses_selection_and_source_without_accepting_prose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.main import _run
+    from digest.radar.collector import SourceCollectionOutcome, _capture_candidates
 
-    config = _config(tmp_path)
-    article = make_article()
-    await _seed(config, article)
-    old = {"a" * 32: "2026-10-01T12:00:00+00:00"}
-    Path(".cache/seen_articles.json").write_text(json.dumps(old))
+    monkeypatch.chdir(tmp_path)
+    config, articles = population(2)
+    config.review.review_led_only = True
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+
+    async def collect(_config: Any, **kwargs: Any) -> Any:
+        inventory = kwargs["inventory"]
+        inventory.sources = [SourceCollectionOutcome("A", "https://a.example/feed", "tech", 2)]
+        _capture_candidates(inventory, config.enabled_sources, [articles["tech"]], {}, NOW, [], {})
+        return articles, {}
+
+    async def select(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        item = json.loads(messages[1]["content"])["evidence"]["items"][0]
+        return json.dumps({"selections": [{"evidence_id": item["evidence_id"], "reason": "Useful mechanism",
+                                           "quote": item["title"], "confidence": "high"}],
+                           "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
+
     with (patch("digest.config.load_config", return_value=config),
-          patch("digest.radar.collect", AsyncMock(side_effect=AllFeedsFailedError("All feeds unavailable"))),
-          patch("digest.main._analyze_articles", AsyncMock(side_effect=AssertionError("No fresh RSS"))) as selection,
-          patch("digest.delivery.send_article_cards", side_effect=_confirmed)):
-        result = await run("fixture.yaml", False, False, False)
-    selection.assert_not_called()
-    assert result.new_articles == 0 and result.telegram_sent and result.markdown_saved
-    assert result.reading_state == "available"
-    payload = json.loads(Path(result.review_checkpoint).read_text())
-    assert payload["reviews"] == [] and payload["reading_brief_status"]["state"] == "available"
-    committed = json.loads(Path(".cache/seen_articles.json").read_text())
-    assert committed["a" * 32] == old["a" * 32]
-    assert set(committed) == {"a" * 32, article_hash(article.title, article.link)}
+          patch("digest.radar.collect", side_effect=collect),
+          patch("digest.review.complete", side_effect=select) as selection,
+          patch("digest.reading_brief.fetch_article",
+                AsyncMock(return_value=fetched("Full source evidence."))) as fetch,
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+          patch("digest.llm.complete", side_effect=generate) as model,
+          patch("digest.edition_runtime.finish_preparation", side_effect=AssertionError("No semantic acceptance"))):
+        first = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
+        second = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
+    assert first.edition_status == second.edition_status == "semantic_reconciliation_pending"
+    assert selection.call_count == fetch.call_count == count.call_count == model.call_count == 1
+    assert not (tmp_path / ".cache" / "pending_preparation.json").exists()
+    assert not first.telegram_sent and not second.telegram_sent
+
+
+@pytest.mark.asyncio
+async def test_changed_occurrence_cannot_bypass_prior_unknown_generation(tmp_path: Path) -> None:
+    config, progress, packet, report = await saved_selection(tmp_path)
+    with (patch("digest.reading_brief.fetch_article",
+                AsyncMock(return_value=fetched("Complete public source."))) as fetch,
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=TimeoutError("fixture uncertainty")) as model):
+        initial = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert initial.pending == 1 and model.call_count == fetch.call_count == 1
+    config, progress, packet, report = await saved_selection(tmp_path, description="Changed RSS description only")
+    with (patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No new acquisition")),
+          patch("digest.llm.complete", side_effect=AssertionError("No unknown replay"))):
+        held = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert held.pending == 1 and held.outcomes[0].state == "held"
+
+
+@pytest.mark.asyncio
+async def test_matching_legacy_completed_evidence_has_explicit_current_adoption(tmp_path: Path) -> None:
+    from digest.reading_brief_state import load_state
+
+    config, progress, packet, report = await saved_selection(tmp_path)
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=generate)):
+        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    identity = report.reviews[0].selections[0].evidence_id
+    source_sha = load_state(tmp_path, identity).source_sha256
+    (tmp_path / "reading_bindings" / f"{identity}.json").unlink()
+    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No completed-page replay")):
+        adopted = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert first.technical_complete == adopted.technical_complete == 1
+    handoff = json.loads(Path(adopted.handoff_paths[0]).read_text())
+    assert handoff["binding"]["evidence_origin"] == "legacy_selection_match_historical_feed_binding_unknown"
+    assert handoff["source_sha256"] == source_sha
+    assert list((tmp_path / "reading_bindings" / "revisions").glob("*.json"))
+
+
+@pytest.mark.asyncio
+async def test_unsupported_source_invocation_fails_before_feedback_collection_or_models(tmp_path: Path) -> None:
+    from digest.main import _run
+
+    config, _ = population(1)
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+    with (patch("digest.config.load_config", return_value=config),
+          patch("digest.main._collect_run_feedback", side_effect=AssertionError("No feedback I/O")),
+          patch("digest.radar.collect", side_effect=AssertionError("No feed I/O")),
+          patch("digest.review.complete", side_effect=AssertionError("No model I/O"))):
+        with pytest.raises(ValueError, match="candidate-bound --prepare-edition"):
+            await _run("config.yaml", True, True, False)
+
+
+@pytest.mark.asyncio
+async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Path) -> None:
+    config, progress, packet, report = await saved_selection(tmp_path)
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=generate)):
+        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    identity = report.reviews[0].selections[0].evidence_id
+    (tmp_path / "reading_briefs" / f"{identity}.json").unlink()
+    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No lost-state replay")):
+        held = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+    assert held.pending == 1 and held.outcomes[0].reason == "technical_missing_reading_state"
