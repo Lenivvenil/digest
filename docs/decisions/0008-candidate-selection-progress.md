@@ -1,6 +1,10 @@
 # 0008. Account for candidates across bounded preparation packets
 
-Status: proposed; local implementation and review in progress
+Status: accepted
+
+Owner approval, 2026-10-04: accepted the bounded preparation-packet and evidence-storage
+decision and authorized PR #125 merge and engine-pin rollout. Natural-run and
+disposition-quality acceptance remain open under #121.
 
 Issue: [#121](https://github.com/Lenivvenil/digest/issues/121)
 
