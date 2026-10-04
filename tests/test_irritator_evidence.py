@@ -48,8 +48,8 @@ def _narrative(bundle: EvidenceBundle | FullSourceEvidence) -> dict[str, Any]:
     }], "limitations": ["Only the supplied RSS excerpts were considered."]}
 
 
-def _queries(count: int = 1) -> dict[str, Any]:
-    return {"queries": [{"query": f"rollout documented limitations {index}",
+def _queries(count: int = 1, *, anchor: str = "Benchmark") -> dict[str, Any]:
+    return {"queries": [{"query": anchor if index == 0 else f"rollout documented limitations {index}",
                           "intent": "Find deployment caveats."} for index in range(count)], "limitations": []}
 
 
@@ -1034,7 +1034,7 @@ async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Pa
     cited, qualification = source.items
     response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
     model = AsyncMock(side_effect=[
-        (json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {}),
+        (json.dumps(response), {}), (json.dumps(_queries(anchor="rollout")), {}), (json.dumps(_ranking()), {}),
     ])
     before = asdict(source)
     with (patch("digest.irritator.evidence_stage.complete", model),
@@ -1221,7 +1221,7 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
     source = _full_source_evidence(tmp_path, rss)
     narrative = _narrative(source)
     narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
-    responses = iter([narrative, _queries(), _ranking()])
+    responses = iter([narrative, _queries(anchor="rollout"), _ranking()])
     deadlines: list[float] = []
 
     async def admission(messages: Any, bounded: Any, **kwargs: Any) -> RequestAdmission:
@@ -1258,3 +1258,88 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
     assert llm.request_budget_remaining(config) == 10 - attempts
     assert [call.args[1] for call in pace.call_args_list] == [expected] * attempts
     assert config.llm.min_request_interval_seconds == configured
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_verdict_queries_hold_without_source_io() -> None:
+    config = fixture_config()
+    bundle = _bundle(config)
+    queries = ["Benchmark reports cancelled", "Vendor benchmark controversy", "Model latency scandal"]
+    response = {"queries": [{"query": query, "intent": "Test a possible opposing hypothesis."}
+                            for query in queries], "limitations": []}
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as hn,
+          patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock()) as arxiv,
+          patch("digest.irritator.evidence_stage.search_lobsters", AsyncMock()) as lobsters):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "incomplete" and model.await_count == 2
+    assert [item.query for item in result.queries] == queries and result.query_anchor is None
+    diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
+    assert diagnostic.status == "incomplete" and diagnostic.error == "MissingSourceQueryAnchor"
+    assert diagnostic.output_count == 3 and not result.source_attempts
+    for search in (hn, arxiv, lobsters):
+        search.assert_not_awaited()
+    assert any("not evidence that no counter-signal exists" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    queries = ['"benchmark reports"', "latency measurement", "model comparison"]
+    response = {"queries": [{"query": query, "intent": "Evaluate the stated finding."}
+                            for query in queries], "limitations": []}
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and model.await_count == 2 and search.await_count == 3
+    assert [item.query for item in result.queries] == queries
+    anchor = result.query_anchor
+    assert anchor is not None and anchor.query_index == 0 and anchor.query == queries[0]
+    assert anchor.evidence_bundle_id == bundle.bundle_id and anchor.evidence_id == bundle.items[0].evidence_id
+    assert anchor.field == "title" and anchor.matched_text == bundle.items[0].title[anchor.start:anchor.end]
+    assert anchor.matched_text == "Benchmark reports"
+    assert any("neutrality and retrieval usefulness are not certified" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
+    config = fixture_config()
+    bundle = _bundle(config)
+    response = _queries(anchor=bundle.items[1].title)
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with patch("digest.irritator.evidence_stage.complete", model):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "incomplete" and result.query_anchor is None and not result.source_attempts
+    assert next(item for item in result.diagnostics if item.stage == "queries").error == "MissingSourceQueryAnchor"
+
+
+@pytest.mark.asyncio
+async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    cited, qualification = source.items
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(narrative), {}), (json.dumps(_queries(anchor="trial deployment")), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "empty" and model.await_count == 2
+    anchor = result.query_anchor
+    assert anchor is not None and anchor.evidence_bundle_id == source.bundle_id != rss.bundle_id
+    assert anchor.evidence_id == qualification.evidence_id and anchor.field == "excerpt"
+    assert qualification.excerpt[anchor.start:anchor.end] == anchor.matched_text == "trial deployment"
+    assert result.narratives[0].evidence_ids == [cited.evidence_id]

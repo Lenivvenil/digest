@@ -40,6 +40,18 @@ the supplied sources. A literal quotation, relation label or valid JSON does not
 a meaningful counter-signal. Manual comparisons and source qualifications must remain
 distinct from automatic search/ranking acceptance.
 
+### Proposed query provenance floor
+
+[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) requires one
+source-anchored topic/entity query within the existing bounded query slots. A derived
+source-text match proves provenance only, not neutrality or useful recall. Nonempty
+query sets without that anchor retain their generated text and stop as technical
+incomplete before any source request; no replacement query is fabricated.
+
+This proposed change affects the bounded RSS path even when source reading is disabled,
+as well as full-source investigation. It remains undeployed in draft #107. The standalone
+legacy generator, query counts, primary delivery and semantic acceptance remain unchanged.
+
 ---
 
 ## Purpose

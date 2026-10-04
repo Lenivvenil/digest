@@ -19,7 +19,14 @@ import httpx
 
 from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
-from digest.irritator.query_contract import QUERY_CONTRACT, QUERY_ERROR, lexical_atoms
+from digest.irritator.query_contract import (
+    GROUNDED_QUERY_CONTRACT,
+    QUERY_CONTRACT,
+    QUERY_ERROR,
+    SourceQueryAnchor,
+    find_source_anchor,
+    lexical_atoms,
+)
 from digest.irritator.query_generator import SearchQuery
 from digest.irritator.ranker import (
     MAX_RANKING_JSON_CHARS,
@@ -146,6 +153,7 @@ class EvidenceIrritatorResult:
     source_attempts: list[SourceAttempt] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     source_bundle_id: str | None = None
+    query_anchor: SourceQueryAnchor | None = None
 
 
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
@@ -602,14 +610,29 @@ async def _run_stages(
     )
     text = await _model_text(diagnostic, LLMRole.GENERATE_QUERIES, (
         'Find external evidence that could contradict or complicate this source-supported narrative. Generate '
-        'up to max_queries distinct English topic/entity searches for relevant external material. '
+        'up to max_queries distinct topic/entity searches for relevant external material. '
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
-        'Explain an empty query list. No other fields. ' + QUERY_CONTRACT + context_instruction
+        'Explain an empty query list. No other fields. ' + QUERY_CONTRACT + ' ' + GROUNDED_QUERY_CONTRACT
+        + ' ' + context_instruction
     ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config,
         admission_deadline=admission_deadline)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
+    if result.queries:
+        result.query_anchor = find_source_anchor([query.query for query in result.queries], cited_evidence)
+        if result.query_anchor is None:
+            diagnostic.status, diagnostic.error = "incomplete", "MissingSourceQueryAnchor"
+            diagnostic.output_count = len(result.queries)
+            result.limitations.append(
+                "Generated queries lacked a source-anchored topic phrase; no source search was attempted. "
+                "This is an incomplete query contract, not evidence that no counter-signal exists."
+            )
+            result.status = "incomplete"
+            return
+        result.limitations.append(
+            "One query has a verified source-text anchor; neutrality and retrieval usefulness are not certified."
+        )
     _finish_stage(diagnostic, len(result.queries))
     if not result.queries:
         result.status = "empty"

@@ -43,3 +43,7 @@ and technical handoff under #122; it does not approve semantic publication or ru
 
 [0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
 source-point representation for #55. It does not approve a new prompt or publication path.
+
+[0011](0011-source-anchored-investigation-queries.md) proposes a source-presence floor
+for bounded RSS and full-source investigation queries under #77; neutrality and useful
+retrieval remain empirical gates.
