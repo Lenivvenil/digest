@@ -150,3 +150,22 @@ Multi-page completion remains a technical handoff. Neither concatenated page sum
 nor appended quotations establish an accurate whole-article brief. A changed publication
 algorithm or source-unit selection prompt requires its own proposed decision and real-source
 acceptance; this integration does not authorize it or activate source reading.
+
+## Preserve known source qualifications in optional investigation
+
+The full-source Irritator input previously narrowed every later stage to the narrative's
+chosen citation IDs. That could discard a qualification already retained from the same
+source, even though extraction had seen it. Query and ranking now carry those known
+qualification passages separately from the unchanged narrative citations. Matching
+requires the exact article identity, source snapshot hash and body hash; another article
+or revision cannot supply implicit context. This is still selected evidence, not every
+condition in the original source or a semantic-completeness verdict.
+
+The full serialized contextual evidence envelope, including IDs and provenance, must
+fit the existing 16,000-character evidence bound. An oversized envelope holds optional
+query/search/ranking as technical incomplete without truncating known conditions. This
+is a conservative transport bound, not token counting or provider quota admission.
+Route-specific complete-request admission remains a #77/#122 integration requirement
+before activation. Existing RSS input, request ceilings and primary delivery remain
+unchanged. This correction does not repair the saved RSS-only Progent applicability
+error or establish automatic counter-signal quality.

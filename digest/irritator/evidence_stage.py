@@ -32,7 +32,7 @@ from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, _extract_json, complete
-from digest.review import EvidenceBundle, canonical_evidence_quote
+from digest.review import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundle, validate_full_source_evidence
 
 MAX_QUERIES = 3
@@ -471,6 +471,27 @@ def _finish_stage(diagnostic: StageDiagnostic, count: int) -> None:
     diagnostic.status = "complete" if count else "empty"
 
 
+def _narrative_context(
+    evidence: EvidenceBundle | FullSourceEvidence, narrative: EvidenceNarrative,
+) -> dict[str, Any]:
+    """Keep passages marked as qualifications bound to the cited article snapshot."""
+    cited = [item for item in evidence.items if item.evidence_id in narrative.evidence_ids]
+    payload: dict[str, Any] = {
+        "bundle_id": evidence.bundle_id, "evidence_kind": evidence.evidence_kind,
+        "items": [asdict(item) for item in cited], "limited_to_narrative_citations": True,
+    }
+    if isinstance(evidence, FullSourceEvidence):
+        bindings = {(item.article_id, item.source_sha256, item.body_sha256)
+                    for item in evidence.items if item.evidence_id in narrative.evidence_ids}
+        additions = [item for item in evidence.items
+                     if item.evidence_id not in narrative.evidence_ids and "qualification" in item.roles
+                     and (item.article_id, item.source_sha256, item.body_sha256) in bindings]
+        payload["qualification_context"] = [asdict(item) for item in additions]
+        payload["limited_to_narrative_citations"] = not additions
+        payload["complete_article_context"] = False
+    return payload
+
+
 async def _run_stages(
     bundle: EvidenceBundle, config: Config, client: httpx.AsyncClient, result: EvidenceIrritatorResult,
     source_evidence: FullSourceEvidence | None = None,
@@ -527,19 +548,30 @@ async def _run_stages(
         "claim": narrative.claim, "category": narrative.category,
         "evidence_ids": narrative.evidence_ids, "quotes": narrative.quotes,
     }
-    cited_evidence = {
-        "bundle_id": evidence.bundle_id, "evidence_kind": evidence.evidence_kind,
-        "items": [asdict(item) for item in evidence.items if item.evidence_id in narrative.evidence_ids],
-        "limited_to_narrative_citations": True,
-    }
+    cited_evidence = _narrative_context(evidence, narrative)
     maximum_queries = min(MAX_QUERIES, config.irritator.queries_per_narrative)
     diagnostic = _stage(result, "queries", 1)
+    if (isinstance(evidence, FullSourceEvidence)
+            and len(json.dumps(cited_evidence, ensure_ascii=False, sort_keys=True)) > MAX_EVIDENCE_JSON_CHARS):
+        diagnostic.status, diagnostic.error = "incomplete", "QualificationContextBudget"
+        result.limitations.append(
+            "Known source context exceeds the existing evidence-envelope bound; "
+            "query, search and ranking were not attempted. This is not provider token admission."
+        )
+        result.status = "incomplete"
+        return
+    context_instruction = (
+        "qualification_context contains literal passages marked as qualifications "
+        "from the exact cited article snapshots. "
+        "Keep them when assessing the claim; they are not new narrative claims or complete article context. "
+        if isinstance(evidence, FullSourceEvidence) else ""
+    )
     text = await _model_text(diagnostic, LLMRole.GENERATE_QUERIES, (
         'Find external evidence that could contradict or complicate this source-supported narrative. Generate '
         'up to max_queries distinct English topic/entity searches for relevant external material. '
         'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
-        'Explain an empty query list. No other fields. ' + QUERY_CONTRACT
+        'Explain an empty query list. No other fields. ' + QUERY_CONTRACT + context_instruction
     ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
@@ -600,7 +632,7 @@ async def _run_stages(
         'Use unique URLs only. 9-10 means strong '
         'direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; 1-4 weak relevance. '
         'Explain an empty ranking list in limitations (up to 5 concise strings). '
-        'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT
+        'Use the requested language for reasoning. ' + RANK_RELATION_CONTRACT + context_instruction
     ), {"narrative": narrative_input, "evidence": cited_evidence,
         "signals": [_ranking_signal_payload(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config)

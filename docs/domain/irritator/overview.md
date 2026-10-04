@@ -22,6 +22,21 @@ or that nothing is persisted describe the April snapshot, not the later
 follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
 acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
+### Draft source-context preservation under #77/#122
+
+The disabled full-source integration retains known qualification passages beside the
+original narrative citations for query generation and ranking. Only passages from the
+exact cited article and source/body snapshot can be added; the claim and its quotations
+remain unchanged. Oversized complete context is technical incomplete under the existing
+evidence-envelope bound, not silently shortened. This bound is not provider admission.
+See [proposed ADR0009](../../decisions/0009-selected-source-admission.md).
+
+This fixes loss of supplied evidence, not the model's ability to judge applicability.
+The saved Apple/Progent explanation still invented a necessity comparison absent from
+the supplied sources. A literal quotation, relation label or valid JSON does not prove
+a meaningful counter-signal. Manual comparisons and source qualifications must remain
+distinct from automatic search/ranking acceptance.
+
 ---
 
 ## Purpose

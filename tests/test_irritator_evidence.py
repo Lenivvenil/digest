@@ -1021,3 +1021,97 @@ async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() ->
     ranking = next(item for item in result.diagnostics if item.stage == "ranking")
     assert ranking.status == "incomplete" and ranking.omitted_count == 1
     assert result.ranked_signals == []
+
+
+@pytest.mark.asyncio
+async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    response = _narrative(source)
+    cited, qualification = source.items
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {}),
+    ])
+    before = asdict(source)
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url="https://external.example/caveat", title="Deployment limitations"),
+          ]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.narratives[0].claim == response["narratives"][0]["claim"]
+    assert result.narratives[0].evidence_ids == [cited.evidence_id]
+    assert result.narratives[0].quotes == {cited.evidence_id: cited.excerpt}
+    for call in model.await_args_list[1:]:
+        payload = json.loads(call.args[1][1]["content"])
+        assert payload["evidence"]["items"] == [json.loads(json.dumps(asdict(cited)))]
+        assert payload["evidence"]["qualification_context"] == [json.loads(json.dumps(asdict(qualification)))]
+        assert payload["evidence"]["limited_to_narrative_citations"] is False
+        assert payload["evidence"]["complete_article_context"] is False
+        assert "not new narrative claims or complete article context" in call.args[1][0]["content"]
+    assert asdict(source) == before
+
+
+@pytest.mark.parametrize("difference", ["article", "snapshot", "body"])
+def test_qualification_context_does_not_cross_source_bindings(tmp_path: Path, difference: str) -> None:
+    from digest.irritator.evidence_stage import _narrative_context
+    from digest.review_checkpoint import _identity_hash
+
+    config = fixture_config()
+    source = _full_source_evidence(tmp_path, _bundle(config))
+    cited, qualification = source.items
+    response = _narrative(source)
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    narrative = _parse_narrative(json.dumps(response), source)[0][0]
+    if difference == "article":
+        from digest.radar.collector import article_hash
+
+        title, url = "Another source article", "https://another.example/announcement"
+        unrelated = replace(qualification, article_id=article_hash(title, url), title=title, url=url, span_id=99)
+    else:
+        field = "source_sha256" if difference == "snapshot" else "body_sha256"
+        unrelated = replace(qualification, **{field: "b" * 64}, span_id=99)
+    unrelated = replace(unrelated, evidence_id=_identity_hash(unrelated, "evidence_id"))
+    context = _narrative_context(replace(source, items=(*source.items, unrelated)), narrative)
+    assert [item["evidence_id"] for item in context["qualification_context"]] == [qualification.evidence_id]
+    assert unrelated.evidence_id not in json.dumps(context)
+    # A qualification already cited remains in the citation set, without duplication.
+    narrative.evidence_ids.append(qualification.evidence_id)
+    context = _narrative_context(source, narrative)
+    assert context["qualification_context"] == [] and len(context["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_oversized_complete_context_stops_before_optional_queries(tmp_path: Path) -> None:
+    import hashlib
+
+    from digest.review import MAX_EVIDENCE_JSON_CHARS
+    from digest.review_checkpoint import _identity_hash
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    cited, qualification = source.items
+    # Valid source-context metadata, rather than excerpt text alone, exceeds the envelope.
+    qualification = replace(qualification, source="Publisher " + "x" * MAX_EVIDENCE_JSON_CHARS)
+    qualification = replace(qualification, evidence_id=_identity_hash(qualification, "evidence_id"))
+    source = replace(source, items=(cited, qualification))
+    source = replace(source, bundle_id=_identity_hash(source, "bundle_id"))
+    response = _narrative(source)
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(return_value=(json.dumps(response), {}))
+    before = hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest()
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete" and model.await_count == 1
+    search.assert_not_awaited()
+    assert result.narratives and not result.queries and not result.ranked_signals
+    assert next(d for d in result.diagnostics if d.stage == "queries").error == "QualificationContextBudget"
+    assert any("not provider token admission" in item for item in result.limitations)
+    assert hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest() == before
