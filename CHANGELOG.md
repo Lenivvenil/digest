@@ -6,6 +6,8 @@
   within the existing slots. Ungrounded nonempty sets remain technical incomplete
   before search. This affects bounded RSS and full-source investigation on rollout,
   regardless of the reading flag; literal anchoring is not semantic acceptance.
+  Exact cited target/final URLs are excluded from external candidates with explicit
+  diagnostics; different documents from the same publisher remain eligible.
 - Draft source admission (#122) reuses complete-source acquisition and exact/estimated
   request accounting from #107, bound to current saved candidate selections. Durable
   generation-intent holds and actual per-page fallback provenance remain separate from

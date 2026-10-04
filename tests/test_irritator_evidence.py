@@ -1343,3 +1343,83 @@ async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_p
     assert anchor.evidence_id == qualification.evidence_id and anchor.field == "excerpt"
     assert qualification.excerpt[anchor.start:anchor.end] == anchor.matched_text == "trial deployment"
     assert result.narratives[0].evidence_ids == [cited.evidence_id]
+
+
+@pytest.mark.asyncio
+async def test_exact_cited_url_is_not_ranked_as_external_evidence() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    cited_url = bundle.items[0].url
+    other_document = "https://example.com/another-document"
+    raw = [make_signal(url=url, title="Deployment limitations") for url in (
+        cited_url, other_document, "https://another.example/evidence",
+    )]
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}),
+        (json.dumps(_ranking(other_document)), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.excluded_cited_source_urls == [cited_url]
+    ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
+    assert {item["url"] for item in ranking_payload["signals"]} == {other_document, "https://another.example/evidence"}
+    assert result.ranked_signals[0].signal.url == other_document
+    validation = next(item for item in result.diagnostics if item.stage == "validation")
+    assert (validation.input_count, validation.output_count, validation.omitted_count) == (3, 2, 1)
+    assert result.source_attempts[0].result_count == 3
+
+
+@pytest.mark.asyncio
+async def test_verified_final_url_exclusion_preserves_counts_and_different_documents(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    final_url = "https://provider.example/canonical-announcement"
+    source = _full_source_evidence(tmp_path, rss, final_url=final_url)
+    cited = source.items[0]
+    other_document = "https://provider.example/followup-document"
+    raw = [make_signal(url=url, title="Deployment limitations") for url in (
+        cited.url, cited.url, final_url, other_document,
+    )]
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(narrative), {}), (json.dumps(_queries(anchor="rollout")), {}),
+        (json.dumps(_ranking(other_document)), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.excluded_cited_source_urls == sorted([cited.url, final_url])
+    ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
+    assert [item["url"] for item in ranking_payload["signals"]] == [other_document]
+    validation = next(item for item in result.diagnostics if item.stage == "validation")
+    assert (validation.input_count, validation.output_count, validation.omitted_count) == (4, 1, 3)
+    assert result.source_attempts[0].result_count == 4
+
+
+@pytest.mark.asyncio
+async def test_only_self_source_hits_skip_ranking_with_explicit_exclusion() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    cited_url = bundle.items[0].url
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url=cited_url),
+          ])) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and model.await_count == 2 and search.await_count == 1
+    assert result.excluded_cited_source_urls == [cited_url] and not result.ranked_signals
+    assert next(item for item in result.diagnostics if item.stage == "ranking").status == "not_run"
+    assert any("repeat known cited sources" in limitation for limitation in result.limitations)
+    assert "not confirmation" in result.coverage

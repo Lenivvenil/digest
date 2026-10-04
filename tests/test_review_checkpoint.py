@@ -498,7 +498,7 @@ async def test_mutable_evidence_item_container_is_rejected_before_model_calls() 
 
 
 def _full_source_evidence(
-    tmp_path: Path, bundle: EvidenceBundle, *, fallback: bool = False,
+    tmp_path: Path, bundle: EvidenceBundle, *, fallback: bool = False, final_url: str | None = None,
 ) -> FullSourceEvidence:
     from digest.article_source import FetchedArticle
     from digest.reading_brief_state import BriefState, Page, PageResult, Route, Selection, save_source
@@ -511,7 +511,7 @@ def _full_source_evidence(
             "The provider reports API-powered deployments improved reliability.\n\n"
             "The reported result applies only to the trial deployment, not every customer.")
     snapshot, source = save_source(tmp_path, selection, FetchedArticle(
-        body, selection.link, "2026-10-02T12:00:00+00:00", None, "article",
+        body, final_url or selection.link, "2026-10-02T12:00:00+00:00", None, "article",
     ))
     page = Page(0, len(source.spans), "a" * 64, PageResult(
         [span.id for span in source.spans], [2], [3], "A model-only reading angle", [2], False,

@@ -154,6 +154,7 @@ class EvidenceIrritatorResult:
     limitations: list[str] = field(default_factory=list)
     source_bundle_id: str | None = None
     query_anchor: SourceQueryAnchor | None = None
+    excluded_cited_source_urls: list[str] = field(default_factory=list)
 
 
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
@@ -531,6 +532,14 @@ def _narrative_context(
     return payload
 
 
+def _cited_source_urls(evidence: EvidenceBundle | FullSourceEvidence, narrative: EvidenceNarrative) -> set[str]:
+    """Known exact target locations only; never infer aliases or fetch redirects."""
+    urls = {item.url for item in evidence.items if item.evidence_id in narrative.evidence_ids}
+    if isinstance(evidence, FullSourceEvidence):
+        urls.update(item.final_url for item in evidence.items if item.evidence_id in narrative.evidence_ids)
+    return urls
+
+
 async def _run_stages(
     bundle: EvidenceBundle, config: Config, client: httpx.AsyncClient, result: EvidenceIrritatorResult,
     source_evidence: FullSourceEvidence | None = None, *, admission_deadline: float | None = None,
@@ -659,6 +668,13 @@ async def _run_stages(
 
     diagnostic = _stage(result, "validation", len(raw))
     signals = validate_signals(raw, config.filters.blocklist_keywords)
+    cited_urls = _cited_source_urls(evidence, narrative)
+    result.excluded_cited_source_urls = sorted({signal.url for signal in signals if signal.url in cited_urls})
+    if result.excluded_cited_source_urls:
+        signals = [signal for signal in signals if signal.url not in cited_urls]
+        result.limitations.append(
+            f"Excluded {len(result.excluded_cited_source_urls)} distinct search URLs that repeat known cited sources."
+        )
     _finish_stage(diagnostic, len(signals))
     diagnostic.omitted_count = len(raw) - len(signals)
     # Do not issue arbitrary URL requests. Liveness failures in the legacy validator

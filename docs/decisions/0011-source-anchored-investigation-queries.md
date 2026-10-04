@@ -1,6 +1,6 @@
 # 0011. Retain a source-anchored topic query within bounded investigation
 
-Status: proposed; local implementation under review
+Status: proposed; implemented in draft PR #107, not accepted or deployed
 
 Refs [#77](https://github.com/Lenivvenil/digest/issues/77),
 [the Irritator domain](../domain/irritator/overview.md), and
@@ -61,3 +61,18 @@ negative terms. The saved failure is preserved privately; public fixtures are sy
 Actual model compliance, search recall and useful sourced relations remain empirical
 acceptance gates. No automatic ranking success or runtime activation follows from this
 proposed contract.
+
+## Known self-source hits are not external evidence
+
+Search can return the cited target itself through an index or aggregator. Exclude only
+exact URLs already present in the narrative's cited evidence, including a final URL
+retained from verified source acquisition. Do not infer redirects, canonicalize unknown
+aliases or issue another fetch. Different documents remain eligible even when they have
+the same publisher or host; their actual relation still needs assessment.
+
+Results retain the distinct excluded URLs in optional diagnostic metadata. Validation
+counts include the exclusion while original source-attempt result counts stay unchanged.
+If only self-source hits remain, skip ranking and explain the exclusion; this is not a
+claim that the wider web contains no counter-evidence. Older records without this field
+contain no retrospective exclusion proof. This enforces the existing external-evidence
+boundary without changing source adapters, query counts or primary delivery.

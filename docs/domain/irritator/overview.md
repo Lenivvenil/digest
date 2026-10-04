@@ -51,6 +51,9 @@ incomplete before any source request; no replacement query is fabricated.
 This proposed change affects the bounded RSS path even when source reading is disabled,
 as well as full-source investigation. It remains undeployed in draft #107. The standalone
 legacy generator, query counts, primary delivery and semantic acceptance remain unchanged.
+Search results that exactly repeat a cited target URL or its verified final URL are
+excluded from external candidates, with explicit URLs/counts retained. Different
+documents on the same publisher remain eligible; no guessed alias or extra fetch is used.
 
 ---
 
