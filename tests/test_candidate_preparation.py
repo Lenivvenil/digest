@@ -19,32 +19,15 @@ from digest.edition_runtime import delivery_phase
 from digest.feedback import FeedbackStore, save_feedback
 from digest.main import _run
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates
-from digest.review import (
-    BlindReviewReport,
-    EvidenceSelection,
-    ModelReview,
-    build_evidence_bundle,
-    build_review_messages,
-)
 from scripts.review_fixture import fixture_config
 
 
-def _report(articles: dict[str, list[Article]], config: Any) -> BlindReviewReport:
-    bundle = build_evidence_bundle(articles, config.review)
-    item = bundle.items[-1]
-    prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        bundle, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
-    primary = ModelReview('primary', config.review.primary.provider, config.review.primary.model,
-                          bundle.bundle_id, prompt_hash, 'ok',
-                          selections=[EvidenceSelection(
-                              item.evidence_id, 'Useful fixture selection', item.title, 'high')])
-    return BlindReviewReport(1, bundle, [primary], 'incomplete', None, [], 'offline fixture')
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("fail_snapshot", "failed_feeds"), [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize(("fail_snapshot", "failed_feeds", "precall_capacity"), [
+    (False, False, False), (True, False, False), (False, True, False), (False, False, True),
+])
 async def test_later_packet_reaches_real_preparation_without_replaying_confirmed_day(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_snapshot: bool, failed_feeds: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_snapshot: bool, failed_feeds: bool, precall_capacity: bool,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('TELEGRAM_CHAT_ID', '12345')
@@ -84,14 +67,28 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         kwargs['fetch_metrics']['Source'] = SourceFetchMetrics(True, len(observed), 17)
         return ({'Tech': observed[:3]} if observed else {}), cache  # Source slots do not define eligibility.
 
-    async def analyze(groups: dict[str, list[Article]], c: Any) -> tuple[list[Any], None, list[Any], BlindReviewReport]:
-        from digest.review import primary_cards
-        report = _report(groups, c)
-        calls.append({item.evidence_id for item in report.evidence.items})
-        return [], None, primary_cards(report, groups, 'en', include_attribution=False), report
+    async def model(role: Any, messages: list[dict[str, str]], c: Any, **kwargs: Any) -> tuple[str, dict[str, int]]:
+        evidence = json.loads(messages[1]['content'])['evidence']['items']
+        selected = evidence[-1]
+        calls.append({item['evidence_id'] for item in evidence})
+        dispositions = [{'evidence_id': item['evidence_id'], 'status': 'selected'}
+                        if item == selected else {'evidence_id': item['evidence_id'], 'status': 'not_selected',
+                                                  'reason': 'This fixture item has no mechanism relevant to the role.'}
+                        for item in evidence]
+        return json.dumps({'selections': [{'evidence_id': selected['evidence_id'],
+                                           'reason': 'Useful fixture selection', 'quote': selected['title'],
+                                           'confidence': 'high'}], 'limitations': ['Offline fixture'],
+                           'dispositions': dispositions}), {}
 
     monkeypatch.setattr('digest.radar.collect', collect)
-    monkeypatch.setattr('digest.main._analyze_articles', analyze)
+    monkeypatch.setattr('digest.review.complete', model)
+    if precall_capacity:
+        monkeypatch.setattr('digest.candidate_review.MAX_BYTES', 200000)
+        with pytest.raises(ValueError, match='capacity before model'):
+            await _run('config.yaml', False, False, False, prepare_only=True)
+        assert not calls and not Path('.cache', READY_FILE).exists()
+        assert len(load_candidate_progress().candidates) == 47
+        return
     if fail_snapshot:
         from digest.edition_runtime import save_accepted_preparation
 
@@ -127,7 +124,7 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         item['link'] for item in first_manifest['canonical_metadata']['cards']}
     state = load_candidate_progress()
     assert sum(item.status == 'not_presented' for item in state.candidates.values()) == 7
-    assert sum(item.status == 'not_selected_without_editorial_reason' for item in state.candidates.values()) == 38
+    assert sum(item.status == 'not_selected' for item in state.candidates.values()) == 38
 
     if failed_feeds:
         from digest.source_scorer import load_stats

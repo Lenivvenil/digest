@@ -486,17 +486,22 @@ subsequent fresh preparation. An existing accepted snapshot or ready/held editio
 still takes precedence. Selected cards can proceed without waiting for all candidates.
 
 Private `.cache/candidate_progress.json` and the archive's `.candidates.json` sibling
-separate observed, planned, selected, technically unfinished, and unselected-without-
-rejection-reason records. Feed parsing limits and exclusions remain explicit. This is
+separate observed, planned, selected, metadata-rejected, duplicate and technically
+unfinished records. The same model response supplies per-item reasons and retained
+IDs; missing/invalid dispositions and capacity-only omissions stay unfinished.
+Legacy responses retain their unselected-without-reason limitation. Feed parsing limits and exclusions remain explicit. This is
 RSS metadata selection, not complete-source reading or proof that throughput matches
 incoming volume. Current source, recency, blocklist and delivered-history rules apply
 to saved candidates; no new retention TTL or extra model call is introduced. A candidate-specific 32 MB
-checkpoint safety limit fails explicitly rather than deleting evidence. See proposed
+checkpoint safety limit fails explicitly rather than deleting evidence. Verified
+immutable references reduce resolved/excluded active payload duplication; selected,
+unknown and pending evidence stays materialized. Full historical archives still grow. See proposed
 [ADR0008](docs/decisions/0008-candidate-selection-progress.md) and #121 for remaining
 editorial accounting and capacity acceptance.
 
 A valid primary abstention retains #120's accepted empty snapshot for its publication
-day. Repeating preparation in that window returns no ready edition; it does not
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
 advance another packet. Unseen work can advance in a later fresh preparation window.
 This inherited limit is part of the remaining throughput acceptance, not a claim
 that all observed candidates received an editorial decision.

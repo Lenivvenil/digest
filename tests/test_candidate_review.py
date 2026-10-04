@@ -240,7 +240,8 @@ def test_private_archive_exact_match_summary_and_legacy_compatibility(tmp_path: 
     sidecar = archive_candidate_accounting(report, archive, tmp_path)
     saved = json.loads(sidecar.read_text())
     assert saved["summary"]["statuses"] == {
-        "selected": 1, "not_selected_without_editorial_reason": 19, "not_presented": 1, "technical_pending": 0,
+        "selected": 1, "not_selected": 0, "duplicate": 0,
+        "not_selected_without_editorial_reason": 19, "not_presented": 1, "technical_pending": 0,
     }
     assert saved["summary"]["registered_identities"] == 21
     original = sidecar.read_bytes()
@@ -507,3 +508,430 @@ def test_frozen_accounting_rejects_outer_schema_even_with_valid_hash(tmp_path: P
     frozen.write_text(json.dumps(record))
     with pytest.raises(ValueError, match="schema version"):
         archive_candidate_accounting(report, tmp_path / "review.json", tmp_path)
+
+
+def compactable_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, str]:
+    config, articles = population(3)
+    config.review.max_evidence_articles = 1
+    for article in articles["tech"]:
+        article.description = "Original source evidence " * 100
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    reconcile_packet(progress, packet, report_for(packet, config), config, tmp_path)
+    excluded = next(candidate for candidate in progress.candidates.values() if candidate.status == "not_presented")
+    config.filters.blocklist_keywords = [excluded.article.title]
+    merge_candidates(progress, {}, config, {}, now=NOW)
+    return progress, config, excluded.identity
+
+
+def test_compaction_rehydrates_exact_excluded_sources_after_policy_change(tmp_path: Path) -> None:
+    from dataclasses import asdict
+
+    from digest.candidate_review import progress_size
+
+    progress, config, identity = compactable_fixture(tmp_path)
+    original = asdict(progress.candidates[identity])
+    full_bytes = progress_size(progress)
+    path = save_candidate_progress(progress, tmp_path)
+    raw = json.loads(path.read_text())["candidate_accounting"]
+    assert raw["schema_version"] == 2
+    compacted = raw["candidates"][identity]
+    assert "article" not in compacted and "occurrences" not in compacted
+    assert compacted["first_observed_at"] == original["first_observed_at"]
+    assert compacted["status"] == "not_presented"
+    assert compacted["evidence_reference"]["identity"] == identity
+    assert path.stat().st_size == progress_size(progress, tmp_path) < full_bytes
+    restored = load_candidate_progress(tmp_path)
+    assert asdict(restored.candidates[identity]) == original
+    config.filters.blocklist_keywords = []
+    merge_candidates(restored, {}, config, {}, now=NOW)
+    assert restored.candidates[identity].eligible
+    packet = plan_packet(restored, config, NOW)
+    assert packet is not None
+    assert identity in {item.evidence_id for item in packet.evidence.items}
+
+
+@pytest.mark.parametrize("damage", ["missing", "hash", "identity", "source_hash"])
+def test_compaction_reference_damage_never_resets_unfinished_work(tmp_path: Path, damage: str) -> None:
+    from digest.candidate_review import CANDIDATE_FILE
+    from digest.preparation import _canonical
+
+    progress, _, identity = compactable_fixture(tmp_path)
+    path = save_candidate_progress(progress, tmp_path)
+    record = json.loads(path.read_text())
+    reference = record["candidate_accounting"]["candidates"][identity]["evidence_reference"]
+    archive = tmp_path / "candidate_reports" / f'{reference["report_sha256"]}.json'
+    if damage == "missing":
+        archive.unlink()
+    elif damage == "hash":
+        archive.write_text(archive.read_text().replace("Original source evidence", "Altered source evidence"))
+    else:
+        reference["identity" if damage == "identity" else "source_sha256"] = "0" * 64
+        record["sha256"] = hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()
+        path.write_text(json.dumps(record))
+    before = (tmp_path / CANDIDATE_FILE).read_bytes()
+    with pytest.raises(ValueError, match="[Mm]issing|hash|identity"):
+        load_candidate_progress(tmp_path)
+    assert path.read_bytes() == before
+
+
+def test_compaction_keeps_selected_unknown_and_technical_evidence_materialized(tmp_path: Path) -> None:
+    from digest.candidate_review import ensure_report_accounting
+
+    config, articles = population(4)
+    config.review.max_evidence_articles = 3
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config)
+    reconcile_packet(progress, packet, report, config, tmp_path)
+    selected = report.reviews[0].selections[0].evidence_id
+    progress.candidates[selected].delivery_cache_observed_at = NOW.isoformat()
+    next(candidate for candidate in progress.candidates.values()
+         if candidate.status == "not_presented").status = "technical_pending"
+    config.filters.blocklist_keywords = ["Item"]
+    merge_candidates(progress, {}, config, {}, now=NOW)
+    mark_prepared(progress, report.evidence.bundle_id, tmp_path)
+    assert ensure_report_accounting(progress, report, tmp_path).exists()
+    raw = json.loads(save_candidate_progress(progress, tmp_path).read_text())["candidate_accounting"]
+    assert raw["schema_version"] == 1
+    assert all("article" in candidate for candidate in raw["candidates"].values())
+    assert "evidence" in raw["packets"][0]
+    assert load_candidate_progress(tmp_path).candidates[selected].status == "selected"
+
+
+def test_compaction_requires_verified_existing_archive_before_atomic_save(tmp_path: Path) -> None:
+    progress, _, identity = compactable_fixture(tmp_path)
+    archive = next((tmp_path / "candidate_reports").glob("*.json"))
+    saved_archive = archive.read_bytes()
+    archive.unlink()
+    path = save_candidate_progress(progress, tmp_path)
+    assert "article" in json.loads(path.read_text())["candidate_accounting"]["candidates"][identity]
+    before = path.read_bytes()
+    archive.write_bytes(saved_archive.replace(b"Original source evidence", b"Corrupted source evidence"))
+    with pytest.raises(ValueError, match="hash or report binding"):
+        save_candidate_progress(progress, tmp_path)
+    assert path.read_bytes() == before
+
+
+def test_compacted_schema_requires_exact_integer(tmp_path: Path) -> None:
+    from digest.preparation import _canonical
+
+    progress, _, _ = compactable_fixture(tmp_path)
+    path = save_candidate_progress(progress, tmp_path)
+    record = json.loads(path.read_text())
+    record["candidate_accounting"]["schema_version"] = 2.0
+    record["sha256"] = hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="schema version"):
+        load_candidate_progress(tmp_path)
+
+
+def test_interrupted_compact_write_keeps_previous_materialized_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import digest.candidate_review as candidate_review
+
+    progress, _, _ = compactable_fixture(tmp_path)
+    path = tmp_path / candidate_review.CANDIDATE_FILE
+    original = path.read_bytes()
+    archives = {archive.name: archive.read_bytes() for archive in (tmp_path / "candidate_reports").glob("*.json")}
+
+    def interrupted_write(path: Path, data: object) -> None:
+        raise OSError("synthetic interrupted compaction")
+
+    monkeypatch.setattr(candidate_review, "atomic_json_write", interrupted_write)
+    with pytest.raises(OSError, match="interrupted compaction"):
+        save_candidate_progress(progress, tmp_path)
+    assert path.read_bytes() == original
+    retained = {archive.name: archive.read_bytes() for archive in (tmp_path / "candidate_reports").glob("*.json")}
+    assert retained == archives
+    assert len(load_candidate_progress(tmp_path).candidates) == 3
+
+
+def test_compaction_verifies_newest_matching_snapshot_without_reading_all_history(tmp_path: Path) -> None:
+    progress, config, identity = compactable_fixture(tmp_path)
+    old_archive = next((tmp_path / "candidate_reports").glob("*.json"))
+    next_packet = plan_packet(progress, config, NOW)
+    assert next_packet is not None
+    begin_packet(progress, next_packet, tmp_path)
+    reconcile_packet(progress, next_packet, report_for(next_packet, config), config, tmp_path)
+    old_archive.write_text("unrelated historical corruption")
+    # The newer self-contained snapshot proves this source occurrence. Old proof
+    # files remain untouched, and are checked only if actually referenced.
+    path = save_candidate_progress(progress, tmp_path)
+    raw = json.loads(path.read_text())["candidate_accounting"]["candidates"][identity]
+    assert "evidence_reference" in raw
+    assert load_candidate_progress(tmp_path).candidates[identity].article == progress.candidates[identity].article
+
+
+def resolved_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, BlindReviewReport]:
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+
+    config, articles = population(3)
+    for article in articles["tech"]:
+        article.description = "Specific original evidence " * 100
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config, "abstained")
+    raw = json.dumps({"selections": [], "limitations": ["RSS only"], "dispositions": [
+        {"evidence_id": item.evidence_id, "status": "not_selected",
+         "reason": "The supplied excerpt only repeats the vendor announcement without technical detail."}
+        for item in packet.evidence.items
+    ]})
+    report.reviews[0] = replace(report.reviews[0], response_sha256=hashlib.sha256(raw.encode()).hexdigest())
+    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
+    assert capture.attempts[0].status == "complete"
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    return progress, config, report
+
+
+def test_resolved_packet_and_candidate_references_roundtrip_after_consumed_abstention(tmp_path: Path) -> None:
+    from digest.candidate_review import progress_size
+
+    progress, config, report = resolved_fixture(tmp_path)
+    materialized_bytes = progress_size(progress)
+    assert pending_completed_report(progress) == report
+    path = mark_prepared(progress, report.evidence.bundle_id, tmp_path)
+    wire = json.loads(path.read_text())["candidate_accounting"]
+    assert wire["schema_version"] == 2
+    assert all("evidence_reference" in candidate for candidate in wire["candidates"].values())
+    assert all(candidate["disposition"]["reason"] for candidate in wire["candidates"].values())
+    assert "archive_reference" in wire["packets"][0] and "articles" not in wire["packets"][0]
+    assert wire["packets"][0]["planned_at"] == NOW.isoformat()
+    assert path.stat().st_size == progress_size(progress, tmp_path) < materialized_bytes / 2
+    restored = load_candidate_progress(tmp_path)
+    assert restored == progress
+    assert pending_completed_report(restored) is None
+    assert plan_packet(restored, config, NOW) is None
+    assert {candidate.status for candidate in restored.candidates.values()} == {"not_selected"}
+
+
+def test_changed_excerpt_reopens_exact_identity_and_preserves_original_decision(tmp_path: Path) -> None:
+    progress, config, report = resolved_fixture(tmp_path)
+    mark_prepared(progress, report.evidence.bundle_id, tmp_path)
+    progress = load_candidate_progress(tmp_path)
+    candidate = next(iter(progress.candidates.values()))
+    identity, original, decision = candidate.identity, candidate.article, candidate.disposition
+    observed_at = candidate.first_observed_at
+    changed = replace(original.article(), description="New contrary technical result with material details.")
+    merge_candidates(progress, {changed.category: [changed]}, config, {}, now=NOW + timedelta(hours=1))
+    assert candidate.status == "not_presented"
+    assert candidate.disposition is None and candidate.decision_response_sha256 is None
+    assert candidate.first_observed_at == observed_at and candidate.article.description == changed.description
+    assert original in candidate.occurrences
+    packet = plan_packet(progress, config, NOW + timedelta(hours=1))
+    assert packet is not None and [item.evidence_id for item in packet.evidence.items] == [identity]
+    assert packet.articles[0].description == changed.description
+    assert decision in progress.packets[0].disposition_attempts[0].dispositions
+    path = save_candidate_progress(progress, tmp_path)
+    assert "article" in json.loads(path.read_text())["candidate_accounting"]["candidates"][identity]
+    restored = load_candidate_progress(tmp_path)
+    assert original in restored.packets[0].articles
+    assert decision in restored.packets[0].disposition_attempts[0].dispositions
+
+
+@pytest.mark.parametrize("damage", ["missing", "packet_hash", "planned_at"])
+def test_resolved_packet_reference_damage_fails_closed(tmp_path: Path, damage: str) -> None:
+    from digest.preparation import _canonical
+
+    progress, _, report = resolved_fixture(tmp_path)
+    path = mark_prepared(progress, report.evidence.bundle_id, tmp_path)
+    record = json.loads(path.read_text())
+    packet = record["candidate_accounting"]["packets"][0]
+    reference = packet["archive_reference"]
+    if damage == "missing":
+        (tmp_path / "candidate_reports" / f'{reference["report_sha256"]}.json').unlink()
+    elif damage == "packet_hash":
+        reference["packet_sha256"] = "0" * 64
+    else:
+        packet["planned_at"] = (NOW + timedelta(hours=1)).isoformat()
+    record["sha256"] = hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="missing|packet evidence or original time"):
+        load_candidate_progress(tmp_path)
+
+
+@pytest.mark.parametrize("compact", [False, True])
+def test_legacy_candidate_fields_read_and_archive_without_changing_frozen_payload(
+    tmp_path: Path, compact: bool,
+) -> None:
+    from digest.candidate_review import archive_candidate_accounting
+    from digest.preparation import _canonical
+
+    progress, _, _ = compactable_fixture(tmp_path)
+    if compact:
+        path = save_candidate_progress(progress, tmp_path)
+    else:
+        path = tmp_path / "candidate_progress.json"
+    record = json.loads(path.read_text())
+    frozen = next((tmp_path / "candidate_reports").glob("*.json"))
+    archive = json.loads(frozen.read_text())
+    new_fields = ("disposition", "decision_response_sha256", "decision_prompt_hash", "decision_occurrence_sha256")
+    for body in (record["candidate_accounting"], archive["candidate_accounting"]):
+        for candidate in body["candidates"].values():
+            for field in new_fields:
+                candidate.pop(field, None)
+        for packet in body["packets"]:
+            packet.pop("disposition_attempts", None)
+    archive["sha256"] = hashlib.sha256(_canonical({key: value for key, value in archive.items()
+                                                   if key != "sha256"})).hexdigest()
+    frozen.write_text(json.dumps(archive))
+    for candidate in record["candidate_accounting"]["candidates"].values():
+        if "evidence_reference" in candidate:
+            candidate["evidence_reference"]["archive_sha256"] = archive["sha256"]
+    record["sha256"] = hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()
+    path.write_text(json.dumps(record))
+    restored = load_candidate_progress(tmp_path)
+    assert all(candidate.disposition is None for candidate in restored.candidates.values())
+    report = progress.packets[0].report
+    assert report is not None
+    target = archive_candidate_accounting(report, tmp_path / "accepted-review.json", tmp_path)
+    assert target is not None
+    assert json.loads(target.read_text()) == archive
+    assert archive_candidate_accounting(report, tmp_path / "accepted-review.json", tmp_path) == target
+
+
+def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(tmp_path: Path) -> None:
+    from dataclasses import asdict
+
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+
+    config, articles = population(2)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config)
+    retained, duplicate = packet.evidence.items
+    raw = json.dumps({"selections": [asdict(report.reviews[0].selections[0])], "dispositions": [
+        {"evidence_id": retained.evidence_id, "status": "selected"},
+        {"evidence_id": duplicate.evidence_id, "status": "duplicate", "retained_id": retained.evidence_id,
+         "reason": "RSS descriptions identify the same reproduced announcement without a distinct result."},
+    ]})
+    report.reviews[0] = replace(report.reviews[0], response_sha256=hashlib.sha256(raw.encode()).hexdigest())
+    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    path = mark_prepared(progress, report.evidence.bundle_id, tmp_path)
+    wire = json.loads(path.read_text())["candidate_accounting"]
+    assert "evidence_reference" in wire["candidates"][duplicate.evidence_id]
+    assert "article" in wire["candidates"][retained.evidence_id]
+    assert "evidence" in wire["packets"][0]
+    restored = load_candidate_progress(tmp_path)
+    assert restored.candidates[duplicate.evidence_id].status == "duplicate"
+    assert restored.candidates[retained.evidence_id].status == "selected"
+    assert pending_completed_report(restored) == report
+
+
+@pytest.mark.parametrize("selected", [True, False])
+def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, selected: bool) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+
+    config, articles = population(1)
+    config.sources.append(SourceConfig("B", "https://b.example/feed", "tech", True))
+    other = replace(articles["tech"][0], source="B")
+    articles["tech"].append(other)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config, "ok" if selected else "abstained")
+    identity = packet.evidence.items[0].evidence_id
+    decision = {"evidence_id": identity, "status": "selected" if selected else "deferred"}
+    if not selected:
+        decision["reason"] = "Useful work remains outside this response allowance."
+    raw = json.dumps({"dispositions": [decision]})
+    report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
+    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    original_capture = packet.disposition_attempts
+    assert progress.candidates[identity].disposition is not None
+    config.sources[0].enabled = False
+    merge_candidates(progress, {}, config, {}, now=NOW)
+    assert progress.candidates[identity].article.source == "B"
+    assert progress.candidates[identity].disposition is None
+    assert progress.candidates[identity].decision_occurrence_sha256 is None
+    save_candidate_progress(progress, tmp_path)
+    restored = load_candidate_progress(tmp_path)
+    assert restored.packets[0].disposition_attempts == original_capture
+    assert restored.packets[0].articles[0].source == "A"
+
+
+@pytest.mark.parametrize("kind", ["deferred", "missing", "complete", "legacy"])
+def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferral(tmp_path: Path, kind: str) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.main import _save_candidate_preparation
+    from digest.preparation import PreparationSnapshot, load_preparation
+
+    config, articles = population(2)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config, "abstained")
+    raw_data: dict[str, object] = {"selections": [], "limitations": ["No cards in this response."]}
+    if kind in {"deferred", "complete"}:
+        raw_data["dispositions"] = [
+            {"evidence_id": item.evidence_id, "status": "deferred" if kind == "deferred" else "not_selected",
+             "reason": "Useful but waiting for capacity." if kind == "deferred" else "Only generic marketing detail."}
+            for item in packet.evidence.items
+        ]
+    raw = json.dumps(raw_data)
+    report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
+    capture = (None if kind == "legacy" else CandidateDispositionCapture([
+        capture_review_dispositions(packet.evidence, report.reviews[0], raw)]))
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    snapshot = PreparationSnapshot([], [], "", report, 1, 2, ["A"])
+    _save_candidate_preparation(snapshot, packet, str(tmp_path), None)
+    assert (load_preparation(tmp_path) is not None) == (kind in {"complete", "legacy"})
+    assert (pending_completed_report(progress) is not None) == (kind in {"complete", "legacy"})
+    if kind == "complete":
+        changed = replace(articles["tech"][0], description="New material qualification changes this evidence.")
+        merge_candidates(progress, {"tech": [changed]}, config, {}, now=NOW)
+        assert pending_completed_report(progress) is None
+        assert plan_packet(progress, config, NOW) is not None
+
+
+@pytest.mark.asyncio
+async def test_response_storage_reserve_covers_supported_escaped_unicode_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.candidate_review import RESPONSE_STORAGE_RESERVE, progress_size
+    from digest.review import run_primary_review
+
+    config = fixture_config()
+    config.sources = [SourceConfig("A", "https://x/rss", "c", True)]
+    config.review.max_evidence_articles = 100
+    config.review.max_selections = 10
+    config.review.max_excerpt_chars = 50
+    articles = {"c": [Article(f"T{i}", f"https://x/{i}", "D", "A", "c", None) for i in range(100)]}
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None and len(packet.evidence.items) == 80
+    begin_packet(progress, packet, tmp_path)
+    before = progress_size(progress)
+    items = packet.evidence.items
+    selections = [{"evidence_id": item.evidence_id, "reason": "😀" * 180,
+                   "quote": item.title, "confidence": "high"} for item in items[:9]]
+    selections.append({"evidence_id": items[9].evidence_id, "reason": "bad",
+                       "quote": "fabricated quote", "confidence": "high"})
+    dispositions = [{"evidence_id": item.evidence_id, "status": "selected"}
+                    if index < 9 else {"evidence_id": item.evidence_id, "status": "deferred", "reason": "😀" * 240}
+                    for index, item in enumerate(items)]
+    raw = json.dumps({"selections": selections, "limitations": ["x"], "dispositions": dispositions}, ensure_ascii=False)
+    provider = AsyncMock(side_effect=[("😀" * 32000, {}), (raw, {})])
+    monkeypatch.setattr("digest.review.complete", provider)
+    capture = CandidateDispositionCapture()
+    report = await run_primary_review(packet_articles(packet), config, disposition_capture=capture)
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    growth = progress_size(progress) - before
+    assert 1_048_576 < growth <= RESPONSE_STORAGE_RESERVE
+    assert provider.await_count == 2 and [review.status for review in report.reviews] == ["invalid", "partial"]

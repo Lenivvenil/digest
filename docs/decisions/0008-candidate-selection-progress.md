@@ -34,8 +34,10 @@ of published cards or requirement to finish the cohort before preparing selected
 cards. Current primary/fallback routing and job limits still apply.
 
 Track registration, planned/uncertain attempt, validated model output and confirmed
-publication as distinct facts. A valid response that does not select an input gives
-no per-item rejection reason: record that limitation, not an editorial rejection.
+publication as distinct facts. The same bounded response records one per-ID disposition: selected, metadata
+not-selected with a reason, duplicate with a retained selected identity, or deferred.
+Selected reasons stay in their existing selection record. Missing/invalid or capacity-
+only omissions remain technical work; old outputs retain their missing-reason limit.
 Output validation failures are not editorial decisions. Exact repeated identities
 may share attribution; different reports and contrary accounts remain distinct.
 
@@ -77,16 +79,16 @@ boundary; 10,800 is a theoretical observed population, not measured eligible dai
 arrival volume. The old 55-item runtime sample was already source-allocated and
 cannot estimate the full pre-slot population. After removing repeated article bodies
 from occurrence and observation records, a synthetic 10,800-item population with
-500-character descriptions occupies 16,451,215 serialized bytes, including the
-historical-cache provenance field. This leaves 15,548,785 bytes before packet/history
+500-character descriptions occupies 18,103,615 serialized bytes, including the
+decision and historical-cache provenance fields. This leaves 13,896,385 bytes before packet/history
 growth under a candidate-only 32,000,000-byte safety
 ceiling; the accepted-preparation snapshot's existing 4 MB bound is unchanged.
 
 Record used and remaining storage capacity and fail before model work without
 truncating identities. Historical packet and immutable report evidence still consumes
 space; this ceiling is not an unlimited-retention or sustainable-throughput solution.
-Compacting resolved records into verified archive references needs a separate reviewed
-lifecycle choice rather than ad-hoc deletion or an invented TTL in this patch.
+The active-reference encoding below is a reviewed implementation proposal for reducing
+duplication. It does not delete archives or supply the still-unresolved retention policy.
 
 
 Previously observed delivery-cache membership is retained as cache evidence, not
@@ -98,7 +100,49 @@ work is explicitly returned to a bounded technical attempt rather than stranded.
 
 
 A valid primary abstention retains #120's accepted empty snapshot for its publication
-day. Repeating preparation in that window returns no ready edition; it does not
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
 advance another packet. Unseen work can advance in a later fresh preparation window.
 This inherited limit is part of the remaining throughput acceptance, not a claim
 that all observed candidates received an editorial decision.
+
+
+### Typed decisions and verified active compaction
+
+Per-ID capture is separate from ModelReview/BlindReviewReport/PreparationSnapshot.
+Bind each attempt to exact slot/provider/model, bundle, prompt and raw response hash;
+only the delivery-used primary/fallback may change candidate state. Unknown, missing,
+conflicting or malformed entries remain unresolved. Duplicate targets are one-hop
+validated selected IDs in the same request; no topic-only equivalence is inferred.
+The inherited selection response allowance is not an editorial rejection rule:
+useful overflow must be deferred. The existing output ceiling and call count remain.
+Reasons are RSS metadata judgments, not proof of full-source irrelevance or fidelity.
+
+For active storage, reference encoding v2 replaces only resolved or reversible-policy-
+excluded payloads with direct identity/occurrence hashes and verified immutable report
+archive references. Materialized v1 remains readable. No reference chains, TTL or
+archive deletion are introduced. Write/verify the immutable evidence before atomically
+replacing active bytes; missing/tampered references stop explicitly. Hydration restores
+exact source occurrences before policy reconciliation. Selected, unknown and pending
+work remains materialized; preparation handoff and legacy cache observations do not
+constitute confirmed delivery proof. Original timestamps and decisions remain traceable.
+
+Full immutable snapshots remain self-contained and can still grow quadratically with
+history. Active compaction alone is not sustainable retention. The candidate-only 32 MB
+ceiling applies separately to materialized report evidence; a conservative 2 MiB response
+storage reserve before a provider call accounts for the existing two 32K-character
+primary/fallback responses, up to 12 JSON bytes per astral Unicode character,
+capture/report copies, evidence duplication and metadata. This reserve is
+not a provider token estimate or editorial quota. Rollback to an old candidate reader
+requires a verified materialized checkpoint; accepted edition/sender schemas are unchanged.
+
+Offline 20-ID/5-card examples count 926 English, 976 Cyrillic and 2991 JSON-escaped
+Cyrillic content tokens with the existing official o200k asset. They establish finite
+fixture fit only, excluding provider framing/reasoning; they are not a universal 4096-
+token guarantee. Truncated output remains incomplete without another repair call.
+
+
+Metadata completeness is per stable article identity using the exact chosen RSS
+occurrence. Retained alternate source memberships are not claimed reviewed; this
+does not introduce a pass over every historical RSS variant. New changed evidence
+reopens its active metadata decision, while prior bound judgments remain archived.

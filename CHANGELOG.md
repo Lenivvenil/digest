@@ -4,9 +4,10 @@
 
 - Candidate accounting (#121): ordinary review-led preparation captures pre-slot
   identities and resumes later bounded packets through persisted selection evidence.
-  Existing accepted editions still take precedence; unseen and unselected-without-
-  reason candidates are not labelled editorially rejected. Capacity and real-output
-  acceptance remain open.
+  Existing accepted editions still take precedence. Same-response typed per-ID
+  dispositions distinguish metadata reasons/duplicates from capacity-deferred work;
+  old missing reasons remain unresolved. Verified immutable references compact only
+  resolved/excluded active payloads. Capacity and real-output acceptance remain open.
 
 - Prepared-edition boundary (#120): accepted canonical analysis is resumable before
   presentation; exact Telegram payloads are frozen and remotely persisted before a

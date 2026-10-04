@@ -404,8 +404,9 @@ The mutable progress file is `.cache/candidate_progress.json`. Frozen report-bou
 accounting is archived as `<edition>.md.candidates.json` and included in ready-edition
 archive hashes. Keep the existing runtime `.cache`/archive persistence step: local
 writes are not proof of remote durability. A planned record alone is not proof a
-request reached a provider. Successful omission supplies no editorial rejection
-reason. Feed failures, parser limits, source changes and age exclusions are separate.
+request reached a provider. The same response now includes typed per-ID dispositions. A missing or invalid
+entry supplies no editorial rejection reason; capacity-only omission is deferred.
+Reasons are judgments over the supplied RSS occurrence, not full-source conclusions. Feed failures, parser limits, source changes and age exclusions are separate.
 
 Do not clear progress to claim complete coverage. Capacity overflow fails without
 truncation; retention and sustainable throughput require the #121/#55 acceptance
@@ -414,7 +415,28 @@ under ADR0007. Candidate accounting grants no permission to replay a held editio
 
 
 A valid primary abstention retains #120's accepted empty snapshot for its publication
-day. Repeating preparation in that window returns no ready edition; it does not
+day. New candidate responses with only deferred/missing/invalid dispositions do not
+qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
 advance another packet. Unseen work can advance in a later fresh preparation window.
 This inherited limit is part of the remaining throughput acceptance, not a claim
 that all observed candidates received an editorial decision.
+
+
+Disposition capture is bound to the exact delivery-used provider/model, evidence
+bundle, prompt and raw-response hash. It is separate from legacy ModelReview and
+accepted PreparationSnapshot fields. Old reports remain readable with unavailable
+per-item reasons; a changed prompt cannot claim same-prompt reuse. Selected reasons
+are not duplicated. Duplicate references must retain a validated selected identity
+from the same request; shared topic alone is insufficient and contrary accounts must
+remain eligible. Structural checks do not certify semantic correctness.
+
+The active candidate checkpoint may use reference encoding v2; loaders also read
+materialized v1. References point directly to hash-verified, self-contained immutable
+report evidence. Missing/corrupt references stop with a recovery error and are never
+silently dropped. Current policy can rehydrate excluded candidates; changed source
+occurrences reopen resolved metadata decisions while preserving old evidence.
+Selected/unknown/pending records are not retired by compaction. This reduces active
+duplication, not total archive growth. A pre-call materialized-size reserve prevents
+known archive-capacity exhaustion from consuming another model attempt. Rolling back
+to an earlier candidate reader requires restoring a verified materialized checkpoint;
+do not delete evidence or delivery markers to bypass a compatibility error.

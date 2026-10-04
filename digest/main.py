@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from digest.delivery.telegram import IssueDeliveryResult
     from digest.feedback import FeedbackStore
     from digest.irritator import IrritatorStatus
+    from digest.preparation import PreparationSnapshot
     from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
     from digest.review import BlindReviewReport
@@ -911,14 +912,16 @@ def _candidate_inputs(
             ensure_report_accounting(progress, report, cache_dir)
     logging.getLogger(__name__).info(
         "Candidate accounting: %d registered, %d eligible, %d never planned, %d technical pending, "
-        "%d unselected without editorial reason; next packet %d items",
+        "%d unselected without editorial reason, %d metadata not-selected, %d duplicates; next packet %d items",
         len(progress.candidates), sum(item.eligible for item in progress.candidates.values()),
         sum(item.status == "not_presented" for item in progress.candidates.values()),
         sum(item.status == "technical_pending" for item in progress.candidates.values()),
         sum(item.status == "not_selected_without_editorial_reason" for item in progress.candidates.values()),
+        sum(item.status == "not_selected" for item in progress.candidates.values()),
+        sum(item.status == "duplicate" for item in progress.candidates.values()),
         len(packet.evidence.items) if packet is not None else 0,
     )
-    stored_bytes = progress_size(progress)
+    stored_bytes = progress_size(progress, cache_dir)
     logging.getLogger(__name__).info("Candidate storage: %d bytes used; %d bytes remaining",
                                     stored_bytes, MAX_BYTES - stored_bytes)
     articles = packet_articles(packet) if packet is not None else {}
@@ -938,13 +941,18 @@ async def _analyze_candidate_articles(
         cards = primary_cards(cached_report, articles, config.radar.language,
                               include_attribution=config.telegram.delivery_mode != "compact")
         return [], None, cards, cached_report
-    result = await _analyze_articles(articles, config)
-    report = result[3]
-    if progress is not None and packet is not None and report is not None:
-        from digest.candidate_review import reconcile_packet
+    if progress is None or packet is None:
+        return await _analyze_articles(articles, config)
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.candidate_review import reconcile_packet
+    from digest.review import primary_cards, run_primary_review
 
-        reconcile_packet(progress, packet, report, config, cache_dir)
-    return result
+    capture = CandidateDispositionCapture()
+    report = await run_primary_review(articles, config, disposition_capture=capture)
+    reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
+    cards = primary_cards(report, articles, config.radar.language,
+                          include_attribution=config.telegram.delivery_mode != "compact")
+    return [], None, cards, report
 
 
 def _save_prepared_fetch_stats(
@@ -957,6 +965,24 @@ def _save_prepared_fetch_stats(
     if not already_failed:
         _record_source_stats(source_stats, fetch_metrics, articles, set())
         save_stats(source_stats, cache_dir, active_sources={source.name for source in config.enabled_sources})
+
+
+def _save_candidate_preparation(
+    snapshot: PreparationSnapshot, packet: CandidatePacket | None,
+    cache_dir: str, publication_date: date | None,
+) -> None:
+    from digest.edition_runtime import save_accepted_preparation
+    from digest.review import _delivery_review
+
+    if not snapshot.top_articles and packet is not None and packet.disposition_attempts:
+        report = snapshot.review_report
+        if report is None:
+            return
+        delivery = _delivery_review(report)
+        capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
+        if capture is None or capture.status != "complete":
+            return  # Deferred or malformed metadata is not an accepted empty editorial decision.
+    save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
 
 
 def _handoff_candidate(
@@ -1097,7 +1123,7 @@ async def _run(
     combined = _publication_intro(combined, review_report, config)
 
     if prepare_only:
-        from digest.edition_runtime import finish_preparation, save_accepted_preparation
+        from digest.edition_runtime import finish_preparation
         from digest.preparation import PreparationSnapshot
 
         snapshot = PreparationSnapshot(
@@ -1105,7 +1131,7 @@ async def _run(
             review_report=review_report, source_count=len(articles_by_category),
             article_count=total_articles, contributing_sources=contributing_sources,
         )
-        save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=edition_date)
+        _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
         _handoff_candidate(candidate_progress, candidate_packet, review_report, cache_dir, edition_date)
         _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
                                    config, cache_dir, collection_failed)
