@@ -40,3 +40,6 @@ or editorial-quality approval.
 
 [0009](0009-selected-source-admission.md) proposes candidate-bound source admission
 and technical handoff under #122; it does not approve semantic publication or runtime activation.
+
+[0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
+source-point representation for #55. It does not approve a new prompt or publication path.
