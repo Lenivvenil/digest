@@ -23,6 +23,14 @@ has a second, opt-in RSS-review path. Full-source enrichment in
 [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
 not the operating architecture documented below.
 
+The draft source-admission adapter reuses safe acquisition and contiguous page progress.
+It admits only current candidate occurrences with exact saved selection proof, and
+freezes technical source evidence before accepted preparation. It does not publish the
+draft reading-angle concatenation or mark independent comparison complete. Request
+intents preserve ambiguous generation holds; count uncertainty is separate. Proposed
+[ADR0009](decisions/0009-selected-source-admission.md) records this integration. #55
+still owns source reconciliation and factual presentation; runtime activation is off.
+
 ## Data flow
 
 ```mermaid

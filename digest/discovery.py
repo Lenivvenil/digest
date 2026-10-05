@@ -30,7 +30,7 @@ DELIVERY_FILE = "discovery_delivery.json"
 
 def source_hash(url: str) -> str:
     """Return an 8-character hex hash of the URL for source decisions."""
-    return hashlib.md5(url.encode()).hexdigest()[:8]
+    return hashlib.md5(url.encode(), usedforsecurity=False).hexdigest()[:8]
 
 
 @dataclass

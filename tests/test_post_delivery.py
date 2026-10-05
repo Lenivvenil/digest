@@ -528,7 +528,9 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
         assert "not independently verified" in notice
         text = _markdown(checkpoint).read_text()
         assert "Status: empty" in text and notice in text
-        assert json.loads(text.split("## Stage diagnostics\n", 1)[1]) == asdict(canonical)
+        expected_diagnostics = asdict(canonical)
+        expected_diagnostics.pop("ranking_audit")
+        assert json.loads(text.split("## Stage diagnostics\n", 1)[1]) == expected_diagnostics
         return "sent"
 
     with (
@@ -563,3 +565,82 @@ async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tm
     record = json.loads(_marker(checkpoint).read_text())
     assert record["supplement_status"] == "archive_only" and record["stage_status"] == "incomplete"
     assert _markdown(checkpoint).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path, invalid: bool) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    payload["full_source_required"] = True
+    if invalid:
+        payload["full_source_evidence"] = {"invalid": "incomplete checkpoint"}
+    checkpoint.write_text(json.dumps(payload))
+    assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    with (patch("httpx.AsyncClient", return_value=_client_context()),
+          patch("digest.llm.complete", AsyncMock(side_effect=AssertionError("No RSS fallback"))) as model,
+          patch("digest.post_delivery._send_supplement", AsyncMock(return_value="sent"))):
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+    model.assert_not_called()
+    result = json.loads(_result(checkpoint).read_text())
+    assert result["status"] == "incomplete"
+    assert result["diagnostics"][0]["error"] == "FullSourceEvidencePending"
+    assert "selected literal full-source passages" in _markdown(checkpoint).read_text()
+    marker = json.loads(_marker(checkpoint).read_text())
+    assert marker["full_source_required"] is True
+    if invalid:
+        assert marker["full_source_error"] == "ValueError"
+
+
+@pytest.mark.asyncio
+async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: Path) -> None:
+    from digest.irritator.evidence_stage import _ranking_audit
+    from tests.factories import make_signal
+
+    checkpoint = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(checkpoint)
+    prepare_post_delivery(Path("config.yaml"), checkpoint)
+    result = _stage_result(payload["evidence"]["bundle_id"], "incomplete")
+    private = make_signal(title="PRIVATE AUDIT SENTINEL", snippet="Confined to the private JSON trace.")
+    result.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
+    client = _client_context()
+
+    async def send(actual: Any, config: Any) -> str:
+        saved = json.loads(_result(checkpoint).read_text())
+        assert saved == asdict(result) and actual is result
+        markdown = _markdown(checkpoint).read_text()
+        assert "PRIVATE AUDIT SENTINEL" not in markdown and '"ranking_audit"' not in markdown
+        assert "1 validated candidates, 1 admitted" in markdown and ".irritator.json" in markdown
+        return "sent"
+
+    with (patch("httpx.AsyncClient", return_value=client),
+          patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)) as stage,
+          patch("digest.post_delivery._send_supplement", side_effect=send)):
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        with pytest.raises(ValueError):
+            await execute_post_delivery(Path("config.yaml"), checkpoint)
+    stage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.irritator.evidence_stage import RankingDecision, _ranking_audit
+    from tests.factories import make_signal
+
+    config = fixture_config()
+    config.telegram.enabled = True
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
+    result = _stage_result("bundle", "empty")
+    private = make_signal(title="PRIVATE TITLE SENTINEL", snippet="PRIVATE ABSTRACT SENTINEL")
+    result.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
+    result.ranking_audit.candidates[0].decision = RankingDecision(
+        "context", 10, "PRIVATE REASON SENTINEL", "private-quote", "PRIVATE QUOTE SENTINEL",
+    )
+    client = _client_context()
+    client.post = AsyncMock(return_value=httpx.Response(
+        200, json={"ok": True}, request=httpx.Request("POST", "https://example.com"),
+    ))
+    with patch("httpx.AsyncClient", return_value=client):
+        assert await _send_supplement(result, config) == "sent"
+    assert "PRIVATE" not in json.dumps([call.kwargs for call in client.post.await_args_list])

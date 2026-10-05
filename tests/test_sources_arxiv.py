@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import httpx
 import pytest
 import respx
@@ -95,13 +97,20 @@ async def test_concurrent_arxiv_requests_are_serial_and_spaced_without_real_slee
         clock[0] += delay
         await original_sleep(0)
 
+    class ResponseStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            await original_sleep(0)
+            yield _ARXIV_EMPTY.encode()
+
+        async def aclose(self) -> None:
+            active[0] -= 1
+
     async def response(request):
         active[0] += 1
         assert active[0] == 1
         starts.append(clock[0])
         await original_sleep(0)
-        active[0] -= 1
-        return httpx.Response(200, request=request, text=_ARXIV_EMPTY)
+        return httpx.Response(200, request=request, stream=ResponseStream())
 
     monkeypatch.setattr(arxiv, "_requests", None)
     monkeypatch.setattr(arxiv, "monotonic", lambda: clock[0])

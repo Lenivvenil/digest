@@ -281,7 +281,8 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
     packet.collection_json = progress.latest_collection_json
     validate_evidence_bundle(packet.evidence, config)
     packet.prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        packet.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        packet.evidence, config.review, config.radar.language, sources=config.sources),
+        sort_keys=True).encode()).hexdigest()
     packet.max_selections = config.review.max_selections
     return packet
 
@@ -294,7 +295,10 @@ def _current_occurrences(candidate: Candidate) -> None:
     candidate.occurrences = tuple(item for item in latest.values() if item != candidate.article)
 
 
-def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache") -> Path:
+def begin_packet(
+    progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache", *,
+    skipped_empty_reports: set[str] | None = None,
+) -> Path:
     """Persist a planned attempt; this is not evidence that dispatch occurred."""
     if packet.report is not None:
         raise ValueError("Cannot begin an already completed candidate packet.")
@@ -305,7 +309,7 @@ def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir
             _index_candidate(candidate, progress, cache_dir)
         _clear_disposition(candidate)
         candidate.status = "technical_pending"
-    path = save_candidate_progress(progress, cache_dir)
+    path = save_candidate_progress(progress, cache_dir, skipped_empty_reports=skipped_empty_reports)
     if progress_size(progress, cache_dir) + RESPONSE_STORAGE_RESERVE > MAX_BYTES:
         raise ValueError(
             "Insufficient candidate working-set capacity before model work; no input was truncated.")
@@ -329,7 +333,8 @@ def reconcile_packet(
     validate_evidence_bundle(report.evidence, config)
     _validate_report(report)
     prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        report.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        report.evidence, config.review, config.radar.language, sources=config.sources),
+        sort_keys=True).encode()).hexdigest()
     selected: set[str] = set()
     rejected: set[str] = set()
     valid = False
@@ -382,7 +387,9 @@ def reconcile_packet(
     return path
 
 
-def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport | None:
+def pending_completed_report(
+    progress: CandidateProgress, *, skip_reports: set[str] | None = None,
+) -> BlindReviewReport | None:
     """Recover undelivered selection after callers honor ready/preparation precedence.
 
     Handoff means accepted preparation, never confirmed delivery. Once that
@@ -390,7 +397,7 @@ def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport |
     abstentions stay consumed; mixed eligibility returns useful work to planning.
     """
     for packet in reversed(progress.packets):
-        if packet.report is None:
+        if packet.report is None or _digest(asdict(packet.report)) in (skip_reports or set()):
             continue
         successful = _delivery_review(packet.report) if packet.report.reviews else None
         if successful is None or successful.status not in {"ok", "partial", "abstained"}:
@@ -536,7 +543,6 @@ def _restore_relevant_history(
         for packet in storage.load_candidate_packets(identity, cache_dir):
             key = storage.packet_key(packet)
             if key not in known_packets:
-                packet.handed_to_preparation = True
                 progress.packets.append(packet)
                 known_packets.add(key)
 
@@ -568,20 +574,27 @@ def _index_candidate(candidate: Candidate, progress: CandidateProgress, cache_di
     from digest import candidate_storage as storage
 
     keys = []
+    handoffs = {}
     for packet in _proof_packets(candidate, progress.packets):
         storage.freeze_packet(packet, {}, cache_dir)
-        keys.append(storage.packet_key(packet))
-    storage.save_candidate(candidate, tuple(keys), cache_dir)
+        key = storage.packet_key(packet)
+        keys.append(key)
+        handoffs[key] = packet.handed_to_preparation
+    storage.save_candidate(candidate, tuple(keys), cache_dir, report_handoffs=handoffs)
 
 
-def _retire_indexed_work(progress: CandidateProgress, cache_dir: str | Path) -> None:
+def _retire_indexed_work(
+    progress: CandidateProgress, cache_dir: str | Path, skipped_empty_reports: set[str] | None = None,
+) -> None:
     """Verified index first, active removal last; excluded work is not completed work."""
     from digest import candidate_storage as storage
 
     retiring = []
     for identity, candidate in progress.candidates.items():
         proof = _proof_packets(candidate, progress.packets)
-        unconsumed = any(_accepted_empty_packet(packet) and not packet.handed_to_preparation for packet in proof)
+        unconsumed = any(packet.report is not None and _accepted_empty_packet(packet)
+                         and not packet.handed_to_preparation
+                         and _digest(asdict(packet.report)) not in (skipped_empty_reports or set()) for packet in proof)
         if candidate.eligible and (candidate.status not in {"not_selected", "duplicate"} or unconsumed):
             continue
         _index_candidate(candidate, progress, cache_dir)
@@ -655,6 +668,7 @@ def progress_size(progress: CandidateProgress, cache_dir: str | Path | None = No
 
 def save_candidate_progress(
     progress: CandidateProgress, cache_dir: str | Path = ".cache", *, retire: bool = True,
+    skipped_empty_reports: set[str] | None = None,
 ) -> Path:
     from digest.candidate_storage import encode_active_candidate, put_article, write_policy
 
@@ -667,7 +681,7 @@ def save_candidate_progress(
     for packet in progress.packets:
         packet.collection_json = _materialize_collection(packet.collection_json, cache_dir)
     if retire:
-        _retire_indexed_work(progress, cache_dir)
+        _retire_indexed_work(progress, cache_dir, skipped_empty_reports)
     record = _working_record(progress, cache_dir)
     if len(json.dumps(record, indent=2).encode("utf-8")) > MAX_BYTES:
         raise ValueError(f"Candidate progress exceeds {MAX_BYTES}-byte budget; no manifest was truncated.")

@@ -8,8 +8,8 @@ This is the existing canonical Digest domain page. The 2026-10-01 register below
 preserves the earlier decision history; current status was reconciled on 2026-10-02.
 The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
 limits. The operating allocation is a reviewed proposal; the daily schedule is
-deployed. Compact rendering is an explicit engine opt-in with a required durable
-publication boundary; runtime activation and observed-output acceptance remain separate. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+deployed. Compact rendering is implemented and enabled in the runtime with a required
+durable publication boundary; observed-output acceptance remains open. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
 single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
 is under active scope reassessment for the simple daily edition; its factual release
 gate remains unmet. The latest owner direction permits no parked/deferred tasks:
@@ -71,10 +71,19 @@ Their issue-level review surface is #55 and its linked work order #91.
 |---|---|---|---|
 | D-01 | Remain a zero-incremental-spend experiment; do not depend exclusively on one model vendor | October owner direction; original [project plan](../../plans/completed/digest.md#plan-daily-news-digest) already requires free hosting/no VPS/no payment | Provider availability, rate quota, context size and output allowance are separate operational constraints. No paid fallback is authorized by this requirement. Independent blind review is an opt-in comparison, not a mandatory daily-release gate or proof of factual correctness; its observed status must stay explicit (#91). |
 | D-02 | A Russian digest must add a specific non-obvious insight, with evidence, limitations and a reason to read the original | [#55](https://github.com/Lenivvenil/digest/issues/55); historical [PR73](https://github.com/Lenivvenil/digest/pull/73) already targeted information gain rather than headline repetition | The [three-source sample](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922127576) received only provisional positive feedback, [recorded here](https://github.com/Lenivvenil/digest/issues/55#issuecomment-5922207102). It is not a final gold standard, a fixed template, or a three-card quota. |
-| D-03 | Full source material must support the analysis; provider limits must not silently turn into editorial rejection of longer articles | October owner rejection of the proposed max-three/shared-input-budget policy, tracked under #55 | No article may be labelled uninteresting merely because it is long or a quota is exhausted. Pending/inaccessible/technically incomplete evidence must be distinguished from a completed editorial rejection. The mechanism is not yet decided or implemented. |
+| D-03 | Avoid arbitrary article quotas and distinguish technical limits from editorial rejection | The owner rejected the proposed max-three/shared-input-budget limit. Mandatory complete-source processing was subsequently introduced by the assistant as a mechanism, not established by that rejection | Source coverage and technical incompleteness must remain truthful. Article length or exhausted quota alone must not be presented as editorial uninterest. Full-source acquisition is an experimental option, not a mandatory processing or #55 closure requirement. |
 | D-04 | Preserve the Irritator's genuine external counter-signal function while primary delivery remains independent of optional-stage failure | Owner-approved primary-first recovery; [PR89](https://github.com/Lenivvenil/digest/pull/89); historical [#53](https://github.com/Lenivvenil/digest/issues/53) defines the unmet core value | Search, provenance, ranking and honest incomplete status must survive editorial changes. A successful supplementary API send does not prove a useful contradiction was found. Source repairs remain #77. |
 | D-05 | Telegram is the required primary destination; archived evidence and delivery state must remain truthful and replay-safe | Owner-approved recovery, [PR88](https://github.com/Lenivvenil/digest/pull/88), [PR89](https://github.com/Lenivvenil/digest/pull/89), [PR90](https://github.com/Lenivvenil/digest/pull/90) | Only confirmed card delivery consumes its dedup identity. Footer-only output, an archived report or a green workflow is not proof of a useful delivered digest. |
 | D-06 | Changes must preserve accumulated domain analysis and follow one visible issue at a time | Current owner direction; [Principles §4 and Definition of Done](../../principles.md); [#91](https://github.com/Lenivvenil/digest/issues/91) | Link requirement/source → decision/rationale → issue acceptance → change → verification before resuming implementation. Existing documents and issues are updated, not replaced by parallel sources of truth. |
+
+### Requirement-provenance correction — 2026-10-05
+
+The October 1 conversation gave provisional positive feedback on useful summaries
+and rejected an artificial limit. The assistant then introduced complete-text
+processing as its solution. That sequence does not establish an owner mandate to
+read every article in full. The agreed outcome is useful, faithful daily content;
+the full-source experiments and their failures remain evidence about a proposed
+mechanism, not a mandatory acceptance gate. New expansion of that mechanism is paused.
 
 ### Operating envelope and daily-edition decision — 2026-10-02
 
@@ -136,10 +145,10 @@ source links and stable per-article vote attribution. Telegram transport chunks 
 be necessary; they must preserve complete selected content and URL/identity bindings.
 No artificial first-N article rule or length-based editorial rejection follows from
 this format decision. Put translation/verification notices once per edition rather
-than repeating them on every article. The proposed first compact release retains
+than repeating them on every article. The compact release retains
 optional Irritator/comparison processing and honest results in the archive, without
-additional supplementary Telegram pushes. This presentation change requires code;
-it is not available merely by changing the cron or an existing configuration flag.
+additional supplementary Telegram pushes. It requires `telegram.delivery_mode: compact`
+and the managed reservation/persistence boundary.
 
 **Risk/acceptance boundaries:** daily polling has no safety margin against Telegram's
 at-most-24-hour ordinary-message retention. Delayed or missed runs can lose votes;
@@ -164,14 +173,60 @@ allows delayed/dropped runs; minute 17 is no guarantee. The late run persisted
 feedback before acknowledgement and blocked a duplicate confirmed edition. These
 safeguards worked; they do not eliminate the 24-hour feedback retention risk.
 
-Current model control flow admits a conservative ceiling of ten physical requests
+With reading briefs disabled, the deployed model control flow admits a conservative ceiling of ten physical requests
 per product cycle before cache reuse, timeout and failure short-circuiting: up to two
 primary/fallback reviews, one primary translation, three Irritator phases, one optional
 translation and three independent-review slots. Runtime retries are zero. Review
 outputs are capped at 4,096 tokens; Irritator/translation outputs at 2,048. The current
 20 × 500-character RSS evidence allocation plus metadata is not full-article coverage.
-Primary pacing is configured separately from optional stages' 65-second pacing.
+Primary pacing is configured separately from legacy optional stages' 65-second Groq
+policy. Proposed full-source admission uses route-specific configured pacing under
+[ADR0009](../../decisions/0009-selected-source-admission.md), not a universal Gemini rate.
 These are execution constraints, not an editorial rule to prefer shorter articles.
+
+The draft source-admission integration (#122, proposed ADR0009) uses at most ten
+in-process request reservations shared by selection, counting, fallback and reading.
+It preserves #121's validated-selection/disposition contract and does not enlarge the
+RSS packet. Missing or truncated output remains incomplete rather than rejection.
+A proposed per-run stage claim/journal shares that ten across separate primary and
+optional processes, with no regrant after unknown usage or reruns. Compatible
+engine/workflow rollout, actual quota and capacity remain acceptance gates; the draft
+does not authorize the earlier proposed twelve-request primary allowance or additional
+optional calls. Reading remains off.
+
+Its application budget is 360 seconds inside the unchanged 8-minute primary job.
+The reading stage subtracts the configured translation deadline and 45 seconds for
+transport/persistence, then checks that pacing plus the acquisition/count timeout fits before each call.
+A generation needs at least 30 useful seconds after pacing; its adapter HTTP timeout
+is clipped to the remaining reading window, at most 120 seconds, with an absolute
+outer deadline as a second bound. An uncertain generation is held across later invocations and route changes. A normal uncached article needs at most 20 seconds to
+fetch, 10 seconds for exact counting and 120 seconds for one generation, plus pacing.
+Five worst-case articles therefore do not fit by assumption. Previously selected
+unfinished work resumes before fresh work, including on empty RSS days; backlog age,
+request usage and technical pending outcomes must remain observable.
+
+Whole-body input is preferred on the explicitly configured supported route. Exact
+counting uses the same Gemini generation payload, including system instructions;
+the supported Groq route uses its labelled local estimate. Only route-bound input
+admission overflow creates a complete ordered page sweep; an estimate is not a measured
+provider-context failure. Quota failure never causes context splitting. Every page must finish before a technical reading handoff is complete,
+and all nominated material-qualification passages remain in the original-language
+archive appendix and evidence checkpoint. The retained diagnostic renderer also keeps
+these passages in its presentation provenance for both single-page and multi-page
+sources, including qualifications from abstaining pages. Translation does not rewrite
+these literal passages. This preserves selected evidence; it does not repair unsupported
+claims in generated prose or reconcile conflicting statements across pages.
+
+The candidate-bound integration freezes source/page evidence for #55 and does not
+publish the diagnostic reading-angle cards. A publication mechanism still needs to
+produce a useful whole-article brief with essential conditions and unresolved source
+contradictions intact. Per-page prose concatenation and a union of quotation IDs do not
+establish that requirement. Prompt-version binding prevents silent reuse of old model
+outputs under a changed reading contract.
+Neither full input coverage nor literal citation validation proves semantic completeness.
+The configured model's advertised context is not evidence of free-account entitlement.
+This path remains off pending the finite #55 quality/cost acceptance gate; no new live
+run or runtime activation is authorized by this documentation.
 
 Provider quotas are a separate ledger: account entitlement, RPM/TPM, daily tokens,
 context and output limits are not interchangeable with Actions minutes. Current

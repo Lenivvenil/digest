@@ -238,3 +238,24 @@ async def test_non_delivery_modes_never_publish_checkpoint(args: list[str]) -> N
     ):
         assert await main(args) == 0
     publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", [None, "MAX_TOKENS"])
+async def test_reading_primary_incomplete_completion_never_implies_editorial_rejection(finish: str | None) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.config import ReadingBriefConfig
+
+    config = fixture_config()
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+
+    async def select(*args: Any, **kwargs: Any) -> Any:
+        text, usage = await fixture_response(*args, **kwargs)
+        return text, usage | {"finish_reason": finish}
+
+    capture = CandidateDispositionCapture()
+    with patch("digest.review.complete", side_effect=select):
+        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture)
+    assert report.reviews[0].selections  # Existing valid-card salvage is preserved.
+    assert capture.attempts[0].status == "incomplete"
+    assert not any(item.status in {"not_selected", "duplicate"} for item in capture.attempts[0].dispositions)

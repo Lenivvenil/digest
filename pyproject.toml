@@ -9,6 +9,12 @@ dependencies = [
     "feedparser>=6.0.12",
 ]
 
+[project.optional-dependencies]
+reading-brief = ["tiktoken==0.14.0"]
+
+[tool.setuptools]
+license-files = ["THIRD_PARTY_NOTICES.md"]
+
 [tool.setuptools.packages.find]
 include = ["digest*"]
 

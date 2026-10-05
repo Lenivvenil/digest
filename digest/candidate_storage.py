@@ -166,17 +166,26 @@ def read_packet(report_sha: str, cache_dir: str | Path) -> CandidatePacket:
     return _decode_packet(_report_record(report_sha, cache_dir), cache_dir)
 
 
+def _validate_handoffs(record: dict[str, Any]) -> None:
+    handoffs = record.get("report_handoffs", {})
+    if (not isinstance(handoffs, dict) or not set(handoffs) <= set(record["report_refs"])
+            or any(type(value) is not bool for value in handoffs.values())):
+        raise ValueError("Invalid candidate preparation handoff provenance.")
+
+
 def _state_record(identity: str, cache_dir: str | Path) -> dict[str, Any] | None:
     path = _path(cache_dir, "candidate_index", identity, 32)
     if not path.exists():
         return None
     record = _read(path)
-    if (set(record) != {"schema_version", "candidate", "article_ref", "occurrence_refs",
-                       "report_refs", "policy_fields", "sha256"}
+    fields_without_handoffs = {"schema_version", "candidate", "article_ref", "occurrence_refs",
+                               "report_refs", "policy_fields", "sha256"}
+    if (set(record) not in (fields_without_handoffs, fields_without_handoffs | {"report_handoffs"})
             or type(record["schema_version"]) is not int or record["schema_version"] != 1
             or not isinstance(record["candidate"], dict) or record["candidate"].get("identity") != identity
             or not isinstance(record["occurrence_refs"], list) or not isinstance(record["report_refs"], list)):
         raise ValueError("Invalid candidate latest-state record.")
+    _validate_handoffs(record)
     fields = record["policy_fields"]
     if (not isinstance(fields, list) or len(fields) != 1 + len(record["occurrence_refs"])
             or any(not isinstance(item, dict) or set(item) != {"source", "source_url", "category", "published"}
@@ -190,7 +199,9 @@ def load_candidate_packets(identity: str, cache_dir: str | Path) -> tuple[Candid
     record = _state_record(identity, cache_dir)
     if record is None:
         return ()
-    return tuple(read_packet(sha, cache_dir) for sha in record["report_refs"])
+    return tuple(replace(read_packet(sha, cache_dir),
+                         handed_to_preparation=record.get("report_handoffs", {}).get(sha, False))
+                 for sha in record["report_refs"])
 
 
 def encode_active_candidate(candidate: Candidate, cache_dir: str | Path) -> dict[str, Any]:
@@ -241,6 +252,7 @@ def _policy_fields(candidate: Candidate) -> list[dict[str, str | None]]:
 def _decode_candidate(record: dict[str, Any], cache_dir: str | Path) -> Candidate:
     from digest.candidate_review import Candidate, CandidateProgress, _validate
 
+    _validate_handoffs(record)
     candidate = decode_active_candidate({key: record[key] for key in (
         "candidate", "article_ref", "occurrence_refs")}, cache_dir)
     if record["policy_fields"] != _policy_fields(candidate):
@@ -264,14 +276,18 @@ def load_candidate(identity: str, cache_dir: str | Path) -> Candidate | None:
     return _decode_candidate(record, cache_dir) if record is not None else None
 
 
-def save_candidate(candidate: Candidate, packet_report_shas: tuple[str, ...], cache_dir: str | Path) -> Path:
+def save_candidate(
+    candidate: Candidate, packet_report_shas: tuple[str, ...], cache_dir: str | Path, *,
+    report_handoffs: dict[str, bool] | None = None,
+) -> Path:
     """Verify direct proofs, archive this state, then atomically publish latest state.
 
     The caller removes the active record only after this succeeds. An old active
     record must take precedence after interruption at any earlier boundary.
     """
     body = {"schema_version": 1, **encode_active_candidate(candidate, cache_dir),
-            "policy_fields": _policy_fields(candidate), "report_refs": list(dict.fromkeys(packet_report_shas))}
+            "policy_fields": _policy_fields(candidate), "report_refs": list(dict.fromkeys(packet_report_shas)),
+            "report_handoffs": report_handoffs or {}}
     if _decode_candidate(body, cache_dir) != candidate:
         raise ValueError("Candidate latest-state verification failed.")
     _write(_path(cache_dir, "candidate_history", digest(body)), body)

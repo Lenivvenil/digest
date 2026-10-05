@@ -396,7 +396,7 @@ def measured_candidate_window(
     for identity in identities:
         candidate = load_candidate(identity, cache_dir)
         assert candidate is not None and candidate.status == "not_selected"
-        assert load_candidate_packets(identity, cache_dir) == (frozen,)
+        assert load_candidate_packets(identity, cache_dir) == (replace(frozen, handed_to_preparation=True),)
     files = list(cache_dir.rglob("*.json"))
     row = {"window": window + 1, "active_candidates": len(restored.candidates),
            "active_packets": len(restored.packets),
@@ -506,3 +506,18 @@ def test_packet_collection_retains_excluded_source_references_after_active_retir
     (tmp_path / "candidate_sources" / f"{excluded_ref}.json").unlink()
     with pytest.raises(ValueError, match="Missing candidate evidence"):
         candidate_accounting_sources(report, tmp_path)
+
+
+def test_legacy_index_without_handoff_provenance_does_not_invent_acceptance(tmp_path: Path) -> None:
+    progress, packet = completed_packet()
+    assert packet.report is not None
+    freeze_packet(packet, {}, tmp_path)
+    candidate = next(iter(progress.candidates.values()))
+    key = digest(asdict(packet.report))
+    save_candidate(candidate, (key,), tmp_path, report_handoffs={key: True})
+    path = tmp_path / "candidate_index" / f"{candidate.identity}.json"
+    raw = json.loads(path.read_text())
+    raw.pop("report_handoffs")
+    raw["sha256"] = digest({key: value for key, value in raw.items() if key != "sha256"})
+    path.write_text(json.dumps(raw))
+    assert load_candidate_packets(candidate.identity, tmp_path)[0].handed_to_preparation is False

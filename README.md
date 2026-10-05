@@ -58,8 +58,9 @@ The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
 [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains open: full-source support
-and useful factual output are current requirements, with no deferred-task status.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
+daily output and sustainable delivery. Mandatory complete-source processing was an
+assistant-proposed mechanism, not an established owner requirement or closure gate.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
 optional post translation, now implemented with explicit compatibility and recovery.
 The current priority is one compact daily edition within the documented
@@ -67,7 +68,26 @@ The current priority is one compact daily edition within the documented
 Compact delivery is implemented and deployed: a production edition confirmed five
 articles in one Telegram chunk, with its archive and delivery state persisted.
 Translation and recovery acceptance covers the observed cases described below;
-full-source factual quality remains open in #55.
+editorial quality remains open in #55.
+
+Full-source reading briefs are off by default. The `reading_brief` setting requires
+English canonical text, review-led selection, and an explicitly configured model
+route. Gemini 3.8 Flash uses an exact count; Groq GPT-OSS 120B supports a pinned
+local tokenizer estimate with explicit framing headroom and output reserve. Unknown
+profiles (including Qwen without a verified current framing profile) remain technical
+pending. An unavailable route may use at most one other supported route already in
+`llm.providers`, within the same deadline, pacing and request cap, without retries.
+See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
+Advertised context and the local request allowance do not establish free-account quota.
+The draft integration runs only through `--prepare-edition`; unsupported preview/direct
+publish modes stop before source/model work. It uses exact saved candidate selections and current occurrence
+eligibility before source work. Completed pages become a technical evidence handoff
+for #55; they do not publish concatenated draft prose or create an accepted edition.
+Unknown generation outcomes hold across later invocations and route changes. Known
+count uncertainty remains distinct from generation uncertainty. See proposed
+[ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
+reuse and the proposed shared per-cycle request allocation. The finite factual-quality,
+reconciliation and throughput gates remain open; reading stays off.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see

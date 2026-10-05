@@ -901,13 +901,17 @@ def _candidate_inputs(
         raise ValueError("Candidate preparation requires collection accounting.")
     merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
                      inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
-    report = pending_completed_report(progress)
+    from digest.reading_preparation import deferred_source_reports
+
+    deferred = (deferred_source_reports(progress, Path(cache_dir), config)
+                if getattr(getattr(config, "reading_brief", None), "enabled", False) else set())
+    report = pending_completed_report(progress, skip_reports=deferred)
     packet = (next(item for item in reversed(progress.packets) if item.report == report)
               if report is not None else plan_packet(progress, config))
     if packet is not None and report is None:
-        begin_packet(progress, packet, cache_dir)
+        begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
     else:
-        save_candidate_progress(progress, cache_dir)
+        save_candidate_progress(progress, cache_dir, skipped_empty_reports=deferred)
         if report is not None:
             ensure_report_accounting(progress, report, cache_dir)
     logging.getLogger(__name__).info(
@@ -997,6 +1001,16 @@ def _handoff_candidate(
         mark_prepared(progress, packet.evidence.bundle_id, cache_dir)
 
 
+async def _resume_if_preparing(
+    prepare_only: bool, config: Config, feedback_collected: int, verbose: bool, edition_date: date | None,
+) -> RunStats | None:
+    if not prepare_only:
+        return None
+    from digest.edition_runtime import resume_preparation
+
+    return await resume_preparation(config, feedback_collected, verbose=verbose, publication_date=edition_date)
+
+
 async def _run(
     config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
     issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
@@ -1024,6 +1038,9 @@ async def _run(
 
     _t_run_start = time.monotonic()
     config = load_config(config_path)
+    from digest.reading_preparation import validate_reading_mode
+
+    validate_reading_mode(config, prepare_only)
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
     _validate_compact_run(compact, dry_run, radar_only, issue_guard, prepare_only)
     review_led_only = _review_led(config)
@@ -1040,11 +1057,12 @@ async def _run(
         config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
     )
     feeds_count = len(config.enabled_sources)
-    if prepare_only:
-        from digest.edition_runtime import resume_preparation
-        resumed = await resume_preparation(config, feedback_collected, verbose=verbose, publication_date=edition_date)
-        if resumed is not None:
-            return resumed
+    resumed = await _resume_if_preparing(prepare_only, config, feedback_collected, verbose, edition_date)
+    if resumed is not None:
+        return resumed
+    from digest.reading_preparation import setup_reading_budget
+
+    setup_reading_budget(config)
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
@@ -1092,6 +1110,9 @@ async def _run(
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     if not articles_by_category:
+        from digest.reconciliation_checkpoint import prepare_current_batch
+
+        await prepare_current_batch(candidate_progress, run_config, config_path, _t_run_start)
         logger.info("No eligible articles in this processing packet. Nothing to summarize.")
         if not dry_run:
             _save_empty_cache(cache, compact, cache_dir, prepare_only)
@@ -1105,9 +1126,14 @@ async def _run(
         {a.source for articles in articles_by_category.values() for a in articles}
     )
 
-    summaries, trends, top_articles, review_report = await _analyze_candidate_articles(
-        articles_by_category, config, candidate_progress, candidate_packet, candidate_cached_report, cache_dir,
-    )
+    from digest.reading_preparation import reading_deadline
+
+    selection_deadline = (reading_deadline(config, _t_run_start)
+                          if getattr(getattr(config, "reading_brief", None), "enabled", False) else None)
+    async with asyncio.timeout_at(selection_deadline):
+        summaries, trends, top_articles, review_report = await _analyze_candidate_articles(
+            articles_by_category, config, candidate_progress, candidate_packet, candidate_cached_report, cache_dir,
+        )
     if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         _save_failed_run_stats(
@@ -1118,6 +1144,24 @@ async def _run(
             dry_run=dry_run, telegram_enabled=config.telegram.enabled and not compact,
         )
         return _empty_run_stats(feeds_count, feedback_collected, total_articles)
+
+    if getattr(getattr(config, "reading_brief", None), "enabled", False):
+        from digest.reading_preparation import prepare_selected_sources
+
+        result = await prepare_selected_sources(
+            candidate_progress, candidate_packet, review_report, run_config, Path(cache_dir),
+            reading_deadline(config, _t_run_start), prepare_only=prepare_only,
+        )
+        from digest.reconciliation_checkpoint import prepare_current_batch
+
+        await prepare_current_batch(candidate_progress, run_config, config_path, _t_run_start)
+        _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
+                                   config, cache_dir, collection_failed)
+        logger.info("Source preparation: %d selected, %d technically complete, %d pending; %s",
+                    result.selected, result.technical_complete, result.pending, result.status)
+        stats = _empty_run_stats(feeds_count, feedback_collected, total_articles)
+        stats.edition_status = result.status
+        return stats
 
     combined = _combined_summary(summaries, trends, review_led_only, config.radar.language)
     combined = _publication_intro(combined, review_report, config)

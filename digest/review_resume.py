@@ -87,7 +87,7 @@ def _report_time(reviews: list[ModelReview]) -> datetime | None:
 
 
 def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: Config) -> set[str]:
-    messages = build_review_messages(bundle, config.review, config.radar.language)
+    messages = build_review_messages(bundle, config.review, config.radar.language, sources=config.sources)
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
     models = {"primary": config.review.primary, "secondary": config.review.secondary,
               "third": config.review.tie_breaker}
@@ -196,8 +196,15 @@ async def execute_resume(config_path: Path, checkpoint_path: Path) -> int:
     if limited_third and report.third_model_reason == "third_model_not_configured":
         report.third_model_reason = "resume_request_budget_exhausted"
         report.status = "incomplete"
+    payload = asdict(report)
+    previous = json.loads(content)
+    # Independent RSS review never upgrades source provenance. Preserve the
+    # separately bound passages and any explicit missing-evidence marker as-is.
+    for key in ("full_source_required", "full_source_evidence", "full_source_error", "reading_brief_status"):
+        if key in previous:
+            payload[key] = previous[key]
     with output.open("x", encoding="utf-8") as handle:
-        json.dump(asdict(report), handle, ensure_ascii=False, indent=2)
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     with markdown.open("x", encoding="utf-8") as handle:
         handle.write("# Report-only resumed review\n" + render_review(report) + "\n")

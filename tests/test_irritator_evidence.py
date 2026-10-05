@@ -6,6 +6,7 @@ import asyncio
 import json
 from copy import deepcopy
 from dataclasses import asdict, replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -27,15 +28,17 @@ from digest.irritator.evidence_stage import (
 from digest.irritator.ranker import RANK_RELATION_CONTRACT
 from digest.llm import LLMRole
 from digest.review import EvidenceBundle, build_evidence_bundle
+from digest.review_checkpoint import FullSourceEvidence
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article, make_signal
+from tests.test_review_checkpoint import _full_source_evidence
 
 
 def _bundle(config: Config) -> EvidenceBundle:
     return build_evidence_bundle(fixture_articles(), config.review)
 
 
-def _narrative(bundle: EvidenceBundle) -> dict[str, Any]:
+def _narrative(bundle: EvidenceBundle | FullSourceEvidence) -> dict[str, Any]:
     item = bundle.items[0]
     return {"narratives": [{
         "claim": "The proposed rollout can improve reliability.", "category": item.category,
@@ -45,8 +48,8 @@ def _narrative(bundle: EvidenceBundle) -> dict[str, Any]:
     }], "limitations": ["Only the supplied RSS excerpts were considered."]}
 
 
-def _queries(count: int = 1) -> dict[str, Any]:
-    return {"queries": [{"query": f"rollout documented limitations {index}",
+def _queries(count: int = 1, *, anchor: str = "Benchmark") -> dict[str, Any]:
+    return {"queries": [{"query": anchor if index == 0 else f"rollout documented limitations {index}",
                           "intent": "Find deployment caveats."} for index in range(count)], "limitations": []}
 
 
@@ -853,6 +856,98 @@ def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics()
 
 
 @pytest.mark.asyncio
+async def test_full_source_narrative_uses_late_literal_passages_instead_of_rss(tmp_path: Path) -> None:
+    config = fixture_config()
+    rss_bundle = _bundle(config)
+    source_evidence = _full_source_evidence(tmp_path, rss_bundle)
+    response = _narrative(source_evidence)
+    item = source_evidence.items[0]
+    response["narratives"][0]["quotes"][item.evidence_id] = item.excerpt
+    response["limitations"] = ["These are provider-reported results from selected source passages."]
+    model = AsyncMock(side_effect=[
+        (json.dumps(response), {}),
+        (json.dumps({"queries": [], "limitations": ["No useful external query was identified."]}), {}),
+    ])
+    before = asdict(source_evidence)
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000)):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(
+                rss_bundle, config, client, source_evidence=source_evidence, require_full_source=True,
+            )
+    assert result.status == "empty"
+    assert result.bundle_id == rss_bundle.bundle_id
+    assert result.source_bundle_id == source_evidence.bundle_id
+    assert result.narratives[0].quotes == {item.evidence_id: item.excerpt}
+    assert not result.narratives[0].typography_normalized
+    assert item.start > 500
+    assert model.await_count == 2 and not result.source_attempts
+    for index, call in enumerate(model.await_args_list):
+        payload = json.loads(call.args[1][1]["content"])
+        assert payload["evidence"]["bundle_id"] == source_evidence.bundle_id
+        if index == 0:
+            assert payload["evidence"] == json.loads(json.dumps(before))
+            assert "not independent confirmation" in call.args[1][0]["content"]
+        else:
+            assert payload["evidence"]["items"] == [json.loads(json.dumps(asdict(item)))]
+        assert "A model-only reading angle" not in call.args[1][1]["content"]
+    assert asdict(source_evidence) == before
+
+
+@pytest.mark.parametrize("mutation", ["title", "translated", "hyphen", "other_span", "rss_id"])
+def test_full_source_quotes_require_exact_text_from_the_identified_span(mutation: str, tmp_path: Path) -> None:
+    rss_bundle = _bundle(fixture_config())
+    evidence = _full_source_evidence(tmp_path, rss_bundle)
+    response = _narrative(evidence)
+    narrative = response["narratives"][0]
+    item = evidence.items[0]
+    quote = item.excerpt
+    if mutation == "title":
+        quote = item.title
+    elif mutation == "translated":
+        quote = "The system definitely makes every deployment reliable."
+    elif mutation == "hyphen":
+        quote = item.excerpt.replace("API-powered", "API\u2011powered")
+    elif mutation == "other_span":
+        quote = evidence.items[1].excerpt
+    else:
+        narrative["evidence_ids"] = [rss_bundle.items[0].evidence_id]
+        narrative["quotes"] = {rss_bundle.items[0].evidence_id: rss_bundle.items[0].title}
+    if mutation != "rss_id":
+        narrative["quotes"] = {item.evidence_id: quote}
+    with pytest.raises(ValueError):
+        _parse_narrative(json.dumps(response), evidence)
+
+
+@pytest.mark.asyncio
+async def test_required_full_source_without_provenance_stays_pending_without_model_or_search() -> None:
+    config = fixture_config()
+    with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(_bundle(config), config, client, require_full_source=True)
+    assert result.status == "incomplete"
+    assert result.diagnostics[0].error == "FullSourceEvidencePending"
+    assert result.diagnostics[1].status == "not_run"
+    assert not result.narratives and not result.source_attempts
+    model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_full_source_hash_fails_before_model_and_never_falls_back_to_rss(tmp_path: Path) -> None:
+    config = fixture_config()
+    rss_bundle = _bundle(config)
+    evidence = replace(_full_source_evidence(tmp_path, rss_bundle), bundle_id="tampered")
+    with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss_bundle, config, client, source_evidence=evidence)
+    assert result.status == "error"
+    assert result.diagnostics[0].error_detail == "Full-source evidence hash mismatch."
+    assert result.diagnostics[1].status == "not_run"
+    assert not result.source_attempts
+    model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("query", [
     "empirical studies on frequency of AI‑generated malware or phishing attacks bypassing existing security controls",
     "evaluations of macOS Full Disk Access permission changes and their actual impact on preventing AI‑based abuse",
@@ -927,3 +1022,443 @@ async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() ->
     ranking = next(item for item in result.diagnostics if item.stage == "ranking")
     assert ranking.status == "incomplete" and ranking.omitted_count == 1
     assert result.ranked_signals == []
+
+
+@pytest.mark.asyncio
+async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    response = _narrative(source)
+    cited, qualification = source.items
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(response), {}), (json.dumps(_queries(anchor="rollout")), {}), (json.dumps(_ranking()), {}),
+    ])
+    before = asdict(source)
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url="https://external.example/caveat", title="Deployment limitations"),
+          ]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.narratives[0].claim == response["narratives"][0]["claim"]
+    assert result.narratives[0].evidence_ids == [cited.evidence_id]
+    assert result.narratives[0].quotes == {cited.evidence_id: cited.excerpt}
+    for call in model.await_args_list[1:]:
+        payload = json.loads(call.args[1][1]["content"])
+        assert payload["evidence"]["items"] == [json.loads(json.dumps(asdict(cited)))]
+        assert payload["evidence"]["qualification_context"] == [json.loads(json.dumps(asdict(qualification)))]
+        assert payload["evidence"]["limited_to_narrative_citations"] is False
+        assert payload["evidence"]["complete_article_context"] is False
+        assert "not new narrative claims or complete article context" in call.args[1][0]["content"]
+    assert asdict(source) == before
+
+
+@pytest.mark.parametrize("difference", ["article", "snapshot", "body"])
+def test_qualification_context_does_not_cross_source_bindings(tmp_path: Path, difference: str) -> None:
+    from digest.irritator.evidence_stage import _narrative_context
+    from digest.review_checkpoint import _identity_hash
+
+    config = fixture_config()
+    source = _full_source_evidence(tmp_path, _bundle(config))
+    cited, qualification = source.items
+    response = _narrative(source)
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    narrative = _parse_narrative(json.dumps(response), source)[0][0]
+    if difference == "article":
+        from digest.radar.collector import article_hash
+
+        title, url = "Another source article", "https://another.example/announcement"
+        unrelated = replace(qualification, article_id=article_hash(title, url), title=title, url=url, span_id=99)
+    else:
+        field = "source_sha256" if difference == "snapshot" else "body_sha256"
+        unrelated = replace(qualification, **{field: "b" * 64}, span_id=99)
+    unrelated = replace(unrelated, evidence_id=_identity_hash(unrelated, "evidence_id"))
+    context = _narrative_context(replace(source, items=(*source.items, unrelated)), narrative)
+    assert [item["evidence_id"] for item in context["qualification_context"]] == [qualification.evidence_id]
+    assert unrelated.evidence_id not in json.dumps(context)
+    # A qualification already cited remains in the citation set, without duplication.
+    narrative.evidence_ids.append(qualification.evidence_id)
+    context = _narrative_context(source, narrative)
+    assert context["qualification_context"] == [] and len(context["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_oversized_complete_context_stops_before_optional_queries(tmp_path: Path) -> None:
+    import hashlib
+
+    from digest.review import MAX_EVIDENCE_JSON_CHARS
+    from digest.review_checkpoint import _identity_hash
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    cited, qualification = source.items
+    # Valid source-context metadata, rather than excerpt text alone, exceeds the envelope.
+    qualification = replace(qualification, source="Publisher " + "x" * MAX_EVIDENCE_JSON_CHARS)
+    qualification = replace(qualification, evidence_id=_identity_hash(qualification, "evidence_id"))
+    source = replace(source, items=(cited, qualification))
+    source = replace(source, bundle_id=_identity_hash(source, "bundle_id"))
+    response = _narrative(source)
+    response["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(return_value=(json.dumps(response), {}))
+    before = hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest()
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete" and model.await_count == 1
+    search.assert_not_awaited()
+    assert result.narratives and not result.queries and not result.ranked_signals
+    assert next(d for d in result.diagnostics if d.stage == "queries").error == "QualificationContextBudget"
+    assert any("not provider token admission" in item for item in result.limitations)
+    assert hashlib.sha256(json.dumps(asdict(source), sort_keys=True).encode()).hexdigest() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold", ["unsupported", "oversized", "budget"])
+async def test_full_source_stage_holds_before_unadmitted_generation(tmp_path: Path, hold: str) -> None:
+    from digest import llm
+    from digest.config import ReviewModelConfig
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    if hold == "unsupported":
+        config.review.secondary = ReviewModelConfig("groq", "unverified-model")
+    if hold == "budget":
+        llm.set_request_limit(config, 0)
+    with (patch("digest.source_admission.count_gpt_input", return_value=100_000 if hold == "oversized" else 1000),
+          patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate,
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete"
+    generate.assert_not_awaited()
+    search.assert_not_awaited()
+    diagnostic = next(item for item in result.diagnostics if item.stage == "narrative")
+    assert diagnostic.admission is not None and not diagnostic.admission.admitted
+    assert diagnostic.error == {
+        "unsupported": "technical_unknown_profile", "oversized": "technical_admission_capacity",
+        "budget": "technical_request_budget",
+    }[hold]
+    assert diagnostic.admission.output_reserve == MAX_OUTPUT_TOKENS
+    if hold == "oversized":
+        assert diagnostic.admission.method == "estimated" and diagnostic.admission.exact_count is None
+        assert diagnostic.admission.input_estimate is not None
+    if hold == "budget":
+        assert llm.request_budget_remaining(config) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["provider", "model", "output_reserve", "request_sha256"])
+async def test_full_source_dispatch_requires_exact_admission_binding(tmp_path: Path, mutation: str) -> None:
+    from digest.source_admission import RequestAdmission, admit_request
+
+    config = fixture_config()
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+
+    async def changed(*args: Any, **kwargs: Any) -> RequestAdmission:
+        record = await admit_request(*args, **kwargs)
+        assert record.admitted
+        return replace(record, **{mutation: 1 if mutation == "output_reserve" else "different"})
+
+    with (patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.admit_request", side_effect=changed),
+          patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "incomplete"
+    generate.assert_not_awaited()
+    assert next(item for item in result.diagnostics if item.stage == "narrative").error == "technical_request_binding"
+
+
+@pytest.mark.asyncio
+async def test_legacy_rss_path_does_not_add_source_count_or_admission() -> None:
+    config = fixture_config()
+    rss = _bundle(config)
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(rss)), {}),
+        (json.dumps({"queries": [], "limitations": ["No useful query."]}), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.admit_request", side_effect=AssertionError("No source admission"))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client)
+    assert result.status == "empty" and model.await_count == 2
+    assert all(item.admission is None for item in result.diagnostics)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,configured,expected,attempts", [
+    ("gemini", 20.0, 20.0, 6), ("groq", 20.0, 65.0, 3),
+    ("gemini", 90.0, 90.0, 6), ("groq", 90.0, 90.0, 3),
+])
+async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
+    tmp_path: Path, provider: str, configured: float, expected: float, attempts: int,
+) -> None:
+    import time
+
+    from digest import llm
+    from digest.config import ReviewModelConfig
+    from digest.source_admission import RequestAdmission, admit_request
+
+    config = fixture_config()
+    config.review.secondary = ReviewModelConfig(
+        provider, "gemini-3.8-flash" if provider == "gemini" else "openai/gpt-oss-120b",
+    )
+    config.llm.min_request_interval_seconds = configured
+    config.irritator.sources = ["hackernews"]
+    llm.set_request_limit(config, 10)
+    shared = llm._request_state(config)
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
+    responses = iter([narrative, _queries(anchor="rollout"), _ranking()])
+    deadlines: list[float] = []
+
+    async def admission(messages: Any, bounded: Any, **kwargs: Any) -> RequestAdmission:
+        assert llm._request_state(bounded) is shared
+        assert bounded.llm.min_request_interval_seconds == expected
+        deadlines.append(kwargs["deadline"])
+        return await admit_request(messages, bounded, **kwargs)
+
+    async def count(messages: Any, bounded: Any, **kwargs: Any) -> int:
+        actual = kwargs["provider_override"]
+        assert actual.name == provider and actual.model == config.review.secondary.model
+        await llm._pace_request(shared, bounded.llm.min_request_interval_seconds)
+        llm._reserve_request(shared, actual.name, actual.model, "count")
+        return 1000
+
+    async def generate(client: Any, actual: Any, messages: Any, *args: Any, **kwargs: Any) -> Any:
+        assert actual.name == provider and actual.model == config.review.secondary.model
+        return json.dumps(next(responses)), {"finish_reason": "stop"}
+
+    started = time.monotonic()
+    with (patch("digest.irritator.evidence_stage.admit_request", side_effect=admission),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.llm.count_gemini_tokens", side_effect=count),
+          patch("digest.llm._pace_request", AsyncMock()) as pace,
+          patch("digest.llm._call_provider", side_effect=generate),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url="https://external.example/caveat", title="Deployment limitations"),
+          ]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete"
+    assert len(deadlines) == 3 and len(set(deadlines)) == 1
+    assert started + 180 <= deadlines[0] <= started + 181
+    assert llm.request_budget_remaining(config) == 10 - attempts
+    assert [call.args[1] for call in pace.call_args_list] == [expected] * attempts
+    assert config.llm.min_request_interval_seconds == configured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_source", [False, True], ids=["rss", "full-source"])
+async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path, full_source: bool) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews", "arxiv", "lobsters"]
+    bundle = _bundle(config)
+    source = _full_source_evidence(tmp_path, bundle) if full_source else None
+    narrative = _narrative(source or bundle)
+    if source is not None:
+        narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
+    # Preserve the formerly blocked set; reaching mocked search makes no quality claim.
+    queries = ["Benchmark reports cancelled", "Vendor benchmark controversy", "Model latency scandal"]
+    response = {"queries": [{"query": query, "intent": "Test a possible opposing hypothesis."}
+                            for query in queries], "limitations": []}
+    model = AsyncMock(side_effect=[(json.dumps(narrative), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as hn,
+          patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[])) as arxiv,
+          patch("digest.irritator.evidence_stage.search_lobsters", AsyncMock(return_value=[])) as lobsters):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client, source_evidence=source)
+    assert result.status == "empty" and model.await_count == 2
+    assert [item.query for item in result.queries] == queries and result.query_anchor is None
+    assert [item.intent for item in result.queries] == [item["intent"] for item in response["queries"]]
+    diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
+    assert diagnostic.status == "complete" and diagnostic.error == ""
+    assert diagnostic.output_count == 3 and len(result.source_attempts) == 9
+    assert all(item.status == "empty" for item in result.source_attempts)
+    for search in (hn, arxiv, lobsters):
+        assert [call.args[0] for call in search.await_args_list] == queries
+    assert not any("source-text anchor" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["missing_intent", "extra_field", "invalid_entries"])
+async def test_invalid_query_schema_still_stops_before_search(mutation: str) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    response = _queries(anchor="reliability evaluation")
+    if mutation == "missing_intent":
+        del response["queries"][0]["intent"]
+    elif mutation == "extra_field":
+        response["queries"][0]["source_fact"] = "Unsupported claim"
+    else:
+        response["queries"] = {"query": "reliability evaluation", "intent": "Explore a hypothesis."}
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "incomplete" and model.await_count == 2
+    assert not result.queries and not result.source_attempts and result.query_anchor is None
+    diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
+    assert diagnostic.status == "error" and diagnostic.error == "ValueError"
+    search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    queries = ['"benchmark reports"', "latency measurement", "model comparison"]
+    response = {"queries": [{"query": query, "intent": "Evaluate the stated finding."}
+                            for query in queries], "limitations": []}
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and model.await_count == 2 and search.await_count == 3
+    assert [item.query for item in result.queries] == queries
+    anchor = result.query_anchor
+    assert anchor is not None and anchor.query_index == 0 and anchor.query == queries[0]
+    assert anchor.evidence_bundle_id == bundle.bundle_id and anchor.evidence_id == bundle.items[0].evidence_id
+    assert anchor.field == "title" and anchor.matched_text == bundle.items[0].title[anchor.start:anchor.end]
+    assert anchor.matched_text == "Benchmark reports"
+    assert any("neutrality and retrieval usefulness are not certified" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    response = _queries(anchor=bundle.items[1].title)
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and result.query_anchor is None and len(result.source_attempts) == 1
+    assert model.await_count == 2
+    assert next(item for item in result.diagnostics if item.stage == "queries").status == "complete"
+    assert search.await_args is not None and search.await_args.args[0] == bundle.items[1].title
+
+
+@pytest.mark.asyncio
+async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    source = _full_source_evidence(tmp_path, rss)
+    cited, qualification = source.items
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(narrative), {}), (json.dumps(_queries(anchor="trial deployment")), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[]))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "empty" and model.await_count == 2
+    anchor = result.query_anchor
+    assert anchor is not None and anchor.evidence_bundle_id == source.bundle_id != rss.bundle_id
+    assert anchor.evidence_id == qualification.evidence_id and anchor.field == "excerpt"
+    assert qualification.excerpt[anchor.start:anchor.end] == anchor.matched_text == "trial deployment"
+    assert result.narratives[0].evidence_ids == [cited.evidence_id]
+
+
+@pytest.mark.asyncio
+async def test_exact_cited_url_is_not_ranked_as_external_evidence() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    cited_url = bundle.items[0].url
+    other_document = "https://example.com/another-document"
+    raw = [make_signal(url=url, title="Deployment limitations") for url in (
+        cited_url, other_document, "https://another.example/evidence",
+    )]
+    model = AsyncMock(side_effect=[
+        (json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}),
+        (json.dumps(_ranking(other_document)), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.excluded_cited_source_urls == [cited_url]
+    ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
+    assert {item["url"] for item in ranking_payload["signals"]} == {other_document, "https://another.example/evidence"}
+    assert result.ranked_signals[0].signal.url == other_document
+    validation = next(item for item in result.diagnostics if item.stage == "validation")
+    assert (validation.input_count, validation.output_count, validation.omitted_count) == (3, 2, 1)
+    assert result.source_attempts[0].result_count == 3
+
+
+@pytest.mark.asyncio
+async def test_verified_final_url_exclusion_preserves_counts_and_different_documents(tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    rss = _bundle(config)
+    final_url = "https://provider.example/canonical-announcement"
+    source = _full_source_evidence(tmp_path, rss, final_url=final_url)
+    cited = source.items[0]
+    other_document = "https://provider.example/followup-document"
+    raw = [make_signal(url=url, title="Deployment limitations") for url in (
+        cited.url, cited.url, final_url, other_document,
+    )]
+    narrative = _narrative(source)
+    narrative["narratives"][0]["quotes"][cited.evidence_id] = cited.excerpt
+    model = AsyncMock(side_effect=[
+        (json.dumps(narrative), {}), (json.dumps(_queries(anchor="rollout")), {}),
+        (json.dumps(_ranking(other_document)), {}),
+    ])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+    assert result.status == "complete" and model.await_count == 3
+    assert result.excluded_cited_source_urls == sorted([cited.url, final_url])
+    ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
+    assert [item["url"] for item in ranking_payload["signals"]] == [other_document]
+    validation = next(item for item in result.diagnostics if item.stage == "validation")
+    assert (validation.input_count, validation.output_count, validation.omitted_count) == (4, 1, 3)
+    assert result.source_attempts[0].result_count == 4
+
+
+@pytest.mark.asyncio
+async def test_only_self_source_hits_skip_ranking_with_explicit_exclusion() -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    cited_url = bundle.items[0].url
+    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[
+              make_signal(url=cited_url),
+          ])) as search):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client)
+    assert result.status == "empty" and model.await_count == 2 and search.await_count == 1
+    assert result.excluded_cited_source_urls == [cited_url] and not result.ranked_signals
+    assert next(item for item in result.diagnostics if item.stage == "ranking").status == "not_run"
+    assert any("repeat known cited sources" in limitation for limitation in result.limitations)
+    assert "not confirmation" in result.coverage

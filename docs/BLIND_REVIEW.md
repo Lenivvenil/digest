@@ -40,6 +40,55 @@ Markdown and Telegram pipeline. It defaults to false for existing configurations
    At most one third-model task is requested. HTTP retries remain independently
    bounded by the shared LLM retry policy.
 
+## Configured interests and reason fidelity
+
+The shared selection prompt retains the technology-architect audience and considers
+practical, operational and business relevance across operator-defined categories.
+Its `configured_category_interests` contains only distinct category labels already
+present in the exact RSS packet, with an unambiguous match to an enabled configured
+source. Matching follows the existing source sanitization and category truncation;
+collisions, including disabled look-alikes, convey no configured intent. Missing
+context never removes evidence or establishes irrelevance. There is no new reader
+profile, category quota or mandatory category coverage.
+
+No feed URLs, unrelated/disabled source list, personal profile, feedback or allocation
+priorities are added to the prompt. Priorities retain their allocation role and do
+not become editorial scores. The context is bounded by the existing packet count
+and 200-character category field. It adds input text without reducing the existing
+16,000-character evidence allowance or increasing requests, output limits or routes.
+Input headroom therefore decreases: the revised system text adds 970 UTF-8 bytes
+(166 content tokens with the existing local `o200k_base` tokenizer). With arbitrary
+JSON-escaped labels, the added context has a conservative ceiling of 24,115 UTF-8
+bytes at 20 evidence items, or 64,235 bytes across the supported 100-item setting
+and existing evidence-character bound. These are safety bounds, not typical usage;
+normal short category labels are much smaller. For byte-based `o200k_base`, standalone
+context token counts are at most those byte ceilings. These estimates exclude
+provider framing and do not establish Gemini or other provider token accounting,
+free-tier entitlement or guaranteed prompt fit. No counting call is added.
+
+Reasons must distinguish a supplied observation from conditional relevance inference,
+avoid attributing unstated mechanisms/results, and describe insufficient excerpt
+evidence without judging the unseen full article. The same restraint applies to
+non-selection and duplicate reasons. Existing strict quote/provenance checks remain;
+they cannot mechanically prove that every generated claim follows from its quotation.
+Capacity-only omissions still require `deferred`, never editorial rejection.
+
+All selection, planned-packet, reconciliation and resume paths hash the same complete
+messages. The changed prompt cannot silently reuse an older model-review result as a
+new-contract review. Historical reports, completed candidate judgments and accepted
+preparations stay readable and keep their original hashes; this change does not
+reopen prior editorial rejections. Technical-deferred work retains existing eligibility
+and scheduling rules and is not considered re-reviewed merely because a new packet
+can be planned. No persisted-state or YAML migration is introduced.
+
+Offline fixtures verify this wiring, privacy boundary and provenance only. Semantic
+acceptance for #121/#55 remains open: inspect supported facts, relevance inferences,
+inadequate evidence and dispositions in a subsequent ordinary authorized run or an
+explicitly admitted bounded replay, preserving the original failed evidence and the
+unchanged request/provider/Actions budgets. A new paid/private evaluation is not
+required by this change. Do not claim the prompt or synthetic responses prove better
+selection or factuality.
+
 ## Output and integration
 
 Primary selection becomes canonical Telegram cards, labeled as model opinion.
@@ -249,6 +298,16 @@ are excluded from these requests. Legacy query generation uses claim and categor
 only; legacy ranking remains claim-only. This input boundary does not verify claim
 truth or semantic counter-evidence quality.
 
+The local [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
+asks for useful grounded queries in both bounded RSS and full-source investigation,
+without requiring a copied source phrase. It supersedes the earlier unaccepted
+mandatory-anchor proposal. Exploratory hypotheses stay in `intent`, distinct from
+source claims. A whole-query literal match, when available, remains exact derived
+provenance metadata. Its absence does not block an otherwise valid query set or mark
+it incomplete. Existing lexical/schema checks, source validation, exact cited/final-URL
+self-source exclusions, query/model/request limits and deadlines remain unchanged.
+This local revision does not establish semantic quality or useful live retrieval.
+
 Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
 `context` or `insufficient` against the supplied claim. Every entry must pass field,
 identity, score, relation and reasoning validation before filtering; bounded ranking
@@ -256,8 +315,9 @@ also verifies its URL-bound quote ID. Only `contradicts` and `complicates` at th
 existing minimum score reach public results, even when another relation has a high
 score. Bounded results record fixed omission counts for the three non-counter
 relations in the existing limitations list. An all-non-counter response is `empty`,
-not a ranking failure; an unknown relation fails the response closed. Public and
-archived result shapes, quote identity, request counts and ranking caps are unchanged.
+not a ranking failure; an unknown relation fails the response closed. The relation
+filter leaves existing public result fields, quote identity, request counts and
+ranking caps unchanged; the proposed private audit extension below is separate.
 This filter enforces the declared classification; it cannot prove that the model
 assigned the semantically correct relation.
 
@@ -440,3 +500,19 @@ recoverable. Missing/corrupt required objects fail explicitly; unrelated histori
 objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
 deployed accepted preparation and ready-edition formats remain compatible. Do not
 delete evidence or delivery markers to bypass a recovery error.
+
+### Proposed private ranking audit
+
+The local [ADR0012 proposal](decisions/0012-private-ranking-evidence.md) adds a versioned
+`ranking_audit` to the companion private `.irritator.json`. It preserves exact admitted
+source records, explicitly truncated diagnostic previews of omitted candidates,
+original hashes/lengths, query lineage, admission causes and fully validated model
+dispositions. `not_returned` means absent from a valid bounded model response;
+`pending` means no wholly valid response was obtained. Neither means irrelevant.
+
+Only JSON retains this trace; Markdown gets a concise summary/reference, and Telegram
+and translation keep their existing selected-prose inputs. The omitted-text allocation
+reuses 16,000 characters as a new proposed archive policy, not a ranking threshold.
+See the proposal for serialization bounds and the limits of truncated evidence. Old
+archives lack this evidence and cannot be retrospectively audited from hashes alone.
+This local proposal has not been accepted or deployed.

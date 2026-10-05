@@ -2,6 +2,29 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Offline reconciliation response binding validates a sparse evidence input against
+  exact request/admission/completion metadata and original citation IDs. It preserves
+  nominated conditions without claiming semantic completeness or adding dispatch.
+
+- External evidence responses enforce the existing 512,000-byte decoded-body limit
+  during streaming; the fixed-endpoint arXiv adapter applies the same bound in both
+  investigation paths. The fixed arXiv endpoint explicitly rejects redirects, including
+  when a custom caller enables them; owned pipeline callers already rejected them.
+  Oversized bodies fail explicitly without parsing a prefix.
+  Accepted bytes and charset decoding are retained. This bounds accumulated response
+  data, not decompressor allocations or XML-parser memory. Existing MD5 article/source
+  IDs remain byte-identical and are explicitly marked as non-security hashing.
+
+- Draft investigation query floor (#77) requires one source-anchored topic query
+  within the existing slots. Ungrounded nonempty sets remain technical incomplete
+  before search. This affects bounded RSS and full-source investigation on rollout,
+  regardless of the reading flag; literal anchoring is not semantic acceptance.
+  Exact cited target/final URLs are excluded from external candidates with explicit
+  diagnostics; different documents from the same publisher remain eligible.
+- Draft source admission (#122) reuses complete-source acquisition and exact/estimated
+  request accounting from #107, bound to current saved candidate selections. Durable
+  generation-intent holds and actual per-page fallback provenance remain separate from
+  #55 semantic acceptance; technical completion does not publish draft prose.
 - Candidate accounting (#121): ordinary review-led preparation captures pre-slot
   identities and resumes later bounded packets through persisted selection evidence.
   Existing accepted editions still take precedence. Same-response typed per-ID
