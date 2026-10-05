@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from digest.reading_brief_state import Source, Span, _validate_source, checksum
@@ -40,6 +40,13 @@ class PointCandidate:
     source_sha256: str
     points: tuple[PointSelection, ...]
     editorial_interpretation: EditorialInterpretation | None = None
+
+
+@dataclass(frozen=True)
+class PointProjection:
+    candidate: PointCandidate
+    # One-based original point positions; each replacement is retained unchanged.
+    redundant_points: tuple[tuple[int, int], ...]
 
 
 def source_units(source: Source) -> tuple[Span, ...]:
@@ -161,6 +168,31 @@ def _validated_units(candidate: PointCandidate, source: Source) -> tuple[Span, .
     # Rendering also checks manually constructed dataclasses and later source edits.
     parse_point_selection(json.dumps(asdict(candidate), ensure_ascii=False), source)
     return source_units(source)
+
+
+def project_distinct_points(candidate: PointCandidate, source: Source) -> PointProjection:
+    """Offline role-preserving redundancy projection, never semantic equivalence.
+
+    Drop only a group with identical support and strictly contained context or
+    qualifications. The original candidate is untouched; replacements refer to
+    retained original groups. This cannot repair missing context or infer scope.
+    """
+    _validated_units(candidate, source)
+
+    def contains(outer: PointSelection, inner: PointSelection) -> bool:
+        return (set(outer.supporting_unit_ids) == set(inner.supporting_unit_ids)
+                and set(inner.context_unit_ids) <= set(outer.context_unit_ids)
+                and set(inner.qualification_unit_ids) <= set(outer.qualification_unit_ids)
+                and (set(inner.context_unit_ids) < set(outer.context_unit_ids)
+                     or set(inner.qualification_unit_ids) < set(outer.qualification_unit_ids)))
+
+    kept = tuple(index for index, point in enumerate(candidate.points)
+                 if not any(contains(other, point) for other in candidate.points))
+    replacements = tuple(
+        (index + 1, next(other + 1 for other in kept if contains(candidate.points[other], point)))
+        for index, point in enumerate(candidate.points) if index not in kept
+    )
+    return PointProjection(replace(candidate, points=tuple(candidate.points[index] for index in kept)), replacements)
 
 
 def _literal(source: Source, unit: Span, label: str) -> str:

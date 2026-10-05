@@ -82,3 +82,29 @@ may process fewer arrivals than the feeds produce. Local checks do not establish
 sustainable daily throughput. Pending age, selected-source backlog and actual request
 usage must remain visible; this proposal does not increase the ten-request cycle or
 8/12-minute job envelopes, and does not impose a new article quota or retention TTL.
+
+## Local role-preserving redundancy projection
+
+The actual grouped-source Citi trial retained exact quotations but repeated one
+complete point inside another, while omitting a material launch-versus-existing-
+product transition elsewhere. These are different defects. A proposed offline
+projection removes a point only when a retained point has identical supporting IDs
+and supersets of its context and qualification IDs, with at least one strict
+containment. It preserves original order, source/version and every represented
+evidence role, and records dropped-to-retained original point positions. The raw
+response remains unchanged. Incomparable groups and different support roles remain.
+
+This is representation-level redundancy, not a judgment that the underlying claims
+are semantically equivalent or complete. Distinct intended angles within the same
+support unit are not represented by this schema. The saved Citi projection removes
+one duplicated group (570 to 468 quoted words); it does not repair the missing
+product-scope context. The saved AWS selection remains unchanged at 1,668 quoted
+words. Blanket original-paragraph expansion would grow those examples to 650 and
+2,592 words respectively, and still would not resolve the AWS logging ambiguity.
+It is therefore not adopted as an automatic publication correction.
+
+The helper has no model, preparation, sender or runtime integration. A separate
+relation-aware selection prompt may be proposed and evaluated locally, without
+replacing frozen requests or calling a provider. Adoption remains subject to this
+ADR's owner decision and finite source-fidelity/readability acceptance; neither
+projection nor a revised instruction establishes that outcome.
