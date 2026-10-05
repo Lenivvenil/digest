@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- External evidence responses enforce the existing 512,000-byte decoded-body limit
+  during streaming; the fixed-endpoint arXiv adapter applies the same bound in both
+  investigation paths. The fixed arXiv endpoint explicitly rejects redirects, including
+  when a custom caller enables them; owned pipeline callers already rejected them.
+  Oversized bodies fail explicitly without parsing a prefix.
+  Accepted bytes and charset decoding are retained. This bounds accumulated response
+  data, not decompressor allocations or XML-parser memory. Existing MD5 article/source
+  IDs remain byte-identical and are explicitly marked as non-security hashing.
+
 - Draft investigation query floor (#77) requires one source-anchored topic query
   within the existing slots. Ungrounded nonempty sets remain technical incomplete
   before search. This affects bounded RSS and full-source investigation on rollout,

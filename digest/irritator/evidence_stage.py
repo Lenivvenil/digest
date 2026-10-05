@@ -35,6 +35,7 @@ from digest.irritator.ranker import (
     RankedSignal,
 )
 from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
+from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
@@ -53,7 +54,6 @@ from digest.source_admission import (
 MAX_QUERIES = 3
 MAX_SOURCE_RESULTS = 10
 MAX_RANKING_CANDIDATES = 12
-MAX_SOURCE_RESPONSE_BYTES = 512000
 MAX_RANKED_SIGNALS = 3
 MAX_OUTPUT_TOKENS = 2048
 MAX_RESPONSE_CHARS = 16000
@@ -446,9 +446,7 @@ async def _check_source_response(response: httpx.Response) -> None:
         return
     # This also rejects redirects before a redirect-enabled client follows them.
     response.raise_for_status()
-    await response.aread()
-    if len(response.content) > MAX_SOURCE_RESPONSE_BYTES:
-        raise ValueError("Source response exceeds the response budget.")
+    await read_bounded_response(response, MAX_SOURCE_RESPONSE_BYTES)
     source = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "lobste.rs": "lobsters"}[
         response.request.url.host
     ]

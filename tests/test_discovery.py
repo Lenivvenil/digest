@@ -6,6 +6,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -39,6 +40,18 @@ def test_source_hash_length() -> None:
 
 def test_source_hash_different_urls() -> None:
     assert source_hash("https://a.com/feed") != source_hash("https://b.com/feed")
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://example.com/feed", "ca7a0f39"),
+    ("https://example.com/café?q=1", "386024ef"),
+])
+def test_source_hash_preserves_existing_ids_without_security_use(url: str, expected: str) -> None:
+    import hashlib
+
+    with patch("digest.discovery.hashlib.md5", wraps=hashlib.md5) as md5:
+        assert source_hash(url) == expected
+    md5.assert_called_once_with(url.encode(), usedforsecurity=False)
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import httpx
 
 from digest.irritator.query_contract import lexical_atoms
 from digest.irritator.sources import Signal, _register, validate_search_response
+from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 
 _BASE_URL = "https://export.arxiv.org/api/query"
 _TIMEOUT = 10.0
@@ -56,8 +57,8 @@ async def search_arxiv(
         if delay > 0:
             await asyncio.sleep(delay)
         state.next_start = monotonic() + 3.0
-        resp = await client.get(
-            _BASE_URL,
+        async with client.stream(
+            "GET", _BASE_URL,
             params={
                 "search_query": search_query,
                 "start": 0,
@@ -65,8 +66,10 @@ async def search_arxiv(
                 "sortBy": "relevance",
             },
             timeout=_TIMEOUT,
-        )
-    resp.raise_for_status()
+            follow_redirects=False,
+        ) as resp:
+            resp.raise_for_status()
+            await read_bounded_response(resp, MAX_SOURCE_RESPONSE_BYTES)
     validate_search_response(resp, "arxiv")
 
     feed = feedparser.parse(resp.text)

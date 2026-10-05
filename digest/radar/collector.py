@@ -156,7 +156,7 @@ def _strip_html(text: str) -> str:
 
 
 def article_hash(title: str, link: str) -> str:
-    return hashlib.md5(f"{title}|{link}".encode()).hexdigest()
+    return hashlib.md5(f"{title}|{link}".encode(), usedforsecurity=False).hexdigest()
 
 
 def _parse_pub_date(entry: Any) -> datetime | None:

@@ -105,8 +105,9 @@ async def _fetch_feed(client: httpx.AsyncClient, url: str) -> str:
 async def validate_feed_url(url: str) -> str:
     """Return the final safe feed URL or raise a technical validation exception.
 
-    One aggregate 15-second deadline covers DNS, at most three redirects, the
-    streamed response (at most 2 MiB decoded), and parsing. There are no retries.
+    One aggregate 15-second deadline bounds awaiting DNS, at most three redirects,
+    the streamed response (at most 2 MiB decoded), and parsing. Timing out cannot
+    stop an already running DNS or parser thread. There are no retries.
     Environment proxies are disabled so they cannot bypass DNS pinning.
     """
     try:
