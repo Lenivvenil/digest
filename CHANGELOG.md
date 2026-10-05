@@ -2,6 +2,10 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Offline reconciliation response binding validates a sparse evidence input against
+  exact request/admission/completion metadata and original citation IDs. It preserves
+  nominated conditions without claiming semantic completeness or adding dispatch.
+
 - External evidence responses enforce the existing 512,000-byte decoded-body limit
   during streaming; the fixed-endpoint arXiv adapter applies the same bound in both
   investigation paths. The fixed arXiv endpoint explicitly rejects redirects, including

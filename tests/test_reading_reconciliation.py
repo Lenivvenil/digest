@@ -34,7 +34,12 @@ from digest.reading_brief_state import (
 )
 from digest.reading_brief_tokens import TokenProfileUnavailable
 from digest.reading_reconciliation import (
+    RESPONSE_INSTRUCTION,
+    RESPONSE_VERSION,
+    ReconciliationCompletion,
+    ReconciliationInput,
     build_reconciliation_input,
+    parse_reconciliation_response,
     plan_reconciliation_request,
     verify_reconciliation_input,
 )
@@ -364,3 +369,356 @@ def test_missing_local_counter_remains_unverified(
     )
     assert plan.status == "unverified" and plan.error_class == "technical_tokenizer_profile"
     assert plan.wire_json and not plan.accounting
+
+
+def synthetic_reconciliation_response(value: ReconciliationInput, *, abstain: bool = False) -> str:
+    """Synthetic prose deliberately does not claim source fidelity."""
+    return json.dumps(
+        {
+            "selected_span_ids": [] if abstain else [value.evidence[0].id],
+            "qualification_span_ids": sorted({item for page in value.pages for item in page.qualification_span_ids}),
+            "reading_angle": None
+            if abstain
+            else {
+                "text": "Synthetic finding with semantic accuracy still unverified.",
+                "span_ids": [value.evidence[0].id],
+            },
+            "abstain": abstain,
+        }
+    )
+
+
+def synthetic_reconciliation_transport(
+    value: ReconciliationInput,
+    raw: str,
+    *,
+    provider: str = "gemini",
+) -> tuple[source_admission.RequestAdmission, ReconciliationCompletion]:
+    """Fabricated fixture metadata, never real provider/admission receipts.
+
+    No LocalRequestPlan is promoted to a completed physical request.
+    """
+    model = "gemini-3.8-flash" if provider == "gemini" else "openai/gpt-oss-120b"
+    route = source_admission.route_profile(provider, model, 2048)
+    assert route is not None
+    messages = [
+        {"role": "system", "content": RESPONSE_INSTRUCTION},
+        {"role": "user", "content": json.dumps(asdict(value), ensure_ascii=False, sort_keys=True)},
+    ]
+    request_hash = source_admission.request_sha256(route, messages, 0.1)
+    record = source_admission.estimate_record(route, 100) if provider == "groq" else {}
+    admission = source_admission.RequestAdmission(
+        provider,
+        model,
+        request_hash,
+        2048,
+        route.input_tokens,
+        status="admitted",
+        method="exact" if provider == "gemini" else "estimated",
+        exact_count=400 if provider == "gemini" else None,
+        input_estimate=int(record["input_estimate"]) if record else None,
+        evidence=record,
+    )
+    completion = ReconciliationCompletion(
+        RESPONSE_VERSION,
+        value.input_sha256,
+        provider,
+        model,
+        0.1,
+        2048,
+        request_hash,
+        hashlib.sha256(raw.encode()).hexdigest(),
+        "completed",
+        "STOP" if provider == "gemini" else "stop",
+    )
+    return admission, completion
+
+
+@pytest.mark.parametrize("provider", ["gemini", "groq"])
+def test_response_binds_sparse_archive_without_certifying_prose(
+    saved_synthetic: tuple[Source, BriefState],
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    admission, completion = synthetic_reconciliation_transport(value, raw, provider=provider)
+    original = copy.deepcopy((asdict(source), asdict(state), asdict(value)))
+    monkeypatch.setattr(source_admission, "estimate_request", lambda *args: pytest.fail("Must reuse saved count"))
+    monkeypatch.setattr(source_admission, "count_gpt_input", lambda *args: pytest.fail("Must not need tokenizer"))
+    result = parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+    assert result.input == value and result.input.pages[-1].abstain
+    assert result.qualification_span_ids == (len(source.spans),)
+    # A retained archive condition need not be a citation for the chosen prose.
+    # This also intentionally demonstrates that valid IDs cannot prove fidelity.
+    assert result.angle_span_ids == (1,) and not set(result.qualification_span_ids) & set(result.angle_span_ids)
+    assert result.reading_angle and result.semantic_completeness == "unverified"
+    assert result.raw_response == raw and result.completion == completion
+    assert json.loads(result.admission_json) == asdict(admission)
+    admission.evidence["tampered_later"] = "Must not change the stored record"
+    assert "tampered_later" not in result.admission_json
+    assert original == (asdict(source), asdict(state), asdict(value))
+    with pytest.raises(FrozenInstanceError):
+        result.reading_angle = "Changed"  # type: ignore[misc]
+
+
+def test_abstention_retains_qualifications_without_creating_a_brief(saved_synthetic: tuple[Source, BriefState]) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value, abstain=True)
+    admission, completion = synthetic_reconciliation_transport(value, raw)
+    result = parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+    assert result.abstain and result.qualification_span_ids == (len(source.spans),)
+    assert result.reading_angle is None and not result.selected_span_ids and not result.angle_span_ids
+
+
+def test_valid_citations_cannot_detect_a_synthetic_scope_error(saved_synthetic: tuple[Source, BriefState]) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    data = json.loads(synthetic_reconciliation_response(value))
+    # Deliberately contradict the fixture's retained pilot-client condition.
+    data["reading_angle"] = {"text": "All clients qualify.", "span_ids": [1, len(source.spans)]}
+    raw = json.dumps(data)
+    admission, completion = synthetic_reconciliation_transport(value, raw)
+    result = parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+    assert result.reading_angle == "All clients qualify."
+    assert result.semantic_completeness == "unverified"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_qualification",
+        "unknown_qualification",
+        "omitted_citation",
+        "unknown_selected",
+        "bool_id",
+        "duplicate_id",
+        "empty_selection",
+        "empty_prose",
+        "empty_citations",
+        "missing_prose",
+        "extra_angle_field",
+        "nonboolean_abstain",
+        "abstain_with_prose",
+        "missing_field",
+        "coverage",
+        "model_copied_hash",
+        "duplicate_key",
+    ],
+)
+def test_response_rejects_invalid_schema_ids_and_empty_success(
+    saved_synthetic: tuple[Source, BriefState],
+    damage: str,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    data = json.loads(synthetic_reconciliation_response(value))
+    if damage == "missing_qualification":
+        data["qualification_span_ids"] = []
+    elif damage == "unknown_qualification":
+        data["qualification_span_ids"].append(9999)
+    elif damage == "omitted_citation":
+        data["reading_angle"]["span_ids"] = [value.sparse_coverage.omitted_span_ids[0]]
+    elif damage == "unknown_selected":
+        data["selected_span_ids"] = [9999]
+    elif damage == "bool_id":
+        data["selected_span_ids"] = [True]
+    elif damage == "duplicate_id":
+        data["reading_angle"]["span_ids"] = [1, 1]
+    elif damage == "empty_selection":
+        data["selected_span_ids"] = []
+    elif damage == "empty_prose":
+        data["reading_angle"]["text"] = " \n "
+    elif damage == "empty_citations":
+        data["reading_angle"]["span_ids"] = []
+    elif damage == "missing_prose":
+        data["reading_angle"] = None
+    elif damage == "extra_angle_field":
+        data["reading_angle"]["certified"] = True
+    elif damage == "nonboolean_abstain":
+        data["abstain"] = 0
+    elif damage == "abstain_with_prose":
+        data["abstain"] = True
+    elif damage == "missing_field":
+        del data["qualification_span_ids"]
+    elif damage == "coverage":
+        data["coverage"] = {"first_span_id": 1, "last_span_id": len(source.spans)}
+    elif damage == "model_copied_hash":
+        data["input_sha256"] = value.input_sha256
+    raw = json.dumps(data)
+    if damage == "duplicate_key":
+        raw = raw[:-1] + ', "abstain": false}'
+    admission, completion = synthetic_reconciliation_transport(value, raw)
+    with pytest.raises(ValueError):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("version", "old-response-protocol"),
+        ("input_sha256", "0" * 64),
+        ("provider", "groq"),
+        ("model", "unknown-model"),
+        ("temperature", 0.2),
+        ("temperature", False),
+        ("temperature", float("nan")),
+        ("output_reserve", 2049),
+        ("output_reserve", True),
+        ("request_sha256", "0" * 64),
+        ("response_sha256", "0" * 64),
+        ("status", "unknown"),
+        ("status", "reserved"),
+        ("status", "failed"),
+        ("finish_reason", None),
+        ("finish_reason", "length"),
+        ("finish_reason", "MAX_TOKENS"),
+    ],
+)
+def test_completion_binding_rejects_each_changed_transport_component(
+    saved_synthetic: tuple[Source, BriefState],
+    field: str,
+    changed: Any,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    admission, completion = synthetic_reconciliation_transport(value, raw)
+    completion = replace(completion, **{field: changed})
+    with pytest.raises(ValueError):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "groq"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "route",
+        "model",
+        "input_limit",
+        "output_reserve",
+        "request",
+        "status",
+        "method",
+        "count",
+        "error",
+        "record",
+    ],
+)
+def test_admitted_status_does_not_replace_route_and_count_proof(
+    saved_synthetic: tuple[Source, BriefState],
+    provider: str,
+    damage: str,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    admission, completion = synthetic_reconciliation_transport(value, raw, provider=provider)
+    changes: dict[str, Any] = {
+        "route": {"provider": "different"},
+        "model": {"model": "different"},
+        "input_limit": {"input_limit": 1},
+        "output_reserve": {"output_reserve": 1},
+        "request": {"request_sha256": "0" * 64},
+        "status": {"status": "unverified"},
+        "method": {"method": "unverified"},
+        "count": {"exact_count" if provider == "gemini" else "input_estimate": True},
+        "error": {"error_class": "technical_count_unknown"},
+        "record": {"evidence": {"method": "unknown"}},
+    }
+    admission = replace(admission, **changes[damage])
+    with pytest.raises(ValueError):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "groq"])
+@pytest.mark.parametrize("damage", ["zero", "oversized", "other_method_count", "saved_method", "saved_tokenizer"])
+def test_completed_response_requires_valid_saved_accounting(
+    saved_synthetic: tuple[Source, BriefState],
+    provider: str,
+    damage: str,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    admission, completion = synthetic_reconciliation_transport(value, raw, provider=provider)
+    route = source_admission.route_profile(provider, completion.model, completion.output_reserve)
+    assert route is not None
+    if damage in {"zero", "oversized"}:
+        count = 0 if damage == "zero" else route.input_tokens + 1
+        if provider == "gemini":
+            admission = replace(admission, exact_count=count)
+        else:
+            record = source_admission.estimate_record(route, count)
+            admission = replace(admission, input_estimate=int(record["input_estimate"]), evidence=record)
+    elif damage == "other_method_count":
+        admission = replace(admission, **{"input_estimate" if provider == "gemini" else "exact_count": 100})
+    elif damage == "saved_method":
+        admission.evidence["method"] = "unrecognized-estimator"
+    else:
+        admission.evidence["tokenizer_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="invalid_reconciliation_admission"):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+
+
+@pytest.mark.parametrize("damage", ["source", "page", "input_version", "raw", "instruction"])
+def test_response_rechecks_original_source_pages_protocol_and_exact_raw_text(
+    saved_synthetic: tuple[Source, BriefState],
+    damage: str,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    admission, completion = synthetic_reconciliation_transport(value, raw)
+    if damage == "source":
+        source = replace(source, text=source.text + " Changed")
+    elif damage == "page":
+        state.pages[0].response = "Changed"
+    elif damage == "input_version":
+        value = replace(value, version="old-input-protocol")
+        value = replace(value, input_sha256=checksum(asdict(replace(value, input_sha256=""))))
+        admission, completion = synthetic_reconciliation_transport(value, raw)
+    elif damage == "raw":
+        raw += " "  # Equivalent JSON is not the same returned raw response.
+    elif damage == "instruction":
+        plan = plan_reconciliation_request(
+            value,
+            source,
+            state,
+            instruction="Old protocol",
+            provider="gemini",
+            model="gemini-3.8-flash",
+            max_output_tokens=2048,
+        )
+        admission = replace(admission, request_sha256=plan.request_sha256)
+        completion = replace(completion, request_sha256=plan.request_sha256)
+    with pytest.raises(ValueError):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
+
+
+def test_prospective_fit_cannot_substitute_for_completion_or_admission(
+    saved_synthetic: tuple[Source, BriefState],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, state = saved_synthetic
+    value = build_reconciliation_input(source, state)
+    raw = synthetic_reconciliation_response(value)
+    monkeypatch.setattr(source_admission, "count_gpt_input", lambda messages: 100)
+    plan = plan_reconciliation_request(
+        value,
+        source,
+        state,
+        instruction=RESPONSE_INSTRUCTION,
+        provider="groq",
+        model="openai/gpt-oss-120b",
+        max_output_tokens=2048,
+    )
+    assert plan.status == "estimated_fit"
+    admission, completion = synthetic_reconciliation_transport(value, raw, provider="groq")
+    assert plan.request_sha256 == completion.request_sha256
+    with pytest.raises(ValueError, match="missing_reconciliation_completion_evidence"):
+        parse_reconciliation_response(raw, value, source, state, admission=plan, completion=completion)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing_reconciliation_completion_evidence"):
+        parse_reconciliation_response(raw, value, source, state, admission=admission, completion=plan)  # type: ignore[arg-type]

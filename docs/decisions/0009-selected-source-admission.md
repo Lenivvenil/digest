@@ -243,3 +243,37 @@ remains unverified in offline planning. Oversized/unverified input stays intact 
 held. The plan adds no dispatch, retries, queue, request allowance or deadline. Any
 later execution must use the existing shared per-cycle counter, count/generation
 admission, pacing and absolute deadline; no local sizing result grants quota.
+
+### Local response binding — proposed, no dispatcher
+
+A future reconciliation response uses the existing selection/qualification IDs,
+reading-angle prose and abstention semantics, without a contiguous-source coverage
+field. Its separate machine envelope binds the verified sparse input, versioned
+protocol instruction, exact provider/model/output-bound request and raw response hash.
+A local estimated-fit plan is insufficient: parsing requires separately supplied,
+consistent admission and terminal-completion metadata. Those records are assertions
+from the caller, not cryptographic evidence that a physical request occurred. This
+slice neither creates such a receipt from a plan nor dispatches a request.
+
+The planner may size arbitrary proposed instructions, but this response version binds
+only the exact fixed protocol instruction. A different editorial instruction needs
+an explicit versioned response design; hash matching is not relaxed. Saved Groq
+accounting is checked for declared-count arithmetic/profile consistency without
+retokenizing the wire, and saved Gemini counts are not independently recounted.
+Both remain trusted-caller admission assertions, not newly measured facts.
+
+Original sparse excerpts are source evidence; retained page prose is a prior model
+assertion. Every nominated input qualification ID remains retained in the response
+and immutable archive, including conditions irrelevant to a selected final finding.
+The final prose must preserve the conditions affecting its retained claims, but ID
+membership or echoing cannot establish that relationship. Unknown IDs, missing
+required IDs, malformed/empty non-abstention, unfinished output and inconsistent
+input/request/response records fail validation. No truncation or repair is performed.
+
+The generated brief and complete evidence archive remain separate. Validation proves
+schema, identity and citation membership only, not source-wide reading, truthful
+paraphrase, omitted-condition safety or publication eligibility. A later operation
+still needs the existing cycle budget, actual-route admission, deadline and durable
+request-outcome integration; #55's semantic release evaluation remains open. The
+protocol does not adopt the separate experimental semantic prompt or activate any
+publication path.
