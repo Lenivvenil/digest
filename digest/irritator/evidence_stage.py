@@ -140,6 +140,49 @@ class SourceAttempt:
     error_detail: str = ""
 
 
+@dataclass(frozen=True)
+class RankingDecision:
+    """Fully validated model judgment, including judgments withheld from delivery."""
+
+    relation: str
+    score: int
+    reasoning: str
+    quote_id: str
+    quote: str
+
+
+@dataclass
+class RankingCandidateAudit:
+    """Private evidence snapshot; omitted text is diagnostic, never ranking input."""
+
+    signal: Signal
+    signal_sha256: str
+    signal_json_chars: int
+    title_chars: int
+    snippet_chars: int
+    title_truncated: bool
+    snippet_truncated: bool
+    ranking_payload_chars: int | None
+    query_indices: list[int]
+    admission: Literal["admitted", "evidence_budget", "candidate_limit"]
+    disposition: Literal["not_admitted", "pending", "not_returned", "accepted", "non_counter", "below_min_score"]
+    decision: RankingDecision | None = None
+
+
+@dataclass
+class RankingAudit:
+    """Optional versioned trace in the existing private result JSON, not public prose."""
+
+    min_score: int
+    max_ranked: int
+    candidates: list[RankingCandidateAudit] = field(default_factory=list)
+    schema_version: int = 1
+    max_ranking_json_chars: int = MAX_RANKING_JSON_CHARS
+    max_candidates: int = MAX_RANKING_CANDIDATES
+    omitted_text_budget_chars: int = MAX_RESPONSE_CHARS
+    response_validated: bool = False
+
+
 @dataclass
 class EvidenceIrritatorResult:
     schema_version: int
@@ -155,6 +198,7 @@ class EvidenceIrritatorResult:
     source_bundle_id: str | None = None
     query_anchor: SourceQueryAnchor | None = None
     excluded_cited_source_urls: list[str] = field(default_factory=list)
+    ranking_audit: RankingAudit | None = None
 
 
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
@@ -317,10 +361,12 @@ def _ranking_signal_payload(signal: Signal) -> dict[str, Any]:
 
 def _parse_rankings(
     text: str, signals: list[Signal], narrative: EvidenceNarrative, maximum: int, min_score: int,
+    *, audit: RankingAudit | None = None,
 ) -> tuple[list[EvidenceRankedSignal], list[str]]:
     entries, limitations = _response(text, "rankings", maximum)
     known = {signal.url: signal for signal in signals}
     validated = []
+    decisions: dict[str, RankingDecision] = {}
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote_id"}:
@@ -342,6 +388,7 @@ def _parse_rankings(
         reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
         validated.append((signal, score, reasoning, relation, quote))
+        decisions[url] = RankingDecision(relation, score, reasoning, quote_id, quote)
 
     ranked = []
     omitted = dict.fromkeys(("supports", "context", "insufficient"), 0)
@@ -359,6 +406,22 @@ def _parse_rankings(
             + ", ".join(f"{relation}={count}" for relation, count in omitted.items()) + "."
         )
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
+    if audit is not None:
+        # Do not retain a valid prefix of an invalid response. Existing validation
+        # above still rejects the entire response, including invalid extra rows.
+        for candidate in audit.candidates:
+            if candidate.admission != "admitted":
+                continue
+            candidate.decision = decisions.get(candidate.signal.url)
+            if candidate.decision is None:
+                candidate.disposition = "not_returned"
+            elif candidate.decision.relation not in ("contradicts", "complicates"):
+                candidate.disposition = "non_counter"
+            elif candidate.decision.score < min_score:
+                candidate.disposition = "below_min_score"
+            else:
+                candidate.disposition = "accepted"
+        audit.response_validated = True
     return ranked, limitations
 
 
@@ -439,6 +502,45 @@ def _ranking_candidates(signals: list[Signal]) -> list[Signal]:
     return candidates
 
 
+def _ranking_audit(
+    signals: list[Signal], candidates: list[Signal], min_score: int, max_ranked: int,
+    lineage: dict[str, set[int]],
+) -> RankingAudit:
+    """Observe the unchanged greedy admission; never shorten its model evidence.
+
+    Omitted title/snippet previews share the existing response-character bound,
+    equally per omitted candidate, title first. Lengths/flags expose every loss.
+    Hashes use sorted ASCII-escaped JSON, including legal JSON lone surrogates.
+    """
+    admitted_urls = {signal.url for signal in candidates}
+    omitted_count = len(signals) - len(candidates)
+    preview_chars = MAX_RESPONSE_CHARS // omitted_count if omitted_count else 0
+    audit = RankingAudit(min_score, max_ranked)
+    admitted_count = 0
+    for signal in signals:
+        original = json.dumps(asdict(signal), ensure_ascii=True, sort_keys=True)
+        signal_sha256 = hashlib.sha256(original.encode()).hexdigest()
+        admitted = signal.url in admitted_urls
+        snapshot = signal if admitted else replace(
+            signal, title=signal.title[:preview_chars],
+            snippet=signal.snippet[:max(0, preview_chars - len(signal.title))],
+        )
+        admission: Literal["admitted", "evidence_budget", "candidate_limit"] = (
+            "admitted" if admitted else "candidate_limit" if admitted_count >= MAX_RANKING_CANDIDATES
+            else "evidence_budget"
+        )
+        audit.candidates.append(RankingCandidateAudit(
+            snapshot, signal_sha256, len(original),
+            len(signal.title), len(signal.snippet), snapshot.title != signal.title, snapshot.snippet != signal.snippet,
+            (None if admission == "candidate_limit"
+             else len(json.dumps(_ranking_signal_payload(signal), ensure_ascii=False))),
+            sorted(lineage.get(signal_sha256, set())),
+            admission, "pending" if admitted else "not_admitted",
+        ))
+        admitted_count += int(admitted)
+    return audit
+
+
 async def _check_source_response(response: httpx.Response) -> None:
     """Reject error pages and malformed success bodies rather than reporting empty."""
     source_hosts = {"hn.algolia.com", "export.arxiv.org", "lobste.rs"}
@@ -455,18 +557,24 @@ async def _check_source_response(response: httpx.Response) -> None:
 
 async def _search(
     result: EvidenceIrritatorResult, config: Config, client: httpx.AsyncClient,
+    *, lineage: dict[str, set[int]] | None = None,
 ) -> list[Signal]:
     adapters = {"hackernews": search_hackernews, "arxiv": search_arxiv, "lobsters": search_lobsters}
     sources = [source for source in SAFE_SOURCES if source in config.irritator.sources]
     semaphore = asyncio.Semaphore(3)
 
-    async def attempt(query: SearchQuery, source: str) -> list[Signal]:
+    async def attempt(query: SearchQuery, source: str, query_index: int) -> list[Signal]:
         try:
             async with semaphore:
                 raw = await adapters[source](query.query, config, client)
             if not isinstance(raw, list):
                 raise ValueError("Source result must be a list.")
             signals = _bounded_signals(raw, source)
+            if lineage is not None:
+                for signal in signals:
+                    original = json.dumps(asdict(signal), ensure_ascii=True, sort_keys=True)
+                    identity = hashlib.sha256(original.encode()).hexdigest()
+                    lineage.setdefault(identity, set()).add(query_index)
             result.source_attempts.append(SourceAttempt(
                 query.query, source, "complete" if signals else "empty", len(signals),
                 max(0, len(raw) - len(signals)),
@@ -491,7 +599,9 @@ async def _search(
     # Preserve the caller's hooks and remove only our own, including on cancellation.
     client.event_hooks["response"].append(_check_source_response)
     try:
-        batches = await asyncio.gather(*(attempt(query, source) for query in result.queries for source in sources))
+        batches = await asyncio.gather(*(
+            attempt(query, source, index) for index, query in enumerate(result.queries) for source in sources
+        ))
     finally:
         client.event_hooks["response"].remove(_check_source_response)
     result.source_attempts.sort(key=lambda attempt: (attempt.query, attempt.source))
@@ -650,7 +760,8 @@ async def _run_stages(
         diagnostic.status, diagnostic.error = "error", "NoConfiguredSafeSources"
         result.status = "error"
         return
-    raw = await _search(result, config, client)
+    lineage: dict[str, set[int]] = {}
+    raw = await _search(result, config, client, lineage=lineage)
     _finish_stage(diagnostic, len(raw))
     diagnostic.omitted_count = sum(attempt.omitted_count for attempt in result.source_attempts)
     failed = sum(attempt.status in {"error", "unavailable"} for attempt in result.source_attempts)
@@ -685,6 +796,9 @@ async def _run_stages(
 
     candidates = _ranking_candidates(signals)
     maximum_ranked = min(MAX_RANKED_SIGNALS, config.irritator.top_signals)
+    result.ranking_audit = _ranking_audit(
+        signals, candidates, config.irritator.min_signal_score, maximum_ranked, lineage,
+    )
     diagnostic = _stage(result, "ranking", len(candidates))
     diagnostic.omitted_count = len(signals) - len(candidates)
     if diagnostic.omitted_count:
@@ -710,7 +824,7 @@ async def _run_stages(
         "max_ranked": maximum_ranked, "language": config.radar.language}, config,
         admission_deadline=admission_deadline)
     result.ranked_signals, limitations = _parse_rankings(
-        text, candidates, narrative, maximum_ranked, config.irritator.min_signal_score,
+        text, candidates, narrative, maximum_ranked, config.irritator.min_signal_score, audit=result.ranking_audit,
     )
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.ranked_signals))
@@ -772,8 +886,8 @@ async def run_evidence_irritator(
             if isinstance(exc, NarrativeQuoteMismatch):
                 current.rejected_quote = exc.rejection
         # No full provider responses, prompts, HTTP headers or credentials are retained.
-        # Only a quote bounded by its validated evidence title/excerpt length may be saved
-        # in the private result archive; exception text/logging remains fixed.
+        # The private archive retains bounded source/validated judgment evidence;
+        # invalid response text and exception bodies are never retained.
         if isinstance(exc, SourceAdmissionHeld):
             result.status = "incomplete"
             if current is not None:

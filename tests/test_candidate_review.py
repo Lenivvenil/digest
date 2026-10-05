@@ -52,7 +52,8 @@ def report_for(
     item = packet.evidence.items[0]
     selections = [EvidenceSelection(item.evidence_id, "Useful", item.title, "high")] if status == "ok" else []
     prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        packet.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        packet.evidence, config.review, config.radar.language, sources=config.sources),
+        sort_keys=True).encode()).hexdigest()
     review = ModelReview(slot, "test", "test", packet.evidence.bundle_id, prompt_hash, status,
                          selections=selections, limitations=["RSS only"])
     return BlindReviewReport(1, packet.evidence, [review], "incomplete", None, [], "pending_independent_review")
@@ -838,3 +839,41 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     growth = progress_size(progress) - before
     assert 1_048_576 < growth <= RESPONSE_STORAGE_RESERVE
     assert provider.await_count == 2 and [review.status for review in report.reviews] == ["invalid", "partial"]
+
+
+def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_path: Path) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+
+    config, articles = population(1)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config, "abstained")
+    raw = json.dumps({"selections": [], "limitations": ["RSS only"], "dispositions": [
+        {"evidence_id": item.evidence_id, "status": "deferred", "reason": "Useful but output capacity exhausted."}
+        for item in packet.evidence.items]})
+    report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
+    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    # Emulate a valid archived report from a different prompt contract, preserving
+    # every matching provenance reference before the ordinary save/load boundary.
+    old_hash = hashlib.sha256(b"older selection contract").hexdigest()
+    packet.prompt_hash = report.reviews[0].prompt_hash = old_hash
+    packet.disposition_attempts = tuple(replace(attempt, prompt_hash=old_hash)
+                                        for attempt in packet.disposition_attempts)
+    candidate = next(iter(progress.candidates.values()))
+    candidate.decision_prompt_hash = old_hash
+    save_candidate_progress(progress, tmp_path)
+    restored = load_candidate_progress(tmp_path)
+    merge_candidates(restored, {}, config, {}, now=NOW + timedelta(hours=1))
+    candidate = next(iter(restored.candidates.values()))
+    assert candidate.eligible and candidate.status == "technical_pending"
+    assert candidate.disposition.status == "deferred"
+    assert candidate.decision_prompt_hash == old_hash
+    assert pending_completed_report(restored) is None
+    next_packet = plan_packet(restored, config, NOW + timedelta(hours=1))
+    assert next_packet is not None and next_packet.evidence == packet.evidence
+    assert next_packet.prompt_hash != old_hash and next_packet.report is None
+    assert restored.packets[0].report.reviews[0].prompt_hash == old_hash
+    assert candidate.status == "technical_pending" and candidate.decision_prompt_hash == old_hash

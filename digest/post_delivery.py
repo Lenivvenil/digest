@@ -100,7 +100,17 @@ def _render_result(
         lines.append('\n' + signal_text(ranked))
     if notice:
         lines.append('\n' + notice)
-    lines.append('\n## Stage diagnostics\n' + json.dumps(asdict(canonical or result), ensure_ascii=False, indent=2))
+    diagnostics = asdict(canonical or result)
+    audit = diagnostics.pop('ranking_audit', None)
+    if audit is not None:
+        candidates = audit['candidates']
+        admitted = sum(item['admission'] == 'admitted' for item in candidates)
+        lines.append(
+            f"\nPrivate ranking audit: {len(candidates)} validated candidates, {admitted} admitted; "
+            f"response validated: {audit['response_validated']}. "
+            "Candidate evidence and dispositions are in the companion .irritator.json archive."
+        )
+    lines.append('\n## Stage diagnostics\n' + json.dumps(diagnostics, ensure_ascii=False, indent=2))
     return '\n'.join(lines) + '\n'
 
 

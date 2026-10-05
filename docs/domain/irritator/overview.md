@@ -55,6 +55,14 @@ Search results that exactly repeat a cited target URL or its verified final URL 
 excluded from external candidates, with explicit URLs/counts retained. Different
 documents on the same publisher remain eligible; no guessed alias or extra fetch is used.
 
+### Proposed private decision evidence
+
+[ADR0012](../../decisions/0012-private-ranking-evidence.md) proposes a bounded private
+JSON trace of post-validation external candidates, admission omissions and fully
+validated ranking dispositions. Omitted-source previews explicitly record truncation;
+unknown or unreturned relevance is never relabeled as rejection. This local archive
+proposal does not change ranking behavior or establish semantic counter-evidence quality.
+
 ---
 
 ## Purpose

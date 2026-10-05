@@ -47,3 +47,7 @@ source-point representation for #55. It does not approve a new prompt or publica
 [0011](0011-source-anchored-investigation-queries.md) proposes a source-presence floor
 for bounded RSS and full-source investigation queries under #77; neutrality and useful
 retrieval remain empirical gates.
+
+[0012](0012-private-ranking-evidence.md) proposes bounded candidate/admission and
+validated ranking-decision evidence in the existing private JSON archive under #77.
+It is a local retention proposal, not owner acceptance, publication or deployment.

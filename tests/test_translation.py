@@ -310,7 +310,12 @@ async def test_conflicting_article_identity_keeps_each_original_before_any_model
 async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadline(tmp_path: Path) -> None:
     import time
 
-    from digest.irritator.evidence_stage import EvidenceIrritatorResult, EvidenceNarrative, EvidenceRankedSignal
+    from digest.irritator.evidence_stage import (
+        EvidenceIrritatorResult,
+        EvidenceNarrative,
+        EvidenceRankedSignal,
+        _ranking_audit,
+    )
     from digest.irritator.sources import Signal
     from digest.llm import _request_state
     from digest.translation import translate_supplement_presentation
@@ -322,9 +327,12 @@ async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadli
     ranked = EvidenceRankedSignal(source, 7, "Only the preview was measured.", "Only enrolled clients.",
                                   "complicates", "Literal evidence.")
     canonical = EvidenceIrritatorResult(1, "bundle", "complete", narratives=[narrative], ranked_signals=[ranked])
+    private = replace(source, title="PRIVATE AUDIT SENTINEL", snippet="Private diagnostic evidence.")
+    canonical.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
     original = asdict(canonical)
 
     async def answer(_role, messages, _config, **_kwargs):
+        assert "PRIVATE AUDIT SENTINEL" not in json.dumps(messages)
         fields = json.loads(messages[1]["content"])["fields"]
         return json.dumps({"translations": [{"id": x["id"], "text": "Перевод: " + x["text"]}
                                              for x in fields]}), {"finish_reason": "stop"}
@@ -349,6 +357,7 @@ async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadli
     assert presented.ranked_signals[0].signal is source
     assert presented.ranked_signals[0].quote == ranked.quote
     assert presented.ranked_signals[0].reasoning.startswith("Перевод:")
+    assert presented.ranking_audit is canonical.ranking_audit
     call.assert_awaited_once()
 
 
