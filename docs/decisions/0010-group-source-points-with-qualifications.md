@@ -108,3 +108,34 @@ relation-aware selection prompt may be proposed and evaluated locally, without
 replacing frozen requests or calling a provider. Adoption remains subject to this
 ADR's owner decision and finite source-fidelity/readability acceptance; neither
 projection nor a revised instruction establishes that outcome.
+
+## Research disposition and restored brief direction — 2026-10-05
+
+Quote-only publication is not selected following the observed product evidence;
+this is not an owner rejection of an accepted architecture. Blind paragraph-view
+candidates produced 496, 1,903 and 2,307 words in the Citi, AWS and TigerData reader
+views. Exact source text and broader structural context did not establish concise
+analytical reading. Preserve the experimental code and evidence; paragraph projection
+is not the product correction.
+
+The local successor restores the established e4772dd/README/D-02 distinction: concise
+semantic brief and material caveats on the card, complete immutable source and literal
+evidence in the archive, optional translation of the generated brief. Three cached
+assistant-side candidates were 77, 103 and 172 words. Source review accepted the chosen
+AWS/TigerData claims but found a geographic condition omitted from Citi's prose. The
+existing full qualification appendage retained that condition at 566 combined words;
+neither a detached appendix nor concise text alone demonstrated the joint requirement.
+These are diagnostic assistant-side results, not configured-provider release evidence.
+
+A separate untried instruction revision requires geography, eligibility and product
+version to survive compression when inherited from surrounding definitions or linked
+footnotes. This generic rule does not establish that a model will follow it. No new
+prompt, generation, publication mechanism or runtime activation is adopted here.
+
+The proposed offline input binding in ADR0009 distinguishes completed original page
+coverage from the sparse evidence supplied for reconciliation. All required nominated
+conditions remain bound; their semantic completeness remains unproved. Existing
+midpoint admission can process the two larger sources in complete ordered pages,
+but concatenating page briefs is not the final article-level reconciliation. Its
+output/input coverage contract, source fidelity, translation and useful sustainable
+throughput remain acceptance work within existing budgets.

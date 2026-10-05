@@ -212,3 +212,34 @@ Groq route uses local admission and three generation requests. Neither arithmeti
 establishes provider/account RPM or token quota, and count/generation entitlements must
 not be conflated. Actual latency or a slower configured interval can still leave the
 unchanged 180-second window incomplete. The primary sender remains independent.
+
+## Local reconciliation input binding — proposed
+
+A completed source handoff can supply an offline, immutable reconciliation input.
+It must bind the complete original Source hash and body hash to every admitted,
+completed page, retaining each actual route, request/admission and response proof.
+The existing page validator remains authoritative; an unfinished page, unresolved
+generation or mismatched source cannot be represented as completed reconciliation
+input. Legacy evidence keeps its original provenance rather than acquiring invented
+request-attempt history.
+
+The reconciliation payload has explicitly **sparse original-source evidence**: ordered
+original span IDs, offsets and exact text for every span referenced by retained page
+findings, selected passages or nominated conditions, including conditions from
+abstaining pages. It also retains those page findings and their ID associations.
+The immutable input hash binds both the evidence and page proofs. Dropping a required
+condition or changing a page/source requires rejection, not a silent new interpretation.
+
+Complete technical page coverage is a separate fact from sparse reconciliation input
+coverage. Neither proves that every material condition was identified or that the
+page prose is faithful. Do not reuse PageResult's contiguous original-range coverage
+field for this new sparse payload or call it a whole-source reconciliation read.
+The final semantic brief/output contract remains proposed under #55.
+
+A prospective request binds the exact messages, actual supported provider/model,
+output reserve and serialized wire through existing source-admission helpers. Local
+Groq estimates keep their current margin; a Gemini request requiring remote counting
+remains unverified in offline planning. Oversized/unverified input stays intact and
+held. The plan adds no dispatch, retries, queue, request allowance or deadline. Any
+later execution must use the existing shared per-cycle counter, count/generation
+admission, pacing and absolute deadline; no local sizing result grants quota.
