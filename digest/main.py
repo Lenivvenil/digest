@@ -1110,6 +1110,9 @@ async def _run(
     total_articles = sum(len(arts) for arts in articles_by_category.values())
 
     if not articles_by_category:
+        from digest.reconciliation_checkpoint import prepare_current_batch
+
+        await prepare_current_batch(candidate_progress, run_config, config_path, _t_run_start)
         logger.info("No eligible articles in this processing packet. Nothing to summarize.")
         if not dry_run:
             _save_empty_cache(cache, compact, cache_dir, prepare_only)
@@ -1149,6 +1152,9 @@ async def _run(
             candidate_progress, candidate_packet, review_report, run_config, Path(cache_dir),
             reading_deadline(config, _t_run_start), prepare_only=prepare_only,
         )
+        from digest.reconciliation_checkpoint import prepare_current_batch
+
+        await prepare_current_batch(candidate_progress, run_config, config_path, _t_run_start)
         _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
                                    config, cache_dir, collection_failed)
         logger.info("Source preparation: %d selected, %d technically complete, %d pending; %s",

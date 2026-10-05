@@ -317,9 +317,50 @@ loss. There are three future orchestration choices, none activated here:
 - Consume previously persisted inputs in a later admitted invocation, still checkpointing
   its operation intent before dispatch. This is an option, not mandatory next-day latency.
 
-The current workflow persists only the budget reservation at its initial preparation
-barrier. Selecting and integrating a reconciliation-intent barrier remains explicit
-runtime/ADR adoption work. The local driver's caller precondition cannot substitute
+The earlier shared-budget workflow proposal persists only the budget reservation
+at its initial preparation barrier. Selecting and adopting a reconciliation-intent
+barrier remains explicit runtime/ADR work; the paired local prototype is described
+below. The local driver's caller precondition cannot substitute
 for that verification. Telegram unknown-send replay rules and #120 preparation/sender
 isolation are unchanged. No live request, workflow, runtime pin or publication path
 is enabled by this proposed driver.
+
+### Paired preparation/checkpoint prototype — local, not deployed
+
+The proposed engine/runtime path connects the driver to the existing preparation
+stage. After #120's accepted/ready precedence, reading-enabled managed preparation
+uses current candidate proofs to find eligible frozen handoffs, including saved
+work when no new packet exists. It prepares one exact batch only while the original
+reading cutoff leaves a usable checkpoint/execution window. Ordinary reading-disabled
+preparation and the sender remain unchanged.
+
+The batch binds source, selection, operation and eligibility references, the original
+cutoff, the actually remaining local/shared allowance and the prior pacing floor.
+A separate bounded phase stages only its intended files, commits/pushes once, fetches
+the remote tip, verifies commit reachability and exact current referenced bytes,
+then invokes the driver. A rejected/uncertain push, changed input/history or expired
+window prevents dispatch. A capability check requires the paired engine interface.
+No protocol instruction or semantic publication algorithm is adopted by this wiring.
+
+Crucially, the active nonce-bearing model-budget journal is excluded from the
+mid-stage checkpoint. The remote retains the original unbegun reservation while the
+original workspace retains its active journal. Both are checked separately. Thus a
+fresh checkout cannot execute or finalize the reservation using the original nonce
+through the existing budget APIs. No second workspace-witness authorization layer is
+introduced. The later ordinary persistence step records finalized usage and outcomes;
+local writes are not described as surviving runner loss.
+
+Persisted per-item outcomes distinguish genuinely unattempted work from unknown or
+accepted-invalid computation. A new claim may rebind only proved-unattempted work,
+retaining its exact prior record; another operation's budget use is not evidence
+that this item dispatched. Missing proof or any uncertain attempt remains held.
+Outcome persistence after stage finalization is idempotently repairable without
+releasing allowance again or repeating model calls. This does not adopt the separate
+later-cycle unknown-compute recovery proposal.
+
+The proposed runtime keeps its existing triggers, permissions, job deadlines,
+feedback ordering and independent frozen sender. All outputs remain technical
+candidates. Local bare-Git and fake-transport verification can establish orchestration
+invariants, but does not establish live latency, account quota, semantic quality or
+production acceptance. The prior frozen runtime proposal and deployed pins remain
+unchanged until explicit adoption.
