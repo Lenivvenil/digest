@@ -17,9 +17,11 @@ words. Neither a quotation appendix nor typed model-generated claims proves usef
 compact, complete analysis.
 
 D-02 requires a specific useful insight with evidence, limitations and a reason to
-read the original. D-03 requires complete source support and honest technical pending.
-These are established requirements. The grouped representation below is a proposed
-implementation, not an owner-approved publication algorithm or an accepted quality gate.
+read the original, with honest evidence coverage and technical-pending status.
+The earlier attribution of mandatory complete-source support to D-03 was corrected
+in the [domain provenance record](../domain/digest/overview.md#requirement-provenance-correction--2026-10-05).
+The grouped representation below remains an experimental mechanism, not an
+owner-approved publication algorithm or a mandatory #55 acceptance gate.
 
 ## Proposed decision
 

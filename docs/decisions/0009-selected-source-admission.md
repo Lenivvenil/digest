@@ -7,9 +7,14 @@ Refs [#122](https://github.com/Lenivvenil/digest/issues/122),
 [ADR0007](0007-compact-issue-reservation.md), and
 [ADR0008](0008-candidate-selection-progress.md).
 
-## Existing requirements
+## Scope of this proposed mechanism
 
-Reuse draft #107's acquisition, exact/conservative request admission and contiguous
+Mandatory complete-source processing was an assistant-introduced interpretation,
+not an established owner requirement or a prerequisite for closing #55. The
+[domain provenance correction](../domain/digest/overview.md#requirement-provenance-correction--2026-10-05)
+preserves that distinction. This experimental mechanism remains unaccepted and disabled.
+
+This proposal reuses draft #107's acquisition, exact/conservative request admission and contiguous
 page progress. Preserve the current candidate scheduler, accepted preparation and
 model-free sender. Technical limits must remain technical pending, and uncertainty
 must not cause an automatic repeated generation. Complete pages are not a semantic
