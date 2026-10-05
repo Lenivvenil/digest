@@ -1,7 +1,7 @@
 # 0012. Preserve bounded private ranking evidence
 
-Status: proposed local implementation under [#77](https://github.com/Lenivvenil/digest/issues/77);
-not owner-accepted, published or deployed
+Status: proposed; implemented in draft [PR #107](https://github.com/Lenivvenil/digest/pull/107)
+under [#77](https://github.com/Lenivvenil/digest/issues/77); not owner-accepted or deployed
 
 ## Context and proposed decision
 

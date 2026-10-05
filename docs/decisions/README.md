@@ -44,9 +44,10 @@ and technical handoff under #122; it does not approve semantic publication or ru
 [0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
 source-point representation for #55. It does not approve a new prompt or publication path.
 
-[0011](0011-source-anchored-investigation-queries.md) proposes a source-presence floor
-for bounded RSS and full-source investigation queries under #77; neutrality and useful
-retrieval remain empirical gates.
+[0011](0011-source-anchored-investigation-queries.md) revises the unaccepted mandatory
+literal-query guard into optional provenance diagnostics for bounded RSS and full-source
+investigation under #77. Useful grounded searches need no copied phrase; neutrality and
+useful retrieval remain empirical gates. The revision remains local and undeployed.
 
 [0012](0012-private-ranking-evidence.md) proposes bounded candidate/admission and
 validated ranking-decision evidence in the existing private JSON archive under #77.

@@ -1,6 +1,8 @@
-# 0011. Retain a source-anchored topic query within bounded investigation
+# 0011. Ground bounded investigation queries with optional literal provenance
 
-Status: proposed; implemented in draft PR #107, not accepted or deployed
+Status: revised proposal; not accepted or deployed.
+The earlier mandatory-anchor proposal was implemented in draft PR #107 but was never
+accepted or deployed; it is superseded by this revision.
 
 Refs [#77](https://github.com/Lenivvenil/digest/issues/77),
 [the Irritator domain](../domain/irritator/overview.md), and
@@ -14,37 +16,56 @@ requiring a desired conclusion. A preserved ordinary run nevertheless used only
 queries conditioned on cancellation, controversy or criticism; all available searches
 were empty and ranking never ran. Syntax validity did not establish useful retrieval.
 
-## Proposed decision
+## Superseded initial proposal (unaccepted)
 
-Within the existing maximum of three queries, ask for at least one useful neutral
-topic/entity phrase grounded in the actual supplied source. Keep the model's existing
-query/intent JSON schema. Derive proof in code that one WHOLE query matches a contiguous
-phrase within one supplied title or excerpt. Search quote delimiters, case and whitespace
-may differ; recorded offsets and matched text always refer to the original source field.
+The initial proposal required at least one whole query to match a contiguous phrase
+in supplied source evidence, within the existing maximum of three queries. Its rationale
+was a source-presence floor after the verdict-conditioned searches above. A nonempty
+set without a match retained its queries but stopped as technical incomplete before
+source I/O with `MissingSourceQueryAnchor`; no replacement query was synthesized.
+
+The owner declined adopting that mandatory literal-match gate. This revises an
+unaccepted proposal, not a previously accepted policy. Literal copying is not necessary
+for a useful grounded search, and a match by itself does not establish neutrality,
+relevance or useful retrieval.
+
+## Revised proposed decision
+
+Ask for useful topic/entity searches grounded in the supplied evidence and its
+qualification context, without requiring a copied phrase. Queries may paraphrase or
+combine relevant source terms. Keep exploratory hypotheses and reasons in `intent`,
+distinct from source claims; preserve the source's scope and qualifications. Keep the
+existing query/intent JSON schema, lexical validation and maximum of three queries.
+
+Retain `find_source_anchor` as optional derived diagnostic metadata. When one WHOLE
+query matches a contiguous phrase within one supplied title or excerpt, record the
+match. Search quote delimiters, case and whitespace may differ; recorded offsets and
+matched text always refer to the original source field.
 Technical-word boundaries prevent prefix fragments from posing as full source terms.
-No title/excerpt stitching, cross-article joins, synonym repair or replacement query is
-performed. The anchor may remain in the source language; other slots may explore
-English hypotheses under the existing query contract.
+The matcher performs no title/excerpt stitching, cross-article joins, synonym repair
+or replacement query. Searches preferably use English, retaining source-language names
+or phrases when useful. Generated queries are searched unchanged after validation.
 
 The proof records the query index/text, actual evidence bundle and item IDs, field,
 offsets and exact source slice. In full-source mode, only the cited passages and their
 already-bound qualification context are eligible. The proof refers to that full-source
-bundle, not the outer RSS bundle. It is a source-presence floor: negative language can
-be present in the source, and a generic phrase can match. Neither neutrality, relevance
-nor retrieval usefulness is certified. No keyword blacklist or extra minimum length
-is introduced.
+bundle, not the outer RSS bundle. Negative language can be present in the source, and
+a generic phrase can match. Neither neutrality, relevance nor retrieval usefulness is
+certified. No keyword blacklist or extra minimum length is introduced.
 
-A nonempty generated set without an anchor is technical incomplete before source I/O.
-Retain its queries for diagnosis; do not report that no external evidence exists or
-synthesize a replacement. Existing empty-query handling remains unchanged. Successful
-anchoring does not relax source validation or semantic ranking acceptance.
+A nonempty, valid generated set without an anchor proceeds to the existing bounded
+search. Missing literal provenance is diagnostic absence only, never an error or
+technical incomplete by itself. Existing empty-query handling remains unchanged.
+Neither presence nor absence of an anchor relaxes source validation, self-source
+exclusion or semantic ranking acceptance.
 
 ## Compatibility and rollout scope
 
-This changes BOTH bounded RSS and full-source Irritator query generation/validation.
-It is not gated by reading_brief.enabled. Production remains unchanged while the draft
-engine is undeployed; a later rollout would affect RSS investigation even with source
-reading disabled. The standalone legacy query generator remains unchanged.
+This revision removes the proposed mandatory gate from BOTH bounded RSS and full-source
+Irritator execution. It is not gated by reading_brief.enabled. Production remains
+unchanged while this revision is local and undeployed; a later rollout would affect RSS
+investigation even with source reading disabled. The standalone legacy query generator
+remains unchanged.
 
 SearchQuery and model response fields stay unchanged. Results add optional derived
 query_anchor metadata; absence in older archives means no recorded proof, never a
@@ -54,10 +75,12 @@ are unchanged. Primary preparation and frozen sending remain independent.
 
 ## Verification and remaining acceptance
 
-Offline cases cover a whole verdict-seeking query set holding, one literal anchor plus
-exploratory queries, uncited-source rejection, actual full-source bundle binding,
-quoted/case/source-language variants, technical-word boundaries and genuine source
-negative terms. The saved failure is preserved privately; public fixtures are synthetic.
+Offline cases cover the formerly held three-query set reaching mocked search without
+an anchor in RSS and full-source modes, unchanged schema/lexical rejection, one literal
+anchor plus exploratory queries, uncited evidence excluded from anchor metadata,
+actual full-source bundle binding, quoted/case/source-language variants, technical-word
+boundaries and genuine source negative terms. Exact self-source exclusions remain
+covered. The saved failure is preserved privately; public fixtures are synthetic.
 Actual model compliance, search recall and useful sourced relations remain empirical
 acceptance gates. No automatic ranking success or runtime activation follows from this
 proposed contract.

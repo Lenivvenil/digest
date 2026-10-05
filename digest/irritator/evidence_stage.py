@@ -738,18 +738,10 @@ async def _run_stages(
     result.limitations.extend(limitations)
     if result.queries:
         result.query_anchor = find_source_anchor([query.query for query in result.queries], cited_evidence)
-        if result.query_anchor is None:
-            diagnostic.status, diagnostic.error = "incomplete", "MissingSourceQueryAnchor"
-            diagnostic.output_count = len(result.queries)
+        if result.query_anchor is not None:
             result.limitations.append(
-                "Generated queries lacked a source-anchored topic phrase; no source search was attempted. "
-                "This is an incomplete query contract, not evidence that no counter-signal exists."
+                "One query has a verified source-text anchor; neutrality and retrieval usefulness are not certified."
             )
-            result.status = "incomplete"
-            return
-        result.limitations.append(
-            "One query has a verified source-text anchor; neutrality and retrieval usefulness are not certified."
-        )
     _finish_stage(diagnostic, len(result.queries))
     if not result.queries:
         result.status = "empty"

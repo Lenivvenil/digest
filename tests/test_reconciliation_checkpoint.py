@@ -21,6 +21,7 @@ from digest import reconciliation_checkpoint as checkpoint
 from digest.candidate_review import CandidateProgress
 from digest.config import Config, ProviderConfig
 from digest.reading_preparation import prepare_selected_sources, setup_reading_budget
+from tests.test_candidate_review import NOW
 from tests.test_main_reading_brief import generate, saved_selection
 from tests.test_reading_brief import fetched
 
@@ -550,6 +551,7 @@ async def test_main_preparation_emits_executable_batch_in_both_reading_branches(
         return {}, {}
 
     with (
+        patch("digest.candidate_review._instant", return_value=NOW),
         patch("digest.config.load_config", return_value=runtime.config),
         patch("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))),
         patch("digest.radar.collect", side_effect=collect),

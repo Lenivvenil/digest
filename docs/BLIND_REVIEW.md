@@ -298,6 +298,16 @@ are excluded from these requests. Legacy query generation uses claim and categor
 only; legacy ranking remains claim-only. This input boundary does not verify claim
 truth or semantic counter-evidence quality.
 
+The local [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
+asks for useful grounded queries in both bounded RSS and full-source investigation,
+without requiring a copied source phrase. It supersedes the earlier unaccepted
+mandatory-anchor proposal. Exploratory hypotheses stay in `intent`, distinct from
+source claims. A whole-query literal match, when available, remains exact derived
+provenance metadata. Its absence does not block an otherwise valid query set or mark
+it incomplete. Existing lexical/schema checks, source validation, exact cited/final-URL
+self-source exclusions, query/model/request limits and deadlines remain unchanged.
+This local revision does not establish semantic quality or useful live retrieval.
+
 Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
 `context` or `insufficient` against the supplied claim. Every entry must pass field,
 identity, score, relation and reasoning validation before filtering; bounded ranking

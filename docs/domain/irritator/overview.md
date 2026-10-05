@@ -40,17 +40,20 @@ the supplied sources. A literal quotation, relation label or valid JSON does not
 a meaningful counter-signal. Manual comparisons and source qualifications must remain
 distinct from automatic search/ranking acceptance.
 
-### Proposed query provenance floor
+### Revised proposal for grounded queries and optional provenance
 
-[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) requires one
-source-anchored topic/entity query within the existing bounded query slots. A derived
-source-text match proves provenance only, not neutrality or useful recall. Nonempty
-query sets without that anchor retain their generated text and stop as technical
-incomplete before any source request; no replacement query is fabricated.
+[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) now proposes
+useful grounded topic/entity searches without requiring a copied source phrase. Its
+earlier mandatory literal-match guard was an unaccepted draft proposal and is superseded,
+not an accepted policy being revoked. Exploratory hypotheses remain distinct from
+source claims. A derived source-text match remains optional provenance metadata only;
+it proves neither neutrality nor useful recall. Valid nonempty query sets without a
+match proceed unchanged to bounded search; no replacement query is fabricated.
 
 This proposed change affects the bounded RSS path even when source reading is disabled,
-as well as full-source investigation. It remains undeployed in draft #107. The standalone
-legacy generator, query counts, primary delivery and semantic acceptance remain unchanged.
+as well as full-source investigation. This revision is local, unaccepted and undeployed.
+The standalone legacy generator, lexical/schema validation, query/model/request limits,
+deadlines, primary delivery and semantic acceptance remain unchanged.
 Search results that exactly repeat a cited target URL or its verified final URL are
 excluded from external candidates, with explicit URLs/counts retained. Different
 documents on the same publisher remain eligible; no guessed alias or extra fetch is used.

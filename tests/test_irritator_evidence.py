@@ -1261,27 +1261,62 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
 
 
 @pytest.mark.asyncio
-async def test_ungrounded_verdict_queries_hold_without_source_io() -> None:
+@pytest.mark.parametrize("full_source", [False, True], ids=["rss", "full-source"])
+async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path, full_source: bool) -> None:
     config = fixture_config()
+    config.irritator.sources = ["hackernews", "arxiv", "lobsters"]
     bundle = _bundle(config)
+    source = _full_source_evidence(tmp_path, bundle) if full_source else None
+    narrative = _narrative(source or bundle)
+    if source is not None:
+        narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
+    # Preserve the formerly blocked set; reaching mocked search makes no quality claim.
     queries = ["Benchmark reports cancelled", "Vendor benchmark controversy", "Model latency scandal"]
     response = {"queries": [{"query": query, "intent": "Test a possible opposing hypothesis."}
                             for query in queries], "limitations": []}
+    model = AsyncMock(side_effect=[(json.dumps(narrative), {}), (json.dumps(response), {})])
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.source_admission.count_gpt_input", return_value=1000),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as hn,
+          patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[])) as arxiv,
+          patch("digest.irritator.evidence_stage.search_lobsters", AsyncMock(return_value=[])) as lobsters):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(bundle, config, client, source_evidence=source)
+    assert result.status == "empty" and model.await_count == 2
+    assert [item.query for item in result.queries] == queries and result.query_anchor is None
+    assert [item.intent for item in result.queries] == [item["intent"] for item in response["queries"]]
+    diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
+    assert diagnostic.status == "complete" and diagnostic.error == ""
+    assert diagnostic.output_count == 3 and len(result.source_attempts) == 9
+    assert all(item.status == "empty" for item in result.source_attempts)
+    for search in (hn, arxiv, lobsters):
+        assert [call.args[0] for call in search.await_args_list] == queries
+    assert not any("source-text anchor" in item for item in result.limitations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["missing_intent", "extra_field", "invalid_entries"])
+async def test_invalid_query_schema_still_stops_before_search(mutation: str) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    response = _queries(anchor="reliability evaluation")
+    if mutation == "missing_intent":
+        del response["queries"][0]["intent"]
+    elif mutation == "extra_field":
+        response["queries"][0]["source_fact"] = "Unsupported claim"
+    else:
+        response["queries"] = {"query": "reliability evaluation", "intent": "Explore a hypothesis."}
     model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
     with (patch("digest.irritator.evidence_stage.complete", model),
-          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as hn,
-          patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock()) as arxiv,
-          patch("digest.irritator.evidence_stage.search_lobsters", AsyncMock()) as lobsters):
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client)
     assert result.status == "incomplete" and model.await_count == 2
-    assert [item.query for item in result.queries] == queries and result.query_anchor is None
+    assert not result.queries and not result.source_attempts and result.query_anchor is None
     diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
-    assert diagnostic.status == "incomplete" and diagnostic.error == "MissingSourceQueryAnchor"
-    assert diagnostic.output_count == 3 and not result.source_attempts
-    for search in (hn, arxiv, lobsters):
-        search.assert_not_awaited()
-    assert any("not evidence that no counter-signal exists" in item for item in result.limitations)
+    assert diagnostic.status == "error" and diagnostic.error == "ValueError"
+    search.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1310,14 +1345,18 @@ async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses(
 @pytest.mark.asyncio
 async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
     config = fixture_config()
+    config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
     response = _queries(anchor=bundle.items[1].title)
     model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(response), {})])
-    with patch("digest.irritator.evidence_stage.complete", model):
+    with (patch("digest.irritator.evidence_stage.complete", model),
+          patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client)
-    assert result.status == "incomplete" and result.query_anchor is None and not result.source_attempts
-    assert next(item for item in result.diagnostics if item.stage == "queries").error == "MissingSourceQueryAnchor"
+    assert result.status == "empty" and result.query_anchor is None and len(result.source_attempts) == 1
+    assert model.await_count == 2
+    assert next(item for item in result.diagnostics if item.stage == "queries").status == "complete"
+    assert search.await_args is not None and search.await_args.args[0] == bundle.items[1].title
 
 
 @pytest.mark.asyncio

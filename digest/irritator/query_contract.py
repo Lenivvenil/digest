@@ -17,14 +17,13 @@ QUERY_CONTRACT = (
     'Keep technical punctuation within words (for example GPT-4 or C++).'
 )
 GROUNDED_QUERY_CONTRACT = (
-    'Within the existing query slots, include at least one useful, neutral topic/entity phrase '
-    'copied literally from a single supplied evidence title or excerpt, including supplied '
-    'qualification_context. The whole query must be that contiguous source phrase, apart from '
-    'search double quotes and case/whitespace differences. This anchor may stay in the source '
-    'language; the other queries should be in English and may explore hypotheses. '
-    'Do not add a query slot, stitch source passages together, or append a desired conclusion '
-    'to the literal phrase. Literal provenance alone does not establish neutrality or usefulness; '
-    'choose the phrase thoughtfully and keep the explanation in intent.'
+    'Use the supplied evidence and qualification_context to choose useful topic/entity searches '
+    'within the existing query slots. Queries may paraphrase or combine relevant source terms; '
+    'no query has to copy a literal source phrase. Prefer English searches, retaining source-language '
+    'names or phrases when useful. Keep exploratory hypotheses and why they matter in intent, '
+    'distinct from what the source actually claims. Preserve source scope and qualifications; '
+    'do not turn a possible outcome into an asserted source fact or require a desired conclusion. '
+    'A literal source match alone does not establish neutrality, relevance or retrieval usefulness.'
 )
 QUERY_ERROR = "Invalid lexical query contract."
 _WORD = r"[^\W_][\w.+/#'’\-‑]*"
