@@ -1,6 +1,8 @@
 # 0011. Ground bounded investigation queries with optional literal provenance
 
-Status: revised proposal; not accepted or deployed.
+Status: revised optional-provenance decision accepted for the engine-only release
+on 2026-10-05, following owner approval to merge PR #107 and update digest-prod.
+Full-source reading stays disabled; its activation and ADR0009/0010 are not accepted.
 The earlier mandatory-anchor proposal was implemented in draft PR #107 but was never
 accepted or deployed; it is superseded by this revision.
 

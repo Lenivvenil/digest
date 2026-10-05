@@ -1,7 +1,9 @@
 # 0012. Preserve bounded private ranking evidence
 
-Status: proposed; implemented in draft [PR #107](https://github.com/Lenivvenil/digest/pull/107)
-under [#77](https://github.com/Lenivvenil/digest/issues/77); not owner-accepted or deployed
+Status: accepted for the engine-only release on 2026-10-05, following owner approval
+to merge [PR #107](https://github.com/Lenivvenil/digest/pull/107) and update digest-prod.
+The approval covers this bounded private audit under [#77](https://github.com/Lenivvenil/digest/issues/77);
+semantic quality acceptance remains open.
 
 ## Context and proposed decision
 
