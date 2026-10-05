@@ -277,3 +277,49 @@ still needs the existing cycle budget, actual-route admission, deadline and dura
 request-outcome integration; #55's semantic release evaluation remains open. The
 protocol does not adopt the separate experimental semantic prompt or activate any
 publication path.
+
+### Local computation driver and persistence preconditions — proposed
+
+A local driver may prepare an exact fixed-protocol operation, then execute only an
+existing, matching operation record. The immutable prepared intent binds its originating
+reserved cycle/stage claim before checkpointing; later execution cannot add a new
+origin to a ready-looking record restored after runner loss. Its caller must attest
+that the exact immutable
+intent has crossed a verified persistence checkpoint; a local atomic write or a
+well-formed commit/hash string does not establish remote durability. Uncached work
+also requires the existing active shared-budget execution. Neither missing state nor
+a different input/route authorizes recreating an uncertain operation.
+
+Persist local adapter intent before counting or generation. Preserve completed,
+definite-failure, unknown and accepted-invalid outcomes separately; acceptance of a
+response precedes parsing, so an invalid result does not buy an automatic retry.
+Count uncertainty is not generation uncertainty: a previously bound configured local
+counter route can remain distinct from repeating an uncertain remote count. Unknown
+generation conservatively holds replay across inputs/routes in this draft. This is
+not an accepted perpetual owner prohibition: the historical domain restricted timeout
+retry "in that pass", and bounded later-cycle recovery remains a separate proposal.
+Foreign cycle/nonce execution requires
+a separately reviewed checkpoint transition; this slice does not establish a new
+permanent count-only rejection or adopt the pending later-cycle recovery proposal.
+Compatible completed cache reuse needs exact input/request/admission/response binding
+and no new model allowance. Every candidate remains semantically unverified.
+
+The existing remote stage reservation protects its cycle allowance after local usage
+is lost. It does not identify an exact reconciliation request created later in that
+stage. Local operation files survive ordinary retained-workspace recovery, not runner
+loss. There are three future orchestration choices, none activated here:
+
+- Include exact already-known operation intents in the initial remote stage checkpoint.
+  Newly generated page results cannot be bound before they exist.
+- Batch newly ready exact intents into one additional checkpoint before reconciliation,
+  using remaining time inside the same absolute deadline. This is not one Git push
+  per request and grants no extra model allowance; checkpoint failure holds dispatch.
+- Consume previously persisted inputs in a later admitted invocation, still checkpointing
+  its operation intent before dispatch. This is an option, not mandatory next-day latency.
+
+The current workflow persists only the budget reservation at its initial preparation
+barrier. Selecting and integrating a reconciliation-intent barrier remains explicit
+runtime/ADR adoption work. The local driver's caller precondition cannot substitute
+for that verification. Telegram unknown-send replay rules and #120 preparation/sender
+isolation are unchanged. No live request, workflow, runtime pin or publication path
+is enabled by this proposed driver.
