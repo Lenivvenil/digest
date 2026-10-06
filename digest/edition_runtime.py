@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,9 +58,11 @@ async def finish_preparation(
     """Resume only presentation; accepted canonical work is already saved."""
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
+    from digest.delivery.telegram import _render_compact_issue
     from digest.irritator import IrritatorStatus
     from digest.main import _deferred_review_status, _publication_presentation, _run_irritator
     from digest.preparation import clear_preparation
+    from digest.translation import ClosingPresentation, translate_publication_with_closing
 
     stats = _stats("no_ready", feedback=feedback)
     stats.review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
@@ -72,9 +74,34 @@ async def finish_preparation(
         status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
     else:
         _, ranked, status = await _run_irritator(snapshot.summaries, config, verbose)
-    text, cards, ranked = await _publication_presentation(
-        snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
-    )
+    closing = getattr(snapshot, "closing", None)
+    closing_presentation: ClosingPresentation | None = None
+    if closing is not None and closing.status == "selected":
+        if closing.card is None:
+            raise ValueError("Selected closing decision is missing its canonical card.")
+        text, cards, ranked, closing_presentation = await translate_publication_with_closing(
+            snapshot.combined, snapshot.top_articles, ranked, closing.card, config, Path(".cache/translations"),
+            selection_binding=asdict(closing),
+        )
+    else:
+        text, cards, ranked = await _publication_presentation(
+            snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
+        )
+        if closing is not None:
+            closing_presentation = ClosingPresentation(closing.status, closing.reason)
+    # Required main rendering errors remain preparation failures, before either output.
+    _render_compact_issue(cards, config, text)
+    if closing_presentation is not None and closing_presentation.card is not None:
+        assembled = [*cards, closing_presentation.card]
+        try:
+            _render_compact_issue(assembled, config, text)
+        except ValueError as exc:
+            logger.warning("Closing presentation omitted after render preflight: %s", exc)
+            closing_presentation = replace(
+                closing_presentation, status="incomplete", reason="rendering_failed", card=None,
+            )
+        else:
+            cards = assembled
     archive = write_digest(
         text, config, top_articles=cards, ranked_signals=ranked or None,
         review_report=snapshot.review_report, irritator_status=status,
@@ -98,16 +125,20 @@ async def finish_preparation(
         for path in paths:
             relative = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
             references[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    canonical = {
+    canonical: dict[str, Any] = {
         "combined": snapshot.combined,
         "cards": [asdict(card) for card in snapshot.top_articles],
         "contributing_sources": snapshot.contributing_sources,
         "source_count": snapshot.source_count,
         "article_count": snapshot.article_count,
     }
+    presentation: dict[str, Any] = {"combined": text, "cards": [asdict(card) for card in cards]}
+    if closing is not None and closing_presentation is not None:
+        canonical["closing"] = asdict(closing)
+        presentation["closing"] = asdict(closing_presentation)
     _, digest = prepare_edition(
         cards, config, notice=text, canonical_metadata=canonical,
-        presentation_metadata={"combined": text, "cards": [asdict(card) for card in cards]},
+        presentation_metadata=presentation,
         checkpoint_refs=references, producing_engine=_engine_provenance(), publication_date=publication_date,
     )
     clear_preparation()

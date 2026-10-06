@@ -1,8 +1,10 @@
 # 0013. Keep exploration attempts separate from source offers
 
-Status: proposed; implemented for the first slice of
-[#132](https://github.com/Lenivvenil/digest/issues/132). This is not rollout approval,
-proof of semantic breadth, or completion of the approval-to-candidate work.
+Status: accepted for the implemented first slice of
+[#132](https://github.com/Lenivvenil/digest/issues/132). Owner approval on 2026-10-06
+authorized PR #133 and its engine-pin rollout. Professional-radar protection after
+approval and ordinary recommendation quality remain open; this is not semantic
+breadth or complete issue acceptance.
 
 ## Context
 

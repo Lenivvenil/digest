@@ -169,6 +169,21 @@ class TranslationConfig:
 
 
 @dataclass(frozen=True)
+class ClosingSourceBinding:
+    name: str
+    url: str
+    category: str
+
+
+@dataclass(frozen=True)
+class ClosingConfig:
+    """Explicit eligible feed bindings; approval and attribution are activation gates."""
+
+    enabled: bool = False
+    approved_sources: tuple[ClosingSourceBinding, ...] = ()
+
+
+@dataclass(frozen=True)
 class ReadingBriefConfig:
     """Opt-in full-source reading briefs on an explicitly configured route."""
 
@@ -204,6 +219,7 @@ class Config:
     translation: TranslationConfig = field(default_factory=TranslationConfig)
     reading_brief: ReadingBriefConfig = field(default_factory=ReadingBriefConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    closing: ClosingConfig = field(default_factory=ClosingConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -840,6 +856,36 @@ def _load_reading_brief(
     return ReadingBriefConfig(enabled=enabled, provider=provider, model=model, **values)
 
 
+def _load_closing(
+    data: dict[str, Any], review: ReviewConfig,
+    telegram: TelegramConfig, reading_brief: ReadingBriefConfig,
+) -> ClosingConfig:
+    section = data.get("closing", {})
+    if not isinstance(section, dict) or set(section) - {"enabled", "approved_sources"}:
+        raise ValueError("closing must contain only enabled and approved_sources.")
+    enabled = section.get("enabled", False)
+    values = section.get("approved_sources", [])
+    if type(enabled) is not bool or not isinstance(values, list) or len(values) > 20:
+        raise ValueError("Invalid closing.enabled or closing.approved_sources.")
+    bindings = []
+    for value in values:
+        if (not isinstance(value, dict) or set(value) != {"name", "url", "category"}
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 2048
+                       for item in value.values())):
+            raise ValueError("Each closing.approved_sources entry requires name, url and category.")
+        binding = ClosingSourceBinding(**value)
+        if binding in bindings:
+            raise ValueError("Duplicate closing approved source binding.")
+        parsed_url = urlparse(binding.url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValueError("Closing approved source binding requires an HTTP(S) feed URL.")
+        bindings.append(binding)
+    if enabled and (not bindings or not review.enabled or not review.review_led_only
+                    or telegram.delivery_mode != "compact" or reading_brief.enabled):
+        raise ValueError("Closing requires approved feeds, compact review-led preparation and no reading_brief.")
+    return ClosingConfig(enabled, tuple(bindings))
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -873,6 +919,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     translation = _load_translation(data, llm, radar, review)
     reading_brief = _load_reading_brief(data, llm, radar, review)
     discovery = _load_discovery(data)
+    closing = _load_closing(data, review, telegram, reading_brief)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -894,4 +941,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         translation=translation,
         reading_brief=reading_brief,
         discovery=discovery,
+        closing=closing,
     )

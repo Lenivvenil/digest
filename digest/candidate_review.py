@@ -276,7 +276,8 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
     packet.collection_json = progress.latest_collection_json
     validate_evidence_bundle(packet.evidence, config)
     packet.prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        packet.evidence, config.review, config.radar.language, sources=config.sources),
+        packet.evidence, config.review, config.radar.language, sources=config.sources,
+        closing=getattr(config, "closing", None)),
         sort_keys=True).encode()).hexdigest()
     packet.max_selections = config.review.max_selections
     return packet
@@ -328,7 +329,8 @@ def reconcile_packet(
     validate_evidence_bundle(report.evidence, config)
     _validate_report(report)
     prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        report.evidence, config.review, config.radar.language, sources=config.sources),
+        report.evidence, config.review, config.radar.language, sources=config.sources,
+        closing=getattr(config, "closing", None)),
         sort_keys=True).encode()).hexdigest()
     selected: set[str] = set()
     rejected: set[str] = set()

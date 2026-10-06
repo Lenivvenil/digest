@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Disabled-by-default humane closing slice (#127): optional same-response
+  designation, exact delivery-slot/source provenance, strict preparation v1/v2
+  compatibility and isolated presentation before archive/freeze. Main capacity,
+  sender and receipts stay unchanged. Source activation, translated capacity and
+  editorial acceptance remain open. A fitting closing explanation shares the
+  existing translation request, with independent optional-field validation.
+
 - First discovery slice (#132): configurable cross-field proposal targets, deterministic
   least-recent-offer preference within fair passes, and finite exact-proposal validation
   cooldowns in existing delivery metadata. Legacy approval bindings and send barriers

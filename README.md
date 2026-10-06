@@ -337,6 +337,16 @@ instead produces explicitly attributed model-selection cards from RSS evidence; 
 current limitations are described in the review runbook. Neither format should invent
 benefits, certainty or facts to fill a template.
 
+An optional humane final story is implemented behind `closing.enabled: false`
+for compact review-led edition preparation. It uses one validated selection from
+the existing evidence packet and explicit eligible feed bindings; it adds no
+selection request and preserves the main-card cap. Source approval, attribution
+review and finite editorial/capacity acceptance are still required. Closing prose
+can join an existing translation request only when it fits without displacing main
+fields; invalid optional output preserves valid main translation. See
+[ADR-0014](docs/decisions/0014-optional-humane-closing-item.md) for configuration,
+recovery boundaries and the remaining #127 acceptance work.
+
 <a id="автоматическое-обнаружение-источников"></a>
 
 ## External counter-signals and source discovery

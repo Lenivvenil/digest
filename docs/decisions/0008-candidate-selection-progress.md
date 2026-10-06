@@ -52,7 +52,9 @@ next eligible ordinary preparation, reconcile saved work with current source,
 blocklist, recency and delivered-history boundaries before planning a later packet.
 Candidate age remains visible. No new TTL or permanently active queue is established.
 
-**Proposed #132 admission-order correction (not deployed).** Within each unseen/technical
+**Implemented #132 admission-order correction.** Owner approval on 2026-10-06
+authorized PR #134 and its engine-pin rollout. This accepts removal of alphabetical
+admission bias, not the unresolved professional-core protection policy. Within each unseen/technical
 status class, admit one candidate per source per round.
 Keep each source in first-observed order and re-order its remaining head each round:
 oldest observation first, effective priority for coeval heads, then stable source

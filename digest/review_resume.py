@@ -87,7 +87,8 @@ def _report_time(reviews: list[ModelReview]) -> datetime | None:
 
 
 def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: Config) -> set[str]:
-    messages = build_review_messages(bundle, config.review, config.radar.language, sources=config.sources)
+    messages = build_review_messages(bundle, config.review, config.radar.language, sources=config.sources,
+                                     closing=getattr(config, "closing", None))
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
     models = {"primary": config.review.primary, "secondary": config.review.secondary,
               "third": config.review.tie_breaker}
