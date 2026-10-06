@@ -35,6 +35,17 @@ irritator:
 adaptive:
   enabled: false
 
+# Provisional proposal targets: refresh the professional radar and explore other fields.
+# This does not activate feeds, allocate daily slots or mandate a professional/exploration ratio.
+discovery:
+  exploration_areas:
+    - fintech/banking/architecture
+    - science
+    - society/institutions
+    - history/culture
+    - environment
+    - design
+
 review:
   enabled: false
 

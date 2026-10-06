@@ -202,7 +202,7 @@ category mix, feedback and lifecycle state; they do not measure factual accuracy
 
 ## Trial source lifecycle and discovery
 
-1. `--discover` asks a model for feeds in underrepresented categories, validates feed
+1. `--discover` asks a model for feeds in configured exploration areas, validates feed
    URLs, persists candidates and requests operator approval where Telegram is configured.
 2. Discovery sends Add/Reject deep links (`/start source_ok_HASH` or
    `/start source_no_HASH`) after persisting the proposal. Without a valid configured
@@ -219,9 +219,11 @@ category mix, feedback and lifecycle state; they do not measure factual accuracy
    Rejected candidates are removed from pending. Receipts confirm saved decisions,
    not successful config additions. Decision messages share the at-most-24-hour
    Telegram retention limit of article votes.
-3. Trial sources receive the configured trial allocation. Trial start, graduation and
-   demotion are runtime state in `source_state.json`, not fields repeatedly written into
-   source configuration by the evaluator.
+3. Approved sources enter runtime configuration at priority 3 as trials. Trial start,
+   graduation and demotion are runtime state in `source_state.json`, not fields repeatedly
+   written into source configuration by the evaluator. The daily candidate scheduler
+   does not enforce `adaptive.trial_slots`; this setting is not proof of protected
+   professional coverage or exploratory admission.
 4. After `trial_days`, the current evaluator uses its source score threshold to graduate
    or demote the source. These operational observations are not editorial acceptance.
 
@@ -236,6 +238,48 @@ It stops after the first successful response, including a valid empty response; 
 route or new provider is added. Weekly discovery retains its ten-minute runtime ceiling.
 A valid empty result is distinct from feed-validation or delivery failure.
 
+`discovery.exploration_areas` provisionally defaults to fintech/banking/architecture,
+science, society/institutions, history/culture, environment and design. This keeps
+professional source refresh eligible alongside other disciplines; it is not an
+owner-mandated proportion. It accepts 1–16 distinct trimmed names of at most 80 characters;
+case-insensitive duplicates are rejected. These proposal targets are independent of
+active categories, feeds and priorities. Generation matches the requested area;
+cross-field targets require no contrived technology or banking connection. The request
+remains capped at 2,048 output tokens.
+
+Rotation uses a bounded pass through configured areas. Among areas not yet attempted
+in the pass, choose the least recently offered, with configured-order ties; only after
+all areas have been attempted does a new pass begin. Persist the attempt before the
+model call. Empty, invalid or interrupted generations advance the pass but never
+mark coverage. A full legacy pending batch uses no generation and advances no area.
+At the next prepare, confirmed and unknown receipts are folded into one latest offer
+record per configured area, preserving the actual status. Unknown means possible
+delivery, not confirmed exposure. Reserved or explicitly rejected sends do not count;
+in particular, the transient pre-POST unknown is not counted if the final receipt is
+rejected. Area summaries survive the 30-day receipt horizon; removing an area removes
+its summary and its place in the current pass. Source rejection does not erase a prior
+offer. Exact requested areas do not prove actual disciplinary novelty or publisher diversity.
+
+Additive schema-1 metadata in `discovery_delivery.json` keeps `proposal_areas` by exact
+binding, bounded `area_offers` and `attempted_areas`, the latest `generation` record
+(requested area, cycle, time, outcome and up to three validated bindings), and pending
+`validation_failures`. Old metadata initializes these fields empty. `PendingSource`
+and its `asdict` decision binding remain byte-compatible; legacy proposals receive no
+invented area. Present malformed fields fail closed. Metadata reads and writes enforce
+the existing 256,000-byte ceiling. No new cache file or persistence path is needed.
+
+Each failed pending validation still consumes one of that prepare's three checks.
+Its binding records `failed_cycle` and initially null `skipped_cycle`. All attempts
+of the failed managed run remain deferred; the next distinct eligible prepare cycle
+records `skipped_cycle` and defers it, including reruns of that cycle. A subsequent
+cycle may retry; another failure restarts this finite cooldown. Eligibility requires
+that the pending loop reach the binding before exhausting its three-check cap, so
+larger pending backlogs can delay generation. Managed cycle identity uses `GITHUB_RUN_ID`
+without the attempt number; send ownership still includes the attempt. Each direct
+local invocation is a distinct cycle. Send-only calls never advance cooldowns. Success
+clears the marker and expiry/removal prunes it; neither resets discovery time, changes
+the binding, nor records an editorial rejection.
+
 Managed discovery uses `--discover --discovery-phase prepare`, commits/pushes both
 files, and verifies both hashes from the same remote revision before `--discovery-phase
 send --discovery-pending-sha ... --discovery-delivery-sha ...`. The sender binds the
@@ -246,6 +290,12 @@ and send; no automatic replay or exactly-once promise is made. Final receipts mu
 be persisted even after partial failure. Direct `--discover` provides local-file
 durability only. History is retained for the existing 30-day proposal horizon.
 The runtime keeps its weekly ten-minute job; this change adds no polling schedule.
+
+The first slice of [#132](https://github.com/Lenivvenil/digest/issues/132) covers proposals
+and finite validation retries only. Approval-to-candidate protection of professional
+signals and non-starving exploratory admission remain open, as does ordinary-output
+evaluation. No scheduler adjustment, fixed daily fraction or automatic feed activation
+is implied. The proposed additive state decision is [ADR-0013](decisions/0013-discovery-exploration-state.md).
 
 No source-discovery schedule is installed by the engine. The runtime owns its cadence
 and serialized access to the same state as the main digest.

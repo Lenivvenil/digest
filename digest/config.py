@@ -180,6 +180,15 @@ class ReadingBriefConfig:
 
 
 @dataclass
+class DiscoveryConfig:
+    """Exploration targets for source proposals, independent of active categories."""
+
+    exploration_areas: list[str] = field(default_factory=lambda: [
+        "fintech/banking/architecture", "science", "society/institutions", "history/culture", "environment", "design",
+    ])
+
+
+@dataclass
 class Config:
     llm: LLMConfig
     radar: RadarConfig
@@ -194,6 +203,7 @@ class Config:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
     reading_brief: ReadingBriefConfig = field(default_factory=ReadingBriefConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -467,6 +477,22 @@ def _load_irritator(data: dict[str, Any]) -> IrritatorConfig:
         sources=sources,
         reddit_subreddits=reddit_subreddits,
     )
+
+
+def _load_discovery(data: dict[str, Any]) -> DiscoveryConfig:
+    section = data.get("discovery")
+    if section is None:
+        return DiscoveryConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'discovery' must be a mapping.")
+    areas = section.get("exploration_areas", DiscoveryConfig().exploration_areas)
+    if (not isinstance(areas, list) or not 1 <= len(areas) <= 16
+            or any(not isinstance(area, str) or not 1 <= len(area.strip()) <= 80 for area in areas)):
+        raise ValueError("discovery.exploration_areas must contain 1–16 nonempty strings of at most 80 characters.")
+    normalized = [area.strip() for area in areas]
+    if len({area.casefold() for area in normalized}) != len(normalized):
+        raise ValueError("discovery.exploration_areas must not contain duplicate areas.")
+    return DiscoveryConfig(exploration_areas=normalized)
 
 
 def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
@@ -846,6 +872,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     review = _load_review(data)
     translation = _load_translation(data, llm, radar, review)
     reading_brief = _load_reading_brief(data, llm, radar, review)
+    discovery = _load_discovery(data)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -866,4 +893,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         review=review,
         translation=translation,
         reading_brief=reading_brief,
+        discovery=discovery,
     )
