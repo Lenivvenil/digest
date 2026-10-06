@@ -239,7 +239,7 @@ def deferred_source_reports(progress: CandidateProgress, state_dir: Path, config
             continue
         try:
             selections, _ = _validated_cached_selections(
-                _delivery_review(report), packet.evidence, packet.max_selections)
+                _delivery_review(report), packet.evidence)
             if not selections:
                 if _accepted_empty_packet(packet):
                     deferred.add(_hash(asdict(report)))
@@ -268,7 +268,7 @@ async def prepare_selected_sources(
         raise ValueError("Reading requires the exact saved candidate report.")
     started = time.monotonic()
     review = _delivery_review(report)
-    selections, _ = _validated_cached_selections(review, packet.evidence, packet.max_selections)
+    selections, _ = _validated_cached_selections(review, packet.evidence)
     routes = _routes(config)
     route = routes[0] if routes else Route(config.reading_brief.provider, config.reading_brief.model,
                                          1, config.reading_brief.max_output_tokens)

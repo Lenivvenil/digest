@@ -119,7 +119,7 @@ def _build_nano_status(
 
 @dataclass
 class RunStats:
-    feeds_fetched: int
+    feeds_fetched: int  # Attempted feeds, including failed fetches; not success count.
     new_articles: int
     digest_length: int
     telegram_sent: bool
@@ -199,7 +199,7 @@ def _setup_logging(verbose: bool) -> None:
 
 def _print_stats(stats: RunStats) -> None:
     print("\n--- Digest Run Summary ---")
-    print(f"Feeds fetched:      {stats.feeds_fetched}")
+    print(f"Feeds attempted:    {stats.feeds_fetched}")
     print(f"New articles:       {stats.new_articles}")
     print(f"Digest length:      {stats.digest_length} chars")
     print(f"Blind review:       {stats.review_status}")
@@ -683,7 +683,7 @@ async def _analyze_articles(
         report = await (run_primary_review(articles, config) if config.review.review_led_only
                         else run_blind_review(articles, config))
         cards = primary_cards(
-            report, articles, config.radar.language,
+            report, articles, config.radar.language, max_cards=config.review.max_selections,
             include_attribution=getattr(config.telegram, "delivery_mode", "cards") != "compact",
         )
         if config.review.review_led_only:
@@ -943,6 +943,7 @@ async def _analyze_candidate_articles(
         from digest.review import primary_cards
 
         cards = primary_cards(cached_report, articles, config.radar.language,
+                              max_cards=config.review.max_selections,
                               include_attribution=config.telegram.delivery_mode != "compact")
         return [], None, cards, cached_report
     if progress is None or packet is None:
@@ -954,7 +955,7 @@ async def _analyze_candidate_articles(
     capture = CandidateDispositionCapture()
     report = await run_primary_review(articles, config, disposition_capture=capture)
     reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
-    cards = primary_cards(report, articles, config.radar.language,
+    cards = primary_cards(report, articles, config.radar.language, max_cards=config.review.max_selections,
                           include_attribution=config.telegram.delivery_mode != "compact")
     return [], None, cards, report
 
@@ -1102,6 +1103,8 @@ async def _run(
         collection_failed = True
         articles_by_category, cache = {}, dict(delivered_before_collection)
 
+    collected_articles = sum(len(articles) for articles in articles_by_category.values())
+
     candidate_packet, candidate_cached_report, articles_by_category = _candidate_inputs(
         candidate_progress, inventory, run_config, config, delivered_before_collection,
         effective_priorities, cache_dir, collection_failed, articles_by_category,
@@ -1180,8 +1183,12 @@ async def _run(
         _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
                                    config, cache_dir, collection_failed)
         save_source_category_map(config.enabled_sources, cache_dir)
-        return await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
-                                        publication_date=edition_date)
+        stats = await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
+                                         publication_date=edition_date)
+        stats.feeds_fetched = len(fetch_metrics)
+        stats.new_articles = collected_articles
+        stats.duration_seconds = time.monotonic() - _t_run_start
+        return stats
 
     if radar_only:
         combined, top_articles = await _primary_presentation(

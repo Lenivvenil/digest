@@ -142,8 +142,30 @@ Bind each attempt to exact slot/provider/model, bundle, prompt and raw response 
 only the delivery-used primary/fallback may change candidate state. Unknown, missing,
 conflicting or malformed entries remain unresolved. Duplicate targets are one-hop
 validated selected IDs in the same request; no topic-only equivalence is inferred.
-The inherited selection response allowance is not an editorial rejection rule:
-useful overflow must be deferred. The existing output ceiling and call count remain.
+The exact evidence packet bounds relevance selections; publication capacity is not
+part of the model request. The reviewer selects every useful supplied item in
+priority order, subject to the existing output allowance. Useful items omitted
+because that response allowance is exhausted must be deferred, never not-selected.
+Live parsing and saved-report validation use the same packet membership ceiling,
+including partial-result rejection indices. Quote, identity and provenance checks,
+the 32,000-character response limit, configured output tokens and call count remain.
+
+`review.max_selections` caps publication cards locally, after the complete validated
+report is saved. Card formation preserves the review's order and does not trim its
+selections, quotes or dispositions, or establish delivery. The existing packet field
+of that name remains frozen publication-cap provenance; it is not a cached relevance
+validation ceiling. Prior packet/report objects, hashes and accepted schemas remain
+unchanged. A changed publication cap alone does not change the relevance prompt.
+
+Overflow remains selected and eligible until ordinary preparation rechecks current
+policy and delivery history. Once some members have confirmed delivery/cache
+evidence, the existing mixed-eligibility recovery returns unsent eligible selections
+to technical pending for a later bounded packet. No automatic additional request,
+new queue or whole-report replay is introduced. Ready/accepted preparation and
+same-window no-op precedence remain unchanged. An offline synthetic eight-useful-item
+fixture preserves all eight in the archive, emits five cards, confirms those five
+through the mocked delivery flow and prepares the remaining three in the next
+window; snapshot failure also recovers the full saved report without another call.
 Reasons are RSS metadata judgments, not proof of full-source irrelevance or fidelity.
 
 The new draft codec replaces the undeployed prototype formats; unsupported prototype

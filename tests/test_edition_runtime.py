@@ -173,6 +173,8 @@ async def test_main_prepare_resume_does_not_refetch_or_reanalyze(
     presentation.return_value = ("Notice", cards, [])
     result = await run("config.yaml", False, False, False, feedback_precollected=True, prepare_only=True)
     assert result.edition_status == "ready"
+    assert result.feeds_fetched == result.new_articles == 0
+    assert result.digest_length == len("Notice")
     assert collection.await_count == analysis.await_count == 1
 
 

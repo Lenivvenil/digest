@@ -105,6 +105,15 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
     assert len(calls) == 1
     assert first.edition_status == 'ready'
     first_manifest = json.loads(Path('.cache', READY_FILE).read_text())
+    assert first.feeds_fetched == 1
+    assert first.new_articles == (0 if fail_snapshot else 3)
+    assert first_manifest['canonical_metadata']['article_count'] == 20
+    assert len(first_manifest['canonical_metadata']['cards']) == 1
+    assert first.digest_length == len(first_manifest['presentation_metadata']['combined']) > 0
+    assert first.markdown_saved and Path(first.markdown_path).is_file()
+    assert first.review_status == json.loads(Path(first.review_checkpoint).read_text())['status']
+    assert first.review_status != 'not_requested'
+    assert not first.telegram_sent
     assert any(path.endswith('.candidates.json') for path in first_manifest['checkpoint_refs'])
     assert len(load_candidate_progress().candidates) == 28
     assert len(list(Path('.cache/candidate_index').glob('*.json'))) == 19
@@ -116,9 +125,11 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         assert await delivery_phase('send', 'config.yaml', first.ready_sha256, claim_sha) == 0
     same_day = await _run('config.yaml', False, False, False, prepare_only=True)
     assert same_day.edition_status == 'confirmed' and len(calls) == 1
+    assert same_day.feeds_fetched == same_day.new_articles == 0
     tomorrow = await _run('config.yaml', False, False, False, prepare_only=True,
                           edition_date=now.date() + timedelta(days=1))
     assert tomorrow.edition_status == 'pending_window'
+    assert tomorrow.feeds_fetched == 1 and tomorrow.new_articles == 0
     assert len(calls) == 2 and calls[0].isdisjoint(calls[1])
     manifest = json.loads(Path('.cache', READY_FILE).read_text())
     assert manifest['canonical_metadata']['cards'][0]['link'] not in {
