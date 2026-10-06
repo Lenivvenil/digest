@@ -52,6 +52,19 @@ next eligible ordinary preparation, reconcile saved work with current source,
 blocklist, recency and delivered-history boundaries before planning a later packet.
 Candidate age remains visible. No new TTL or permanently active queue is established.
 
+**Proposed #132 admission-order correction (not deployed).** Within each unseen/technical
+status class, admit one candidate per source per round.
+Keep each source in first-observed order and re-order its remaining head each round:
+oldest observation first, effective priority for coeval heads, then stable source
+name and identity. Category names do not grant earlier admission. This uses the
+original observation timestamp, including after restart or repeated observation;
+it does not change publication age, eligibility, evidence bounds or editorial status.
+These are packet-admission preferences, not relevance or publication guarantees.
+An older backlog can delay fresh urgent work, and unseen work still precedes technical
+retries. Professional-core protection and sustained throughput remain open under
+[#132](https://github.com/Lenivvenil/digest/issues/132); categories, source priorities
+and trial status do not independently establish a professional-core role.
+
 Archive candidate accounting separately beside the ordinary review report and bind
 it into the ready edition's existing archive hashes. Model-review messages do not
 contain accounting decisions or another model's choices. Existing report and strict

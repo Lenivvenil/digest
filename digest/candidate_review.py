@@ -242,23 +242,18 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
             if candidate.eligible and candidate.status == status:
                 groups.setdefault((candidate.article.category, candidate.article.source), []).append(candidate)
         for group in groups.values():
-            group.sort(key=lambda item: (item.first_observed_at, item.identity))
-        # Interleave sources within categories, then categories. Priorities only
-        # choose the order of each turn, never a source's editorial allowance.
-        categories: dict[str, list[Candidate]] = {}
-        for category in sorted({key[0] for key in groups}):
-            sources = sorted((key for key in groups if key[0] == category),
-                             key=lambda key: (-groups[key][0].priority, key[1]))
-            ordered: list[Candidate] = []
-            while any(groups[key] for key in sources):
-                for key in sources:
-                    if groups[key]:
-                        ordered.append(groups[key].pop(0))
-            categories[category] = ordered
-        while any(categories.values()):
-            for group in categories.values():
-                if group:
-                    candidates.append(group.pop(0))
+            group.sort(key=lambda item: (datetime.fromisoformat(item.first_observed_at), item.identity))
+        # Take one head per source each round, oldest observation cohort first.
+        # Effective priority orders coeval heads; category names grant no turn.
+        while groups:
+            sources = sorted(groups, key=lambda key: (
+                datetime.fromisoformat(groups[key][0].first_observed_at),
+                -groups[key][0].priority, key[1], groups[key][0].identity,
+            ))
+            for key in sources:
+                candidates.append(groups[key].pop(0))
+                if not groups[key]:
+                    del groups[key]
     selected: list[CandidateArticle] = []
     for candidate in candidates:
         if len(selected) >= config.review.max_evidence_articles:
