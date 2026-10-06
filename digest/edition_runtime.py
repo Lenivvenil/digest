@@ -62,9 +62,11 @@ async def finish_preparation(
     from digest.main import _deferred_review_status, _publication_presentation, _run_irritator
     from digest.preparation import clear_preparation
 
+    stats = _stats("no_ready", feedback=feedback)
+    stats.review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
         logger.info("Edition preparation: no selected articles; no ready edition created")
-        return _stats("no_ready", feedback=feedback)
+        return stats
     ranked: list[Any] = []
     if config.review.enabled and config.review.review_led_only:
         status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
@@ -111,7 +113,14 @@ async def finish_preparation(
     clear_preparation()
     future_window = publication_date and publication_date > datetime.now(timezone.utc).date()
     status_name = "pending_window" if future_window else "ready"
-    return _stats(status_name, feedback=feedback, ready_sha=digest)
+    stats.edition_status = status_name
+    stats.ready_sha256 = digest
+    stats.digest_length = len(text)
+    stats.markdown_saved = archive is not None
+    stats.markdown_path = str(archive) if archive is not None else ""
+    stats.review_checkpoint = (str(archive.with_suffix(".review.json"))
+                               if archive is not None and snapshot.review_report is not None else "")
+    return stats
 
 
 def _strict_cache(path: Path) -> dict[str, str]:

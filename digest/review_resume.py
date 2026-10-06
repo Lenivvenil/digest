@@ -98,7 +98,7 @@ def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: 
                 or (review.provider, review.model, review.bundle_id, review.prompt_hash)
                 != (model.provider, model.model, bundle.bundle_id, prompt_hash)):
             continue
-        _validated_cached_selections(review, bundle, config.review.max_selections)
+        _validated_cached_selections(review, bundle)
         slots.add(review.slot)
     return slots
 

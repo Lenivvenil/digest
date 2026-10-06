@@ -117,7 +117,7 @@ async def test_unknown_duplicates_and_invalid_items_are_rejected_individually() 
     assert [item.index for item in review.rejected_items] == [1, 2, 3]
     assert [item.evidence_id for item in review.rejected_items] == [valid["evidence_id"], None, None]
     with pytest.raises(ValueError, match="duplicated"):
-        _parse_review(json.dumps({"selections": [valid, valid], "limitations": []}), bundle, 5)
+        _parse_review(json.dumps({"selections": [valid, valid], "limitations": []}), bundle)
 
 
 @pytest.mark.asyncio

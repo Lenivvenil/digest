@@ -88,7 +88,7 @@ class CandidatePacket:
     priorities: dict[str, int]
     planned_at: str
     prompt_hash: str = ""
-    max_selections: int = 5
+    max_selections: int = 5  # Planned publication cap; retained as frozen provenance, not a relevance bound.
     report: BlindReviewReport | None = None
     handed_to_preparation: bool = False
     disposition_attempts: tuple[CandidateDispositionAttempt, ...] = ()
@@ -343,7 +343,7 @@ def reconcile_packet(
             continue
         if review.prompt_hash != prompt_hash or review.prompt_hash != packet.prompt_hash:
             raise ValueError("Candidate result prompt differs from the planned review contract.")
-        selections, _ = _validated_cached_selections(review, report.evidence, config.review.max_selections)
+        selections, _ = _validated_cached_selections(review, report.evidence)
         selected.update(item.evidence_id for item in selections)
         rejected.update(item.evidence_id for item in review.rejected_items if item.evidence_id is not None)
         valid = True
@@ -506,7 +506,7 @@ def _validate(progress: CandidateProgress) -> None:
                 raise ValueError("Candidate report evidence mismatch.")
             for review in packet.report.reviews:
                 if review.status in {"ok", "partial", "abstained"}:
-                    _validated_cached_selections(review, packet.evidence, packet.max_selections)
+                    _validated_cached_selections(review, packet.evidence)
                     if review.prompt_hash != packet.prompt_hash:
                         raise ValueError("Candidate report prompt mismatch.")
 

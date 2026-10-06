@@ -123,7 +123,7 @@ async def test_legacy_is_readable_without_fabricated_omission_reasons() -> None:
     data = payload()
     del data["dispositions"]
     bundle = build_evidence_bundle(fixture_articles(), ReviewConfig())
-    assert _parse_review(json.dumps(data), bundle, 5)[0]
+    assert _parse_review(json.dumps(data), bundle)[0]
     report, capture = await run(data)
     assert report.reviews[0].status == "ok"
     assert not capture.attempts[0].dispositions

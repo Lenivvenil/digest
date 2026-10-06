@@ -21,7 +21,7 @@ Markdown and Telegram pipeline. It defaults to false for existing configurations
    article count, excerpt length and a 16,000-character evidence-item JSON budget.
    The omission count is recorded. This is excerpt evidence, not full articles.
 3. Give primary and secondary slots exactly the same messages, language,
-   temperature, selection limit and maximum output tokens. No category summary,
+   temperature, evidence packet bound and maximum output tokens. No category summary,
    prior opinion, prior selection or other model identity enters the prompt.
 4. Pin each slot to its specified provider/model. There is no role/provider
    fallback for review slots. A failed model remains unavailable rather than
@@ -92,6 +92,9 @@ selection or factuality.
 ## Output and integration
 
 Primary selection becomes canonical Telegram cards, labeled as model opinion.
+`max_selections` limits those publication cards in the review's order; it is not
+sent to the reviewer as a relevance quota. The full validated selection list stays
+in the report, bounded by the exact evidence packet and existing response budget.
 Secondary/third opinions do not generate extra Telegram card floods. All reviews,
 quotes, confidence, provider/model identities, token usage, prompt hashes,
 completeness and escalation decisions appear in Markdown and a sibling

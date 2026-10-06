@@ -193,13 +193,13 @@ def build_review_messages(
         "different supplied ID with a validated selected disposition (no chains or cycles). Explain the actual "
         "redundancy; a shared topic or URL alone does not establish semantic duplication. Preserve materially contrary "
         "reports as eligible. not_selected means an explicit metadata selection judgment, never full-source reading "
-        "or quality verification. Useful items omitted only for max_selections or output capacity MUST be deferred, "
+        "or quality verification. Select every useful supplied item in priority order. Publication capacity is "
+        "applied separately after this review. Useful items omitted only for output capacity MUST be deferred, "
         "not not_selected. Missing/invalid entries remain unresolved. No additional fields."
     )
     task = {
         "schema_version": SCHEMA_VERSION,
         "language": language,
-        "max_selections": settings.max_selections,
         "configured_category_interests": _configured_category_interests(bundle, sources),
         "evidence": asdict(bundle),
     }
@@ -207,7 +207,7 @@ def build_review_messages(
             {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
 
 
-def _parse_review_envelope(text: str, max_selections: int) -> tuple[list[object], list[str]]:
+def _parse_review_envelope(text: str, max_entries: int) -> tuple[list[object], list[str]]:
     if len(text) > 32000:
         raise ValueError("response exceeds review budget")
     raw = _extract_json(text)
@@ -215,7 +215,7 @@ def _parse_review_envelope(text: str, max_selections: int) -> tuple[list[object]
             or set(raw) not in ({"selections", "limitations"}, {"selections", "limitations", "dispositions"})):
         raise ValueError("expected selections and limitations")
     selections, limitations = raw["selections"], raw["limitations"]
-    if not isinstance(selections, list) or len(selections) > max_selections:
+    if not isinstance(selections, list) or len(selections) > max_entries:
         raise ValueError("invalid selection count")
     if not isinstance(limitations, list) or len(limitations) > 5 or any(
         not isinstance(s, str) or not s.strip() or len(s) > 600 for s in limitations
@@ -226,9 +226,9 @@ def _parse_review_envelope(text: str, max_selections: int) -> tuple[list[object]
     return selections, limitations
 
 
-def _parse_review(text: str, bundle: EvidenceBundle, max_selections: int) -> tuple[list[EvidenceSelection], list[str]]:
+def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelection], list[str]]:
     """Strict accepted-selection contract, including when revalidating checkpoints."""
-    selections, limitations = _parse_review_envelope(text, max_selections)
+    selections, limitations = _parse_review_envelope(text, len(bundle.items))
     known = {item.evidence_id: item for item in bundle.items}
     seen: set[str] = set()
     parsed: list[EvidenceSelection] = []
@@ -272,7 +272,7 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
     """Repair narrow hyphen typography only after schema/types/budgets validate."""
     text = json.dumps({"selections": [item], "limitations": limitations})
     try:
-        return _parse_review(text, bundle, 1)[0][0]
+        return _parse_review(text, bundle)[0][0]
     except ValueError as exc:
         # The strict parser checks schema, types and length before quote matching.
         if str(exc) != "quote is not in supplied evidence" or not isinstance(item, dict):
@@ -280,15 +280,15 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
         evidence = next(evidence for evidence in bundle.items if evidence.evidence_id == item["evidence_id"])
         quote, normalized = canonical_evidence_quote(item["quote"], evidence.title, evidence.excerpt)
         canonical = {**item, "quote": quote}
-        parsed = _parse_review(json.dumps({"selections": [canonical], "limitations": limitations}), bundle, 1)
+        parsed = _parse_review(json.dumps({"selections": [canonical], "limitations": limitations}), bundle)
         return replace(parsed[0][0], typography_normalized=normalized)
 
 
 def _parse_live_review(
-    text: str, bundle: EvidenceBundle, max_selections: int,
+    text: str, bundle: EvidenceBundle,
 ) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
     """Salvage individual entries only after the complete envelope is valid."""
-    selections, limitations = _parse_review_envelope(text, max_selections)
+    selections, limitations = _parse_review_envelope(text, len(bundle.items))
     known = {item.evidence_id for item in bundle.items}
     accepted: list[EvidenceSelection] = []
     rejected: list[RejectedSelection] = []
@@ -309,14 +309,14 @@ def _parse_live_review(
 
 
 def _validated_cached_selections(
-    review: ModelReview, bundle: EvidenceBundle, max_selections: int,
+    review: ModelReview, bundle: EvidenceBundle,
 ) -> tuple[list[EvidenceSelection], list[str]]:
-    """Reuse accepted entries strictly, without repairing saved quotes a second time."""
+    """Validate against exact evidence membership, independently of publication capacity."""
     selections, limitations = _parse_review(json.dumps({
         "selections": [{key: value for key, value in asdict(item).items() if key != "typography_normalized"}
                        for item in review.selections],
         "limitations": review.limitations,
-    }), bundle, max_selections)
+    }, ensure_ascii=False, separators=(",", ":")), bundle)
     if any(type(item.typography_normalized) is not bool for item in review.selections):
         raise ValueError("Invalid checkpoint typography provenance.")
     selections = [replace(item, typography_normalized=original.typography_normalized)
@@ -326,8 +326,8 @@ def _validated_cached_selections(
         known = {item.evidence_id for item in bundle.items}
         indices = [item.index for item in review.rejected_items]
         if (not selections or not review.rejected_items
-                or len(selections) + len(indices) > max_selections or len(set(indices)) != len(indices)
-                or any(type(index) is not int or not 0 <= index < max_selections for index in indices)
+                or len(selections) + len(indices) > len(bundle.items) or len(set(indices)) != len(indices)
+                or any(type(index) is not int or not 0 <= index < len(bundle.items) for index in indices)
                 or any(item.evidence_id is not None and item.evidence_id not in known for item in review.rejected_items)
                 or any(not isinstance(item.reason, str)
                        or _rejected_output_diagnostics("", ValueError(item.reason))[0] != item.reason
@@ -394,7 +394,7 @@ async def _review_slot(
                     and type(v) is int and v >= 0}
     try:
         result.selections, result.limitations, result.rejected_items = _parse_live_review(
-            text, bundle, config.review.max_selections,
+            text, bundle,
         )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
@@ -474,7 +474,7 @@ async def run_evidence_review(
         if (model is not None and previous.status in {"ok", "partial", "abstained"}
                 and (previous.provider, previous.model, previous.bundle_id, previous.prompt_hash)
                 == (model.provider, model.model, bundle.bundle_id, prompt_hash)):
-            selections, limitations = _validated_cached_selections(previous, bundle, settings.max_selections)
+            selections, limitations = _validated_cached_selections(previous, bundle)
             reusable[name] = replace(previous, selections=selections, limitations=limitations,
                                      reused_from_checkpoint=True)
 
@@ -525,15 +525,18 @@ def primary_notice(report: BlindReviewReport, language: str) -> str:
 
 def primary_cards(
     report: BlindReviewReport, articles_by_category: dict[str, list[Article]], language: str,
-    *, include_attribution: bool = True,
+    *, include_attribution: bool = True, max_cards: int | None = None,
 ) -> list[ArticleSummary]:
+    """Apply publication capacity in review order without trimming the saved review."""
+    if max_cards is not None and (type(max_cards) is not int or max_cards < 1):
+        raise ValueError("Publication card limit must be a positive integer.")
     originals = _ordered_unique_articles(articles_by_category)
     primary = _delivery_review(report)
     if primary.status not in {"ok", "partial"}:
         return []
     label = primary_notice(report, language)
     cards = []
-    for selection in primary.selections:
+    for selection in primary.selections[:max_cards]:
         article = originals[selection.evidence_id]
         summary = f"{label}: {selection.reason}" if include_attribution else selection.reason
         cards.append(ArticleSummary(article.title, article.link, article.source, article.category, summary))

@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Prepared-edition summaries retain actual collection, review and archive results;
+  cache-only resumes do not report historical work as new fetching (#55, #120).
+- Relevance selection no longer receives the publication-card cap. The complete
+  validated report is retained, while locally capped overflow stays eligible for
+  ordinary later processing instead of becoming editorial rejection (#121).
+
 - Offline reconciliation response binding validates a sparse evidence input against
   exact request/admission/completion metadata and original citation IDs. It preserves
   nominated conditions without claiming semantic completeness or adding dispatch.

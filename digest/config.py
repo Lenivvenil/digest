@@ -148,7 +148,7 @@ class ReviewConfig:
     tie_breaker: ReviewModelConfig | None = None
     max_evidence_articles: int = 20
     max_excerpt_chars: int = 500
-    max_selections: int = 5
+    max_selections: int = 5  # Publication card cap; relevance is judged over the complete evidence packet.
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False

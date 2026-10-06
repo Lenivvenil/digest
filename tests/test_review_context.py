@@ -60,7 +60,7 @@ def test_context_uses_only_enabled_categories_represented_in_this_packet() -> No
     assert "private.example" not in json.dumps(messages)
     assert "hidden.example" not in json.dumps(messages)
     assert "Private unrelated" not in json.dumps(messages)
-    assert task["max_selections"] == config.review.max_selections
+    assert "max_selections" not in task
     assert task["evidence"] == json.loads(json.dumps(asdict(build_evidence_bundle(fixture_articles(), config.review))))
     assert len(task["configured_category_interests"]) <= len(task["evidence"]["items"])
 
@@ -133,8 +133,11 @@ def test_prompt_preserves_fidelity_uncertainty_and_capacity_boundaries() -> None
     assert "do not infer that the full article" in system["content"]
     assert "Missing configured context is not negative evidence" in system["content"]
     assert "do not impose category quotas" in system["content"]
-    assert "Useful items omitted only for max_selections or output capacity MUST be deferred" in system["content"]
-    assert json.loads(task["content"])["max_selections"] == 2
+    assert "Useful items omitted only for output capacity MUST be deferred" in system["content"]
+    assert "max_selections" not in json.loads(task["content"])
+    assert "Select every useful supplied item in priority order" in system["content"]
+    config.review.max_selections = 5
+    assert _messages(config) == [system, task]
     # These are prompt assertions, deliberately not assertions of model judgment.
 
 
