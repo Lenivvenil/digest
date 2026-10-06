@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- First discovery slice (#132): configurable cross-field proposal targets, deterministic
+  least-recent-offer preference within fair passes, and finite exact-proposal validation
+  cooldowns in existing delivery metadata. Legacy approval bindings and send barriers
+  stay intact; active feeds and daily candidate scheduling are unchanged. Professional
+  coverage after approval and real recommendation quality remain open.
+
 - Prepared-edition summaries retain actual collection, review and archive results;
   cache-only resumes do not report historical work as new fetching (#55, #120).
 - Relevance selection no longer receives the publication-card cap. The complete

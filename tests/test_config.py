@@ -9,6 +9,7 @@ import pytest
 
 from digest.config import (
     Config,
+    DiscoveryConfig,
     LLMConfig,
     load_config,
 )
@@ -63,6 +64,28 @@ def test_defaults_applied(tmp_path: Path) -> None:
     assert config.obsidian.enabled is True
     assert config.obsidian.output_dir == "digests"
     assert config.filters.blocklist_keywords == []
+    assert config.discovery.exploration_areas == [
+        "fintech/banking/architecture", "science", "society/institutions", "history/culture", "environment", "design",
+    ]
+
+
+def test_discovery_configuration_does_not_change_professional_sources(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG)
+                         + "\ndiscovery:\n  exploration_areas: ['  history  ', 'biology']\n")
+    config = load_config(path)
+    assert config.discovery.exploration_areas == ["history", "biology"]
+    assert config.sources[0].category == "Test"
+    assert config.sources[0].priority == 3
+    config.discovery.exploration_areas.append("art")
+    assert "art" not in DiscoveryConfig().exploration_areas
+
+
+@pytest.mark.parametrize("value", ["[]", "science", "[null]", "['']", "['  ']", "[science, SCIENCE]",
+                                  "['" + "a" * 81 + "']", "[" + ",".join(str(n) for n in range(17)) + "]"])
+def test_discovery_configuration_rejects_invalid_areas(tmp_path: Path, value: str) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f"\ndiscovery:\n  exploration_areas: {value}\n")
+    with pytest.raises(ValueError, match="discovery.exploration_areas"):
+        load_config(path)
 
 
 def test_provider_roles(tmp_path: Path) -> None:

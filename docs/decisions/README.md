@@ -52,3 +52,8 @@ useful retrieval remain empirical gates. The revision remains local and undeploy
 [0012](0012-private-ranking-evidence.md) proposes bounded candidate/admission and
 validated ranking-decision evidence in the existing private JSON archive under #77.
 It is a local retention proposal, not owner acceptance, publication or deployment.
+
+[0013](0013-discovery-exploration-state.md) proposes configurable exploration areas,
+fair passes with least-recent-offer preference, and finite pending-feed validation
+cooldowns in existing discovery metadata under #132. Approval-to-candidate protection
+and ordinary recommendation quality remain open; the first slice remains proposed and undeployed.

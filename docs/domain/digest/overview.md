@@ -478,6 +478,12 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 **PendingSource**
 - Invariants: `source_hash` is unique in the pending list; `url` has passed SSRF validation (`_dns_pinning.validate_url`) before entering pending.
+- Discovery targets a separate configured exploration-area list. Its requested area,
+  fair-pass attempts, confirmed/possible offers and validation cooldown live in
+  `discovery_delivery.json`, never in the five-field proposal identity. The proposed
+  contract is [ADR-0013](../../decisions/0013-discovery-exploration-state.md).
+  A requested area does not establish actual novelty; the first slice of #132 leaves
+  daily scheduling and protection of professional signals after approval open.
 
 ---
 
