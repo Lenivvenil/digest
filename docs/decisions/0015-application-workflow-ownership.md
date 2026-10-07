@@ -1,9 +1,11 @@
 # 0015. Give prepared workflows an application owner
 
-Status: proposed implementation record for the authorized structural migration.
+Status: stage-1 implementation merged and deployed on 2026-10-07.
+[PR #149](https://github.com/Lenivvenil/digest/pull/149) merged at engine
+`de595797282b7b289561105820a55d467f8379a2`; runtime PR #72 deployed that pin.
 Stage 1 is tracked in [#143](https://github.com/Lenivvenil/digest/issues/143) under
-[#126](https://github.com/Lenivvenil/digest/issues/126). It is local and not deployed
-until the implementing PR and runtime pin are verified.
+[#126](https://github.com/Lenivvenil/digest/issues/126). This status does not establish
+semantic acceptance or completion of later structural stages.
 
 ## Context
 
@@ -42,6 +44,10 @@ persisted format. It carries the existing optional candidate state and distingui
 canonical configuration from the collection portfolio. Stage 2 will establish pure
 candidate contracts below selection/storage; this record does not ratify the temporary
 handoff as the final domain model.
+
+The stage-2 implementation is recorded in
+[ADR0016](0016-candidate-contracts-and-retirement.md); its release evidence in #144 is
+separate from this deployed stage-1 boundary.
 
 ## Compatibility and deliberate restriction
 

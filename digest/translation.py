@@ -20,9 +20,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from digest._serialization import extract_json as _extract_json
 from digest._util import atomic_json_write
 from digest.config import Config, ProviderConfig, TranslationConfig
-from digest.llm import LLMRole, _extract_json, _request_state, complete
+from digest.llm import LLMRole, _request_state, complete
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult

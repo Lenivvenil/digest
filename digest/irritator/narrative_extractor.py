@@ -6,8 +6,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from digest._serialization import extract_json as _extract_json
 from digest.config import Config
-from digest.llm import LLMRole, _extract_json, complete
+from digest.llm import LLMRole, complete
 from digest.radar.summarizer import CategorySummary
 
 logger = logging.getLogger(__name__)

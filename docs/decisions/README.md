@@ -68,4 +68,11 @@ activation, translated capacity and semantic acceptance remain open under #127.
 [0015](0015-application-workflow-ownership.md) records stage 1 of the structural
 migration: explicit prepared application ownership, removal of lower-to-entrypoint
 imports, and fail-before-effects preparation/preview validation. Implementation and
-rollout status are tracked in #143; persisted formats and product acceptance remain separate.
+rollout are verified through engine PR #149 (`de595797282b7b289561105820a55d467f8379a2`)
+and runtime PR #72 under #143; persisted formats and product acceptance remain separate.
+
+[0016](0016-candidate-contracts-and-retirement.md) records the implemented
+candidate-ownership slice under #144: pure values/proof validators, storage adapters,
+and explicit verified retirement versus persistence without retirement. Existing
+formats and policies remain unchanged; scheduler ownership and later structural
+stages remain open. This implementation record is not deployment or semantic acceptance.

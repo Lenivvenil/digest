@@ -9,94 +9,42 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import re
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from itertools import zip_longest
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 
 from digest._sanitize import sanitize_article
 from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
 from digest.closing import ClosingCapture, capture_closing, eligible_ids
 from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
-from digest.llm import LLMRole, _extract_json, complete
-from digest.radar.collector import Article, article_hash
+from digest.domain.catalog.articles import Article, article_hash
+from digest.domain.editorial.reviews import BlindReviewReport as BlindReviewReport
+from digest.domain.editorial.reviews import EvidenceBundle as EvidenceBundle
+from digest.domain.editorial.reviews import EvidenceItem as EvidenceItem
+from digest.domain.editorial.reviews import EvidenceSelection as EvidenceSelection
+from digest.domain.editorial.reviews import ModelReview as ModelReview
+from digest.domain.editorial.reviews import RejectedSelection as RejectedSelection
+from digest.domain.editorial.reviews import _parse_live_review as _parse_live_review
+from digest.domain.editorial.reviews import _parse_live_selection as _parse_live_selection
+from digest.domain.editorial.reviews import _parse_review as _parse_review
+from digest.domain.editorial.reviews import _parse_review_envelope as _parse_review_envelope
+from digest.domain.editorial.reviews import _rejected_output_diagnostics as _rejected_output_diagnostics
+from digest.domain.editorial.reviews import canonical_evidence_quote as canonical_evidence_quote
+from digest.domain.editorial.reviews import (
+    delivery_review,
+    validated_cached_selections,
+)
+from digest.llm import LLMRole, complete
 from digest.radar.summarizer import ArticleSummary
 
 SCHEMA_VERSION = 1
 MAX_EVIDENCE_JSON_CHARS = 16000
 
-
-@dataclass(frozen=True)
-class EvidenceItem:
-    evidence_id: str
-    title: str
-    url: str
-    source: str
-    category: str
-    published: str | None
-    excerpt: str
-    excerpt_shortened_or_sanitized: bool
-
-
-@dataclass(frozen=True)
-class EvidenceBundle:
-    schema_version: int
-    bundle_id: str
-    evidence_kind: str
-    omitted_articles: int
-    items: tuple[EvidenceItem, ...]
-
-
-@dataclass(frozen=True)
-class EvidenceSelection:
-    evidence_id: str
-    reason: str
-    quote: str
-    confidence: Literal["low", "medium", "high"]
-    typography_normalized: bool = False
-
-
-@dataclass(frozen=True)
-class RejectedSelection:
-    index: int
-    reason: str
-    evidence_id: str | None = None
-
-
-@dataclass
-class ModelReview:
-    slot: str
-    provider: str
-    model: str
-    bundle_id: str
-    prompt_hash: str
-    status: Literal["ok", "partial", "abstained", "invalid", "unavailable"]
-    selections: list[EvidenceSelection] = field(default_factory=list)
-    limitations: list[str] = field(default_factory=list)
-    usage: dict[str, int] = field(default_factory=dict)
-    error: str = ""
-    resolved_model: str | None = None
-    response_sha256: str | None = None
-    rejected_output: str | None = None
-    rejected_output_truncated: bool = False
-    attempted_at: str | None = None
-    generated_at: str | None = None
-    reused_from_checkpoint: bool = False
-    rejected_items: list[RejectedSelection] = field(default_factory=list)
-
-
-@dataclass
-class BlindReviewReport:
-    schema_version: int
-    evidence: EvidenceBundle
-    reviews: list[ModelReview]
-    status: Literal["complete", "incomplete"]
-    selection_overlap: float | None
-    disputed_ids: list[str]
-    third_model_reason: str
+# Retain the legacy import path while the pure validator belongs to the domain.
+_validated_cached_selections = validated_cached_selections
 
 
 def _ordered_unique_articles(articles_by_category: dict[str, list[Article]]) -> dict[str, Article]:
@@ -236,162 +184,6 @@ def build_review_messages(
         task["closing_eligible_ids"] = eligible_ids(bundle, closing, sources)
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
-
-
-def _parse_review_envelope(
-    text: str, max_entries: int, *, allow_closing: bool = False,
-) -> tuple[list[object], list[str]]:
-    if len(text) > 32000:
-        raise ValueError("response exceeds review budget")
-    raw = _extract_json(text)
-    if allow_closing and isinstance(raw, dict):
-        raw = {key: value for key, value in raw.items() if key != "closing"}
-    if (not isinstance(raw, dict)
-            or set(raw) not in ({"selections", "limitations"}, {"selections", "limitations", "dispositions"})):
-        raise ValueError("expected selections and limitations")
-    selections, limitations = raw["selections"], raw["limitations"]
-    if not isinstance(selections, list) or len(selections) > max_entries:
-        raise ValueError("invalid selection count")
-    if not isinstance(limitations, list) or len(limitations) > 5 or any(
-        not isinstance(s, str) or not s.strip() or len(s) > 600 for s in limitations
-    ):
-        raise ValueError("invalid limitations")
-    if not selections and not limitations:
-        raise ValueError("abstention needs an explanation")
-    return selections, limitations
-
-
-def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelection], list[str]]:
-    """Strict accepted-selection contract, including when revalidating checkpoints."""
-    selections, limitations = _parse_review_envelope(text, len(bundle.items))
-    known = {item.evidence_id: item for item in bundle.items}
-    seen: set[str] = set()
-    parsed: list[EvidenceSelection] = []
-    for item in selections:
-        if not isinstance(item, dict) or set(item) != {"evidence_id", "reason", "quote", "confidence"}:
-            raise ValueError("invalid selection schema")
-        identity, reason, quote, confidence = (item[k] for k in ["evidence_id", "reason", "quote", "confidence"])
-        if not all(isinstance(v, str) for v in [identity, reason, quote, confidence]):
-            raise ValueError("selection fields must be strings")
-        if identity not in known:
-            raise ValueError("unknown evidence id")
-        if identity in seen:
-            raise ValueError("duplicated evidence id")
-        if not reason.strip() or len(reason) > 600 or not quote.strip() or len(quote) > 200:
-            raise ValueError("invalid selection text budget")
-        if confidence not in {"low", "medium", "high"}:
-            raise ValueError("invalid confidence")
-        evidence = known[identity]
-        if quote not in evidence.title and quote not in evidence.excerpt:
-            raise ValueError("quote is not in supplied evidence")
-        seen.add(identity)
-        parsed.append(EvidenceSelection(identity, reason.strip(), quote, confidence))
-    return parsed, limitations
-
-
-def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length: int = 200) -> tuple[str, bool]:
-    """Return the exact source slice after one-to-one hyphen/nonbreaking-space alignment."""
-    if not isinstance(quote, str) or not quote.strip() or len(quote) > max_length:
-        raise ValueError("invalid selection text budget")
-    if quote in title or quote in excerpt:
-        return quote, False
-    typography = str.maketrans({"\u2010": "-", "\u2011": "-", "\u00a0": " ", "\u202f": " "})
-    for source in (title, excerpt):
-        start = source.translate(typography).find(quote.translate(typography))
-        if start >= 0:
-            return source[start:start + len(quote)], True
-    raise ValueError("quote is not in supplied evidence")
-
-
-def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: list[str]) -> EvidenceSelection:
-    """Align narrow typography only after schema, types and budgets validate."""
-    text = json.dumps({"selections": [item], "limitations": limitations})
-    try:
-        return _parse_review(text, bundle)[0][0]
-    except ValueError as exc:
-        # The strict parser checks schema, types and length before quote matching.
-        if str(exc) != "quote is not in supplied evidence" or not isinstance(item, dict):
-            raise
-        evidence = next(evidence for evidence in bundle.items if evidence.evidence_id == item["evidence_id"])
-        quote, normalized = canonical_evidence_quote(item["quote"], evidence.title, evidence.excerpt)
-        canonical = {**item, "quote": quote}
-        parsed = _parse_review(json.dumps({"selections": [canonical], "limitations": limitations}), bundle)
-        return replace(parsed[0][0], typography_normalized=normalized)
-
-
-def _parse_live_review(
-    text: str, bundle: EvidenceBundle, *, max_detailed_selections: int | None = None,
-    allow_closing: bool = False,
-) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
-    """Salvage individual entries only after the complete envelope is valid."""
-    limit = len(bundle.items) if max_detailed_selections is None else min(len(bundle.items), max_detailed_selections)
-    selections, limitations = _parse_review_envelope(text, limit, allow_closing=allow_closing)
-    known = {item.evidence_id for item in bundle.items}
-    accepted: list[EvidenceSelection] = []
-    rejected: list[RejectedSelection] = []
-    seen: set[str] = set()
-    for index, item in enumerate(selections):
-        identity = item.get("evidence_id") if isinstance(item, dict) else None
-        known_identity = identity if isinstance(identity, str) and identity in known else None
-        try:
-            if known_identity is not None and known_identity in seen:
-                raise ValueError("duplicated evidence id")
-            if known_identity is not None:
-                seen.add(known_identity)
-            accepted.append(_parse_live_selection(item, bundle, limitations))
-        except (ValueError, TypeError, KeyError) as exc:
-            reason, _, _ = _rejected_output_diagnostics("", exc)
-            rejected.append(RejectedSelection(index, reason, known_identity))
-    return accepted, limitations, rejected
-
-
-def _validated_cached_selections(
-    review: ModelReview, bundle: EvidenceBundle,
-) -> tuple[list[EvidenceSelection], list[str]]:
-    """Validate against exact evidence membership, independently of publication capacity."""
-    selections, limitations = _parse_review(json.dumps({
-        "selections": [{key: value for key, value in asdict(item).items() if key != "typography_normalized"}
-                       for item in review.selections],
-        "limitations": review.limitations,
-    }, ensure_ascii=False, separators=(",", ":")), bundle)
-    if any(type(item.typography_normalized) is not bool for item in review.selections):
-        raise ValueError("Invalid checkpoint typography provenance.")
-    selections = [replace(item, typography_normalized=original.typography_normalized)
-                  for item, original in zip(selections, review.selections, strict=True)]
-    expected_status = "ok" if selections else "abstained"
-    if review.status == "partial":
-        known = {item.evidence_id for item in bundle.items}
-        indices = [item.index for item in review.rejected_items]
-        if (not selections or not review.rejected_items
-                or len(selections) + len(indices) > len(bundle.items) or len(set(indices)) != len(indices)
-                or any(type(index) is not int or not 0 <= index < len(bundle.items) for index in indices)
-                or any(item.evidence_id is not None and item.evidence_id not in known for item in review.rejected_items)
-                or any(not isinstance(item.reason, str)
-                       or _rejected_output_diagnostics("", ValueError(item.reason))[0] != item.reason
-                       for item in review.rejected_items)):
-            raise ValueError("Invalid checkpoint partial-review provenance.")
-    elif review.status != expected_status or review.rejected_items:
-        raise ValueError("Checkpoint review status contradicts its selections.")
-    return selections, limitations
-
-
-def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, bool]:
-    """Retain bounded untrusted model text, never HTTP error bodies or headers."""
-    known_reasons = {
-        "response exceeds review budget", "expected selections and limitations",
-        "invalid selection count", "invalid limitations", "abstention needs an explanation",
-        "invalid selection schema", "selection fields must be strings", "unknown evidence id",
-        "duplicated evidence id", "invalid selection text budget", "invalid confidence",
-        "quote is not in supplied evidence", "provider reported unfinished response",
-    }
-    reason = str(exc) if str(exc) in known_reasons else "invalid JSON or review contract"
-    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
-    cleaned = re.sub(
-        r"(?:sk-[A-Za-z0-9_-]{16,}|gsk_[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,})",
-        "[redacted credential-like text]", cleaned,
-    )
-    cleaned = re.sub(r"(?i)Bearer\s+[A-Za-z0-9._-]{16,}", "Bearer [redacted]", cleaned)
-    return reason, cleaned[:32000], len(cleaned) > 32000
 
 
 def _groq_review_format(*, allow_closing: bool = False) -> dict[str, Any]:
@@ -598,13 +390,6 @@ async def run_evidence_review(
     )
 
 
-def _delivery_review(report: BlindReviewReport) -> ModelReview:
-    primary = report.reviews[0]
-    if primary.status in {"invalid", "unavailable"}:
-        primary = next((r for r in report.reviews if r.slot == "secondary" and r.status in {"ok", "partial"}), primary)
-    return primary
-
-
 def primary_notice(report: BlindReviewReport, language: str) -> str:
     """Deterministic attribution, usable once for an entire compact issue."""
     primary = _delivery_review(report)
@@ -665,3 +450,7 @@ def render_review(report: BlindReviewReport) -> str:
             label = "Partial review validation" if review.status == "partial" else "Review unavailable"
             lines.append(f"- {label}: {review.error}")
     return "\n".join(lines)
+
+
+# Preserve the historical import while ownership resides in the editorial domain.
+_delivery_review = delivery_review
