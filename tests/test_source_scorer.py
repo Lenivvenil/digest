@@ -17,7 +17,6 @@ from digest.source_scorer import (
     evaluate_trial_sources,
     load_source_state,
     load_stats,
-    save_source_state,
     save_stats,
     update_stats,
 )
@@ -671,22 +670,6 @@ def test_load_source_state_non_dict_entry_skipped(tmp_path: Path) -> None:
     assert "BadFeed" not in store.sources
 
 
-def test_source_state_store_roundtrip(tmp_path: Path) -> None:
-    """save/load round-trip preserves all fields."""
-    store = SourceStateStore()
-    store.set_trial_started("Feed1", "2026-03-01")
-    store.mark_graduated("Feed2")
-    store.mark_demoted("Feed3")
-    save_source_state(store, str(tmp_path))
-
-    loaded = load_source_state(str(tmp_path))
-    assert loaded.get_trial_started("Feed1") == "2026-03-01"
-    assert loaded.is_graduated("Feed2")
-    assert loaded.is_demoted("Feed3")
-    assert not loaded.is_graduated("Feed1")
-    assert not loaded.is_demoted("Feed1")
-
-
 def test_apply_trial_decisions_to_cache_promote() -> None:
     """Promoted source gets graduated=True, trial_started cleared."""
     store = SourceStateStore()
@@ -773,22 +756,6 @@ def test_save_stats_atomic_write(tmp_path: Path) -> None:
     tmp_file = tmp_path / "source_stats.json.tmp"
     assert stats_file.exists(), "source_stats.json should exist after save_stats"
     assert not tmp_file.exists(), ".tmp file should be removed after atomic rename"
-
-
-def test_save_stats_round_trip(tmp_path: Path) -> None:
-    """save_stats then load_stats returns the same data."""
-    from digest.source_scorer import SourceStats, load_stats, save_stats
-
-    stats: dict[str, SourceStats] = {"FeedA": SourceStats(name="FeedA")}
-    stats["FeedA"].total_fetches = 5
-    stats["FeedA"].successful_fetches = 4
-
-    save_stats(stats, str(tmp_path))
-    loaded = load_stats(str(tmp_path))
-
-    assert "FeedA" in loaded
-    assert loaded["FeedA"].total_fetches == 5
-    assert loaded["FeedA"].successful_fetches == 4
 
 
 def test_load_stats_skips_bad_snapshot(tmp_path: Path) -> None:

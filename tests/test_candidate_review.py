@@ -464,12 +464,12 @@ def test_empty_partial_is_not_reused_as_accepted_work(tmp_path: Path) -> None:
     assert plan_packet(progress, config, NOW) is not None
 
 
-@pytest.mark.parametrize("source_count", [10, 54])
-def test_parser_population_fits_candidate_bound_without_duplicate_metadata(tmp_path: Path, source_count: int) -> None:
+def test_parser_population_fits_candidate_bound_without_duplicate_metadata(tmp_path: Path) -> None:
     from digest.candidate_review import MAX_BYTES, progress_size
     from digest.radar.collector import CandidateObservation, CollectionInventory, SourceCollectionOutcome, article_hash
 
     config = fixture_config()
+    source_count = 54  # Retain the largest parser-population bound; smaller duplicate removed.
     config.sources = [SourceConfig(f"Source {index}", f"https://s{index}.example/feed", "tech", True)
                       for index in range(source_count)]
     inventory = CollectionInventory()

@@ -174,18 +174,11 @@ def test_load_feedback_skips_bad_rating_preserves_rest(tmp_path: Path) -> None:
         load_feedback(str(tmp_path), strict=True)
 
 
-def test_save_feedback_no_tmp_file_left(tmp_path: Path) -> None:
-    """After save_feedback, the .tmp file must not exist."""
-    store = FeedbackStore(last_update_id=7)
-    save_feedback(store, str(tmp_path))
-    tmp = tmp_path / "feedback.json.tmp"
-    assert not tmp.exists()
-
-
 def test_save_feedback_preserves_existing_on_write(tmp_path: Path) -> None:
     """Existing feedback.json is intact before and after a successful save."""
     original = FeedbackStore(last_update_id=42)
     save_feedback(original, str(tmp_path))
+    assert not (tmp_path / "feedback.json.tmp").exists()
 
     updated = FeedbackStore(last_update_id=99)
     save_feedback(updated, str(tmp_path))
