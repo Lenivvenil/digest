@@ -22,6 +22,7 @@ from digest.candidate_review import (
 from digest.closing import (
     ClosingCapture,
     ClosingDecision,
+    attribute_closing_card,
     decide_closing,
     eligible_ids,
     load_closing,
@@ -36,6 +37,17 @@ from scripts.review_fixture import fixture_config
 from tests.test_config import MINIMAL_CONFIG, _write_config
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=UTC)
+
+NHS_FEED = "https://www.england.nhs.uk/feed/"
+NHS_CREDIT = (
+    "NHS England RSS feeds. Open Government Licence v3.0: "
+    "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+)
+EA_FEED = "https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=environment-agency"
+EA_CREDIT = (
+    "Contains public sector information licensed under the Open Government Licence v3.0. "
+    "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+)
 
 
 def population() -> tuple[Config, dict[str, list[Article]]]:
@@ -65,6 +77,52 @@ def response(messages: list[dict[str, str]], closing: object = "first") -> str:
     elif closing != "missing":
         raw["closing"] = closing
     return json.dumps(raw)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("feed,credit", [
+    (NHS_FEED, NHS_CREDIT), (EA_FEED, EA_CREDIT),
+    ("https://www.england.nhs.uk/feed", None),
+    ("https://www.england.nhs.uk/another-feed/", None),
+    (EA_FEED.replace("%5B%5D", "[]"), None),
+])
+async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_and_identity(
+    monkeypatch: pytest.MonkeyPatch, feed: str, credit: str | None,
+) -> None:
+    config, articles = population()
+    config.sources[0].url = feed
+    config.closing = replace(config.closing, approved_sources=(ClosingSourceBinding("Community", feed, "Society"),))
+    # A known article hostname cannot substitute for the immutable feed binding.
+    articles["Society"] = [replace(item, link=f"https://www.england.nhs.uk/news/{index}")
+                           for index, item in enumerate(articles["Society"])]
+    packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
+    assert packet is not None
+    capture = ClosingCapture()
+    completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
+    monkeypatch.setattr("digest.review.complete", completion)
+    report = await run_primary_review(articles, config, closing_capture=capture)
+    decision = decide_closing(report, packet, capture, config.closing, config.sources)
+    assert decision.card is not None and decision.provenance is not None
+    canonical = _canonical((asdict(decision), asdict(report), asdict(packet)))
+    config.sources[0].url = "https://changed.example/feed"
+    for summary in (decision.card.summary, "Соседи восстановили доступ."):
+        presented = replace(decision.card, summary=summary)
+        attributed = attribute_closing_card(decision, presented)
+        if credit is None:
+            assert attributed is None
+        else:
+            assert attributed == replace(presented, summary=f"{summary} {credit}")
+            assert attributed is not presented and "\n" not in attributed.summary
+            for field in ("title", "link", "source", "category"):
+                assert attribute_closing_card(decision, replace(presented, **{field: "changed"})) is None
+            tampered = replace(decision.provenance, occurrence_sha256="0" * 64)
+            assert attribute_closing_card(replace(decision, provenance=tampered), presented) is None
+            occurrence = replace(decision.provenance.occurrence, source="Different source")
+            tampered = replace(decision.provenance, occurrence=occurrence,
+                               occurrence_sha256=hashlib.sha256(_canonical(asdict(occurrence))).hexdigest())
+            assert attribute_closing_card(replace(decision, provenance=tampered), presented) is None
+    assert _canonical((asdict(decision), asdict(report), asdict(packet))) == canonical
+    completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio

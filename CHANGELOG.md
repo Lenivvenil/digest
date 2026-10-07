@@ -7,7 +7,9 @@
   compatibility and isolated presentation before archive/freeze. Main capacity,
   sender and receipts stay unchanged. Source activation, translated capacity and
   editorial acceptance remain open. A fitting closing explanation shares the
-  existing translation request, with independent optional-field validation.
+  existing translation request, with independent optional-field validation. Exact-feed
+  NHS/Environment Agency credits share the final archive/frozen card path; optional
+  split attribution is omitted, while required-main attribution holds before send.
 
 - First discovery slice (#132): configurable cross-field proposal targets, deterministic
   least-recent-offer preference within fair passes, and finite exact-proposal validation

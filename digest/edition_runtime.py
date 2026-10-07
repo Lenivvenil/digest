@@ -56,6 +56,7 @@ async def finish_preparation(
     publication_date: date | None = None, selection_complete: bool = True,
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
+    from digest.closing import _digest, attribute_closing_card, attribute_source_card, main_attribution_occurrences
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
     from digest.delivery.telegram import _render_compact_issue
@@ -72,6 +73,10 @@ async def finish_preparation(
         else:
             logger.info("Edition preparation: no selected articles; no ready edition created")
         return stats
+    main_attribution = main_attribution_occurrences(
+        snapshot.review_report, snapshot.top_articles, getattr(config, "sources", ()),
+        closing_snapshot=getattr(snapshot, "closing", None) is not None,
+    )
     ranked: list[Any] = []
     if config.review.enabled and config.review.review_led_only:
         status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
@@ -92,19 +97,45 @@ async def finish_preparation(
         )
         if closing is not None:
             closing_presentation = ClosingPresentation(closing.status, closing.reason)
-    # Required main rendering errors remain preparation failures, before either output.
-    _render_compact_issue(cards, config, text)
+    # Credits stay outside canonical text and model/cache inputs, but enter both
+    # archive and frozen delivery. Missing provenance was checked before calls.
+    from digest.radar.collector import article_hash
+
+    cards = [attribute_source_card(card, occurrence, _digest(asdict(occurrence)))[0]
+             if (occurrence := main_attribution.get(article_hash(card.title, card.link))) is not None else card
+             for card in cards]
+    # Never discard a required main card to satisfy optional placement. Hold the
+    # accepted preparation before archive/freeze/send when its credit would split.
+    _, main_ranges = _render_compact_issue(cards, config, text)
+    if any(item.full_hash in main_attribution and len(item.covering_chunks) != 1 for item in main_ranges):
+        raise ValueError("Main source attribution spans delivery chunks; accepted preparation retained. "
+                         "Review its presentation before resuming; no article was sent or discarded.")
     if closing_presentation is not None and closing_presentation.card is not None:
-        assembled = [*cards, closing_presentation.card]
-        try:
-            _render_compact_issue(assembled, config, text)
-        except ValueError as exc:
-            logger.warning("Closing presentation omitted after render preflight: %s", exc)
+        attributed = attribute_closing_card(closing, closing_presentation.card) if closing is not None else None
+        if attributed is None:
             closing_presentation = replace(
-                closing_presentation, status="incomplete", reason="rendering_failed", card=None,
+                closing_presentation, status="incomplete", reason="attribution_unavailable", card=None,
             )
         else:
-            cards = assembled
+            assembled = [*cards, attributed]
+            try:
+                _, ranges = _render_compact_issue(assembled, config, text)
+            except ValueError as exc:
+                logger.warning("Closing presentation omitted after render preflight: %s", exc)
+                closing_presentation = replace(
+                    closing_presentation, status="incomplete", reason="rendering_failed", card=None,
+                )
+            else:
+                # A visible partial article cannot lose its required credit if
+                # a later chunk fails. Omit optional content; leave main intact.
+                if any((item.full_hash in main_attribution or item is ranges[-1])
+                       and len(item.covering_chunks) != 1 for item in ranges):
+                    closing_presentation = replace(
+                        closing_presentation, status="incomplete", reason="attribution_split", card=None,
+                    )
+                else:
+                    closing_presentation = replace(closing_presentation, card=attributed)
+                    cards = assembled
     archive = write_digest(
         text, config, top_articles=cards, ranked_signals=ranked or None,
         review_report=snapshot.review_report, irritator_status=status,

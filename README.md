@@ -343,7 +343,11 @@ the existing evidence packet and explicit eligible feed bindings; it adds no
 selection request and preserves the main-card cap. Source approval, attribution
 review and finite editorial/capacity acceptance are still required. Closing prose
 can join an existing translation request only when it fits without displacing main
-fields; invalid optional output preserves valid main translation. See
+fields; invalid optional output preserves valid main translation. Exact NHS/Environment
+Agency feed attribution is added only to presentation, including ordinary main cards
+from those feeds. A split optional credit omits the closer; missing required proof
+or a split main credit holds preparation before sending. Source activation remains
+unapproved, and sparse feed supply does not establish a daily positive story. See
 [ADR-0014](docs/decisions/0014-optional-humane-closing-item.md) for configuration,
 recovery boundaries and the remaining #127 acceptance work.
 

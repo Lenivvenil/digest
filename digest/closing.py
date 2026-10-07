@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+import logging
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -16,6 +17,8 @@ from digest.config import ClosingConfig, SourceConfig
 from digest.llm import _extract_json
 from digest.radar.collector import article_hash
 from digest.radar.summarizer import ArticleSummary
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -57,6 +60,101 @@ class ClosingDecision:
     reason: str
     card: ArticleSummary | None = None
     provenance: ClosingProvenance | None = None
+
+
+# Reviewed presentation support, not source activation or a licence classifier.
+# Unknown feed bindings need explicit attribution review before closing can render.
+_CLOSING_SOURCE_CREDITS = {
+    "https://www.england.nhs.uk/feed/": (
+        "NHS England RSS feeds. Open Government Licence v3.0: "
+        "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+    ),
+    "https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=environment-agency": (
+        "Contains public sector information licensed under the Open Government Licence v3.0. "
+        "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+    ),
+}
+
+
+def attribute_source_card(
+    card: ArticleSummary, occurrence: ClosingOccurrence, occurrence_sha256: str,
+) -> tuple[ArticleSummary, bool]:
+    """Credit a supported exact feed on presentation only; validate frozen identity."""
+    if ((card.title, card.link, card.source, card.category) != (
+            occurrence.title, occurrence.link, occurrence.source, occurrence.category)
+            or occurrence_sha256 != _digest(asdict(occurrence))):
+        raise ValueError("Source attribution differs from the frozen article occurrence.")
+    credit = _CLOSING_SOURCE_CREDITS.get(occurrence.source_url)
+    if credit is None:
+        return card, False  # Other ordinary source presentation is unchanged.
+    return replace(card, summary=f"{card.summary} {credit}"), True
+
+
+def main_attribution_occurrences(
+    report: BlindReviewReport | None, cards: Sequence[ArticleSummary], sources: Sequence[SourceConfig],
+    *, closing_snapshot: bool, cache_dir: str | Path = ".cache",
+) -> dict[str, ClosingOccurrence]:
+    """Resolve main credits before calls; legacy recovery remains explicit."""
+    from digest.candidate_storage import read_packet
+    from digest.preparation import _safe
+
+    required = closing_snapshot or any(source.enabled and source.url in _CLOSING_SOURCE_CREDITS
+                                      for source in sources)
+    try:
+        report_sha = _digest(asdict(report)) if report is not None else None
+        path = _safe(Path(cache_dir) / "candidate_reports" / f"{report_sha}.json") if report_sha else None
+        if path is None or not path.exists():
+            if required:
+                raise ValueError(
+                    "Source attribution needs the accepted report's immutable candidate packet. Restore "
+                    f"{path or 'the bound review report'} and its referenced candidate_sources objects before "
+                    "resuming preparation; do not rerun selection. Reconcile unfrozen legacy preparation "
+                    "before enabling these feeds."
+                )
+            return {}  # Accepted legacy reports without supported feeds retain their old behavior.
+        assert report_sha is not None
+        packet = read_packet(report_sha, cache_dir)
+        if packet.report != report:
+            raise ValueError("Source attribution packet differs from the accepted review report.")
+        occurrences = {}
+        for card in cards:
+            identity = article_hash(card.title, card.link)
+            matches = [item for item in packet.articles if article_hash(item.title, item.link) == identity]
+            if len(matches) != 1:
+                raise ValueError("Main article has no unique immutable source occurrence for attribution.")
+            source = matches[0]
+            if source.source_url in _CLOSING_SOURCE_CREDITS:
+                occurrence = ClosingOccurrence(**asdict(source))
+                attribute_source_card(card, occurrence, _digest(asdict(occurrence)))  # Validate before any model call.
+                occurrences[identity] = occurrence
+        return occurrences
+    except (OSError, ValueError) as exc:
+        if required:
+            raise
+        logger.warning("Legacy attribution audit unavailable; retaining accepted presentation without "
+                       "inferring source credit: %s", exc)
+        return {}
+
+
+def attribute_closing_card(decision: ClosingDecision, card: ArticleSummary) -> ArticleSummary | None:
+    """Use reviewed credit for closing; unknown bindings omit the optional card.
+
+    Source approval and item-specific rights remain separate activation gates.
+    This does not alter canonical evidence, translate legal credit or infer a
+    licence from an article hostname.
+    """
+    canonical, provenance = decision.card, decision.provenance
+    if decision.status != "selected" or canonical is None or provenance is None:
+        return None
+    if (card.title, card.link, card.source, card.category) != (
+        canonical.title, canonical.link, canonical.source, canonical.category,
+    ):
+        return None
+    try:
+        attributed, credited = attribute_source_card(card, provenance.occurrence, provenance.occurrence_sha256)
+    except ValueError:
+        return None
+    return attributed if credited else None
 
 
 @dataclass(frozen=True)

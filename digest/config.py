@@ -147,6 +147,7 @@ class ReviewConfig:
     )
     tie_breaker: ReviewModelConfig | None = None
     max_evidence_articles: int = 20
+    max_technical_retry_articles: int = 4  # Fitting continuation opportunities within the same packet.
     max_excerpt_chars: int = 500
     max_selections: int = 5  # Publication card cap; relevance is judged over the complete evidence packet.
     max_detailed_selections: int = 5  # Response detail budget, independent of publication capacity.
@@ -757,13 +758,15 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     slots = [primary, secondary] + ([tie_breaker] if tie_breaker else [])
     if len(set(slots)) != len(slots):
         raise ValueError("review slots must use distinct provider/model identities.")
-    bounds = {"max_evidence_articles": (20, 1, 100), "max_excerpt_chars": (500, 50, 1000),
+    bounds = {"max_evidence_articles": (20, 1, 100), "max_technical_retry_articles": (4, 0, 100),
+              "max_excerpt_chars": (500, 50, 1000),
               "max_selections": (5, 1, 10), "max_detailed_selections": (5, 1, 10),
               "max_output_tokens": (4096, 128, 8192)}
     values: dict[str, int] = {}
     for key, (default, low, high) in bounds.items():
-        if key == "max_detailed_selections" and isinstance(section.get(key), bool):
-            raise ValueError("review.max_detailed_selections must be an integer.")
+        if (key == "max_technical_retry_articles" and type(section.get(key, default)) is not int
+                or key == "max_detailed_selections" and isinstance(section.get(key), bool)):
+            raise ValueError(f"review.{key} must be an integer.")
         value = _safe_int(section.get(key, default), key, "review")
         if not low <= value <= high:
             raise ValueError(f"review.{key} must be between {low} and {high}.")

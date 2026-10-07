@@ -5,7 +5,8 @@ Status: proposed; implemented, disabled by default, for
 production rollout, daily-availability guarantee or editorial acceptance is implied.
 The issue remains open.
 
-This reconciliation uses the reviewed PR #138 code, now merged into main.
+This reconciliation uses merged PR #139 (`e0740534`), including the reviewed
+PR #138 editorial context, quantitative-qualifier and translation-v3 controls.
 It does not activate closing or approve its source and attribution choices.
 
 ## Context
@@ -136,6 +137,96 @@ existing v3 shape; combined requests remain explicitly bound to required fields,
 closing selection, route and output allowance. Cache schema2 is distinct from
 prompt version3. No old record is rewritten or relabelled, and no second closing
 translation call is introduced.
+
+## Literal attribution support in this draft
+
+Presentation supports two exact feed URLs: NHS England RSS and the Environment
+Agency GOV.UK Atom feed. It does not infer permission from an article hostname or
+normalize another URL into an approved binding. The selected canonical card and
+frozen occurrence identity/hash must agree. Unsupported or inconsistent attribution
+omits only the optional presentation with `attribution_unavailable`.
+
+After translation, append the reviewed literal as one paragraph to the closing
+presentation summary. NHS uses `NHS England RSS feeds` and an OGL v3 link. Ordinary
+Environment Agency news uses the OGL default statement, `Contains public sector
+information licensed under the Open Government Licence v3.0.`, and its link, with
+the existing Environment Agency identity and article URL retained. Legal credit is
+not generated or translated by a model. Canonical reasons, evidence, source names,
+article hashes, feedback bindings and translation cache records are unchanged.
+
+Preflight the actual assembled rendering. Include the optional article only when
+its entire rendered range, including credit, occupies one chunk. Otherwise record
+`attribution_split` and retain the main list unchanged. This avoids exposing a
+story whose required credit is stranded in a failed later chunk. It does not add
+a sender path, a whole-issue chunk limit or padding; placement can therefore omit
+an otherwise short closer. The identical attributed card enters the existing
+Markdown archive and immutable edition; the sender still uses its frozen bytes.
+
+The same presentation function also credits ordinary main cards from these feeds:
+feed activation is not a closing-only admission rule. Resolve their exact source
+occurrences from the existing immutable candidate packet keyed by the accepted
+report hash, before any model or translation call. Never infer a feed from a source
+name or article hostname. Add credit after translation without changing canonical
+summaries, identities, feedback bindings or translation cache records.
+
+If an attributed main item would span chunks, fail preparation before archive,
+freeze or send and retain its accepted canonical result. Do not silently drop a
+useful main card to satisfy optional placement. If optional insertion would break
+credit coverage, omit the optional card and retain the preflighted main list.
+
+Accepted legacy reports can lack candidate packet objects. That recovery remains
+supported when no supported attribution feed is enabled and the snapshot did not
+use the closing contract. In that legacy-only branch, absent or unreadable optional
+packet proof retains the original accepted presentation without inferred credit;
+a warning records failed optional inspection. Existing archive validation still
+fails on corrupt bound evidence when archival output requires it. Valid retained
+packets can restore attribution even after source configuration changes.
+Under the new feed configuration or a closing-enabled
+snapshot, absent packet proof instead holds preparation with an explicit restore
+path; it never guesses source identity, resets editorial status or reruns selection.
+Enable feeds only after in-flight unfrozen legacy preparation is reconciled. Ready
+and confirmed editions bypass preparation and retain their immutable recovery
+behavior across configuration changes. These are pre-freeze integrity rules, not a
+new queue or a requirement for full-article processing.
+
+These literal bindings are presentation support, not source activation or a legal
+classifier. OGL excludes personal data and unauthorized third-party rights; NHS
+also has photo/logo and case-study exceptions. Required attribution does not
+establish humane value, factual fidelity or permission for excluded material.
+Source terms: [NHS](https://www.england.nhs.uk/terms-and-conditions-2/),
+[GOV.UK feeds](https://www.gov.uk/help/terms-conditions),
+[OGL v3](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
+
+## Unapplied source and capacity recommendation
+
+A minimal activation proposal is these two text-only feeds with explicit seven-day
+recency, allocation priority 1, and a community/everyday-life category. Add their
+exact bindings to `closing.approved_sources`, retain the main five-card cap, and
+explicitly set `review.max_detailed_selections: 6`. Keep the existing 20-item packet,
+4096 review tokens, shared calls, deadlines and translation allowance. This is an
+unapplied recommendation requiring source/config approval; no existing professional
+source is replaced or silently reweighted. Priority is not a semantic role label.
+
+The October 7 public feed sample contained five Environment Agency entries within
+seven days (two within 24 hours), with one clear completed-action candidate; NHS
+contained two entries within seven days and none within 24 hours. These feeds
+provide occasional material, not a daily guarantee. The seven-day window is an
+explicit proposed freshness tradeoff, not a claim old news was published today.
+Normal identity deduplication prevents repeated publication of the same item.
+
+The Lymington Atom title and summary support installed tidal flaps and refurbished
+flood-gate seals, with intended reliability/maintenance benefits. They do not
+support whole-system restoration. Separate article research found an unfinished
+regulating-valve repair outside the supplied summary. Do not introduce that as a
+model-known fact or widen the selected claim; no mandatory article-fetch gate is
+added. NHS waiting-time reductions are a reported result; vaccination availability
+is access, not proof that the advertised population already received doses.
+
+Story availability, packet admission, selected relevance, faithful presentation
+and successful delivery are separate outcomes. The inherited #139 source turns
+and retry reservation do not reserve a closing slot. The current packet may
+contain no suitable story even when the wider feed has one. No new ranker or
+admission redesign is part of this draft.
 
 ## Activation and acceptance still required
 

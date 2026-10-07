@@ -527,10 +527,12 @@ See the proposal for serialization bounds and the limits of truncated evidence. 
 archives lack this evidence and cannot be retrospectively audited from hashes alone.
 This local proposal has not been accepted or deployed.
 
-### Groq GPT-OSS metadata-review output controls
+### Deployed Groq GPT-OSS metadata-review output controls
 
 For the explicitly configured `groq/openai/gpt-oss-120b` review slot only, the
-proposed correction sends `reasoning_effort: low` and strict JSON Schema for the
+correction deployed through engine [#137](https://github.com/Lenivvenil/digest/pull/137)
+(`526b950c`) and runtime [#65](https://github.com/Lenivvenil/digest-prod/pull/65)
+(`a62f9f5a`) sends `reasoning_effort: low` and strict JSON Schema for the
 existing response shape. Other providers and models retain their existing request options; the clarified
 review prompt is shared by all review slots. Other roles retain their existing wire requests. There is no format-repair request, model switch or increased output
 allowance. The five-detail response cap, 4096 output tokens, ordinary fallback and
@@ -562,7 +564,12 @@ Provider references: [reasoning controls](https://console.groq.com/docs/reasonin
 [strict structured output](https://console.groq.com/docs/structured-outputs), and
 [completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
 
-### Proposed editorial context and quantitative-qualifier correction
+### Deployed editorial context and quantitative-qualifier correction
+
+Engine [#138](https://github.com/Lenivvenil/digest/pull/138) (`a605ecf7`) and runtime
+[#66](https://github.com/Lenivvenil/digest-prod/pull/66) (`32341547`) deployed this
+correction and the reviewed banking/fintech/banking-architecture priority context.
+Real editorial and translation acceptance remains open for subsequent output.
 
 `review.editorial_context` is an optional operator-owned string (maximum 1000
 characters, empty by default). A nonempty value enters the identical primary and

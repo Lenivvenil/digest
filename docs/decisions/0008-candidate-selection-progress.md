@@ -52,9 +52,13 @@ next eligible ordinary preparation, reconcile saved work with current source,
 blocklist, recency and delivered-history boundaries before planning a later packet.
 Candidate age remains visible. No new TTL or permanently active queue is established.
 
-**Implemented #132 admission-order correction.** Owner approval on 2026-10-06
-authorized PR #134 and its engine-pin rollout. This accepts removal of alphabetical
-admission bias, not the unresolved professional-core protection policy. Within each unseen/technical
+**Deployed #132 admission-order correction.** Owner approval on 2026-10-06
+authorized PR [#134](https://github.com/Lenivvenil/digest/pull/134) (`ef68d46e`) and
+runtime [#63](https://github.com/Lenivvenil/digest-prod/pull/63) (`e1e7a133`). This
+accepted removal of alphabetical admission bias, not the unresolved professional-core
+protection policy. The original ordering below was subsequently adjusted by the
+October 7 freshness/continuation correction recorded later in this decision.
+Within each unseen/technical
 status class, admit one candidate per source per round.
 Keep each source in first-observed order and re-order its remaining head each round:
 oldest observation first, effective priority for coeval heads, then stable source
@@ -221,10 +225,73 @@ semantic audit question; no keyword classifier or fidelity claim is introduced.
 
 Technical empty selection yields `selection_incomplete` and a nonzero preparation
 exit after candidate persistence. Complete editorial abstention and no eligible
-input remain ordinary no-ready outcomes. A paired runtime workflow proposal carries
-this status to its final outcome check while preserving persistence and independent
-sender recovery. Engine status alone cannot override a workflow's continue-on-error.
+input remain ordinary no-ready outcomes. The paired workflow deployed by runtime
+[#64](https://github.com/Lenivvenil/digest-prod/pull/64) (`dbc474cb`, engine `af34f802`)
+carries this status to its final outcome check while preserving persistence and
+independent sender recovery. Historical workflow reruns still use historical YAML;
+engine status alone cannot override that workflow's continue-on-error.
 
 PR #135's optional closing item is not deployed. Five detailed entries cannot
 guarantee five main cards plus one closing item: integration must explicitly review
 the shared detail budget and retest main preservation before closing activation.
+
+## Deployed freshness and technical continuation correction (#121 / #132)
+
+The October 7 private-state replay exposed two limits in the deployed ordering:
+new same-source entries wait behind that source's entire unseen inventory, and
+unseen work can exclude every technical retry. Owner approval on 2026-10-07
+authorized engine [#139](https://github.com/Lenivvenil/digest/pull/139) (`e0740534`)
+and runtime [#67](https://github.com/Lenivvenil/digest-prod/pull/67) (`50e2768d`).
+The deployed correction changes admission only; it is not evidence of better
+editorial relevance.
+
+Source turns are class-local: unseen and technical work have separate source
+rounds, not a global one-item-per-source quota. Within unseen work, turns alternate between
+the newest usable supplied timestamp and the oldest original observation. A
+usable freshness timestamp must be no later than both planning time and the
+identity's first observation. A future-at-observation timestamp receives no
+freshness boost even after its advertised date passes. Missing dates stay unknown.
+Neither case is excluded, rewritten to “now,” or classified by event/marketing
+keywords. A source with no usable dated item takes its oldest head. Source-head
+ordering remains observation age, effective-priority ties, then stable identity;
+priority is an allocation weight, not a professional-core label. Freshness/age
+turns restart each packet. With many sources the packet can end before any age
+turn, so this does not guarantee old or undated work against sustained arrivals.
+
+`review.max_technical_retry_articles` is a strict integer from 0 to 100, default 4.
+It reserves up to that many **fitting** technical entries inside the existing
+packet count and character bounds. When unseen work exists, the allowance is
+capped below the packet count and the first fitting unseen item is admitted before
+retry reservation. Remaining places backfill with unseen work, then further
+technical work; unused reservation adds no call or fictitious reviewed count.
+A one-item packet retains unseen preference and cannot serve both classes in one
+packet. An unseen item that cannot fit does not prevent fitting technical work.
+Byte pressure can reduce either class's actual admissions; a reservation is not a
+guarantee of four retries. Individually unrepresentable items remain technical,
+and aggregate byte skips preserve their prior status. No skipped item is an
+editorial rejection. The 20-item evidence, 16,000-character evidence and 4,096-token
+response limits in the deployed configuration are unchanged.
+
+Retries use the least recent retained planning opportunity for the exact current
+source occurrence, with source round robin and effective-priority ties. A packet's
+`planned_at` does not establish a physical HTTP attempt or success. Missing exact
+proof falls back to original observation age without inventing an attempt. Existing
+decision proof remains retained; if different, the latest exact-occurrence plan is
+also retained through active-work retirement and reload (at most two proof packets
+per current technical candidate). Old immutable packet/source records are not
+rewritten. This does not change provider uncertainty handling or refund budget.
+
+The measured private snapshot had 145 unseen and 40 technical identities. Existing
+recency revalidation removed four expired unseen entries. A synthetic freshly
+observed Finextra item moved from ordering position 135 to admitted position 14
+with four reserved retries. The actual old/new planner replay admitted 20 unseen items (12,396 evidence
+characters) versus 16 unseen plus four retries (12,460 characters). After real
+begin/save/load in a temporary copy, the next packet used four different retry IDs.
+These are technical probes, not provider or editorial acceptance. Important older stories did not uniformly improve: the digital-gilt
+story moved 49 to 84, Stripe/FedEx 58 to 57, and Plaid risk models 130 to 70 in the
+unreserved unseen ordering. The four-retry replay packet displaces four unseen
+opportunities and still contains eligible future-dated events through ordinary
+age/retry turns. No source is automatically accepted, and no fintech quota is
+introduced. With 96 new entries and at most 20 admissions per ordinary window,
+ordering alone cannot establish sustainable coverage before source recency expiry.
+The remaining outcomes stay open in #121 and #132.
