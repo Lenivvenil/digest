@@ -209,22 +209,6 @@ class TestSummarizeAll:
         assert summary_texts["AI"] == "Summary for AI"
         assert summary_texts["Banking"] == "Summary for Banking"
         assert trends == "Trends text"
-
-    @pytest.mark.asyncio
-    async def test_article_counts_are_correct(self) -> None:
-        config = _make_config()
-        articles_by_cat = _make_articles_by_category()
-
-        mock_complete = AsyncMock(
-            side_effect=[
-                ("Summary for AI", {}),
-                ("Summary for Banking", {}),
-                ("Trends text", {}),
-            ]
-        )
-        with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, _ = await summarize_all(articles_by_cat, config)
-
         counts = {s.category: s.article_count for s in summaries}
         assert counts["AI"] == 2
         assert counts["Banking"] == 1
