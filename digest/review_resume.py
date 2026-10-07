@@ -19,6 +19,7 @@ from typing import Any
 
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
 from digest.domain.editorial.reviews import (
     EvidenceBundle,
@@ -33,7 +34,6 @@ from digest.review import (
     run_evidence_review,
 )
 from digest.review_checkpoint import load_review_checkpoint
-from digest.review_trial import _ALLOWED_MODELS
 
 _MAX_AGE = timedelta(hours=24)
 _SUFFIX = ".review.json"
@@ -64,7 +64,7 @@ def _config(path: Path) -> Config:
     if not config.review.enabled:
         raise ValueError("Resume requires review.enabled: true.")
     models = [config.review.primary, config.review.secondary, config.review.tie_breaker]
-    if any((model.provider, model.model) not in _ALLOWED_MODELS for model in models if model is not None):
+    if any((model.provider, model.model) not in ALLOWED_REVIEW_MODELS for model in models if model is not None):
         raise ValueError("Resume model is outside the approved free-route lineup.")
     config.llm.max_retries = 0
     config.llm.max_concurrent_requests = 1

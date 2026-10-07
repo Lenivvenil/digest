@@ -10,7 +10,8 @@
 > Source values, quality/trial rules and JSON codecs are deployed through engine PR #156 and runtime PR #79.
 > Discovery adapters are deployed through engine PR #157 and runtime PR #80.
 > Telegram presentation/transport is deployed through engine PR #158 and runtime PR #81.
-> Prepared domain/storage/application ownership remains local.
+> Prepared domain/storage/application ownership is deployed through engine PR #159 and runtime PR #82.
+> Scoped local continuations separate Signal, pure URL filtering, optional HEAD execution and shared query/coverage/route contracts.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -358,8 +359,12 @@ vote keyboards and article-to-chunk ranges. `presentation/supplement.py` owns sh
 canonical signal text and the unchanged lossless UTF-16 splitter, including atomic
 URLs. Both renderers import without HTTP, environment, storage or SDK dependencies.
 The shared `ArticleSummary` value now belongs to `domain/editorial/summaries.py`
-with the identical old summarizer re-export; irritator annotations remain type-only references. The full-source coverage comparison remains at the sender
-boundary and supplies an explicit boolean to localized presentation.
+with the identical old summarizer re-export. Presentation's `IrritatorStatus` and
+`EvidenceIrritatorResult` annotations retain transitional type-only coupling to
+orchestration owners; those references perform no domain or presentation I/O.
+The full-source coverage comparison remains at the sender boundary, imports the
+unchanged vocabulary from `domain/investigation/coverage.py`, and supplies an explicit
+boolean to localized presentation.
 
 `adapters/telegram/delivery.py` owns three deliberately separate protocols. It reads
 credentials at the same send boundaries and imports pure renderers and delivery
@@ -392,7 +397,8 @@ Local checks and review are separate from release, runtime and editorial accepta
 
 ### Stage 5: prepared delivery values, persistence and application
 
-The second local #147 delivery slice gives prepared sending four explicit owners:
+The second #147 delivery slice, deployed through engine PR #159 and runtime PR #82,
+gives prepared sending four explicit owners:
 
 - `domain/delivery/edition.py`: the unchanged edition, article, claim and receipt
   values; pure shape, window, identity, count, state and reference checks; coverage
@@ -437,6 +443,46 @@ failure/replay tests, additional interruption/ownership checks and synthetic exa
 and effect comparison cover the local refactor. Review, merge, deployment and ordinary
 editorial acceptance remain separate evidence, tracked under #147.
 
+### Stage 5: investigation signal validation ownership
+
+This local #147 continuation is recorded in
+[ADR0019](decisions/0019-remaining-application-scenarios.md#signal-validation-continuation).
+`domain/investigation/signals.py` owns the unchanged six-field `Signal` dataclass;
+`irritator.sources.Signal` re-exports that exact class. The pure
+`domain/investigation/validation.py` owns ordered URL deduplication and blocklist
+filtering and imports neither the source registry nor HTTP/application owners.
+`application/signal_validation.py` applies that policy before optional bounded HEAD
+checks in `adapters/http/signal_liveness.py`. `irritator/validator.py` preserves the
+existing synchronous/asynchronous function exports and signatures. Production source,
+ranking and evidence callers import the actual value/policy owners.
+
+The first lower-cased, trailing-slash-stripped URL remains consumed before syntax or
+blocklist validation, even if its signal is later filtered. URL acceptance still only
+requires a parsed scheme and host; substring filtering, input order and malformed-URL
+exception propagation are unchanged. With liveness disabled or no surviving signals,
+there is no HTTP work. Enabled checks retain semaphore 10, five-second request timeout,
+no redirects, 404/410 removal, retention of other statuses including 401/403/429/5xx,
+and the existing transport/URL-error drops. Concurrent completion does not reorder
+results. This does not introduce SSRF policy, URL canonicalization, new signal fields,
+search/ranking/query changes, source activation or a generic validation framework.
+
+Offline regression and synthetic baseline comparisons establish extraction parity;
+they do not establish search availability, runtime rollout or editorial acceptance.
+Search, narrative/query/ranking orchestration and broader investigation contracts
+remain under their existing owners and are outside this slice.
+
+The adjacent local shared-contract continuation moves the unchanged two-field
+`SearchQuery` to `domain/investigation/queries.py` and the RSS/full-source coverage
+strings to `domain/investigation/coverage.py`. The old query-generator and evidence-stage
+names re-export the exact objects; production consumers import the pure owners.
+The source registry no longer imports its query value from model orchestration.
+Importing `irritator.sources` or its adapters still runs the eager `irritator` package
+and registry initialization, so this does not establish cold search-adapter isolation.
+`application/review_routes.py` owns the unchanged mutable `ALLOWED_REVIEW_MODELS` set
+shared by trial, resume and post-delivery work; `review_trial._ALLOWED_MODELS` aliases
+that same set. Production consumers no longer import the trial command for policy.
+No route, prompt, call/budget policy or serialized content changes.
+
 ### Target responsibility map
 
 ```text
@@ -479,7 +525,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — #147-A/B/C, catalog/discovery and Telegram presentation deployed; prepared follow-through local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery policy, metadata, YAML and approval transport now have explicit owners. Delivery slices separate pure rendering, legacy/direct/post-delivery protocols and prepared domain/storage/application/transport ownership. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
+| 5. Adapters and remaining scenarios — #147-A/B/C, catalog/discovery and delivery deployed; investigation follow-through local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery policy, metadata, YAML and approval transport now have explicit owners. Delivery slices separate pure rendering, legacy/direct/post-delivery protocols and prepared domain/storage/application/transport ownership. Signal values and ordered URL filtering have pure investigation owners, with optional HEAD work split between application and adapter. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -615,7 +661,11 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
-| `delivery/telegram.py` | Telegram rendering, cards, vote buttons and transport; compatibility exports for domain delivery result values |
+| `domain/investigation/queries.py`, `domain/investigation/coverage.py` | Unchanged query values and evidence-coverage vocabulary shared by investigation and delivery |
+| `application/review_routes.py` | Shared approved model-route set for bounded trial, resume and post-delivery work |
+| `presentation/telegram.py`, `presentation/supplement.py` | Pure Telegram rendering, vote keyboards, canonical supplement text and lossless chunking; transitional type-only investigation result/status coupling |
+| `adapters/telegram/delivery.py` | Separate legacy, direct-compact and post-delivery Telegram protocols |
+| `delivery/telegram.py`, `delivery/supplement.py` | Compatibility exports for presentation, transport and delivery result values |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
 | `preparation.py`, `edition_runtime.py`, `application/prepared_delivery.py` | Resumable canonical preparation and ordered ready/claim/receipt effects through explicit domain/storage/transport owners |
 | `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |

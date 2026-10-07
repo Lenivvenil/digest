@@ -8,11 +8,14 @@ from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from digest.application.signal_validation import validate_signals_async
+from digest.domain.investigation.queries import SearchQuery
+from digest.domain.investigation.signals import Signal
+from digest.domain.investigation.validation import validate_signals
 from digest.irritator.narrative_extractor import Narrative, extract_narratives
-from digest.irritator.query_generator import QueryDiagnostics, SearchQuery, generate_queries
+from digest.irritator.query_generator import QueryDiagnostics, generate_queries
 from digest.irritator.ranker import RankedSignal, _ranking_signal_packet, rank_signals
-from digest.irritator.sources import SearchDiagnostics, Signal, search_all_sources
-from digest.irritator.validator import validate_signals, validate_signals_async
+from digest.irritator.sources import SearchDiagnostics, search_all_sources
 
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution

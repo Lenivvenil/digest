@@ -11,7 +11,8 @@ from xml.etree import ElementTree
 
 import httpx
 
-from digest.irritator.query_generator import SearchQuery
+from digest.domain.investigation.queries import SearchQuery
+from digest.domain.investigation.signals import Signal as Signal
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,6 @@ class SearchDiagnostics:
     @property
     def total(self) -> int:
         return self.successful + self.failed + self.unavailable
-
-
-@dataclass
-class Signal:
-    """A raw signal fetched from a counter-signal source."""
-
-    url: str
-    title: str
-    snippet: str
-    source_name: str
-    published: str
-    score: float
 
 
 def validate_search_response(response: httpx.Response, source: str) -> Any:

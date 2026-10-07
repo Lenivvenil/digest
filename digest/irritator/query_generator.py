@@ -10,19 +10,12 @@ from typing import Any
 from digest._serialization import extract_json as _extract_json
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
+from digest.domain.investigation.queries import SearchQuery as SearchQuery
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, lexical_atoms
 from digest.llm import LLMRole, complete
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SearchQuery:
-    """A search query for finding counter-signals across all configured sources."""
-
-    query: str
-    intent: str
 
 
 @dataclass

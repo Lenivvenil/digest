@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 
-from digest.irritator.sources import Signal, SourceUnavailableError, _register
+from digest.domain.investigation.signals import Signal
+from digest.irritator.sources import SourceUnavailableError, _register
 
 UNAVAILABLE_REASON = "Lobsters search is unavailable: no supported JSON search contract is verified."
 

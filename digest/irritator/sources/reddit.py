@@ -7,7 +7,8 @@ from typing import Any
 
 import httpx
 
-from digest.irritator.sources import Signal, SourceUnavailableError, _register, validate_search_response
+from digest.domain.investigation.signals import Signal
+from digest.irritator.sources import SourceUnavailableError, _register, validate_search_response
 
 _TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
 _SEARCH_BASE = "https://oauth.reddit.com"
