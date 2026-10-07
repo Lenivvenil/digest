@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.cli.reporting import publish_review_checkpoint as _publish_review_checkpoint
 from digest.config import ProviderConfig
 from digest.delivery import ArticleDeliveryResult
-from digest.main import RunStats, _publish_review_checkpoint, main
+from digest.main import RunStats, main
 from digest.review import primary_cards, render_review, run_evidence_review, run_primary_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 
@@ -235,7 +236,7 @@ async def test_non_delivery_modes_never_publish_checkpoint(args: list[str]) -> N
     stats = RunStats(1, 1, 1, False, False, False, "")
     with (
         patch("digest.main.run", AsyncMock(return_value=stats)),
-        patch("digest.main._publish_review_checkpoint") as publish,
+        patch("digest.cli.reporting.publish_review_checkpoint") as publish,
     ):
         assert await main(args) == 0
     publish.assert_not_called()

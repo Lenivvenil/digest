@@ -632,7 +632,7 @@ async def test_failed_runs_record_fetch_health_without_consuming_articles(
         patch("digest.radar.save_dedup_cache", save_cache),
         patch("digest.source_scorer.load_stats", return_value=source_stats),
         patch("digest.source_scorer.save_stats", save_stats),
-        patch("digest.main._notify_summaries_failed", AsyncMock()),
+        patch("digest.application.legacy._notify_summaries_failed", AsyncMock()),
     ):
         if feed_failure:
             with pytest.raises(AllFeedsFailedError):
@@ -1008,7 +1008,7 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
         patch("digest.delivery.write_digest", return_value=Path("digest.md")),
         patch("digest.delivery.telegram.send_compact_issue", AsyncMock(side_effect=sender)) as send,
         patch("digest.delivery.send_article_cards", AsyncMock()) as old_send,
-        patch("digest.main._legacy_delivery_extras", AsyncMock()) as extra,
+        patch("digest.application.legacy._legacy_delivery_extras", AsyncMock()) as extra,
         patch("digest.feedback.save_feedback", side_effect=save),
     ):
         if case in {"persist_failure", "corrupt_feedback"}:

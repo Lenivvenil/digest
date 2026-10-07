@@ -270,3 +270,93 @@ def test_metadata_write_bound_preserves_existing_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="storage bound"):
         save_delivery(data, str(tmp_path))
     assert (tmp_path / DELIVERY_FILE).read_bytes() == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["prepare", "all"])
+@pytest.mark.parametrize("failure", [None, "pending", "reservation", "output"])
+async def test_discovery_output_is_between_durable_reservation_and_send(
+    discovery_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], phase: str, failure: str | None,
+) -> None:
+    from digest.application.discovery import PreparedDiscovery
+    from digest.cli import reporting
+
+    monkeypatch.delenv("GITHUB_RUN_ID")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    if failure == "output":
+        output.mkdir()
+    monkeypatch.setattr("digest.llm.complete", AsyncMock(return_value=(
+        "FEED|https://example.com/barrier-feed|science|Barrier feed", {},
+    )))
+    monkeypatch.setattr("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url))
+    events: list[str] = []
+    prepared_outputs: list[PreparedDiscovery] = []
+
+    def persist_pending(pending: list[PendingSource], cache_dir: str, *, strict: bool = False) -> None:
+        assert strict
+        if pending and failure == "pending":
+            raise OSError("injected pending write failure")
+        save_pending(pending, cache_dir, strict=strict)
+        if pending:
+            events.append("pending")
+
+    def persist_delivery(data: dict[str, Any], cache_dir: str) -> None:
+        if data["batch"] is not None and failure == "reservation":
+            raise OSError("injected reservation write failure")
+        save_delivery(data, cache_dir)
+        if data["batch"] is not None:
+            events.append("reservation")
+
+    publish_outputs = reporting.publish_discovery_prepared
+
+    def report(prepared: PreparedDiscovery) -> None:
+        assert events == ["pending", "reservation"]
+        assert prepared.pending_sha == hashlib.sha256((Path(".cache") / PENDING_FILE).read_bytes()).hexdigest()
+        assert prepared.delivery_sha == hashlib.sha256((Path(".cache") / DELIVERY_FILE).read_bytes()).hexdigest()
+        data = load_delivery(".cache")
+        assert data["batch"]["owner"].startswith("local:")
+        assert all(receipt["status"] == "reserved" for receipt in data["deliveries"].values())
+        prepared_outputs.append(prepared)
+        publish_outputs(prepared)
+        events.append("output")
+
+    async def send(proposal: PendingSource, token: str, chat: str, username: str) -> ProposalDelivery:
+        prepared = prepared_outputs[0]
+        assert output.read_text() == (f"discovery_pending_sha256={prepared.pending_sha}\n"
+                                      f"discovery_delivery_sha256={prepared.delivery_sha}\n")
+        assert events[:3] == ["pending", "reservation", "output"]
+        data = load_delivery(".cache")
+        receipt = data["deliveries"][proposal_binding(proposal)]
+        assert receipt["status"] == "unknown"
+        assert receipt["owner"] == data["batch"]["owner"]
+        expected_target = hashlib.sha256(json.dumps([token, chat, username]).encode()).hexdigest()
+        assert data["batch"]["target"] == expected_target
+        events.append("send")
+        return ProposalDelivery("confirmed", 42)
+
+    transport = AsyncMock(side_effect=send)
+    monkeypatch.setattr("digest.discovery.save_pending", persist_pending)
+    monkeypatch.setattr("digest.discovery.save_delivery", persist_delivery)
+    monkeypatch.setattr(reporting, "publish_discovery_prepared", report)
+    monkeypatch.setattr("digest.discovery.send_source_approval_message", transport)
+    if failure:
+        with pytest.raises(OSError):
+            await discover_sources("config.yaml", phase=phase)
+        transport.assert_not_awaited()
+        assert capsys.readouterr().out == ""
+        if failure != "output":
+            assert not output.exists()
+        else:
+            assert events == ["pending", "reservation"]
+        return
+    assert await discover_sources("config.yaml", phase=phase) == 0
+    assert events[:3] == ["pending", "reservation", "output"]
+    if phase == "all":
+        transport.assert_awaited_once()
+        assert json.loads(capsys.readouterr().out)["counts"]["confirmed"] == 1
+    else:
+        transport.assert_not_awaited()
+        assert json.loads(capsys.readouterr().out)["stage"] == "prepare"

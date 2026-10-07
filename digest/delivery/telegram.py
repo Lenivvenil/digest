@@ -218,6 +218,22 @@ async def _send_chunk(
                 await asyncio.sleep(2 ** attempt)
 
 
+async def send_status_message(text: str, *, disable_notification: bool = False) -> bool:
+    """Send a legacy notice/footer with the existing retry and fallback policy.
+
+    Missing credentials skip transport. The calling application decides whether
+    a transport error is an optional-notice failure or a publication warning.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return False
+    async with httpx.AsyncClient() as client:
+        await _send_chunk(client, f"https://api.telegram.org/bot{token}/sendMessage", chat_id,
+                          escape_markdownv2(text), disable_notification=disable_notification)
+    return True
+
+
 async def send_article_cards(
     articles_by_category: dict[str, list[Any]],
     config: Any,

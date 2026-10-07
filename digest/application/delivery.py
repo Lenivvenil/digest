@@ -40,7 +40,8 @@ class LegacyOutcomePolicy:
     """Transitional direct-run handoff, including its Markdown consumption rule.
 
     These required inputs are application context, not a persisted domain policy.
-    Remaining legacy scenario extraction is tracked in #147.
+    The legacy application supplies its collected state; decoupling mutable
+    feedback/scoring ownership remains staged work after #147-A.
     """
 
     outcome: ArticleDeliveryResult
