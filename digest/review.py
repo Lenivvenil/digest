@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import zip_longest
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from digest._sanitize import sanitize_article
@@ -184,6 +184,9 @@ def build_review_messages(
         "Each selection has evidence_id, reason (1-2 sentences, at most 600 characters), "
         "quote (an exact non-empty excerpt from title or excerpt, at most 200 characters), "
         "confidence (low, medium or high). Use known unique IDs only. "
+        'A selection has exactly this shape: {"evidence_id":"<supplied ID>","reason":"<brief reason>",'
+        '"quote":"<literal source text>","confidence":"high"}. Do not copy placeholder values. '
+        "limitations belongs only at the top level, never inside a selection. "
         "limitations is a list of at most 5 short strings. If selecting nothing, explain why in limitations. "
         "Keep all text concise to fit the existing output allowance. dispositions contains exactly one entry for "
         "EVERY supplied evidence_id. Each entry has evidence_id and status: "
@@ -361,6 +364,42 @@ def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, b
     return reason, cleaned[:32000], len(cleaned) > 32000
 
 
+def _groq_review_format() -> dict[str, Any]:
+    """Closed wire shape only; local validation still owns counts, IDs and exact quotes."""
+    def closed(properties: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "object", "properties": properties,
+                "required": list(properties), "additionalProperties": False}
+
+    text = {"type": "string"}
+    schema = closed({
+        "selections": {"type": "array", "items": closed({
+            "evidence_id": text, "reason": text, "quote": text,
+            "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        })},
+        "limitations": {"type": "array", "items": text},
+        "dispositions": {"type": "array", "items": {"anyOf": [
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["selected"]}}),
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["not_selected", "deferred"]},
+                    "reason": text}),
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["duplicate"]},
+                    "reason": text, "retained_id": text}),
+        ]}},
+    })
+    return {"type": "json_schema", "json_schema": {"name": "rss_selection_v1", "strict": True, "schema": schema}}
+
+
+def _review_usage(usage: dict[str, Any]) -> dict[str, int]:
+    """Retain allowlisted numeric diagnostics, never reasoning text or arbitrary headers."""
+    keys = {"prompt_tokens", "completion_tokens", "rate_limit_limit_requests", "rate_limit_remaining_requests",
+            "rate_limit_limit_tokens", "rate_limit_remaining_tokens"}
+    result = {key: value for key, value in usage.items() if key in keys and type(value) is int and value >= 0}
+    details = usage.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    if type(reasoning) is int and reasoning >= 0:
+        result["reasoning_tokens"] = reasoning
+    return result
+
+
 async def _review_slot(
     slot: str, model: ReviewModelConfig, bundle: EvidenceBundle,
     messages: list[dict[str, str]], config: Config,
@@ -379,11 +418,14 @@ async def _review_slot(
             )
         return result
 
+    options: dict[str, Any] = {}
+    if (model.provider, model.model) == ("groq", "openai/gpt-oss-120b"):
+        options = {"reasoning_effort": "low", "response_format": _groq_review_format()}
     try:
         text, usage = await complete(
             LLMRole.REVIEW_EVIDENCE, messages, config, temperature=0.2,
             provider_override=ProviderConfig(model.provider, model.model, ["review_evidence"]),
-            max_output_tokens=config.review.max_output_tokens,
+            max_output_tokens=config.review.max_output_tokens, **options,
         )
     except Exception as exc:
         result.error = type(exc).__name__  # Never retain response bodies or credentials.
@@ -394,8 +436,7 @@ async def _review_slot(
     result.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
     resolved_model = usage.get("resolved_model")
     result.resolved_model = resolved_model if isinstance(resolved_model, str) else None
-    result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
-                    and type(v) is int and v >= 0}
+    result.usage = _review_usage(usage)
     try:
         if finish_reason is not None and finish_reason not in {"stop", "STOP", "end_turn"}:
             raise ValueError("provider reported unfinished response")

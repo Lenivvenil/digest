@@ -60,15 +60,41 @@ def _request_timeout(default: float, requested: float | None) -> float:
     return min(default, requested)
 
 
+def _validate_review_output_controls(
+    provider: str, model: str, reasoning_effort: str | None, response_format: dict[str, Any] | None,
+) -> None:
+    """Keep opt-in review controls confined to the supported Groq model."""
+    if reasoning_effort is None and response_format is None:
+        return
+    if provider != "groq" or model != "openai/gpt-oss-120b":
+        raise ValueError("Review output controls require Groq openai/gpt-oss-120b")
+    if reasoning_effort is not None and reasoning_effort != "low":
+        raise ValueError("Review reasoning_effort must be low or None")
+    if response_format is not None:
+        schema = response_format.get("json_schema") if isinstance(response_format, dict) else None
+        if (not isinstance(response_format, dict) or response_format.get("type") != "json_schema"
+                or not isinstance(schema, dict) or not isinstance(schema.get("name"), str)
+                or not schema["name"].strip() or schema.get("strict") is not True
+                or not isinstance(schema.get("schema"), dict)):
+            raise ValueError("Review response_format requires a named strict JSON schema")
+
+
 def openai_request_body(
     model: str, messages: list[dict[str, str]], temperature: float,
     max_output_tokens: int | None = None, *, groq: bool = False,
+    reasoning_effort: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Share the complete wire payload with full-source admission accounting."""
+    _validate_review_output_controls("groq" if groq else "", model, reasoning_effort, response_format)
     body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
     if max_output_tokens is not None:
         token_field = "max_completion_tokens" if groq else "max_tokens"
         body[token_field] = max_output_tokens
+    if reasoning_effort is not None:
+        body["reasoning_effort"] = reasoning_effort
+    if response_format is not None:
+        body["response_format"] = response_format
     return body
 
 
@@ -82,9 +108,18 @@ async def _openai_compat_call(
     max_output_tokens: int | None = None,
     *,
     request_timeout_seconds: float | None = None,
+    reasoning_effort: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Single call to an OpenAI-compatible chat/completions endpoint."""
-    body = openai_request_body(model, messages, temperature, max_output_tokens, groq="api.groq.com" in base_url)
+    control_kwargs: dict[str, Any] = {}
+    if reasoning_effort is not None:
+        control_kwargs["reasoning_effort"] = reasoning_effort
+    if response_format is not None:
+        control_kwargs["response_format"] = response_format
+    body = openai_request_body(
+        model, messages, temperature, max_output_tokens, groq="api.groq.com" in base_url, **control_kwargs,
+    )
     resp = await client.post(
         f"{base_url}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -100,6 +135,15 @@ async def _openai_compat_call(
     if not text:
         raise ValueError(f"OpenAI-compat returned empty content: {str(data)[:200]}")
     usage: dict[str, Any] = dict(data.get("usage", {}))
+    if reasoning_effort is not None or response_format is not None:
+        for kind in ("limit", "remaining"):
+            for unit in ("requests", "tokens"):
+                value = resp.headers.get(f"x-ratelimit-{kind}-{unit}")
+                if value is not None and value.isascii() and value.isdecimal():
+                    try:
+                        usage[f"rate_limit_{kind}_{unit}"] = int(value)
+                    except ValueError:
+                        pass  # Oversized numeric headers must not invalidate a completed review.
     if isinstance(choices[0].get("finish_reason"), str):
         usage["finish_reason"] = choices[0]["finish_reason"]
     if isinstance(data.get("model"), str):
@@ -405,7 +449,10 @@ async def _call_provider(
     messages: list[dict[str, str]], temperature: float, max_output_tokens: int | None = None,
     *,
     request_timeout_seconds: float | None = None,
+    reasoning_effort: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
+    _validate_review_output_controls(provider.name, provider.model, reasoning_effort, response_format)
     if provider.name == "anthropic":
         env_name = "ANTHROPIC_API_KEY"
     elif provider.name == "gemini":
@@ -419,8 +466,8 @@ async def _call_provider(
     if not api_key:
         logger.warning("%s not set, skipping %s", env_name, provider.name)
         return None
-    timeout_kwargs = ({"request_timeout_seconds": request_timeout_seconds}
-                      if request_timeout_seconds is not None else {})
+    timeout_kwargs: dict[str, Any] = ({"request_timeout_seconds": request_timeout_seconds}
+                                      if request_timeout_seconds is not None else {})
     if provider.name == "anthropic":
         return await _anthropic_call(
             client, api_key, provider.model, messages, temperature, max_output_tokens, **timeout_kwargs,
@@ -429,9 +476,14 @@ async def _call_provider(
         return await _gemini_call(
             client, api_key, provider.model, messages, temperature, max_output_tokens, **timeout_kwargs,
         )
+    control_kwargs: dict[str, Any] = {}
+    if reasoning_effort is not None:
+        control_kwargs["reasoning_effort"] = reasoning_effort
+    if response_format is not None:
+        control_kwargs["response_format"] = response_format
     return await _openai_compat_call(
         client, _OPENAI_COMPAT[provider.name]["base_url"], api_key,
-        provider.model, messages, temperature, max_output_tokens, **timeout_kwargs,
+        provider.model, messages, temperature, max_output_tokens, **timeout_kwargs, **control_kwargs,
     )
 
 
@@ -555,10 +607,23 @@ async def complete(
     provider_override: Any | None = None,
     max_output_tokens: int | None = None,
     request_timeout_seconds: float | None = None,
+    reasoning_effort: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Bounded LLM calls. Explicit model slots never silently fall back."""
-    timeout_kwargs = ({"request_timeout_seconds": _request_timeout(120.0, request_timeout_seconds)}
-                      if request_timeout_seconds is not None else {})
+    control_kwargs: dict[str, Any] = {}
+    if reasoning_effort is not None or response_format is not None:
+        if role != LLMRole.REVIEW_EVIDENCE or provider_override is None:
+            raise ValueError("Review output controls require REVIEW_EVIDENCE and an explicit provider_override")
+        _validate_review_output_controls(
+            provider_override.name, provider_override.model, reasoning_effort, response_format,
+        )
+        if reasoning_effort is not None:
+            control_kwargs["reasoning_effort"] = reasoning_effort
+        if response_format is not None:
+            control_kwargs["response_format"] = response_format
+    timeout_kwargs: dict[str, Any] = ({"request_timeout_seconds": _request_timeout(120.0, request_timeout_seconds)}
+                                      if request_timeout_seconds is not None else {})
     providers = ([provider_override] if provider_override is not None
                  else _resolve_routed_providers(role, category, config))
     if not providers:
@@ -585,7 +650,7 @@ async def complete(
                 t0 = time.monotonic()
                 try:
                     result = await _call_provider(
-                        client, provider, messages, temperature, max_output_tokens, **timeout_kwargs,
+                        client, provider, messages, temperature, max_output_tokens, **timeout_kwargs, **control_kwargs,
                     )
                     if result is None:
                         break

@@ -524,3 +524,38 @@ reuses 16,000 characters as a new proposed archive policy, not a ranking thresho
 See the proposal for serialization bounds and the limits of truncated evidence. Old
 archives lack this evidence and cannot be retrospectively audited from hashes alone.
 This local proposal has not been accepted or deployed.
+
+### Groq GPT-OSS metadata-review output controls
+
+For the explicitly configured `groq/openai/gpt-oss-120b` review slot only, the
+proposed correction sends `reasoning_effort: low` and strict JSON Schema for the
+existing response shape. Other providers and models retain their existing request options; the clarified
+review prompt is shared by all review slots. Other roles retain their existing wire requests. There is no format-repair request, model switch or increased output
+allowance. The five-detail response cap, 4096 output tokens, ordinary fallback and
+all finish-reason, ID, quote and disposition checks remain in force.
+
+The schema uses required fields, closed objects and nested `anyOf` for selected,
+not-selected/deferred and duplicate disposition shapes. It forbids a per-selection
+`limitations` field; limitations belongs only at the top level. No unsupported
+`maxItems` or `maxLength` constraint is assumed: local validation still checks
+counts, text budgets, evidence membership and exact quotes. Strict structure does
+not verify relevance or factuality and does not prevent a length cutoff.
+
+The second Oct 7 failed response respected five detailed selections but added
+forbidden limitations inside each, then stopped during its sixteenth disposition.
+Its saved usage contains 4222 prompt and 4096 completion tokens; the historical
+reasoning breakdown is unknown. New diagnostics retain only a nonnegative integer
+`completion_tokens_details.reasoning_tokens`, when supplied, plus allowlisted
+numeric rate-limit values. Missing or invalid values stay absent. Reasoning text,
+arbitrary headers and credentials are never copied into review diagnostics.
+
+The compact strict-schema controls add 1327 serialized wire characters. This is
+not a token count or proof of quota headroom. Ordinary RSS selection currently has
+request-count/pacing guards, not the experimental source-reading token preflight.
+The public 8K TPM profile is not verified remaining account quota; actual server
+usage and rate-limit diagnostics must be inspected after any separately authorized
+run. Output allowance and provider quotas are not increased.
+
+Provider references: [reasoning controls](https://console.groq.com/docs/reasoning),
+[strict structured output](https://console.groq.com/docs/structured-outputs), and
+[completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
