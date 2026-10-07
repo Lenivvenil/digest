@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -252,8 +252,9 @@ async def _collect_and_select(
 ) -> SelectedPreparation | RunStats:
     """Recover accepted work first; otherwise acquire one bounded candidate selection."""
     from digest._util import cleanup_stale_tmp
+    from digest.adapters.storage.feedback import save_feedback
+    from digest.domain.feedback.rules import get_source_feedback_score
     from digest.edition_runtime import resume_preparation
-    from digest.feedback import get_source_feedback_score, save_feedback
     from digest.radar import AllFeedsFailedError, collect
     from digest.reading_preparation import reading_deadline, setup_reading_budget
     from digest.source_scorer import (
@@ -284,7 +285,7 @@ async def _collect_and_select(
 
     feedback_scores = {}
     for source in config.enabled_sources:
-        score = get_source_feedback_score(feedback_store, source.name)
+        score = get_source_feedback_score(feedback_store, source.name, now=datetime.now(tz=timezone.utc))
         if score is not None:
             feedback_scores[source.name] = score
     if config.adaptive.enabled:

@@ -177,7 +177,7 @@ async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying
             raise OSError("synthetic application write failure")
         atomic_json_write(path, data)
 
-    monkeypatch.setattr("digest.feedback.atomic_json_write", fail_write)
+    monkeypatch.setattr("digest.adapters.storage.feedback.atomic_json_write", fail_write)
     monkeypatch.setattr("digest.adapters.storage.delivery_state.atomic_json_write", fail_write)
     with respx.mock() as router:
         route = router.post("https://api.telegram.org/bottest-token/sendMessage").mock(

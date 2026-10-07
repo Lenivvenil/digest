@@ -425,7 +425,7 @@ async def test_collect_feedback_per_article_unknown_hash_records_empty_source(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     _poll([_callback(4001, "fb:a:g:deadbeef")])
-    with caplog.at_level(logging.WARNING, logger="digest.feedback"):
+    with caplog.at_level(logging.WARNING, logger="digest.adapters.telegram.feedback"):
         result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.ratings == []
     assert result.last_poll_counts["unknown_article"] == 1
@@ -496,7 +496,7 @@ async def test_collect_feedback_handles_failed_answer_callback(
         httpx.Response(200, json={"ok": False, "description": "query expired"}),
         httpx.Response(200, json={"ok": True}),
     ])
-    with caplog.at_level(logging.WARNING, logger="digest.feedback"):
+    with caplog.at_level(logging.WARNING, logger="digest.adapters.telegram.feedback"):
         counts = await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
     assert counts == {"attempted": 2, "ack_ok": 0, "ack_failed": 2}
     durable = load_feedback(str(tmp_path), strict=True)
@@ -517,7 +517,7 @@ async def test_collect_feedback_handles_failed_answer_callback(
 
     respx.post(f"{API}/answerCallbackQuery").mock(side_effect=slow_answer)
     real_timeout = asyncio.timeout
-    with patch("digest.feedback.asyncio.timeout", side_effect=lambda _: real_timeout(0.001)):
+    with patch("digest.adapters.telegram.feedback.asyncio.timeout", side_effect=lambda _: real_timeout(0.001)):
         counts = await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
     assert counts == {"attempted": 3, "ack_ok": 0, "ack_failed": 3}
     durable = load_feedback(str(tmp_path), strict=True)
@@ -578,7 +578,7 @@ async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) ->
     save_pending([proposal], str(tmp_path), strict=True)
     _poll([_callback(1), _message(2, "/start vote_g_abcd1234", 2),
            _message(3, f"/source ok {proposal.source_hash}", 3)])
-    with patch("digest.feedback.atomic_json_write", side_effect=OSError("disk full")):
+    with patch("digest.adapters.storage.feedback.atomic_json_write", side_effect=OSError("disk full")):
         with pytest.raises(OSError):
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
     assert store == original
@@ -937,7 +937,7 @@ async def test_source_decisions_reject_unavailable_proposals(
         else _message(1, f"/start source_ok_{hash8}" if transport == "start" else f"/source ok {hash8}", 1)
     )
     _poll([update])
-    with patch("digest.feedback.load_pending", return_value=pending):
+    with patch("digest.application.feedback.load_pending", return_value=pending):
         result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.source_decisions == {} and result.source_decision_bindings == {}
     assert result.last_poll_counts["unknown_source"] == 1

@@ -103,3 +103,9 @@ barrier remain compatible.
 settings from explicit lazy model-execution holders, preserved copy/reset and budget
 policy, and the deliberate internal helper signature migration. Release evidence
 and editorial acceptance remain separately tracked.
+
+[0021](0021-catalog-feedback-boundaries.md) records #147-C proposal/feedback
+rules, storage codecs, Telegram protocol and explicit collect/persist/ack ownership.
+Exact proposal revalidation, persisted bytes, write order and failure behavior remain
+compatible. Adaptive lifecycle and broader discovery policy remain separate work;
+release evidence, source activation and editorial acceptance remain separate.

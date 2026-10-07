@@ -535,7 +535,7 @@ async def test_delivery_commits_only_confirmed_articles(
             "digest.delivery.send_article_cards": AsyncMock(side_effect=send_stub),
             "digest.delivery.send_counter_signals": AsyncMock(),
             "digest.application.run_state.process_pending_approvals": MagicMock(),
-            "digest.feedback.load_feedback": MagicMock(return_value=feedback),
+            "digest.adapters.storage.feedback.load_feedback": MagicMock(return_value=feedback),
             "digest.source_scorer.load_stats": MagicMock(return_value=source_stats),
             "digest.source_scorer.save_stats": MagicMock(),
         }
@@ -686,7 +686,7 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
     card = ArticleSummary(article.title, article.link, "test", "tech", "Canonical summary.")
     with (
         patch("digest.config.load_config", return_value=cfg),
-        patch("digest.feedback.collect_feedback", side_effect=collect_vote) as poll,
+        patch("digest.application.feedback.collect_feedback", side_effect=collect_vote) as poll,
         patch("digest.radar.collect", AsyncMock(return_value=({"tech": [article]}, {}))) as collect,
         patch("digest.application.analysis.analyze_articles",
               AsyncMock(return_value=([_CategorySummary()], None, [card], None))),
@@ -765,9 +765,9 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
             raise OSError("synthetic write failure")
 
     with (
-        patch("digest.discovery.load_pending", return_value=[fresh, failed, stale, wrong]),
+        patch("digest.adapters.storage.pending_sources.load_pending", return_value=[fresh, failed, stale, wrong]),
         patch("digest.discovery.add_source_to_config", side_effect=apply) as add,
-        patch("digest.discovery.save_pending"),
+        patch("digest.adapters.storage.pending_sources.save_pending"),
     ):
         _process_pending_approvals("config.yaml", str(tmp_path), store)
     assert [call.args[1] for call in add.call_args_list] == [fresh, failed]
@@ -878,9 +878,9 @@ def test_pending_decision_cannot_authorize_a_different_proposal(case: str, tmp_p
         original = deepcopy(store)
     pending = [proposal, proposal] if case == "duplicate" else [proposal]
     with (
-        patch("digest.discovery.load_pending", return_value=pending),
+        patch("digest.adapters.storage.pending_sources.load_pending", return_value=pending),
         patch("digest.discovery.add_source_to_config") as add,
-        patch("digest.discovery.save_pending") as save,
+        patch("digest.adapters.storage.pending_sources.save_pending") as save,
     ):
         _process_pending_approvals("config.yaml", str(tmp_path), store)
     add.assert_not_called()
@@ -918,7 +918,8 @@ def test_source_application_io_failure_preserves_durable_decision(failure: str, 
 
     targets = {
         "backup": "digest.discovery.shutil.copy2", "config": "pathlib.Path.replace",
-        "pending": "digest.discovery.atomic_json_write", "feedback": "digest.feedback.atomic_json_write",
+        "pending": "digest.adapters.storage.pending_sources.atomic_json_write",
+        "feedback": "digest.adapters.storage.feedback.atomic_json_write",
     }
     with patch(targets[failure], autospec=True, side_effect=(
         fail_config_replace if failure == "config" else OSError("synthetic failure")
@@ -972,7 +973,9 @@ async def test_source_application_precedes_collection_and_survives_unsuccessful_
         stack.enter_context(patch("digest.application.analysis.analyze_articles",
               AsyncMock(return_value=([], None, [], None))))
         if failure == "pending_write":
-            stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
+            stack.enter_context(patch(
+                "digest.adapters.storage.pending_sources.atomic_json_write", side_effect=OSError("disk full"),
+            ))
         if failure == "feeds":
             with pytest.raises(AllFeedsFailedError):
                 await run("config.yaml", False, False, False, feedback_precollected=True)
@@ -1042,7 +1045,7 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
         patch("digest.delivery.telegram.send_compact_issue", AsyncMock(side_effect=sender)) as send,
         patch("digest.delivery.send_article_cards", AsyncMock()) as old_send,
         patch("digest.application.legacy._legacy_delivery_extras", AsyncMock()) as extra,
-        patch("digest.feedback.save_feedback", side_effect=save),
+        patch("digest.adapters.storage.feedback.save_feedback", side_effect=save),
     ):
         if case in {"persist_failure", "corrupt_feedback"}:
             with pytest.raises(OSError if case == "persist_failure" else ValueError):
