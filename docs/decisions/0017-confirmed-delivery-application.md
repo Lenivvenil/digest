@@ -92,8 +92,8 @@ failures at every prepared state write before receipt application. Transport reg
 retain unknown/unapplied holds and no replay. Check results belong to the implementing
 change, separately from product acceptance.
 
-`delivery/edition.py` still combines receipt/claim storage and transport;
-`delivery/telegram.py` still renders and sends. Feedback and source-scoring modules
+`delivery/edition.py` still combines receipt/claim storage and transport. The later
+#147 continuation below separates Telegram rendering from legacy/direct/post-delivery transport. Feedback and source-scoring modules
 still mix policies and adapters: `FeedbackStore`, `SourceStats` and `SourceStateStore`
 remain there, with type-only source-state imports in the new storage adapter.
 `main` retains legacy/discovery orchestration. This slice does not complete the
@@ -103,3 +103,36 @@ The scoped #146 ownership extraction is recorded separately in
 policies, receipt boundaries and remaining adapter debts unchanged.
 Rollback uses a compatible reviewed code revert or prior engine pin, retaining all
 runtime state and receipts without a format migration or state reset.
+
+## Telegram presentation and transport continuation
+
+Local first delivery-ownership slice under #147, 2026-10-07. This is an implementation
+record, not merge, rollout, complete #147 acceptance or editorial acceptance.
+
+Pure `presentation/telegram.py` now owns card, compact and supplementary rendering,
+Markdown encoding, deep-link buttons and chunk/range coverage. The unchanged shared
+signal text and lossless splitter live in `presentation/supplement.py`. Prepared
+preflight and edition freeze import the renderer directly. Compatible Telegram and
+supplement imports remain, and the delivery package's existing exports are lazy to
+avoid loading HTTP/archive owners when importing a pure supplement helper.
+
+`adapters/telegram/delivery.py` owns legacy, direct-compact and post-delivery Telegram
+protocols. Their distinct acceptance, retry, fallback, deadline and notification
+policies are retained in the [architecture effect matrix](../ARCHITECTURE.md#stage-5-first-telegram-delivery-ownership-slice).
+Legacy cards/status accept HTTP success and retain three attempts and HTTP-400
+plaintext fallback. Direct compact accepts HTTP 200 plus `ok: true` with a 30-second
+bound and no retry/fallback. Post-delivery requires HTTP success and `ok: true`, sends
+silent chunks once within 30 seconds, and reports failures to the existing unknown
+marker. These weaker receipts do not replace prepared delivery's positive message-ID
+and matching-chat validation. All early credential/empty-selection skips remain.
+
+`post_delivery.py` still owns its persisted marker and archive ordering, model and
+translation work, compact archive-only exit and final outcome. It delegates only the
+Telegram send. The full-source coverage string remains owned by the evidence stage;
+the adapter compares it and passes a boolean to the pure localized renderer.
+
+The prepared claim/receipt values, codecs, state transitions, writes and transport
+remain together in `delivery/edition.py`, except its renderer import. Its separation
+from storage and application coordination is explicit remaining #147 work. No schema,
+hash, receipt, retained state, provider call or retry policy changes. Rollback remains
+a compatible code revert or engine pin, without resetting state or resending messages.

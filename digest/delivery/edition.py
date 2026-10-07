@@ -21,8 +21,8 @@ import httpx
 
 from digest.delivery.issue_guard import ISSUE_FILE, _safe
 from digest.delivery.issue_guard import _read as _read_legacy
-from digest.delivery.telegram import _render_compact_issue
 from digest.domain.delivery.outcomes import ArticleCoverage, IssueDeliveryResult, project_issue_coverage
+from digest.presentation.telegram import render_compact_issue
 from digest.radar.summarizer import ArticleSummary
 
 READY_FILE = "prepared_edition.json"
@@ -330,7 +330,7 @@ def prepare_edition(
             raise ValueError("An eligible ready edition already exists; publishing blocked.")
     elif (cache / CLAIM_FILE).exists() or (cache / RECEIPTS_FILE).exists():
         raise ValueError("Orphaned edition claim or receipts; publishing blocked.")
-    chunks, ranges = _render_compact_issue(articles, config, notice)
+    chunks, ranges = render_compact_issue(articles, config, notice)
     end = start + timedelta(days=1)
     payloads = []
     for chunk in chunks:

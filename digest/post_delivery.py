@@ -22,8 +22,9 @@ import httpx
 
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.telegram.delivery import send_post_delivery_supplement
 from digest.config import Config, load_config
-from digest.delivery.supplement import signal_text, split_supplement
+from digest.presentation.supplement import signal_text
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_resume import _safe_path
 from digest.review_trial import _ALLOWED_MODELS
@@ -33,8 +34,6 @@ if TYPE_CHECKING:
     from digest.review import EvidenceBundle
     from digest.review_checkpoint import FullSourceEvidence
 
-
-_SUPPLEMENT_DISPATCH_SECONDS = 30.0
 
 def _paths(checkpoint: Path) -> tuple[Path, Path, Path]:
     if not checkpoint.name.endswith('.review.json'):
@@ -115,16 +114,6 @@ def _render_result(
     return '\n'.join(lines) + '\n'
 
 
-def _coverage_notice(result: EvidenceIrritatorResult, russian: bool) -> str:
-    from digest.irritator.evidence_stage import FULL_SOURCE_COVERAGE
-
-    if result.coverage == FULL_SOURCE_COVERAGE:
-        return ('Охват ограничен выбранными отрывками полных статей; это не независимая проверка всех утверждений.'
-                if russian else 'Limited coverage; selected full-source passages, not verification of every claim.')
-    return ('Охват ограничен; RSS-выдержки, не полные статьи.' if russian
-            else 'Limited coverage; RSS excerpts, not full articles.')
-
-
 def _source_provenance(
     checkpoint: Path, bundle: EvidenceBundle, config: Config, content: bytes,
 ) -> tuple[FullSourceEvidence | None, bool, str]:
@@ -141,37 +130,7 @@ def _source_provenance(
 
 
 async def _send_supplement(result: EvidenceIrritatorResult, config: Config, *, notice: str = "") -> str:
-    from digest.delivery.telegram import escape_markdownv2
-
-    token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
-    if not config.telegram.enabled or not token or not chat:
-        return 'not_configured'
-    russian = config.radar.language == 'ru'
-    header = ('Ирритатор: отдельная проверка одного нарратива' if russian
-              else 'Irritator: separate check of one narrative')
-    outcome = {'complete': 'проверка выполнена', 'empty': 'проверка выполнена, контрсигналов не найдено',
-               'incomplete': 'проверка неполная', 'error': 'проверка не выполнена'}
-    status = outcome.get(result.status, 'проверка неполная') if russian else result.status
-    lines = [header, status, _coverage_notice(result, russian)]
-    if result.narratives:
-        label = "Проверяем: " if russian else "Narrative checked: "
-        lines.extend(label + narrative.claim for narrative in result.narratives)
-    lines.extend(signal_text(ranked, config.radar.language) for ranked in result.ranked_signals)
-    if notice:
-        lines.append(notice)
-    chunks = split_supplement('\n\n'.join(lines), escape_markdownv2)
-    # Never retry an uncertain POST: Telegram has no idempotency key for sendMessage.
-    async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
-        for text in chunks:
-            response = await client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
-                'chat_id': chat, 'text': text, 'parse_mode': 'MarkdownV2',
-                'disable_notification': True,
-            }, timeout=30.0)
-            response.raise_for_status()
-            body = response.json()
-            if not isinstance(body, dict) or body.get('ok') is not True:
-                raise ValueError('Telegram did not confirm the supplement.')
-    return 'sent'
+    return await send_post_delivery_supplement(result, config, notice=notice)
 
 
 async def execute_post_delivery(

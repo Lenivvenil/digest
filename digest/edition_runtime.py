@@ -61,11 +61,11 @@ async def finish_preparation(
     from digest.closing import attribute_closing_card
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
-    from digest.delivery.telegram import _render_compact_issue
     from digest.domain.catalog.occurrences import occurrence_sha256
     from digest.irritator import IrritatorStatus
     from digest.preparation import clear_preparation
     from digest.presentation.source_attribution import attribute_source_card
+    from digest.presentation.telegram import render_compact_issue
     from digest.translation import ClosingPresentation, translate_publication_with_closing
 
     stats = _stats("no_ready" if selection_complete else "selection_incomplete", feedback=feedback)
@@ -110,7 +110,7 @@ async def finish_preparation(
              for card in cards]
     # Never discard a required main card to satisfy optional placement. Hold the
     # accepted preparation before archive/freeze/send when its credit would split.
-    _, main_ranges = _render_compact_issue(cards, config, text)
+    _, main_ranges = render_compact_issue(cards, config, text)
     if any(item.full_hash in main_attribution and len(item.covering_chunks) != 1 for item in main_ranges):
         raise ValueError("Main source attribution spans delivery chunks; accepted preparation retained. "
                          "Review its presentation before resuming; no article was sent or discarded.")
@@ -123,7 +123,7 @@ async def finish_preparation(
         else:
             assembled = [*cards, attributed]
             try:
-                _, ranges = _render_compact_issue(assembled, config, text)
+                _, ranges = render_compact_issue(assembled, config, text)
             except ValueError as exc:
                 logger.warning("Closing presentation omitted after render preflight: %s", exc)
                 closing_presentation = replace(

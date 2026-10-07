@@ -49,7 +49,7 @@ async def test_both_supplement_paths_keep_all_archived_signal_content(monkeypatc
     result = EvidenceIrritatorResult(schema_version=1, bundle_id="bundle", status="complete", ranked_signals=signals)
     archived = _render_result(result)
     legacy_archive = _build_counter_signals_section(signals)
-    with respx.mock, patch("digest.delivery.telegram.asyncio.sleep", AsyncMock()):
+    with respx.mock, patch("digest.adapters.telegram.delivery.asyncio.sleep", AsyncMock()):
         route = respx.post(re.compile(r"api\.telegram\.org")).mock(return_value=httpx.Response(200, json={"ok": True}))
         status = IrritatorStatus("One source failed; retained valid counter-evidence", "incomplete")
         await send_counter_signals(signals, config, status)
@@ -87,12 +87,12 @@ async def test_impossible_url_fails_before_either_sender_contacts_network(monkey
 async def test_legacy_supplement_dispatch_has_total_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-    monkeypatch.setattr("digest.delivery.telegram._SUPPLEMENT_DISPATCH_SECONDS", 0.02)
+    monkeypatch.setattr("digest.adapters.telegram.delivery._SUPPLEMENT_DISPATCH_SECONDS", 0.02)
 
     async def stalled_send(*args: object, **kwargs: object) -> None:
         await asyncio.Event().wait()
 
-    with patch("digest.delivery.telegram._send_chunk", side_effect=stalled_send) as sender:
+    with patch("digest.adapters.telegram.delivery._send_chunk", side_effect=stalled_send) as sender:
         with pytest.raises(TimeoutError):
             await send_counter_signals([make_ranked_signal(reasoning="long " * 3000)], fixture_config())
     sender.assert_awaited_once()

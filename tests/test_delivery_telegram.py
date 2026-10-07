@@ -144,7 +144,7 @@ class TestSendChunk:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sleep = AsyncMock()
-        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", sleep)
+        monkeypatch.setattr("digest.adapters.telegram.delivery.asyncio.sleep", sleep)
         api_url = "https://api.telegram.org/botfake-token/sendMessage"
 
         with respx.mock:
@@ -164,7 +164,7 @@ class TestSendChunk:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sleep = AsyncMock()
-        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", sleep)
+        monkeypatch.setattr("digest.adapters.telegram.delivery.asyncio.sleep", sleep)
         api_url = "https://api.telegram.org/botfake-token/sendMessage"
 
         with respx.mock:
@@ -322,7 +322,7 @@ def _make_top(
 class TestSendArticleCards:
     @pytest.fixture(autouse=True)
     def no_sleep(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("digest.delivery.telegram.asyncio.sleep", AsyncMock())
+        monkeypatch.setattr("digest.adapters.telegram.delivery.asyncio.sleep", AsyncMock())
 
     async def test_without_username_sends_command_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -554,7 +554,7 @@ class TestSendCompactIssue:
     async def test_lossless_shared_and_spanning_chunks_with_indexed_votes(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 240)
+        monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 240)
         long_url = "https://example.com/" + "path_" * 24 + "?a=1&b=2"
         top = [
             _make_top(title="One", link="https://a.test/1", summary="First.", source="A"),
@@ -621,7 +621,7 @@ class TestSendCompactIssue:
         self, monkeypatch: pytest.MonkeyPatch,
         second_response: httpx.Response | Exception, outcome: str,
     ) -> None:
-        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 200)
+        monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 200)
         top = [
             _make_top(title="First", link="https://a.test/1", summary="Accepted", source="A"),
             _make_top(title="Spanning", link="https://a.test/2", summary="x" * 800, source="B"),
@@ -647,7 +647,7 @@ class TestSendCompactIssue:
     async def test_final_notice_failure_does_not_complete_issue(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("digest.delivery.telegram._SPLIT_LIMIT", 200)
+        monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 200)
         top = [_make_top(title="Article", link="https://a.test/1", summary="Complete", source="A")]
         config = self.config()
         notice = "n" * 300
@@ -689,7 +689,7 @@ class TestSendCompactIssue:
     ) -> None:
         import asyncio
 
-        monkeypatch.setattr("digest.delivery.telegram._COMPACT_DISPATCH_SECONDS", 0.01)
+        monkeypatch.setattr("digest.adapters.telegram.delivery._COMPACT_DISPATCH_SECONDS", 0.01)
         attempted = 0
 
         async def delayed_response(request: httpx.Request) -> httpx.Response:
@@ -742,3 +742,63 @@ class TestSendCompactIssue:
         assert "reply_markup" not in article_payload
         assert article_hash(top[0].title, top[0].link)[:8] in article_payload["text"]
         assert article_payload["text"].count("/vote g HASH") == 1
+
+
+def test_pure_rendering_and_supplement_imports_do_not_load_transport() -> None:
+    import subprocess
+    import sys
+
+    code = r"""
+import sys
+from digest.delivery.supplement import split_supplement
+from digest.presentation.telegram import escape_markdownv2
+assert split_supplement('Pure *copy*', escape_markdownv2) == [r'Pure \*copy\*']
+for name in sys.modules:
+    assert not name.startswith(('httpx', 'digest.adapters', 'digest.config',
+                                'digest.radar', 'digest.irritator', 'digest.post_delivery'))
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)
+
+
+def test_delivery_compatibility_exports_keep_their_actual_owner_identity() -> None:
+    from digest import delivery
+    from digest.adapters.telegram import delivery as transport
+    from digest.delivery import markdown, supplement, telegram
+    from digest.domain.delivery import outcomes
+    from digest.presentation import supplement as supplement_view
+    from digest.presentation import telegram as view
+
+    assert delivery.ArticleDeliveryResult is telegram.ArticleDeliveryResult is outcomes.ArticleDeliveryResult
+    assert telegram.IssueDeliveryResult is outcomes.IssueDeliveryResult
+    assert delivery.write_digest is markdown.write_digest
+    assert delivery.send_article_cards is telegram.send_article_cards is transport.send_article_cards
+    assert delivery.send_counter_signals is telegram.send_counter_signals is transport.send_counter_signals
+    assert telegram.send_compact_issue is transport.send_compact_issue
+    assert telegram.send_status_message is transport.send_status_message
+    assert telegram.escape_markdownv2 is view.escape_markdownv2
+    assert telegram.to_markdownv2 is view.to_markdownv2
+    assert telegram.split_message is view.split_message
+    assert telegram._render_compact_issue is view.render_compact_issue
+    assert supplement.signal_text is supplement_view.signal_text
+    assert supplement.split_supplement is supplement_view.split_supplement
+
+
+@pytest.mark.asyncio
+async def test_legacy_markdown_fallback_retains_payload_and_http_only_acceptance() -> None:
+    api_url = "https://api.telegram.org/botfake-token/sendMessage"
+    keyboard = {"inline_keyboard": [[{"text": "Vote", "url": "https://t.me/example?start=vote_g_abcd"}]]}
+    with respx.mock:
+        route = respx.post(api_url).mock(side_effect=[
+            httpx.Response(400), httpx.Response(200, json={"ok": False}),
+        ])
+        async with httpx.AsyncClient() as client:
+            await _send_chunk(client, api_url, "123", r"A \*qualified\* point", True, keyboard)
+    assert route.call_count == 2
+    first, fallback = [json.loads(call.request.content) for call in route.calls]
+    assert first == {
+        "chat_id": "123", "text": r"A \*qualified\* point", "parse_mode": "MarkdownV2",
+        "disable_notification": True, "reply_markup": keyboard,
+    }
+    assert fallback == {
+        "chat_id": "123", "text": "A *qualified* point", "disable_notification": True, "reply_markup": keyboard,
+    }

@@ -59,7 +59,7 @@ async def test_sender_uses_frozen_payload_without_rendering_or_config(
 ) -> None:
     manifest, ready, claim = prepare(tmp_path)
     renderer = Mock(side_effect=AssertionError("sender rendered"))
-    monkeypatch.setattr(edition, "_render_compact_issue", renderer)
+    monkeypatch.setattr(edition, "render_compact_issue", renderer)
     route = respx.post(API).mock(return_value=success())
     result = await edition.send_prepared_edition(
         ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW

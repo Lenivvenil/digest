@@ -95,8 +95,10 @@ agent-only design.
 │   │   ├── ranker.py               # score counter-signals for relevance
 │   │   └── sources/                # multi-platform search adapters
 │   │       ├── arxiv.py, devto.py, hackernews.py, lobsters.py, reddit.py
-│   └── delivery/            # Phase 6: Output distribution
-│       ├── telegram.py      # Telegram Bot API, MarkdownV2, voting buttons
+│   ├── presentation/        # Pure publication copy, escaping and chunk coverage
+│   ├── adapters/telegram/   # Concrete Telegram protocols
+│   └── delivery/            # Compatible distribution imports; prepared receipt/storage owner
+│       ├── telegram.py      # Compatible Telegram presentation/transport exports
 │       └── markdown.py      # Obsidian markdown file generation
 ├── tests/
 │   ├── __init__.py

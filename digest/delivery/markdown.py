@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from digest._util import atomic_json_write
-from digest.delivery.supplement import signal_text
+from digest.presentation.supplement import signal_text
 
 if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
