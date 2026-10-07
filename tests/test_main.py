@@ -766,7 +766,7 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
 
     with (
         patch("digest.adapters.storage.pending_sources.load_pending", return_value=[fresh, failed, stale, wrong]),
-        patch("digest.discovery.add_source_to_config", side_effect=apply) as add,
+        patch("digest.adapters.storage.source_config.add_source_to_config", side_effect=apply) as add,
         patch("digest.adapters.storage.pending_sources.save_pending"),
     ):
         _process_pending_approvals("config.yaml", str(tmp_path), store)
@@ -810,9 +810,11 @@ async def test_discovery_persists_unique_proposals_before_sending_instructions(
             f"FEED|{url}|tech|New\nFEED|{url}|tech|Duplicate", None,
         ))))
         stack.enter_context(patch("digest.discovery_feed.validate_feed_url", AsyncMock(return_value=url)))
-        sent = stack.enter_context(patch("digest.discovery.send_source_approval_message", side_effect=send))
+        sent = stack.enter_context(patch(
+            "digest.adapters.telegram.discovery.send_source_approval_message", side_effect=send))
         if write_fails:
-            stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
+            stack.enter_context(patch(
+                "digest.adapters.storage.discovery.atomic_json_write", side_effect=OSError("disk full")))
             with pytest.raises(OSError):
                 await discover_sources("config.yaml")
             sent.assert_not_called()
@@ -841,7 +843,7 @@ def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path
         source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
     )
     save_feedback(store, str(tmp_path), strict=True)
-    with patch("digest.discovery.add_source_to_config") as add:
+    with patch("digest.adapters.storage.source_config.add_source_to_config") as add:
         _process_pending_approvals("config.yaml", str(tmp_path), store)
     add.assert_not_called()
     assert load_pending(str(tmp_path)) == []
@@ -879,7 +881,7 @@ def test_pending_decision_cannot_authorize_a_different_proposal(case: str, tmp_p
     pending = [proposal, proposal] if case == "duplicate" else [proposal]
     with (
         patch("digest.adapters.storage.pending_sources.load_pending", return_value=pending),
-        patch("digest.discovery.add_source_to_config") as add,
+        patch("digest.adapters.storage.source_config.add_source_to_config") as add,
         patch("digest.adapters.storage.pending_sources.save_pending") as save,
     ):
         _process_pending_approvals("config.yaml", str(tmp_path), store)
@@ -917,7 +919,7 @@ def test_source_application_io_failure_preserves_durable_decision(failure: str, 
         return original_replace(path, target)
 
     targets = {
-        "backup": "digest.discovery.shutil.copy2", "config": "pathlib.Path.replace",
+        "backup": "digest.adapters.storage.source_config.shutil.copy2", "config": "pathlib.Path.replace",
         "pending": "digest.adapters.storage.pending_sources.atomic_json_write",
         "feedback": "digest.adapters.storage.feedback.atomic_json_write",
     }
@@ -1105,7 +1107,7 @@ async def test_discovery_legacy_batch_pair_barrier_receipts_and_no_reoffer(tmp_p
     with (patch("digest.config.load_config", return_value=config),
           patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
           patch("digest.llm.complete", AsyncMock(return_value=("", {}))) as model,
-          patch("digest.discovery.send_source_approval_message", AsyncMock(side_effect=[
+          patch("digest.adapters.telegram.discovery.send_source_approval_message", AsyncMock(side_effect=[
               ProposalDelivery("confirmed", 42), ProposalDelivery("unknown"), ProposalDelivery("rejected"),
           ])) as send):
         assert await discover_sources("config.yaml", phase="prepare") == 0
@@ -1163,7 +1165,7 @@ async def test_discovery_reserved_before_crash_holds_future_run(tmp_path, monkey
     with (patch("digest.config.load_config", return_value=config),
           patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
           patch("digest.llm.complete", AsyncMock(side_effect=RuntimeError("unavailable"))),
-          patch("digest.discovery.send_source_approval_message", AsyncMock()) as send):
+          patch("digest.adapters.telegram.discovery.send_source_approval_message", AsyncMock()) as send):
         await discover_sources("config.yaml", phase="prepare")
         assert len(load_delivery(".cache")["batch"]["bindings"]) == 1
         assert load_delivery(".cache")["prepare_counts"]["generation_failed"] == 1

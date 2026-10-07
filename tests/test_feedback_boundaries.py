@@ -36,7 +36,7 @@ def _imports(path: Path) -> list[tuple[int, str]]:
 
 @pytest.mark.parametrize("relative", [
     "domain/catalog/proposals.py", "domain/catalog/sources.py", "domain/catalog/source_rules.py",
-    "domain/feedback/values.py", "domain/feedback/rules.py",
+    "domain/feedback/values.py", "domain/feedback/rules.py", "domain/catalog/exploration.py",
 ])
 def test_feedback_policy_imports_no_effect_owner(relative: str) -> None:
     forbidden = (
@@ -57,8 +57,9 @@ def test_feedback_policy_imports_no_effect_owner(relative: str) -> None:
     assert not effects, "Policy must receive time and state rather than read effects"
 
 
-def test_telegram_protocol_does_not_read_or_write_persistent_state() -> None:
-    path = ROOT / "adapters/telegram/feedback.py"
+@pytest.mark.parametrize("relative", ["adapters/telegram/feedback.py", "adapters/telegram/discovery.py"])
+def test_telegram_protocol_does_not_read_or_write_persistent_state(relative: str) -> None:
+    path = ROOT / relative
     forbidden = (
         "digest.adapters.storage", "digest.application", "digest.discovery", "digest.feedback", "pathlib",
     )
@@ -77,6 +78,22 @@ def test_telegram_protocol_does_not_read_or_write_persistent_state() -> None:
 
 
 def test_compatibility_exports_preserve_owner_identity() -> None:
+    from digest.adapters.storage import discovery as discovery_storage
+    from digest.adapters.storage import source_config
+    from digest.adapters.telegram import discovery as discovery_telegram
+    from digest.application import discovery as discovery_application
+    from digest.domain.catalog import exploration
+
+    assert discovery.ProposalDelivery is exploration.ProposalDelivery
+    assert discovery.load_delivery is discovery_storage.load_delivery
+    assert discovery.save_delivery is discovery_storage.save_delivery
+    assert discovery.add_source_to_config is source_config.add_source_to_config
+    assert discovery.send_source_approval_message is discovery_telegram.send_source_approval_message
+    assert discovery.record_source_history is discovery_application.record_source_history
+    assert discovery.prune_discovery_state is discovery_application.prune_discovery_state
+    assert discovery.prepare_pending_offers is discovery_application.prepare_pending_offers
+    assert discovery.send_reserved_proposals is discovery_application.send_reserved_proposals
+    assert discovery.select_exploration_area is exploration.select_exploration_area
     assert discovery.PendingSource is proposals.PendingSource
     assert discovery.source_hash is proposals.source_hash
     assert discovery.proposal_binding is proposals.proposal_binding

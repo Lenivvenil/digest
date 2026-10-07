@@ -41,9 +41,15 @@ changes; this local implementation is not merge/deployment or editorial acceptan
 
 The earlier hotspot references to runtime `apply_trial_decisions()` editing YAML
 are historical: trial outcomes live in `SourceStateStore` under ADR0003. Approved
-source additions still edit YAML through discovery. Discovery's generation,
-rotation/cooldowns, history, delivery metadata and YAML responsibilities remain
-unextracted and are a separate next slice. Broader historical policy/owner tables
+source additions still edit YAML, now through `adapters/storage/source_config.py`.
+The local discovery continuation separates pure exploration/pruning/retry/reservation
+rules into `domain/catalog/exploration.py`, metadata into `adapters/storage/discovery.py`
+and approval transport into `adapters/telegram/discovery.py`. `application/discovery.py`
+owns ordered effects and each original decision-time observation; `discovery.py` keeps
+compatible exports. Feed validation remains cohesive in `discovery_feed.py`. Existing
+identities, schema-1 fields, trial addition defaults, budgets, unknown-send holds and
+partial-write behavior are unchanged. This remains local structural work. Broader
+historical policy/owner tables
 below still need reconciliation; they must not be treated as current code ownership.
 
 ### Product intent comes before the latest implementation

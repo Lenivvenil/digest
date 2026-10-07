@@ -13,14 +13,15 @@ import os
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from digest.adapters.models.execution import ModelExecution
+from digest.domain.catalog.proposals import PendingSource
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from digest.config import Config
-    from digest.domain.catalog.proposals import PendingSource
 
 
 @dataclass(frozen=True)
@@ -63,10 +64,6 @@ def _empty_counts() -> dict[str, int]:
                               "malformed", "generation_failed", "validation_deferred")}
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def start_session(config_path: str, phase: str) -> DiscoverySession:
     """Resolve identity once, rejecting managed all before any discovery effects."""
     from digest.config import load_config
@@ -84,9 +81,9 @@ def start_session(config_path: str, phase: str) -> DiscoverySession:
 
 async def prepare_and_reserve(session: DiscoverySession) -> PreparedDiscovery:
     """Persist strict pending state and reservations before exposing either hash."""
-    from digest.adapters.storage.pending_sources import PENDING_FILE, save_pending
-    from digest.discovery import DELIVERY_FILE, prepare_pending_offers, prune_discovery_state, save_delivery
-    from digest.domain.catalog.proposals import proposal_binding
+    from digest.adapters.storage.discovery import delivery_sha256, pending_sha256, save_delivery
+    from digest.adapters.storage.pending_sources import save_pending
+    from digest.domain.catalog.exploration import bind_batch, reserve_offers
 
     config, cache_dir = session.config, session.cache_dir
     counts = _empty_counts()
@@ -96,23 +93,15 @@ async def prepare_and_reserve(session: DiscoverySession) -> PreparedDiscovery:
     offers, validations = await prepare_pending_offers(pending, data, configured, session.cycle, now, counts)
     if len(offers) < 3 and validations < 3:
         offers.extend(await _generate_offers(session, pending, data, now, validations, counts))
-    pending_path, delivery_path = Path(cache_dir) / PENDING_FILE, Path(cache_dir) / DELIVERY_FILE
     save_pending(pending, cache_dir, strict=True)
     if session.token and session.chat and config.telegram.enabled:
-        for source in offers:
-            data["deliveries"][proposal_binding(source)] = {
-                "status": "reserved", "updated_at": now.isoformat(), "owner": session.owner,
-            }
-        data["batch"] = {"owner": session.owner, "pending_sha256": _digest(pending_path), "target": session.target,
-                         "bindings": [proposal_binding(source) for source in offers],
-                         "prepare_counts": counts.copy()}
-        counts["prepared"] = len(offers)
-        data["batch"]["prepare_counts"] = counts.copy()
+        reserve_offers(data, offers, session.owner, now=now)
+        bind_batch(data, offers, session.owner, session.target, pending_sha256(cache_dir), counts)
     else:
         counts["delivery_unavailable"] = len(offers)
     data["prepare_counts"] = counts.copy()
     save_delivery(data, cache_dir)
-    return PreparedDiscovery(_digest(pending_path), _digest(delivery_path), counts)
+    return PreparedDiscovery(pending_sha256(cache_dir), delivery_sha256(cache_dir), counts)
 
 
 async def _generate_offers(
@@ -120,8 +109,9 @@ async def _generate_offers(
     now: datetime, validations: int, counts: dict[str, int],
 ) -> list[PendingSource]:
     """Generate within the remaining three-validation budget and existing routes."""
-    from digest.discovery import save_delivery, select_exploration_area
+    from digest.adapters.storage.discovery import save_delivery
     from digest.discovery_feed import validate_feed_url
+    from digest.domain.catalog.exploration import select_exploration_area
     from digest.domain.catalog.proposals import PendingSource, proposal_binding
     from digest.llm import LLMRole, _resolve_routed_providers, complete
 
@@ -222,8 +212,6 @@ async def send_reserved(
     counts: dict[str, int] | None = None,
 ) -> DiscoveryResult:
     """Send through the existing hash/ownership checks and unknown-before-POST hold."""
-    from digest.discovery import send_reserved_proposals
-
     if counts is None:
         counts = _empty_counts()
     if not session.config.telegram.enabled or not session.token or not session.chat:
@@ -233,3 +221,108 @@ async def send_reserved(
         session.config.telegram.bot_username, pending_sha, delivery_sha, counts,
     )
     return DiscoveryResult("send", counts)
+
+
+def record_source_history(source: PendingSource, decision: str, cache_dir: str) -> None:
+    """Preserve public proposal identity/decision before removing a pending item."""
+    from digest.adapters.storage.discovery import load_delivery, save_delivery
+    from digest.domain.catalog.exploration import append_source_history, has_source_history
+
+    data = load_delivery(cache_dir)
+    if not has_source_history(data, source, decision):
+        append_source_history(data, source, decision, now=datetime.now(tz=timezone.utc))
+    save_delivery(data, cache_dir)
+
+
+def prune_discovery_state(
+    cache_dir: str, now: datetime, exploration_areas: list[str],
+) -> tuple[list[PendingSource], dict[str, Any], int]:
+    """Preserve expiry audit before removing it from the compatible pending list."""
+    from digest.adapters.storage.discovery import _load_exploration_metadata, load_delivery, save_delivery
+    from digest.adapters.storage.pending_sources import load_pending, save_pending
+    from digest.domain.catalog.exploration import expire_pending_proposal, finish_pruning, prune_recent_metadata
+    from digest.domain.catalog.proposals import resolve_pending_proposal
+
+    pending = load_pending(cache_dir, strict=True)
+    data = load_delivery(cache_dir)
+    _load_exploration_metadata(data)
+    prune_recent_metadata(data, exploration_areas, now=now)
+    kept = []
+    expired = 0
+    for source in pending:
+        if expire_pending_proposal(data, source, now=now):
+            expired += 1
+        elif resolve_pending_proposal(pending, source.source_hash, now=datetime.now(tz=timezone.utc)) is None:
+            raise ValueError("Ambiguous or invalid pending source identity.")
+        else:
+            kept.append(source)
+    finish_pruning(data, kept)
+    save_delivery(data, cache_dir)
+    save_pending(kept, cache_dir, strict=True)
+    return kept, data, expired
+
+
+async def prepare_pending_offers(
+    pending: list[PendingSource], data: dict[str, Any], configured: set[str],
+    cycle: str, now: datetime, counts: dict[str, int],
+) -> tuple[list[PendingSource], int]:
+    """Retry failed exact proposals after one distinct prepare cycle, within three checks."""
+    from digest.discovery_feed import validate_feed_url
+    from digest.domain.catalog.exploration import pending_offer_eligible, record_validation_failure
+    from digest.domain.catalog.proposals import proposal_binding
+
+    offers: list[PendingSource] = []
+    validations = 0
+    for source in pending:
+        binding = proposal_binding(source)
+        if not pending_offer_eligible(source, data, configured, cycle, validations, counts):
+            continue
+        validations += 1
+        try:
+            await validate_feed_url(source.url)
+        except Exception as exc:
+            counts["invalid_feed"] += 1
+            record_validation_failure(data, binding, cycle, now=now)
+            logger.warning("Pending feed validation unavailable (%s)", type(exc).__name__)
+            continue
+        data["validation_failures"].pop(binding, None)
+        offers.append(source)
+    return offers, validations
+
+
+async def send_reserved_proposals(
+    cache_dir: str, owner: str, target: str, token: str, chat: str, username: str,
+    pending_sha: str | None, delivery_sha: str | None, counts: dict[str, int],
+) -> dict[str, int]:
+    """Send exactly one owned, externally persisted pair; any uncertainty holds replay."""
+    from digest.adapters.storage.discovery import load_delivery, save_delivery, verify_persisted_pair
+    from digest.adapters.storage.pending_sources import load_pending
+    from digest.adapters.telegram.discovery import send_source_approval_message
+    from digest.domain.catalog.exploration import validate_batch, validate_reserved_proposal
+    from digest.domain.catalog.proposals import proposal_binding
+
+    verify_persisted_pair(cache_dir, pending_sha, delivery_sha)
+    data = load_delivery(cache_dir)
+    batch = data["batch"]
+    if batch is None:
+        counts.update(data.get("prepare_counts", {}))
+        return counts
+    validate_batch(batch, owner, target, pending_sha)
+    counts.update(batch.get("prepare_counts", {}))
+    pending = load_pending(cache_dir, strict=True)
+    by_binding = {proposal_binding(source): source for source in pending}
+    for binding in batch["bindings"]:
+        source = by_binding.get(binding)
+        receipt = data["deliveries"].get(binding, {})
+        if source is None:
+            raise ValueError("Discovery offer no longer matches its reservation.")
+        validate_reserved_proposal(pending, source, receipt, owner, now=datetime.now(tz=timezone.utc))
+    for binding in batch["bindings"]:
+        receipt = data["deliveries"][binding]
+        receipt.update(status="unknown", updated_at=datetime.now(tz=timezone.utc).isoformat())
+        save_delivery(data, cache_dir)
+        outcome = await send_source_approval_message(by_binding[binding], token, chat, username)
+        receipt.update(status=outcome.status, message_id=outcome.message_id)
+        save_delivery(data, cache_dir)
+        counts[outcome.status] += 1
+    return counts

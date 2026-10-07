@@ -1,7 +1,8 @@
 # 0021. Separate proposal and feedback rules from persistence and Telegram
 
 Status: #147-C deployed through engine PR #155 and runtime PR #78 on 2026-10-07.
-The first remaining source-catalog slice below is implemented locally on that foundation.
+The source-catalog continuation deployed through engine PR #156 and runtime PR #79.
+The discovery continuation below is implemented locally on that foundation.
 Its deployment, source activation and editorial acceptance are not established here.
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-c-catalog-and-feedback-boundaries),
@@ -153,10 +154,67 @@ per-source clock sampling across date boundaries, byte parity, source-save setup
 encoding failures, mutation on failed legacy writes, and strict prepared failures.
 The existing effect-free import check also covers both catalog source modules.
 
-Remaining work is explicit: discovery generation, exploration rotation/cooldown,
-delivery metadata, approval transport, source history and YAML editing still belong
-to the mixed `discovery.py` owner. Discovery extraction is a separate later slice.
+At the end of the source-only slice, discovery generation, exploration rotation/
+cooldown, delivery metadata, approval transport, source history and YAML editing
+remained in the mixed `discovery.py` owner. The continuation below extracts them.
 Broader delivery codec/transport separation and historical domain documentation
 reconciliation also remain. No source activation, quota, algorithm, clock policy,
 provider call, runtime setting, persisted schema or deployment changes are authorized
 by this source ownership slice. #147 remains open.
+
+
+## Discovery ownership continuation — 2026-10-07
+
+`domain/catalog/exploration.py` owns existing area rotation, offer retention, expiry,
+validation retry eligibility, reservation and batch/proposal checks over the unchanged
+metadata. `ProposalDelivery` is the same frozen result contract re-exported by the
+compatibility facade. Rules receive decision times and perform no I/O or clock reads.
+This is a bounded extraction, not a general rewrite of schema-1 state into new types.
+
+`adapters/storage/discovery.py` owns the metadata codec, optional-field defaults,
+256,000-byte read/write bound, atomic writes and exact pending/delivery file hashes.
+Unknown fields, key order and JSON encoding remain intact. Legacy receipt and history
+timestamps still accept naive ISO values; exploration timestamps still require a
+timezone. Pruning does not normalize legacy dates or repair their comparison behavior.
+`adapters/storage/source_config.py` owns the comment-preserving YAML insertion,
+validation and backup/temporary-file replacement. Additions still use trial_days 14,
+independently of the SourceConfig declaration default of 7, and are idempotent by exact
+URL. Backup creation failure aborts; replacement failure keeps the original/backup
+and cleans the temporary file; backup cleanup failure after success remains a warning.
+
+`adapters/telegram/discovery.py` owns exact approval-card text/buttons, the bounded
+POST and explicit rejection versus uncertain receipt interpretation. It never reads
+or writes discovery state. `discovery_feed.py` stays the existing cohesive URL/DNS,
+redirect and feed-content validation adapter.
+
+`application/discovery.py` now owns history, prune, pending validation and persisted
+batch sending as well as generation. Preparation retains the original run-time sample;
+every non-expired pending identity gets its own subsequent decision-time observation.
+Every reserved proposal is independently observed while validating the complete batch,
+before any send. Each pre-POST unknown transition samples again. History samples only
+for a new binding/decision entry. Pending-file save retention retains its own original
+clock observation in its existing adapter. No shared timestamp replaces these checks.
+
+Ordered effects remain explicit: prune metadata/history write → pending write; pending
+reservation write → delivery reservation write → caller's hash output barrier. Sending
+verifies both supplied exact file hashes before loading, checks owner/target/pending
+hash and unique bounded bindings, validates every proposal/reservation, then persists
+unknown before each POST and the final receipt afterward. A failed final write leaves
+the persisted unknown hold and stops later sends; it does not count confirmation.
+Any existing receipt prevents reoffer. Pending revalidation deliberately ignores the
+redirect destination, preserving the original Add identity; generated proposals store
+the validated final URL. Attempts still persist before generation, and failure does
+not reclaim its validation budget or become editorial rejection.
+
+Production callers use the actual owners; `discovery.py` retains public aliases and
+its original clock-sampling resolver wrapper. Existing tests run first, with only
+private patch targets moved. Additional critical cases cover byte/default preservation,
+legacy versus exploration dates, whole-batch clock boundaries, ordered partial writes,
+unknown receipt failure, redirect identity and effect-free policy/transport ownership.
+A synthetic before/after probe matches 30 scenarios and 49 exact byte snapshots,
+including YAML, Telegram payloads and clock/effect traces. This proves local structural
+parity, not runtime durability, deployment, source activation or editorial acceptance.
+
+Broader delivery codec/transport separation and historical domain-documentation
+reconciliation remain open. No source policy, model route, call budget, schedule,
+schema or state migration changed. #147 remains open.

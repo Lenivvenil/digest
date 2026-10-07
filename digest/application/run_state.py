@@ -24,7 +24,8 @@ def process_pending_approvals(
 
     from digest.adapters.storage.feedback import save_feedback
     from digest.adapters.storage.pending_sources import load_pending, save_pending
-    from digest.discovery import add_source_to_config, record_source_history
+    from digest.adapters.storage.source_config import add_source_to_config
+    from digest.application.discovery import record_source_history
     from digest.domain.feedback.rules import applicable_source_decision
 
     logger = logging.getLogger(__name__)

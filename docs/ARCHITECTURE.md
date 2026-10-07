@@ -7,7 +7,7 @@
 > #147-A is deployed through engine PR #153 and runtime PR #76.
 > #147-B is deployed through engine PR #154 and runtime PR #77.
 > #147-C is deployed through engine PR #155 and runtime PR #78.
-> Its next local slice gives source values, quality/trial rules and JSON codecs explicit owners.
+> Source values, quality/trial rules and JSON codecs are deployed through engine PR #156 and runtime PR #79.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -306,7 +306,8 @@ persists cleared terminal replies. The runtime still supplies remote durability.
 config/history/pending/feedback application, preserving ordered partial writes,
 caught failures and config reload with a new model execution holder. Public feedback
 and discovery exports remain compatible; production imports use actual owners.
-The next local catalog slice replaces the former source/configuration dependency:
+The catalog continuation deployed through engine PR #156 and runtime PR #79 replaces
+the former source/configuration dependency:
 `domain/catalog/sources.py` owns the unchanged `SourceConfig`, `AdaptiveConfig`,
 `DailySnapshot`, `SourceStats`, `SourceStateEntry` and `SourceStateStore` values.
 `config.py` loads declarations and re-exports the same classes. `source_rules.py`
@@ -327,8 +328,17 @@ while only the existing atomic-write failures are caught. Prepared delivery crea
 no directory, prunes nothing, and propagates every failure. No new transaction,
 rollback, schema, source setting, quota, provider call or state migration is added.
 
-Discovery generation, exploration rotation/cooldowns, delivery metadata, approval
-transport, history and YAML editing remain in `discovery.py` for a separate slice.
+The discovery continuation moves rotation, retention, retry and reservation policy
+into `domain/catalog/exploration.py`; its rules receive explicit observations.
+`adapters/storage/discovery.py` owns unchanged bounded metadata and exact file hashes,
+while `source_config.py` owns comment-preserving YAML additions and backup behavior.
+`adapters/telegram/discovery.py` owns approval-card transport without state access.
+`application/discovery.py` orders history/pruning, pending validation, generation,
+reservation and sending, preserving separate per-proposal checks and complete-batch
+validation before POST. Unknown is still persisted before each send; pending redirects
+keep their original identity while generated proposals use the final feed URL.
+`discovery_feed.py` remains the cohesive validation adapter. `discovery.py` is a public
+compatibility facade. Exact schemas, bytes, clocks, budgets and partial writes remain.
 Broader delivery transport ownership and the historical domain-page reconciliation
 remain open; this extraction does not complete #147 or establish deployed behavior.
 
@@ -374,7 +384,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — #147-A/B/C deployed; source follow-through local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery and broader delivery codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
+| 5. Adapters and remaining scenarios — #147-A/B/C and source catalog deployed; discovery local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery policy, metadata, YAML and approval transport now have explicit owners; broader delivery separation remains pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -514,8 +524,11 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
 | `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
 | `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
-| `source_scorer.py` | Fetch/delivered-source accounting, effective priorities, trial lifecycle state, persistence and bubble diagnostics |
-| `discovery.py` | Discovery delivery metadata, URL validation, approval cards and approved additions to runtime config; compatible proposal/storage exports |
+| `source_scorer.py` | Compatibility exports for catalog values/rules, source-scoring application composition, storage and bubble presentation |
+| `discovery.py` | Compatibility exports for proposal/exploration values, storage, approval transport and discovery application operations |
+| `domain/catalog/exploration.py`, `application/discovery.py` | Pure exploration/pruning/retry/reservation rules with explicit time; ordered generation, persistence and persisted-pair sending effects |
+| `adapters/storage/discovery.py`, `source_config.py`, `adapters/telegram/discovery.py` | Bounded schema-1 metadata and exact hashes; comment-preserving YAML additions; state-independent approval-card transport |
+| `discovery_feed.py` | Cohesive URL/DNS, redirect and RSS/Atom content validation |
 | `_dns_pinning.py`, `_sanitize.py` | URL validation/DNS pinning for feed/article acquisition and untrusted feed-text sanitization |
 | `_util.py` | Atomic JSON write and temporary-file utilities |
 
