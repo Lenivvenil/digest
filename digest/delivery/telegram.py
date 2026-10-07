@@ -7,8 +7,8 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 import httpx
 
 from digest.delivery.supplement import signal_text, split_supplement
+from digest.domain.delivery.outcomes import ArticleCoverage, project_issue_coverage
+from digest.domain.delivery.outcomes import ArticleDeliveryResult as ArticleDeliveryResult
+from digest.domain.delivery.outcomes import IssueDeliveryResult as IssueDeliveryResult
 
 logger = logging.getLogger(__name__)
 
@@ -50,42 +53,6 @@ _BOLD_OPEN = "\ue000"
 _BOLD_CLOSE = "\ue001"
 _LINK_PH_OPEN = "\ue002"
 _LINK_PH_CLOSE = "\ue003"
-
-
-@dataclass
-class ArticleDeliveryResult:
-    """Delivery counts and attribution for cards Telegram actually accepted.
-
-    ``article_source_map`` uses the 8-character callback hashes, while
-    ``delivered_hashes`` contains full hashes for the collector's dedup cache.
-    Skipped delivery (including missing credentials) has zero attempts.
-    """
-
-    attempted: int = 0
-    sent: int = 0
-    failed: int = 0
-    article_source_map: dict[str, str] = field(default_factory=dict)
-    delivered_hashes: set[str] = field(default_factory=set)
-
-
-@dataclass
-class IssueDeliveryResult(ArticleDeliveryResult):
-    """Confirmed article coverage and the independent whole-issue outcome.
-
-    Article attempts count blocks touched by an attempted chunk; incomplete
-    attempted blocks count as failed, including uncertain deliveries. A final
-    notice can fail even when every article has been confirmed. ``unknown``
-    means Telegram acceptance could not be established and must not be retried.
-    """
-
-    outcome: Literal["sent", "failed", "unknown", "skipped"] = "skipped"
-    total_chunks: int = 0
-    attempted_chunks: int = 0
-    confirmed_chunks: int = 0
-
-    @property
-    def complete(self) -> bool:
-        return self.outcome == "sent" and self.sent > 0 and self.confirmed_chunks == self.total_chunks > 0
 
 
 @dataclass
@@ -484,15 +451,13 @@ async def send_compact_issue(
         except (httpx.HTTPError, TimeoutError, ValueError):
             result.outcome = "unknown"
 
-    for article_range in ranges:
-        if any(index < result.attempted_chunks for index in article_range.covering_chunks):
-            result.attempted += 1
-            if all(index < result.confirmed_chunks for index in article_range.covering_chunks):
-                result.sent += 1
-                result.delivered_hashes.add(article_range.full_hash)
-                result.article_source_map[article_range.full_hash[:8]] = article_range.source
-            else:
-                result.failed += 1
+    result = project_issue_coverage(
+        (ArticleCoverage(article.full_hash, article.source, article.covering_chunks) for article in ranges),
+        outcome=result.outcome,
+        total_chunks=result.total_chunks,
+        attempted_chunks=result.attempted_chunks,
+        confirmed_chunks=result.confirmed_chunks,
+    )
     logger.info(
         "Compact Telegram issue: %s, %d/%d chunks confirmed, %d articles confirmed",
         result.outcome, result.confirmed_chunks, result.total_chunks, result.sent,

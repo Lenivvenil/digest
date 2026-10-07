@@ -1,6 +1,7 @@
 # Architecture — Daily News Digest
 
-> Prepared delivery and presentation contracts checked against main `5fbb26ac` on 2026-10-07.
+> Confirmed-delivery ownership reflects the scoped #145 implementation on 2026-10-07.
+> Release evidence is tracked in #145; implementation is not runtime or editorial acceptance.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
 
@@ -12,8 +13,14 @@ Tracked by [#143](https://github.com/Lenivvenil/digest/issues/143) under the
 Stage 1 merged in [PR #149](https://github.com/Lenivvenil/digest/pull/149) at engine
 `de595797282b7b289561105820a55d467f8379a2` and was deployed through runtime PR #72.
 The candidate-ownership slice under [#144](https://github.com/Lenivvenil/digest/issues/144)
-is implemented in this change; its boundaries are recorded in
-[ADR0016](decisions/0016-candidate-contracts-and-retirement.md). Neither status establishes
+merged in [PR #150](https://github.com/Lenivvenil/digest/pull/150) at engine
+`6c5d7db7a6c0f5520d36f3a89b60fbb8e73fdda6`; runtime
+[PR #73](https://github.com/Lenivvenil/digest-prod/pull/73) merged at
+`9d529cc84d9c1968feebe25d55da0658767cc3e7` with the one-line engine-pin update.
+Its boundaries are recorded in [ADR0016](decisions/0016-candidate-contracts-and-retirement.md).
+The confirmed-delivery application under [#145](https://github.com/Lenivvenil/digest/issues/145)
+is implemented as recorded in [ADR0017](decisions/0017-confirmed-delivery-application.md);
+that issue tracks merge, checks and rollout evidence. These statuses do not establish
 editorial acceptance or completion of the remaining migration stages.
 
 The target is a modular monolith: one deployable Python engine, the existing private
@@ -105,6 +112,75 @@ eligibility reconciliation and prompt orchestration still involve
 `candidate_review.py`, `review.py` and collector/configuration code. This slice does
 not claim a pure scheduler, a completed catalog domain or full legacy isolation.
 
+### Stage 3: confirmed-delivery application
+
+[`application/delivery.py`](../digest/application/delivery.py) owns
+`apply_confirmed_outcome`, with explicit `PreparedOutcomePolicy` and
+`LegacyOutcomePolicy` inputs. `edition_runtime._merge_delivery` and the direct
+workflow in `main` delegate to it. The coordinator selects the scenario's effects
+and their order; it does not send messages or finalize receipts.
+
+[`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) owns
+`ArticleDeliveryResult`, `IssueDeliveryResult`, `ArticleCoverage` and the pure
+`project_issue_coverage` operation. Both compact senders use the same projection:
+only complete article-to-chunk coverage earns attribution and delivered hashes.
+An attempted incomplete article fails even when some of its chunks are confirmed;
+a failed final notice can leave every article delivered while the issue is incomplete.
+The projection trusts the transport's sequential attempted/confirmed prefixes and
+outcome. It performs neither receipt validation nor persistence.
+The delivery domain has no imports from other project modules.
+
+The existing owners retain their policies: `feedback.apply_delivery_attribution`
+merges confirmed article/source mappings and sets last-digest metadata only for
+complete Telegram output; `source_scorer.record_delivered_articles` updates prepared
+inclusion accounting without another fetch. Direct runs use
+`application.run_state.record_source_stats` for fetch observations and inclusion.
+[`adapters/storage/delivery_state.py`](../digest/adapters/storage/delivery_state.py)
+owns the strict delivered-cache codec and prepared cache/statistics/lifecycle writes.
+Feedback persistence remains in `feedback.py`; legacy persistence stays with its
+existing owner functions. The following effects preserve the pre-extraction behavior:
+
+| Effect | Prepared edition | Legacy direct run, including direct compact |
+| --- | --- | --- |
+| Mutable input | Reload current feedback, delivered cache and statistics; reload lifecycle state only when adaptation is enabled. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
+| Delivery identity | Full article hashes enter deduplication only after complete confirmed chunk coverage. Empty coverage returns before state reads or writes. | Confirmed Telegram hashes qualify. Cards mode additionally consumes summarized-category articles and top articles after a saved Markdown output when Telegram is optional or complete. That consumption does not imply Telegram confirmation. Direct compact never treats Markdown as delivered coverage. |
+| Attribution | Merge confirmed 8-character hash/source mappings; update last-digest sources/time only when the whole issue is complete. | Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
+| Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
+| Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
+| Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
+| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; caller then marks receipts applied. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
+| Failure policy | Feedback/cache validation fails closed. All application writes propagate failures. Statistics and lifecycle reads retain their existing permissive loaders; strict writes do not imply strict reads. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
+
+Successfully saved prepared coverage is idempotent for inclusion counters and existing
+deduplication timestamps while its hashes remain in the delivered cache. This is not
+whole-operation byte idempotence: metadata/time and adaptive evaluation can run again.
+Normal confirmed-and-applied inspection returns without dispatch or application.
+If any application write or the final applied-receipt write fails, earlier writes can
+already be present. Unapplied receipts remain held for inspection, with no automatic
+reconciliation, rollback or resend. Even after coverage is marked applied, partial
+and unknown transport outcomes remain held. Legacy fetch accounting makes no general
+repeat-idempotence claim. Individual atomic replacements are not a transaction; the
+runtime's remote persistence barrier is still required.
+
+Transport differences are deliberate compatibility: prepared sending validates a
+positive Telegram message ID and matching chat and persists per-chunk receipts;
+direct compact uses its existing HTTP/`ok` acceptance check and coarse issue guard.
+Both compact transports stop on failure/uncertainty without retry or plaintext
+fallback. Legacy cards retain their existing retry/fallback behavior. Sharing a
+coverage value or application entrypoint does not unify these protocols.
+
+`delivery/edition.py` still combines claim/receipt validation, storage and sending;
+`delivery/telegram.py` still combines rendering and transport. `feedback.py` and
+`source_scorer.py` still own `FeedbackStore`, `SourceStats` and `SourceStateStore`
+and mix domain rules with codecs/adapters; the storage adapter's source-state types
+are type-only imports from that existing module. This is not a complete feedback or
+catalog-domain extraction. `main` retains legacy/discovery orchestration.
+Compatibility exports preserve the old Telegram result imports. In particular,
+the broad `LegacyOutcomePolicy` is a transitional in-memory run context pending
+#147, not an ideal domain policy or a persisted entity/schema. Review/source
+attribution and these remaining ownership debts stay separate migration work under
+the existing plan.
+
 ### Target responsibility map
 
 ```text
@@ -126,7 +202,7 @@ digest/
   presentation/            Markdown and Telegram rendering
 ```
 
-This is the destination; only the application and candidate-related domain/storage
+This is the destination; only the application, candidate and delivery-outcome/storage
 boundaries described above exist in the current staged implementation. Domain code
 owns invariants and transitions; it imports neither CLI/application orchestration,
 HTTP clients nor filesystem persistence. Applications coordinate domain operations
@@ -136,16 +212,16 @@ or dependency-injection framework is required.
 
 Delivery owns send claims and receipts, not source metrics or editorial decisions.
 An application operation applies confirmed outcomes to each owning domain explicitly.
-Multiple JSON writes are not an atomic transaction: current write order, idempotence
-and interrupted-application recovery must remain observable.
+Multiple JSON writes are not an atomic transaction: current write order, bounded
+repeat safety and interrupted-application holds must remain observable.
 
 ### Incremental migration and rollback
 
 | Stage | Concrete change and acceptance | Compatibility and rollback |
 | --- | --- | --- |
 | 1. Prepared application — deployed | One ordinary recovery → collection/selection → accepted snapshot → presentation/freeze path; no lower-to-`main` imports. PR #149 and runtime PR #72 implement this boundary; legacy scenarios remain. | No wire/schema/provider changes. Revert the engine pin; retain all runtime state. |
-| 2. Candidate ownership — #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Application operations distinguish verified retirement from persistence without retirement. Scheduler and remaining domain ownership are still staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Verify historical objects and bounded continuation before deployment; release evidence is tracked in #144. |
-| 3. Confirmed-delivery application | One explicit operation updates attribution, deduplication and accounting through their owners; remove duplicated prepared/direct update algorithms. | Preserve partial-send receipts, unknown-send holds and per-file recovery. Never rewrite receipt history for migration. |
+| 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
+| 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution | One review-reuse rule; general source credits independent of optional closing; explicit canonical occurrence ownership. | Preserve report/sidecar formats, exact source binding, fallback and optional omission semantics. |
 | 5. Adapters and remaining scenarios | Move CLI discovery/legacy workflows to explicit applications; separate provider runtime state from configuration; locate codecs with storage adapters. | Migrate one boundary at a time, preserving request counts, deadlines and existing configured routes. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
@@ -231,11 +307,12 @@ failure isolation merely because they use the same presentation functions.
 | --- | --- |
 | Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
 | Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
-| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. In local #144, [`domain review contracts`](../digest/domain/editorial/reviews.py) and [`disposition contracts`](../digest/domain/editorial/dispositions.py) enforce shape, identity and dispositions; [`review.py`](../digest/review.py) retains model-execution ownership. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The #144 [`domain review contracts`](../digest/domain/editorial/reviews.py) and [`disposition contracts`](../digest/domain/editorial/dispositions.py) enforce shape, identity and dispositions; [`review.py`](../digest/review.py) retains model-execution ownership. |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
 | Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
 | Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. Source-bound credits travel with cards; optional closing omission cannot silently discard required main cards. [`finish_preparation`](../digest/edition_runtime.py), [`closing.py`](../digest/closing.py) validate before freeze. |
 | Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`delivery/edition.py`](../digest/delivery/edition.py) enforces identity and state, while the runtime persists them remotely. |
+| Confirmed coverage → operational state (#145) | [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) projects complete article coverage. [`application/delivery.py`](../digest/application/delivery.py) applies scenario-specific attribution, deduplication and accounting; the caller marks receipts applied only afterward. Partial writes remain a held inspection boundary, not automatic recovery. |
 | Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
 
 These are deterministic identity, recovery and bounded-execution contracts. Useful
@@ -260,10 +337,12 @@ experiment, not external counter-evidence or a verified factual consensus.
 | Module | Responsibility |
 | --- | --- |
 | `main.py` | CLI dispatch/reporting plus legacy/discovery scenarios awaiting later migration |
-| `application/` | Prepared use cases, shared canonical analysis/presentation, run-state operations and execution results |
+| `application/` | Prepared use cases, shared canonical analysis/presentation, confirmed-outcome application, run-state operations and execution results |
 | `domain/catalog/`, `domain/editorial/` (#144) | Feed-independent article identity, evidence/review/disposition/candidate values and pure proof validation; not the complete catalog or editorial workflow |
 | `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
-| `adapters/storage/` (#144) | Checkpoint path guards, candidate objects/envelopes, verified writes and active-record codecs; no scheduling or retirement selection |
+| `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |
+| `application/delivery.py` (#145) | Explicit prepared/direct policies, confirmed attribution/deduplication/accounting coordination and ordered persistence |
+| `adapters/storage/` (#144, #145) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence in `delivery_state.py`. No scheduling, retirement or accounting policy |
 | `config.py` | YAML loading, dataclasses and validation |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
@@ -273,11 +352,11 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
-| `delivery/telegram.py` | Telegram article cards, vote buttons and confirmed transport accounting |
+| `delivery/telegram.py` | Telegram rendering, cards, vote buttons and transport; compatibility exports for domain delivery result values |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
 | `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
-| `feedback.py` | Telegram polling, vote parsing, article/source mapping and bot commands |
-| `source_scorer.py` | Source metrics, effective priorities, trial lifecycle state and bubble diagnostics |
+| `feedback.py` | Telegram polling, vote parsing, confirmed article/source attribution, persistence and bot commands |
+| `source_scorer.py` | Fetch/delivered-source accounting, effective priorities, trial lifecycle state, persistence and bubble diagnostics |
 | `discovery.py` | Proposed feeds, URL validation, approval cards and approved additions to runtime config |
 | `_dns_pinning.py`, `_sanitize.py` | Outbound URL/DNS protection and untrusted feed-text sanitization |
 | `_util.py` | Atomic JSON write and temporary-file utilities |

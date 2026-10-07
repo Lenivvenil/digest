@@ -11,10 +11,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from digest._util import atomic_json_write
 from digest.application.results import RunStats
 
 if TYPE_CHECKING:
+    from digest.domain.delivery.outcomes import IssueDeliveryResult
     from digest.preparation import PreparationSnapshot
 
 logger = logging.getLogger(__name__)
@@ -188,60 +188,26 @@ async def finish_preparation(
 
 
 def _strict_cache(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    if path.is_symlink():
-        raise ValueError("Delivery cache must not be a symlink.")
-    raw = json.loads(path.read_text())
-    if not isinstance(raw, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in raw.items()):
-        raise ValueError("Invalid delivered article cache; sending blocked.")
-    return raw
+    from digest.adapters.storage.delivery_state import load_delivery_cache
+
+    return load_delivery_cache(path)
 
 
-def _merge_delivery(result: Any, manifest: dict[str, Any], config: Any) -> None:
-    """Reload mutable operational state, never restore a preparer snapshot."""
-    from digest.feedback import load_feedback, save_feedback
-    from digest.source_scorer import HISTORY_MAX_DAYS, DailySnapshot, load_stats
+def _merge_delivery(result: IssueDeliveryResult, manifest: dict[str, Any], config: Any) -> None:
+    """Compatibility entrypoint for prepared outcome application."""
+    from digest.application.delivery import PreparedOutcomePolicy, apply_confirmed_outcome
 
     if not result.delivered_hashes:
         return
-    store = load_feedback(".cache", strict=True)
-    cache = _strict_cache(Path(".cache/seen_articles.json"))
-    now = datetime.now(timezone.utc)
-    store.article_source_map.update(result.article_source_map)
-    new_hashes = result.delivered_hashes - cache.keys()
-    for identity in result.delivered_hashes:
-        cache.setdefault(identity, now.isoformat())
-    if result.complete:
-        store.last_digest_sources = manifest["canonical_metadata"]["contributing_sources"]
-        store.last_digest_time = now.strftime("%Y-%m-%d %H:%M UTC")
-    # Votes/cursors/source decisions retain their latest independently persisted values.
-    save_feedback(store, ".cache", strict=True)
-    stats = load_stats(".cache")
-    for identity in new_hashes:
-        source = result.article_source_map.get(identity[:8])
-        if source in stats:
-            stats[source].articles_included_in_digest += 1
-            day = datetime.fromisoformat(manifest["window_start"]).date().isoformat()
-            history = stats[source].history
-            entry = next((item for item in history if item.date == day), None)
-            if entry is None:
-                # A delivery-only day is not another fetch or a failed HTTP attempt.
-                entry = DailySnapshot(day, 0, 0, False)
-                history.append(entry)
-                history.sort(key=lambda item: item.date)
-            entry.articles_included += 1
-            stats[source].history = history[-HISTORY_MAX_DAYS:]
-    atomic_json_write(Path(".cache/source_stats.json"), {name: asdict(value) for name, value in stats.items()})
-    if getattr(getattr(config, "adaptive", None), "enabled", False):
-        from digest.source_scorer import apply_trial_decisions_to_cache, evaluate_trial_sources, load_source_state
-
-        state = load_source_state(".cache")
-        today = now.date().isoformat()
-        promote, demote, start = evaluate_trial_sources(config.enabled_sources, stats, today, state)
-        apply_trial_decisions_to_cache(state, promote, demote, today, start)
-        atomic_json_write(Path(".cache/source_state.json"), asdict(state))
-    atomic_json_write(Path(".cache/seen_articles.json"), cache)
+    adaptive_enabled = getattr(getattr(config, "adaptive", None), "enabled", False)
+    apply_confirmed_outcome(PreparedOutcomePolicy(
+        outcome=result,
+        cache_dir=".cache",
+        publication_day=datetime.fromisoformat(manifest["window_start"]).date(),
+        contributing_sources=manifest["canonical_metadata"]["contributing_sources"],
+        adaptive_enabled=adaptive_enabled,
+        enabled_sources=config.enabled_sources if adaptive_enabled else [],
+    ))
 
 
 async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, claim_sha: str | None) -> int:

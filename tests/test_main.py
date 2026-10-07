@@ -500,7 +500,10 @@ async def test_delivery_commits_only_confirmed_articles(
     )
     save_cache = MagicMock()
     source_stats: dict = {}
-    feedback = FeedbackStore()
+    feedback = FeedbackStore(
+        article_source_map={"previous": "Previous source"},
+        last_digest_sources=["Previous source"], last_digest_time="Previous time",
+    )
     cfg = _mock_config()
     cfg.telegram.enabled = True
     cfg.telegram.required = required
@@ -552,7 +555,9 @@ async def test_delivery_commits_only_confirmed_articles(
     assert source_stats["test"].articles_included_in_digest == len(expected_hashes)
     assert source_stats["broken"].successful_fetches == 0
     assert source_stats["broken"].total_fetches == 1
-    assert feedback.article_source_map == delivery.article_source_map
+    assert feedback.article_source_map == {"previous": "Previous source", **delivery.article_source_map}
+    assert feedback.last_digest_sources == (["test"] if result.telegram_sent else ["Previous source"])
+    assert (feedback.last_digest_time != "Previous time") is result.telegram_sent
 
 
 @pytest.mark.asyncio

@@ -522,14 +522,9 @@ async def _legacy_delivery_extras(
 
 
 def _save_delivery_cache(cache: dict[str, str], compact: bool, cache_dir: str) -> None:
-    if compact:
-        from digest._util import atomic_json_write
+    from digest.application.delivery import save_delivery_cache
 
-        atomic_json_write(Path(cache_dir) / "seen_articles.json", cache)
-    else:
-        from digest.radar import save_dedup_cache
-
-        save_dedup_cache(cache)
+    save_delivery_cache(cache, compact, cache_dir)
 
 
 def _finish_compact(guard: IssueGuard | None, result: IssueDeliveryResult | None) -> None:
@@ -602,21 +597,17 @@ async def _run_legacy(
 ) -> RunStats:
     """Full pipeline: feedback -> radar -> (irritator) -> delivery -> scoring."""
     from digest._util import cleanup_stale_tmp
+    from digest.application.delivery import LegacyOutcomePolicy, apply_confirmed_outcome
     from digest.feedback import (
         get_source_feedback_score,
         save_feedback,
     )
     from digest.radar import AllFeedsFailedError, collect
-    from digest.radar.collector import article_hash
     from digest.source_scorer import (
-        apply_trial_decisions_to_cache,
         calculate_effective_priorities,
         calculate_feedback_priorities,
-        evaluate_trial_sources,
         load_source_state,
         load_stats,
-        save_source_category_map,
-        save_source_state,
         save_stats,
     )
 
@@ -751,6 +742,7 @@ async def _run_legacy(
     telegram_partial = False
     card_delivery = ArticleDeliveryResult()
     issue_delivery: IssueDeliveryResult | None = None
+    delivered_at = datetime.now(tz=timezone.utc)
     if config.telegram.enabled:
         try:
             if compact:
@@ -765,12 +757,7 @@ async def _run_legacy(
                 )
                 telegram_sent = card_delivery.sent > 0 and card_delivery.failed == 0
                 telegram_partial = card_delivery.sent > 0 and card_delivery.failed > 0
-            feedback_store.article_source_map.update(card_delivery.article_source_map)
-            if telegram_sent:
-                feedback_store.last_digest_sources = contributing_sources
-                feedback_store.last_digest_time = datetime.now(tz=timezone.utc).strftime(
-                    "%Y-%m-%d %H:%M UTC"
-                )
+            delivered_at = datetime.now(tz=timezone.utc)
             if not compact:
                 nano_status = _build_nano_status(
                     feeds_count, total_articles,
@@ -785,61 +772,35 @@ async def _run_legacy(
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 
-    delivered_hashes = set(card_delivery.delivered_hashes)
     telegram_required = getattr(config.telegram, "required", False)
-    if not compact and markdown_saved and (not telegram_required or telegram_sent):
-        summarized_categories = {s.category for s in summaries}
-        delivered_hashes.update(
-            article_hash(a.title, a.link)
-            for category, articles in articles_by_category.items()
-            if category in summarized_categories
-            for a in articles
-        )
-        delivered_hashes.update(article_hash(a.title, a.link) for a in top_articles)
-    collected_hashes = {
-        article_hash(a.title, a.link)
-        for articles in articles_by_category.values() for a in articles
-    }
-    # Preserve old entries, but commit new entries only for confirmed output.
-    delivered_cache = {
-        key: timestamp for key, timestamp in cache.items()
-        if key not in collected_hashes or key in delivered_hashes
-    }
-    run_state.record_source_stats(source_stats, fetch_metrics, articles_by_category, delivered_hashes)
-    delivery_ok = card_delivery.sent > 0 or markdown_saved
-    sources_promoted = 0
-    sources_demoted = 0
-
-    if delivery_ok:
-        _save_delivery_cache(delivered_cache, compact, cache_dir)
-
-        if config.adaptive.enabled:
-            today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-            promote, demote, needs_start = evaluate_trial_sources(
-                config.enabled_sources, source_stats, today, source_state
-            )
-            if promote or demote or needs_start:
-                apply_trial_decisions_to_cache(source_state, promote, demote, today, needs_start)
-                sources_promoted = len(promote)
-                sources_demoted = len(demote)
-    else:
-        # Only attribution for undelivered new cards is delivery-dependent.
-        # Previously persisted votes/cursor must survive an unrelated delivery failure.
-        feedback_store.article_source_map = saved_article_source_map
-
-    if feedback_usable:
-        save_feedback(feedback_store, cache_dir, strict=compact)
-    save_source_state(source_state, cache_dir)
-    save_stats(source_stats, cache_dir, active_sources={s.name for s in config.enabled_sources})
-    save_source_category_map(config.enabled_sources, cache_dir)
+    applied = apply_confirmed_outcome(LegacyOutcomePolicy(
+        outcome=card_delivery,
+        config=config,
+        cache_dir=cache_dir,
+        compact=compact,
+        telegram_complete=telegram_sent,
+        markdown_saved=markdown_saved,
+        delivered_at=delivered_at,
+        contributing_sources=contributing_sources,
+        feedback=feedback_store,
+        feedback_usable=feedback_usable,
+        previous_article_sources=saved_article_source_map,
+        collected_cache=cache,
+        articles_by_category=articles_by_category,
+        summarized_categories={summary.category for summary in summaries},
+        top_articles=top_articles,
+        fetch_metrics=fetch_metrics,
+        source_stats=source_stats,
+        source_state=source_state,
+    ))
     _finish_compact(issue_guard, issue_delivery)
 
     return RunStats(
         feeds_fetched=feeds_count, new_articles=total_articles,
         digest_length=len(combined), telegram_sent=telegram_sent,
         telegram_partial=telegram_partial, markdown_saved=markdown_saved,
-        markdown_path=markdown_path, sources_promoted=sources_promoted,
-        sources_demoted=sources_demoted, feedback_collected=feedback_collected,
+        markdown_path=markdown_path, sources_promoted=applied.sources_promoted,
+        sources_demoted=applied.sources_demoted, feedback_collected=feedback_collected,
         duration_seconds=time.monotonic() - _t_run_start,
         required_delivery_failed=telegram_required and not telegram_sent,
         review_status=review_report.status if review_report is not None else "not_requested",

@@ -84,6 +84,21 @@ class FeedbackStore:
     seen_message_ids: list[str] = field(default_factory=list)
 
 
+def apply_delivery_attribution(
+    store: FeedbackStore,
+    article_source_map: dict[str, str],
+    *,
+    complete: bool,
+    contributing_sources: list[str],
+    delivered_at: datetime,
+) -> None:
+    """Merge confirmed card attribution; update digest context only when complete."""
+    store.article_source_map.update(article_source_map)
+    if complete:
+        store.last_digest_sources = contributing_sources
+        store.last_digest_time = delivered_at.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("Invalid feedback string list")

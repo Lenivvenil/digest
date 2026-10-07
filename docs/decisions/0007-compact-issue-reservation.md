@@ -129,3 +129,28 @@ confirmed. Its creation timestamp is separate from its publication window: it re
 the end of the intended day, not creation plus 24 hours. A current-day edition prepared
 at 23:59 expires at 00:00; a tomorrow edition remains eligible through tomorrow. No
 new schedule or automatic choice of a future publication day is introduced.
+
+## 2026-10-07 implementation boundary: confirmed-outcome application (#145)
+
+[ADR0017](0017-confirmed-delivery-application.md) records the ownership extraction
+without changing this reservation/receipt protocol. `domain/delivery/outcomes.py`
+owns the result values and pure article-to-chunk coverage projection shared by
+prepared and direct compact sending. `application/delivery.py` applies each
+scenario's attribution, deduplication and source accounting through their owners;
+`adapters/storage/delivery_state.py` owns strict prepared-state writes. The caller
+marks prepared receipts applied only after the application returns successfully.
+
+The [architecture effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
+records preserved prepared/direct differences, including Markdown consumption,
+source-statistics/lifecycle policy and write failures. Prepared writes remain
+feedback → statistics → optional adaptive state → seen articles. A successful
+application prevents repeated inclusion counts while hashes remain in the delivered
+cache; an interruption before the applied marker is a held inspection boundary,
+even if earlier files were already saved. This is neither a multi-file transaction
+nor automatic recovery. Partial/unknown transport outcomes remain held after known
+coverage is applied. The runtime still owns the remote Git persistence barrier.
+
+Shared projection does not change transport acceptance: prepared receipts require
+a positive message ID and matching chat; direct compact retains its existing
+HTTP/`ok` check and coarse reservation. Legacy cards retain their retry/fallback
+policy. No schema, identity, receipt history or automatic resend policy changes.
