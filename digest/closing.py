@@ -7,35 +7,29 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from digest._sanitize import sanitize_article
 from digest._serialization import extract_json as _extract_json
 from digest.config import ClosingConfig, SourceConfig
-from digest.radar.collector import article_hash
+from digest.domain.catalog.articles import article_hash
+from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
+from digest.domain.editorial.reviews import delivery_review, validated_cached_selections
+from digest.presentation.source_attribution import attribute_source_card as attribute_source_card
 from digest.radar.summarizer import ArticleSummary
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from digest.candidate_review import CandidatePacket
-    from digest.review import BlindReviewReport, EvidenceBundle, ModelReview
+    from digest.domain.editorial.candidates import CandidatePacket
+    from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, ModelReview
 
 
 @dataclass(frozen=True)
-class ClosingOccurrence:
-    title: str
-    link: str
-    description: str
-    source: str
-    category: str
-    published: str | None
-    source_url: str
+class ClosingOccurrence(SourceOccurrence):
+    """Transitional named compatibility value while #147/#148 retire old boundaries."""
 
 
 @dataclass(frozen=True)
@@ -62,78 +56,16 @@ class ClosingDecision:
     provenance: ClosingProvenance | None = None
 
 
-# Reviewed presentation support, not source activation or a licence classifier.
-# Unknown feed bindings need explicit attribution review before closing can render.
-_CLOSING_SOURCE_CREDITS = {
-    "https://www.england.nhs.uk/feed/": (
-        "NHS England RSS feeds. Open Government Licence v3.0: "
-        "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
-    ),
-    "https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=environment-agency": (
-        "Contains public sector information licensed under the Open Government Licence v3.0. "
-        "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
-    ),
-}
-
-
-def attribute_source_card(
-    card: ArticleSummary, occurrence: ClosingOccurrence, occurrence_sha256: str,
-) -> tuple[ArticleSummary, bool]:
-    """Credit a supported exact feed on presentation only; validate frozen identity."""
-    if ((card.title, card.link, card.source, card.category) != (
-            occurrence.title, occurrence.link, occurrence.source, occurrence.category)
-            or occurrence_sha256 != _digest(asdict(occurrence))):
-        raise ValueError("Source attribution differs from the frozen article occurrence.")
-    credit = _CLOSING_SOURCE_CREDITS.get(occurrence.source_url)
-    if credit is None:
-        return card, False  # Other ordinary source presentation is unchanged.
-    return replace(card, summary=f"{card.summary} {credit}"), True
-
-
 def main_attribution_occurrences(
     report: BlindReviewReport | None, cards: Sequence[ArticleSummary], sources: Sequence[SourceConfig],
     *, closing_snapshot: bool, cache_dir: str | Path = ".cache",
 ) -> dict[str, ClosingOccurrence]:
-    """Resolve main credits before calls; legacy recovery remains explicit."""
-    from digest.adapters.storage.candidate_objects import read_packet
-    from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
+    """Compatibility boundary; general main attribution belongs to application source attribution."""
+    from digest.application.source_attribution import main_attribution_occurrences as resolve_occurrences
 
-    required = closing_snapshot or any(source.enabled and source.url in _CLOSING_SOURCE_CREDITS
-                                      for source in sources)
-    try:
-        report_sha = _digest(asdict(report)) if report is not None else None
-        path = _safe(Path(cache_dir) / "candidate_reports" / f"{report_sha}.json") if report_sha else None
-        if path is None or not path.exists():
-            if required:
-                raise ValueError(
-                    "Source attribution needs the accepted report's immutable candidate packet. Restore "
-                    f"{path or 'the bound review report'} and its referenced candidate_sources objects before "
-                    "resuming preparation; do not rerun selection. Reconcile unfrozen legacy preparation "
-                    "before enabling these feeds."
-                )
-            return {}  # Accepted legacy reports without supported feeds retain their old behavior.
-        assert report_sha is not None
-        packet = read_packet(report_sha, cache_dir)
-        if packet.report != report:
-            raise ValueError("Source attribution packet differs from the accepted review report.")
-        occurrences = {}
-        for card in cards:
-            identity = article_hash(card.title, card.link)
-            matches = [item for item in packet.articles if article_hash(item.title, item.link) == identity]
-            if len(matches) != 1:
-                raise ValueError("Main article has no unique immutable source occurrence for attribution.")
-            source = matches[0]
-            if source.source_url in _CLOSING_SOURCE_CREDITS:
-                occurrence = ClosingOccurrence(**asdict(source))
-                attribute_source_card(card, occurrence, _digest(asdict(occurrence)))  # Validate before any model call.
-                occurrences[identity] = occurrence
-        return occurrences
-    except (OSError, ValueError) as exc:
-        if required:
-            raise
-        logger.warning("Legacy attribution audit unavailable; retaining accepted presentation without "
-                       "inferring source credit: %s", exc)
-        return {}
+    return {identity: ClosingOccurrence(**asdict(occurrence)) for identity, occurrence in resolve_occurrences(
+        report, cards, sources, closing_snapshot=closing_snapshot, cache_dir=cache_dir,
+    ).items()}
 
 
 def attribute_closing_card(decision: ClosingDecision, card: ArticleSummary) -> ArticleSummary | None:
@@ -237,9 +169,7 @@ def decide_closing(
     report: BlindReviewReport, packet: CandidatePacket, capture: ClosingCapture,
     settings: ClosingConfig, sources: Sequence[SourceConfig],
 ) -> ClosingDecision:
-    from digest.review import _delivery_review
-
-    review = _delivery_review(report)
+    review = delivery_review(report)
     matches = [attempt for attempt in capture.attempts if attempt.slot == review.slot]
     if len(matches) != 1:
         return ClosingDecision("incomplete", "missing_delivery_closing_capture")
@@ -265,7 +195,7 @@ def decide_closing(
         ArticleSummary(occurrence.title, occurrence.link, occurrence.source, occurrence.category, selection.reason),
         ClosingProvenance(1, _digest(asdict(report)), review.slot, review.provider, review.model,
                           report.evidence.bundle_id, review.prompt_hash, review.response_sha256 or "",
-                          evidence.evidence_id, _digest(asdict(evidence)), _digest(asdict(occurrence)), occurrence),
+                          evidence.evidence_id, _digest(asdict(evidence)), occurrence_sha256(occurrence), occurrence),
     )
     validate_closing(decision, report)
     return decision
@@ -273,8 +203,6 @@ def decide_closing(
 
 def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None) -> None:
     """Revalidate persisted binding, never consult current source or provider settings."""
-    from digest.review import _delivery_review, _validated_cached_selections
-
     if (decision.status not in {"selected", "unavailable", "incomplete"}
             or not decision.reason or len(decision.reason) > 200):
         raise ValueError("Invalid terminal closing decision.")
@@ -285,7 +213,7 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
     card, provenance = decision.card, decision.provenance
     if report is None or card is None or provenance is None:
         raise ValueError("Selected closing decision requires report, card and provenance.")
-    review = _delivery_review(report)
+    review = delivery_review(report)
     if (provenance.contract_version != 1 or provenance.report_sha256 != _digest(asdict(report))
             or (provenance.slot, provenance.provider, provenance.model, provenance.bundle_id,
                 provenance.prompt_hash, provenance.response_sha256) != (
@@ -293,7 +221,7 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
                     review.prompt_hash, review.response_sha256)
             or review.status not in {"ok", "partial"} or not provenance.response_sha256):
         raise ValueError("Closing delivery review binding mismatch.")
-    _validated_cached_selections(review, report.evidence)
+    validated_cached_selections(review, report.evidence)
     if provenance.evidence_id in {item.evidence_id for item in review.rejected_items}:
         raise ValueError("Conflicting selected identity cannot supply a closing story.")
     evidence = next((item for item in report.evidence.items if item.evidence_id == provenance.evidence_id), None)
@@ -301,7 +229,7 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
     occurrence = provenance.occurrence
     title, excerpt, source = sanitize_article(occurrence.title, occurrence.description, occurrence.source)
     if (evidence is None or selection is None or provenance.evidence_sha256 != _digest(asdict(evidence))
-            or provenance.occurrence_sha256 != _digest(asdict(occurrence))
+            or provenance.occurrence_sha256 != occurrence_sha256(occurrence)
             or article_hash(occurrence.title, occurrence.link) != provenance.evidence_id
             or (evidence.title, evidence.url, evidence.source, evidence.category, evidence.published) != (
                 title, occurrence.link, source, occurrence.category[:200], occurrence.published)

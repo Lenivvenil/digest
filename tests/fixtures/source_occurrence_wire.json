@@ -1,0 +1,36 @@
+{
+  "baseline": "PR151 source tree dde27751; before source-occurrence ownership extraction",
+  "fields": [
+    "title",
+    "link",
+    "description",
+    "source",
+    "category",
+    "published",
+    "source_url"
+  ],
+  "snapshot_asdict_sha256": "5dd23722bc8a5cab21dbb2e24aa5398a21b7212630bb7606fb6af0abc6638e76",
+  "provenance_asdict_sha256": "fcc3a7974779408aa6a517969b3867f817a27ed78cab7216e9c96f255218ccf4",
+  "files": {
+    "candidate_reports/f254fc0530c0d3312dd68215ce47d28094531027d5067585b9bc2424d296509d.json": "720afc9be7a9555fcc4ef02f805f8bb4b356619038c5617bc6223cbafc5993b1",
+    "candidate_sources/2ef3105183db649f734e85ebc27cd9abc713df1826165239f5259ce2545bf4e3.json": "cc2614fcd1314666546dcb9da34a8077195205b3e9dedfb7800f99f2173074af",
+    "candidate_sources/6a259142f6f20321e366b27eaf4a98dbda62167e8a941d05f25d6575fb965202.json": "95b3c46cd5e9d25b3bb5b5f55996d86d92560bbb97c8e5a63161af1f4e522aef",
+    "closing_decisions/f254fc0530c0d3312dd68215ce47d28094531027d5067585b9bc2424d296509d.json": "501f4eeac0576956aa9b7edbb04ce75a65b91e223b09d5bff2597cd71f97bcaf",
+    "pending_preparation.json": "fb70104cfb2fe353888b2e81e1bac7e1cb8887c264af6af75881acdd1f39460e"
+  },
+  "python_contract": {
+    "values": [
+      "Synthetic \u2014 \u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0439",
+      "https://example.com/article?tag=a%20b",
+      "A \"quote\"\nand caf\u00e9.",
+      "Source",
+      "Tech",
+      "2026-10-06T12:00:00+00:00",
+      "https://www.england.nhs.uk/feed/"
+    ],
+    "candidate_repr": "CandidateArticle(title='Synthetic \u2014 \u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0439', link='https://example.com/article?tag=a%20b', description='A \"quote\"\\nand caf\u00e9.', source='Source', category='Tech', published='2026-10-06T12:00:00+00:00', source_url='https://www.england.nhs.uk/feed/')",
+    "closing_repr": "ClosingOccurrence(title='Synthetic \u2014 \u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0439', link='https://example.com/article?tag=a%20b', description='A \"quote\"\\nand caf\u00e9.', source='Source', category='Tech', published='2026-10-06T12:00:00+00:00', source_url='https://www.england.nhs.uk/feed/')",
+    "candidate_closing_equal": false,
+    "candidate_is_closing_instance": false
+  }
+}

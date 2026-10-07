@@ -12,16 +12,17 @@ from typing import Any
 from urllib.parse import urlparse
 
 from digest.config import Config
-from digest.radar.collector import article_hash
-from digest.review import (
-    MAX_EVIDENCE_JSON_CHARS,
+from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS as MAX_EVIDENCE_JSON_CHARS
+from digest.domain.editorial.reviews import (
     SCHEMA_VERSION,
     EvidenceBundle,
     EvidenceItem,
     EvidenceSelection,
     ModelReview,
     RejectedSelection,
+    validate_request_evidence_bundle,
 )
+from digest.radar.collector import article_hash
 
 MAX_FULL_SOURCE_BYTES = 128000
 FULL_SOURCE_KIND = "selected_full_source_passages"
@@ -202,30 +203,9 @@ def load_full_source_evidence(path: Path, rss_bundle: EvidenceBundle, config: Co
 
 
 def validate_evidence_bundle(bundle: EvidenceBundle, config: Config) -> None:
-    if (type(bundle.schema_version) is not int or bundle.schema_version != SCHEMA_VERSION
-            or not isinstance(bundle.items, tuple) or bundle.evidence_kind != "sanitized_rss_excerpt"
-            or type(bundle.omitted_articles) is not int or bundle.omitted_articles < 0
-            or not bundle.items or len(bundle.items) > config.review.max_evidence_articles):
-        raise ValueError("Unsupported or over-budget checkpoint evidence.")
-    seen: set[str] = set()
-    for item in bundle.items:
-        if (not all(isinstance(value, str) for value in (
-                item.evidence_id, item.title, item.url, item.source, item.category, item.excerpt))
-                or item.published is not None and not isinstance(item.published, str)
-                or type(item.excerpt_shortened_or_sanitized) is not bool):
-            raise ValueError("Invalid checkpoint evidence fields.")
-        if (not item.evidence_id or item.evidence_id in seen
-                or len(item.excerpt) > config.review.max_excerpt_chars
-                or urlparse(item.url).scheme not in {"http", "https"} or not urlparse(item.url).netloc):
-            raise ValueError("Invalid checkpoint evidence identity, URL or budget.")
-        seen.add(item.evidence_id)
-    if sum(len(json.dumps(asdict(item), ensure_ascii=False)) for item in bundle.items) > MAX_EVIDENCE_JSON_CHARS:
-        raise ValueError("Checkpoint evidence exceeds JSON budget.")
-    payload = asdict(bundle)
-    payload.pop("bundle_id")
-    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    if digest != bundle.bundle_id:
-        raise ValueError("Checkpoint evidence hash mismatch.")
+    """Compatibility adapter for callers supplying configured request limits."""
+    validate_request_evidence_bundle(bundle, max_evidence_articles=config.review.max_evidence_articles,
+                                     max_excerpt_chars=config.review.max_excerpt_chars)
 
 
 def load_review_checkpoint(path: Path, config: Config) -> tuple[EvidenceBundle, list[ModelReview]]:

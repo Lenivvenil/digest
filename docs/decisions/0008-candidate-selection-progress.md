@@ -295,3 +295,14 @@ age/retry turns. No source is automatically accepted, and no fintech quota is
 introduced. With 96 new entries and at most 20 admissions per ordinary window,
 ordering alone cannot establish sustainable coverage before source recency expiry.
 The remaining outcomes stay open in #121 and #132.
+
+## Review and occurrence ownership amendment (#146)
+
+[ADR0018](0018-review-reuse-and-source-attribution.md) records shared pure
+exact-request reuse and strict request-evidence validation in the editorial domain.
+Request budgets, live response-detail limits, canonical stored integrity and cached
+packet-membership validation remain distinct; accepted recovery is unchanged.
+The catalog owns the seven-field `SourceOccurrence`; the named `CandidateArticle`
+compatibility subclass preserves its Python and serialized contracts. Occurrence,
+packet, report and decision hashes, immutable storage, scheduling and retirement
+policy remain unchanged. This does not establish natural-run or disposition quality.
