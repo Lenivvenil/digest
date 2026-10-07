@@ -9,7 +9,8 @@
 > #147-C is deployed through engine PR #155 and runtime PR #78.
 > Source values, quality/trial rules and JSON codecs are deployed through engine PR #156 and runtime PR #79.
 > Discovery adapters are deployed through engine PR #157 and runtime PR #80.
-> The first delivery presentation/transport continuation remains local.
+> Telegram presentation/transport is deployed through engine PR #158 and runtime PR #81.
+> Prepared domain/storage/application ownership remains local.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -148,7 +149,8 @@ An attempted incomplete article fails even when some of its chunks are confirmed
 a failed final notice can leave every article delivered while the issue is incomplete.
 The projection trusts the transport's sequential attempted/confirmed prefixes and
 outcome. It performs neither receipt validation nor persistence.
-The delivery domain has no imports from other project modules.
+The coverage module has no imports from other project modules; prepared delivery values
+add only the pure editorial summary value as a domain dependency.
 
 The existing owners retain their policies: `feedback.apply_delivery_attribution`
 merges confirmed article/source mappings and sets last-digest metadata only for
@@ -190,7 +192,8 @@ Both compact transports stop on failure/uncertainty without retry or plaintext
 fallback. Legacy cards retain their existing retry/fallback behavior. Sharing a
 coverage value or application entrypoint does not unify these protocols.
 
-`delivery/edition.py` still combines claim/receipt validation, storage and sending.
+`delivery/edition.py` now preserves compatible exports for prepared application,
+domain, storage and transport owners (the second delivery slice below).
 The first stage-5 delivery slice below separates Telegram rendering and the legacy,
 direct-compact and post-delivery transports. Stage 5-C now owns
 feedback values/rules, storage and polling/acknowledgement separately. Its source
@@ -342,19 +345,20 @@ validation before POST. Unknown is still persisted before each send; pending red
 keep their original identity while generated proposals use the final feed URL.
 `discovery_feed.py` remains the cohesive validation adapter. `discovery.py` is a public
 compatibility facade. Exact schemas, bytes, clocks, budgets and partial writes remain.
-Prepared-edition receipt/storage/application separation and the historical domain-page
-reconciliation remain open; these extractions do not complete #147 or establish deployed behavior.
+Prepared-edition receipt/storage/application separation is recorded in the delivery
+continuation below. Historical domain-page reconciliation remains open; these
+extractions do not complete #147 or establish deployed behavior.
 
 ### Stage 5: first Telegram delivery ownership slice
 
-This local #147 continuation is recorded in
+This #147 continuation deployed through engine PR #158 and runtime PR #81 and is recorded in
 [ADR0017](decisions/0017-confirmed-delivery-application.md#telegram-presentation-and-transport-continuation).
 `presentation/telegram.py` owns card/compact/supplement copy, Markdown conversion,
 vote keyboards and article-to-chunk ranges. `presentation/supplement.py` owns shared
 canonical signal text and the unchanged lossless UTF-16 splitter, including atomic
 URLs. Both renderers import without HTTP, environment, storage or SDK dependencies.
-Existing summarizer/irritator annotations remain type-only references; moving those
-values is separate work. The full-source coverage comparison remains at the sender
+The shared `ArticleSummary` value now belongs to `domain/editorial/summaries.py`
+with the identical old summarizer re-export; irritator annotations remain type-only references. The full-source coverage comparison remains at the sender
 boundary and supplies an explicit boolean to localized presentation.
 
 `adapters/telegram/delivery.py` owns three deliberately separate protocols. It reads
@@ -362,7 +366,7 @@ credentials at the same send boundaries and imports pure renderers and delivery
 outcomes. `delivery/telegram.py` and `delivery/supplement.py` retain compatibility
 exports; `delivery/__init__.py` resolves its existing sender/archive exports lazily,
 so importing the supplement facade cannot load transport. Private test patches now
-point at each actual owner. `edition_runtime` preflight and `delivery/edition.py`
+point at each actual owner. `edition_runtime` preflight and `application/prepared_delivery.py`
 freeze consume presentation directly.
 
 | Protocol | Preserved acceptance, retries and effects |
@@ -373,12 +377,11 @@ freeze consume presentation directly.
 
 `post_delivery.py` retains marker validation and start write, bounded model work,
 canonical archive before optional translation, Markdown archive, compact `archive_only`
-exit, dispatching marker before transport, and final sent/unknown marker. Only its
-Telegram step delegates to the adapter. Private ranking evidence never enters the
-Telegram payloads. Primary prepared transport still validates positive message IDs and exact
-chat identity in `delivery/edition.py`; its claim/receipt codecs, per-chunk persistence,
-unknown/unapplied holds and confirmed-application boundary are unchanged. Splitting
-those receipt/storage/application responsibilities remains the next delivery gap.
+exit, dispatching marker before transport, and final sent/unknown marker. Its storage
+now delegates to the concrete adapter described below; its Telegram step delegates
+to the distinct post-delivery transport. Private ranking evidence never enters the
+Telegram payloads. Primary prepared transport retains stricter positive message-ID
+and exact chat checks, per-chunk persistence and unknown/unapplied holds.
 
 No stored format, hash, receipt, source identity, provider route or runtime state is
 migrated. No generic sender/retry framework, automatic replay or rollback is added.
@@ -386,6 +389,53 @@ Existing rendering, delivery, post-delivery, attribution/freeze and prepared-rec
 regressions cover the preserved behaviors; focused checks add cold-import/export
 compatibility and the previously implicit legacy/post-delivery acceptance differences.
 Local checks and review are separate from release, runtime and editorial acceptance.
+
+### Stage 5: prepared delivery values, persistence and application
+
+The second local #147 delivery slice gives prepared sending four explicit owners:
+
+- `domain/delivery/edition.py`: the unchanged edition, article, claim and receipt
+  values; pure shape, window, identity, count, state and reference checks; coverage
+  projection. The validator receives owner and hash evidence explicitly. It does
+  not read environment variables, checkpoint bytes or the clock.
+- `adapters/storage/edition.py`: exact JSON/hash restoration, schema-1 checks,
+  canonical sorted compact UTF-8 encoding with `allow_nan=False`, checkpoint-byte
+  verification, immutable creation, replacement/fsync and old-dispatch cleanup.
+  `adapters/storage/issue_paths.py` owns the unchanged compact/prepared symlink guard;
+  the legacy issue marker codec remains in `delivery/issue_guard.py`.
+- `application/prepared_delivery.py`: prepare, claim, send, inspect and mark-applied
+  sequencing, current time/credentials and held-state decisions. The runtime imports
+  this application directly; `delivery/edition.py` retains compatible entrypoints,
+  constants and value aliases.
+- `adapters/telegram/prepared.py`: one POST for one frozen payload and strict receipt
+  interpretation. It has no persistent-state access, no retry and no fallback.
+
+| Operation | Preserved ordering and interruption boundary |
+| --- | --- |
+| Prepare | Check current legacy/ready/claim/receipt holds, render and freeze, write the new ready edition, then remove old claim/receipts. Interrupted cleanup leaves old bindings that fail closed. |
+| Claim | Check the legacy hold, bind the exact ready hash and fresh window, verify checkpoint bytes, reject existing receipts, then exclusively create the immutable claim. |
+| Send | Check ready/claim/owner/bot bindings, then return confirmed-and-applied coverage or hold existing receipts before freshness/checkpoint/legacy checks. Require credentials, exclusively create `sending` receipts, persist attempted count before each POST, persist each positive matching-chat receipt, then persist the terminal state. |
+| Apply | The caller completes confirmed-outcome effects before `mark_applied`; partial/unknown transport remains held even after known coverage is applied. |
+
+A post-acceptance `OSError` still escapes. The last persisted `sending` record remains
+held and prevents replay, even if its attempted count or confirmation lags the external
+message. This extraction adds no journal, reset, retry or crash-idempotence guarantee.
+The runtime still owns external ready/claim publication barriers. File-level fsync and
+atomic replacement are not a transaction or remote durability.
+
+`adapters/storage/post_delivery.py` owns concrete checkpoint, marker, result and archive
+operations. Initial exclusive markers retain indented JSON, trailing newline, flush
+and file fsync; later marker/result records retain the existing atomic JSON writer.
+`post_delivery.py` preserves execute-started → canonical result → optional translation
+→ presentation archive → dispatching marker → send → terminal marker. Compact mode
+persists `archive_only` without dispatch. The separate unexpected-failure archives and
+GITHUB_OUTPUT append remain in their original order.
+
+No filenames, schemas, byte encodings, hashes, frozen payloads, publication windows,
+owner restrictions, provider routes or accepted editorial content change. Existing
+failure/replay tests, additional interruption/ownership checks and synthetic exact-byte
+and effect comparison cover the local refactor. Review, merge, deployment and ordinary
+editorial acceptance remain separate evidence, tracked under #147.
 
 ### Target responsibility map
 
@@ -429,7 +479,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — #147-A/B/C and catalog/discovery deployed; delivery local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery policy, metadata, YAML and approval transport now have explicit owners. The first delivery slice separates pure Telegram rendering and legacy/direct/post-delivery protocols; prepared receipt/storage/application separation remains pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
+| 5. Adapters and remaining scenarios — #147-A/B/C, catalog/discovery and Telegram presentation deployed; prepared follow-through local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery policy, metadata, YAML and approval transport now have explicit owners. Delivery slices separate pure rendering, legacy/direct/post-delivery protocols and prepared domain/storage/application/transport ownership. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -517,7 +567,7 @@ failure isolation merely because they use the same presentation functions.
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
 | Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
 | Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. [`application/source_attribution.py`](../digest/application/source_attribution.py) resolves immutable main occurrences before calls; [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) adds reviewed notices after translation. [`finish_preparation`](../digest/edition_runtime.py) preflights credited cards before archive/freeze; optional closing omission cannot discard required main cards. |
-| Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`delivery/edition.py`](../digest/delivery/edition.py) enforces identity and state, while the runtime persists them remotely. |
+| Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`application/prepared_delivery.py`](../digest/application/prepared_delivery.py) orders domain/storage/transport checks, while the runtime persists them remotely. |
 | Confirmed coverage → operational state (#145) | [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) projects complete article coverage. [`application/delivery.py`](../digest/application/delivery.py) applies scenario-specific attribution, deduplication and accounting; the caller marks receipts applied only afterward. Partial writes remain a held inspection boundary, not automatic recovery. |
 | Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
 
@@ -567,7 +617,7 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
 | `delivery/telegram.py` | Telegram rendering, cards, vote buttons and transport; compatibility exports for domain delivery result values |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
-| `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
+| `preparation.py`, `edition_runtime.py`, `application/prepared_delivery.py` | Resumable canonical preparation and ordered ready/claim/receipt effects through explicit domain/storage/transport owners |
 | `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
 | `source_scorer.py` | Compatibility exports for catalog values/rules, source-scoring application composition, storage and bubble presentation |
 | `discovery.py` | Compatibility exports for proposal/exploration values, storage, approval transport and discovery application operations |

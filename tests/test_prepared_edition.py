@@ -14,6 +14,8 @@ import httpx
 import pytest
 import respx
 
+from digest.adapters.storage import edition as edition_storage
+from digest.application import prepared_delivery
 from digest.delivery import edition
 from digest.radar.summarizer import ArticleSummary
 
@@ -59,7 +61,7 @@ async def test_sender_uses_frozen_payload_without_rendering_or_config(
 ) -> None:
     manifest, ready, claim = prepare(tmp_path)
     renderer = Mock(side_effect=AssertionError("sender rendered"))
-    monkeypatch.setattr(edition, "render_compact_issue", renderer)
+    monkeypatch.setattr(prepared_delivery, "render_compact_issue", renderer)
     route = respx.post(API).mock(return_value=success())
     result = await edition.send_prepared_edition(
         ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
@@ -137,28 +139,39 @@ async def test_partial_receipts_keep_only_complete_article_coverage(tmp_path: Pa
         )
 
 
+@pytest.mark.parametrize("failure", ["attempted", "confirmed", "terminal"])
 @respx.mock
-async def test_crash_after_acceptance_before_receipt_is_held(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_receipt_write_failure_retains_hold_without_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
     _, ready, claim = prepare(tmp_path)
-    original_write = edition._write
+    original_write = edition_storage.write_record
 
     def crash(path: Path, value: dict[str, Any], *, exclusive: bool = False) -> str:
-        if value.get("confirmed"):
+        if (
+            failure == "attempted" and value.get("attempted") == 1
+            or failure == "confirmed" and value.get("confirmed")
+            or failure == "terminal" and value.get("state") == "confirmed"
+        ):
             raise OSError("disk lost")
         return original_write(path, value, exclusive=exclusive)
 
-    monkeypatch.setattr(edition, "_write", crash)
+    monkeypatch.setattr(edition_storage, "write_record", crash)
     route = respx.post(API).mock(return_value=success())
     with pytest.raises(OSError):
         await edition.send_prepared_edition(
             ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
         )
-    monkeypatch.setattr(edition, "_write", original_write)
+    persisted = json.loads((tmp_path / edition.RECEIPTS_FILE).read_bytes())
+    assert persisted["state"] == "sending" and persisted["applied"] is False
+    assert persisted["attempted"] == (0 if failure == "attempted" else 1)
+    assert len(persisted["confirmed"]) == (1 if failure == "terminal" else 0)
+    monkeypatch.setattr(edition_storage, "write_record", original_write)
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
             ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
         )
-    assert route.call_count == 1
+    assert route.call_count == (0 if failure == "attempted" else 1)
 
 
 @pytest.mark.parametrize("change", ["ready_hash", "claim_hash", "owner", "expired", "disabled", "tamper"])
@@ -485,3 +498,42 @@ def test_past_publication_day_rejected(tmp_path: Path) -> None:
             publication_date=(NOW - timedelta(days=1)).date(),
         )
     assert not (tmp_path / edition.READY_FILE).exists()
+
+
+def test_prepared_domain_checks_do_not_read_environment_or_checkpoint_bytes() -> None:
+    import subprocess
+    import sys
+
+    code = r"""
+import os
+import sys
+from pathlib import Path
+
+def unexpected(*args, **kwargs):
+    raise AssertionError('Domain read external state')
+
+os.environ.get = unexpected
+Path.read_bytes = unexpected
+from digest.domain.delivery.edition import validate_checkpoint_reference, validate_receipts
+validate_checkpoint_reference('missing/checkpoint.json', 'a' * 64)
+validate_receipts({
+    'ready_sha256': 'ready', 'claim_sha256': 'claim', 'state': 'confirmed',
+    'attempted': 1, 'applied': False,
+    'confirmed': [{'chunk': 0, 'message_id': 1, 'owner_sha256': 'explicit-owner'}],
+}, 'ready', 'claim', 1, 'explicit-owner')
+for name in sys.modules:
+    assert not name.startswith(('httpx', 'digest.adapters', 'digest.application',
+                                'digest.radar', 'digest.llm', 'digest.config'))
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)
+
+
+def test_prepared_compatibility_exports_keep_value_and_entrypoint_identity() -> None:
+    from digest.domain.delivery import edition as domain
+    from digest.domain.editorial.summaries import ArticleSummary as Summary
+
+    assert ArticleSummary is Summary
+    for name in ("_Edition", "_PreparedArticle", "_Claim", "_ChunkReceipt", "_Receipts"):
+        assert getattr(edition, name) is getattr(domain, name)
+    for name in ("prepare_edition", "claim_edition", "send_prepared_edition", "inspect_edition", "mark_applied"):
+        assert getattr(edition, name) is getattr(prepared_delivery, name)

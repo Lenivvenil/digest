@@ -11,28 +11,30 @@ import argparse
 import asyncio
 import hashlib
 import json
-import os
 import time
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 
-from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.storage import post_delivery as storage
 from digest.adapters.telegram.delivery import send_post_delivery_supplement
 from digest.config import Config, load_config
 from digest.presentation.supplement import signal_text
 from digest.review_checkpoint import load_review_checkpoint
-from digest.review_resume import _safe_path
 from digest.review_trial import _ALLOWED_MODELS
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
     from digest.review import EvidenceBundle
     from digest.review_checkpoint import FullSourceEvidence
+
+
+def _safe_path(path: Path) -> Path:
+    return storage.safe_checkpoint_path(path)
 
 
 def _paths(checkpoint: Path) -> tuple[Path, Path, Path]:
@@ -56,33 +58,22 @@ def _config(path: Path) -> Config:
 def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | None:
     checkpoint = _safe_path(checkpoint_path)
     config = _config(config_path)
-    source_bytes = checkpoint.read_bytes()
+    source_bytes = storage.read_checkpoint_bytes(checkpoint)
     bundle, _reviews = load_review_checkpoint(checkpoint, config)
-    if source_bytes != checkpoint.read_bytes():
-        raise ValueError("Checkpoint changed while being read.")
+    storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     marker, report, markdown = _paths(checkpoint)
-    if any(path.exists() or path.is_symlink() for path in (marker, report, markdown)):
+    if storage.attempt_artifacts_exist(marker, report, markdown):
         return None
-    relative = checkpoint.relative_to(Path.cwd().resolve()).as_posix()
+    relative = storage.repository_relative_path(checkpoint)
     record = {
         'schema_version': 1, 'checkpoint': relative, 'bundle_id': bundle.bundle_id,
         'checkpoint_sha256': hashlib.sha256(source_bytes).hexdigest(),
         'prepared_at': datetime.now(UTC).isoformat(), 'execute_started': None,
         'supplement_status': 'not_attempted',
     }
-    try:
-        with marker.open('x', encoding='utf-8') as handle:
-            json.dump(record, handle, indent=2)
-            handle.write('\n')
-            handle.flush()
-            os.fsync(handle.fileno())
-    except FileExistsError:
+    if not storage.create_attempt(marker, record):
         return None
-    output = os.environ.get('GITHUB_OUTPUT')
-    if output:
-        with Path(output).open('a', encoding='utf-8') as handle:
-            handle.write(f'checkpoint={relative}\n')
-            handle.write(f'marker={marker.relative_to(Path.cwd().resolve()).as_posix()}\n')
+    storage.append_github_output(relative, marker)
     return marker
 
 
@@ -140,22 +131,16 @@ async def execute_post_delivery(
 
     checkpoint = _safe_path(checkpoint_path)
     marker, output, markdown = _paths(checkpoint)
-    if not marker.is_file() or marker.is_symlink():
-        raise ValueError('Persisted post-delivery attempt marker is required.')
-    if any(path.exists() or path.is_symlink() for path in (output, markdown)):
-        raise ValueError('Post-delivery result already exists; refusing another attempt.')
-    record: dict[str, Any] = json.loads(marker.read_text())
+    record = storage.load_attempt(marker, output, markdown)
     config = _config(config_path)
-    source_bytes = checkpoint.read_bytes()
+    source_bytes = storage.read_checkpoint_bytes(checkpoint)
     bundle, _reviews = load_review_checkpoint(checkpoint, config)
-    if source_bytes != checkpoint.read_bytes():
-        raise ValueError("Checkpoint changed while being read.")
+    storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     source_evidence, require_full_source, source_error = _source_provenance(checkpoint, bundle, config, source_bytes)
-    if source_bytes != checkpoint.read_bytes():
-        raise ValueError("Checkpoint changed while being read.")
+    storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     if (type(record.get('schema_version')) is not int or record['schema_version'] != 1
             or record.get('execute_started')
-            or record.get('checkpoint') != checkpoint.relative_to(Path.cwd().resolve()).as_posix()
+            or record.get('checkpoint') != storage.repository_relative_path(checkpoint)
             or record.get('bundle_id') != bundle.bundle_id
             or record.get('checkpoint_sha256') != hashlib.sha256(source_bytes).hexdigest()):
         raise ValueError('Invalid, changed or already executed post-delivery checkpoint.')
@@ -164,7 +149,7 @@ async def execute_post_delivery(
         record['full_source_required'] = True
         if source_error:
             record['full_source_error'] = source_error
-    atomic_json_write(marker, record)
+    storage.save_attempt(marker, record)
     translation_enabled = config.translation.enabled and config.translation.target_language != 'en'
     extra = min(config.translation.timeout_seconds, 45.0) if translation_enabled else 0.0
     processing_deadline = time.monotonic() + MAX_SECONDS + extra
@@ -179,14 +164,13 @@ async def execute_post_delivery(
         # Unexpected implementation failures still leave an explicit durable outcome.
         payload = {'status': 'error', 'bundle_id': bundle.bundle_id, 'error': type(exc).__name__,
                    'coverage': 'one narrative maximum', 'stage': 'unexpected_failure'}
-        atomic_json_write(output, payload)
-        markdown.write_text('# Irritator incomplete\n' + json.dumps(payload, indent=2) + '\n')
+        storage.save_failure_archives(output, markdown, payload)
         record['stage_status'] = 'error'
-        atomic_json_write(marker, record)
+        storage.save_attempt(marker, record)
         return 2
     # Persist original analysis before optional presentation. Translation never
     # replaces source evidence or the original stage result.
-    atomic_json_write(output, asdict(result))
+    storage.save_result(output, asdict(result))
     presented, presentation_config, notice = result, config, ""
     if translation_enabled:
         from digest.translation import TranslationResult, translate_supplement_presentation
@@ -204,15 +188,15 @@ async def execute_post_delivery(
         if translation.status == 'translated':
             presentation_config = replace(config, radar=replace(config.radar,
                                           language=config.translation.target_language))
-    markdown.write_text(_render_result(presented, canonical=result, notice=notice), encoding='utf-8')
+    storage.save_markdown_archive(markdown, _render_result(presented, canonical=result, notice=notice))
     record['stage_status'] = result.status
     if getattr(config.telegram, 'delivery_mode', 'cards') == 'compact':
         record['supplement_status'] = 'archive_only'
         record['finished_at'] = datetime.now(UTC).isoformat()
-        atomic_json_write(marker, record)
+        storage.save_attempt(marker, record)
         return 0 if result.status in {'complete', 'empty'} else 2
     record['supplement_status'] = 'dispatching'
-    atomic_json_write(marker, record)
+    storage.save_attempt(marker, record)
     try:
         if translation_enabled:
             record['supplement_status'] = await _send_supplement(presented, presentation_config, notice=notice)
@@ -222,7 +206,7 @@ async def execute_post_delivery(
         record['supplement_status'] = 'unknown'
         record['send_error'] = type(exc).__name__
     record['finished_at'] = datetime.now(UTC).isoformat()
-    atomic_json_write(marker, record)
+    storage.save_attempt(marker, record)
     return 0 if result.status in {'complete', 'empty'} and record['supplement_status'] == 'sent' else 2
 
 

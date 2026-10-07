@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from digest._sanitize import sanitize_article as _sanitize_article
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
+from digest.domain.editorial.summaries import ArticleSummary as ArticleSummary
 from digest.llm import LLMRole, complete
 from digest.radar.collector import Article
 
@@ -27,17 +28,6 @@ def _cap_sentences(text: str, n: int) -> str:
         return text
     parts = _SENTENCE_SPLIT_RE.split(text.strip())
     return " ".join(parts[:n])
-
-
-@dataclass
-class ArticleSummary:
-    """Per-article LLM summary used for individual Telegram posts."""
-
-    title: str
-    link: str
-    source: str
-    category: str
-    summary: str
 
 
 @dataclass

@@ -92,8 +92,8 @@ failures at every prepared state write before receipt application. Transport reg
 retain unknown/unapplied holds and no replay. Check results belong to the implementing
 change, separately from product acceptance.
 
-`delivery/edition.py` still combines receipt/claim storage and transport. The later
-#147 continuation below separates Telegram rendering from legacy/direct/post-delivery transport. Feedback and source-scoring modules
+`delivery/edition.py` retains compatible exports after the later #147 continuations
+below separate Telegram rendering, prepared policy/storage and concrete transports. Feedback and source-scoring modules
 still mix policies and adapters: `FeedbackStore`, `SourceStats` and `SourceStateStore`
 remain there, with type-only source-state imports in the new storage adapter.
 `main` retains legacy/discovery orchestration. This slice does not complete the
@@ -106,8 +106,8 @@ runtime state and receipts without a format migration or state reset.
 
 ## Telegram presentation and transport continuation
 
-Local first delivery-ownership slice under #147, 2026-10-07. This is an implementation
-record, not merge, rollout, complete #147 acceptance or editorial acceptance.
+The first delivery-ownership slice under #147 deployed through engine PR #158 and
+runtime PR #81 on 2026-10-07. This does not establish complete #147 or editorial acceptance.
 
 Pure `presentation/telegram.py` now owns card, compact and supplementary rendering,
 Markdown encoding, deep-link buttons and chunk/range coverage. The unchanged shared
@@ -126,13 +126,61 @@ silent chunks once within 30 seconds, and reports failures to the existing unkno
 marker. These weaker receipts do not replace prepared delivery's positive message-ID
 and matching-chat validation. All early credential/empty-selection skips remain.
 
-`post_delivery.py` still owns its persisted marker and archive ordering, model and
-translation work, compact archive-only exit and final outcome. It delegates only the
-Telegram send. The full-source coverage string remains owned by the evidence stage;
+`post_delivery.py` owns persisted marker/archive ordering, model and translation
+work, compact archive-only exit and final outcome. Concrete persistence now delegates
+to storage as recorded in the second continuation below; Telegram send has its own adapter. The full-source coverage string remains owned by the evidence stage;
 the adapter compares it and passes a boolean to the pure localized renderer.
 
-The prepared claim/receipt values, codecs, state transitions, writes and transport
-remain together in `delivery/edition.py`, except its renderer import. Its separation
-from storage and application coordination is explicit remaining #147 work. No schema,
+The second continuation below separates the prepared claim/receipt values, codecs,
+state checks, writes and transport previously combined in `delivery/edition.py`. No schema,
 hash, receipt, retained state, provider call or retry policy changes. Rollback remains
 a compatible code revert or engine pin, without resetting state or resending messages.
+
+
+## Prepared delivery persistence and application continuation
+
+Local second delivery-ownership slice under #147, 2026-10-07. This record does not
+establish merge, rollout, complete #147 acceptance or editorial acceptance.
+
+`domain/delivery/edition.py` owns unchanged prepared article/edition/claim/receipt
+values and pure shape, binding, count, state, publication-window and checkpoint-reference
+checks. `ArticleSummary` moves unchanged to `domain/editorial/summaries.py`; its old
+summarizer import retains the same identity. The domain imports no model, application,
+transport or storage owners. Receipt checks receive an explicit owner hash. Reference
+validation is separate from checkpoint-byte reads, which remain in storage.
+
+`adapters/storage/edition.py` owns canonical encoding, exact file hashes, JSON
+restoration, checkpoint-byte validation and durable local writes. The unchanged
+symlink guard moves to `adapters/storage/issue_paths.py` with its old alias retained.
+The old legacy compact marker codec remains its staged owner; this is not a redesign
+of the compact issue guard. `application/prepared_delivery.py` owns the five prepared
+operations and current time/environment observations. Production runtime callers use
+that application; the old edition module remains a compatibility facade.
+
+`adapters/telegram/prepared.py` sends one frozen payload and interprets its strict
+message-ID/chat receipt without persistent-state access. The application keeps the
+single 30-second dispatch window, persists attempted count before every POST and each
+accepted receipt afterward, and retains the exact caught exception set. In particular,
+a post-acceptance `OSError` escapes and the preceding `sending` record remains held;
+there is no automatic resend or repair of potentially accepted messages.
+
+The [ordering matrix](../ARCHITECTURE.md#stage-5-prepared-delivery-values-persistence-and-application)
+records prepare/claim/send/apply effects, including ready-before-old-claim cleanup,
+confirmed-and-applied return before freshness, and external ready/claim barriers.
+Schema 1, filenames, sorted compact UTF-8 JSON with `allow_nan=False`, hashes, frozen
+payloads, private owner restriction, UTC windows, exclusive writes and fsync remain
+unchanged. No multi-file transaction, journal, reset or crash-idempotence promise is added.
+
+Post-delivery concrete marker/result/archive effects move to
+`adapters/storage/post_delivery.py`. Initial exclusive markers retain indentation,
+trailing newline and file fsync; subsequent writes retain their previous atomic JSON
+encoding. The application keeps execute-started → canonical result → translation →
+archive → dispatching → send → terminal order and compact `archive_only` behavior.
+
+Existing prepared, legacy guard, runtime, post-delivery and confirmed-outcome tests
+remain the behavioral baseline. Focused additions cover owner-free domain imports,
+explicit receipt owner evidence, value/entrypoint aliases, interrupted receipt writes
+and initial-marker byte/fsync ordering. Synthetic old/new byte and effect comparison
+supports parity; root and independent review remain required before publication.
+Rollback remains a compatible code revert or prior engine pin, preserving all runtime
+state, claims and receipts without reset or replay.

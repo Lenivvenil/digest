@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -98,6 +99,33 @@ async def test_prepare_is_exclusive_and_never_replaces_an_existing_marker(tmp_pa
         assert prepare_post_delivery(Path("config.yaml"), checkpoint) is None
     run.assert_not_called()
     assert _marker(checkpoint).read_bytes() == first_marker
+
+
+@pytest.mark.asyncio
+async def test_initial_marker_is_fsynced_with_its_newline_before_workflow_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    await _checkpoint(checkpoint)
+    output = tmp_path / "github-output"
+    output.write_text("previous=value\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    fsync = os.fsync
+
+    def sync_marker(descriptor: int) -> None:
+        marker_bytes = _marker(checkpoint).read_bytes()
+        record = json.loads(marker_bytes)
+        assert marker_bytes == (json.dumps(record, indent=2) + "\n").encode("utf-8")
+        assert os.fstat(descriptor).st_ino == _marker(checkpoint).stat().st_ino
+        assert output.read_text() == "previous=value\n"
+        fsync(descriptor)
+
+    with patch("digest.adapters.storage.post_delivery.os.fsync", side_effect=sync_marker) as sync:
+        assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    sync.assert_called_once()
+    assert output.read_text() == (
+        "previous=value\ncheckpoint=digests/day.review.json\nmarker=digests/day.post-attempt.json\n"
+    )
 
 
 @pytest.mark.asyncio
@@ -206,7 +234,10 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
         assert asdict(bundle) == payload["evidence"]
         assert actual_client is client
         assert config.llm.max_retries == 0
-        assert json.loads(_marker(checkpoint).read_text())["execute_started"]
+        marker_bytes = _marker(checkpoint).read_bytes()
+        record = json.loads(marker_bytes)
+        assert record["execute_started"]
+        assert marker_bytes == json.dumps(record, indent=2).encode("utf-8")
         assert not _result(checkpoint).exists()
         return result
 
@@ -232,6 +263,8 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
     assert record["stage_status"] == "complete"
     assert record["supplement_status"] == "sent"
     assert record["finished_at"]
+    assert _marker(checkpoint).read_bytes() == json.dumps(record, indent=2).encode("utf-8")
+    assert _result(checkpoint).read_bytes() == json.dumps(asdict(result), indent=2).encode("utf-8")
     assert checkpoint.read_bytes() == original
     with (
         patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as stage,

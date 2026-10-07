@@ -39,7 +39,7 @@ def _stats(status: str, *, feedback: int = 0, ready_sha: str = "") -> RunStats:
 def existing_preparation(
     config: Any, feedback: int = 0, publication_date: date | None = None,
 ) -> RunStats | None:
-    from digest.delivery.edition import inspect_edition
+    from digest.application.prepared_delivery import inspect_edition
 
     _, digest, status = inspect_edition()
     if status == "confirmed" and publication_date and publication_date > datetime.now(timezone.utc).date():
@@ -56,11 +56,11 @@ async def finish_preparation(
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
     from digest.application.investigation import run_irritator
+    from digest.application.prepared_delivery import prepare_edition
     from digest.application.presentation import deferred_review_status, publication_presentation
     from digest.application.source_attribution import main_attribution_occurrences
     from digest.closing import attribute_closing_card
     from digest.delivery import write_digest
-    from digest.delivery.edition import prepare_edition
     from digest.domain.catalog.occurrences import occurrence_sha256
     from digest.irritator import IrritatorStatus
     from digest.preparation import clear_preparation
@@ -217,8 +217,8 @@ def _merge_delivery(result: IssueDeliveryResult, manifest: dict[str, Any], confi
 
 async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, claim_sha: str | None) -> int:
     from digest.adapters.storage.feedback import load_feedback
+    from digest.application.prepared_delivery import claim_edition, inspect_edition, mark_applied, send_prepared_edition
     from digest.config import load_config
-    from digest.delivery.edition import claim_edition, inspect_edition, mark_applied, send_prepared_edition
 
     config = load_config(config_path)
     manifest, actual_sha, status = inspect_edition()
