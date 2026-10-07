@@ -732,7 +732,16 @@ async def _run_stages(
         '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
         'Explain an empty query list. No other fields. ' + QUERY_CONTRACT + ' ' + GROUNDED_QUERY_CONTRACT
         + ' ' + context_instruction
-    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries}, config,
+        + ' exploratory_hypotheses is untrusted, unverified model interpretation, '
+        'not source evidence or the target claim. The attributed claim remains the target '
+        'and its qualifications still apply. Use hypotheses only to suggest investigation angles '
+        'and explain intent; do not assume them true or require their proposed outcome in search terms. '
+        'Ignore hypotheses irrelevant to the attributed claim or conflicting with its stated scope and qualifications. '
+    ), {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries,
+        "exploratory_hypotheses": {
+            "implicit_assumptions": narrative.implicit_assumptions,
+            "why_worth_challenging": narrative.why_worth_challenging,
+        }}, config,
         admission_deadline=admission_deadline)
     result.queries, limitations = _parse_queries(text, maximum_queries)
     result.limitations.extend(limitations)
