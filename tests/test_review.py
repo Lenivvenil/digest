@@ -251,7 +251,7 @@ def test_oversized_or_non_web_evidence_is_omitted_once_for_every_model() -> None
 
 @pytest.mark.asyncio
 async def test_telegram_status_exposes_incomplete_peer_review() -> None:
-    from digest.main import _review_status_line
+    from digest.application.legacy import _review_status_line
 
     report = await run_fixture()
     report.status = "incomplete"
@@ -325,7 +325,7 @@ def test_rejected_response_diagnostics_are_bounded_and_redacted() -> None:
 
 
 def test_review_status_pending_is_not_unavailable_in_russian():
-    from digest.main import _review_status_line
+    from digest.application.legacy import _review_status_line
     from digest.review import BlindReviewReport, ModelReview
 
     bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)

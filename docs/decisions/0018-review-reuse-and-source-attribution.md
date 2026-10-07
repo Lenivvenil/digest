@@ -5,6 +5,10 @@ Status: implementation record for the scoped
 merge, runtime rollout and editorial acceptance are separate. The preceding #145
 change merged in [PR #151](https://github.com/Lenivvenil/digest/pull/151) and was
 deployed through runtime [PR #74](https://github.com/Lenivvenil/digest-prod/pull/74).
+This #146 scope merged through [PR #152](https://github.com/Lenivvenil/digest/pull/152)
+at `7d5f9cca618eb2257be01d54ffacd577498827a2`; runtime
+[PR #75](https://github.com/Lenivvenil/digest-prod/pull/75) deployed it at
+`e9daea980b831b69e45ee7c9af6a72ec653f9881` on 2026-10-07.
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-4-review-reuse-and-source-attribution),
 [ADR0005](0005-optional-presentation-translation.md),

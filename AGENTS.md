@@ -73,10 +73,11 @@ agent-only design.
 
 ```
 ├── digest/
-│   ├── application/         # prepared scenarios and shared analysis/presentation/run operations
+│   ├── application/         # prepared/direct/discovery scenarios and shared application operations
 │   ├── __init__.py          # __version__
 │   ├── __main__.py          # enables `python -m digest`
-│   ├── main.py              # CLI dispatch and remaining legacy/discovery scenarios
+│   ├── main.py              # public compatibility wrappers and CLI dispatch
+│   ├── cli/                 # arguments, diagnostics and result/preview reporting
 │   ├── config.py            # config loading and validation
 │   ├── llm.py               # LLM provider abstraction (Groq, Gemini, DeepSeek)
 │   ├── filters.py           # blocklist keyword filtering

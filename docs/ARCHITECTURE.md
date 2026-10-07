@@ -2,7 +2,9 @@
 
 > Delivery, review-reuse and source-attribution ownership reflect the scoped
 > #145/#146 implementations on 2026-10-07. The #145 boundary is deployed through
-> engine PR #151 and runtime PR #74; #146 release evidence is tracked in its issue.
+> engine PR #151 and runtime PR #74. The #146 boundary is deployed through
+> engine PR #152 and runtime PR #75.
+> #147-A adds execution/legacy/discovery ownership; #147-B remains pending.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -26,7 +28,10 @@ The scoped review/source-attribution implementation
 under [#146](https://github.com/Lenivvenil/digest/issues/146) is recorded in
 [ADR0018](decisions/0018-review-reuse-and-source-attribution.md). The implementing
 issues track merge, checks and rollout evidence. These statuses do not establish
-editorial acceptance or completion of the remaining migration stages.
+editorial acceptance or completion of the remaining migration stages. The local
+#147-A scenario extraction is recorded in
+[ADR0019](decisions/0019-remaining-application-scenarios.md); provider runtime/configuration
+separation under #147-B is still pending.
 
 The target is a modular monolith: one deployable Python engine, the existing private
 runtime, and no additional services or workflow framework. Organization follows who
@@ -46,11 +51,12 @@ The first migration introduces `digest/application/`:
 - `run_state.py`: feedback collection, approved source changes and fetch accounting.
 - `results.py`: the existing `RunStats` result, moved without changing its fields.
 
-`main.py` resolves prepared versus legacy execution before either workflow runs.
+`application/execution.py` now resolves prepared versus legacy execution before either
+workflow runs, behind the public `main.py` wrappers (stage 5-A below).
 `edition_runtime.py` consumes application presentation/results and no longer imports
 `main`. The ordinary preparation coordinator has no preview, direct-send or source-
-reconciliation branch. Legacy preview/dispatch and discovery are still in `main`;
-this stage does not claim the entire entrypoint has become thin. The programmatic
+reconciliation branch. Stage 1 left legacy preview/dispatch and discovery in `main`;
+stage 5-A gives those scenarios application owners. The programmatic
 `run()` entry now rejects preparation combined with dry-run/radar-only before
 configuration/preparation effects, matching the existing CLI restriction. Its existing
 finally block still finalizes an explicitly supplied legacy issue guard. Previously those unsupported Python
@@ -64,8 +70,10 @@ source work is not yet completely isolated from the ordinary acquisition stage.
 
 ```mermaid
 flowchart LR
-    CLI[main: command dispatch] --> PREP[application.preparation]
-    CLI --> LEGACY[existing legacy path]
+    CLI[main: command dispatch] --> EXEC[application.execution]
+    EXEC --> PREP[application.preparation]
+    EXEC --> LEGACY[application.legacy]
+    CLI --> DISCOVERY[application.discovery]
     PREP --> ANALYSIS[application.analysis]
     PREP --> STATE[application.run_state]
     PREP --> EDITION[edition_runtime]
@@ -78,7 +86,7 @@ flowchart LR
     EDITION -->|Non-review legacy mode only| INVESTIGATE
 ```
 
-No lower module imports `main`; the executable `__main__` remains its caller.
+No lower module imports `main` or `cli`; the executable `__main__` remains the CLI caller.
 Existing candidate, checkpoint and delivery internals retain known ownership debt.
 In particular, this is not a redesign of their serialized records or retry policies.
 
@@ -122,7 +130,7 @@ not claim a pure scheduler, a completed catalog domain or full legacy isolation.
 [`application/delivery.py`](../digest/application/delivery.py) owns
 `apply_confirmed_outcome`, with explicit `PreparedOutcomePolicy` and
 `LegacyOutcomePolicy` inputs. `edition_runtime._merge_delivery` and the direct
-workflow in `main` delegate to it. The coordinator selects the scenario's effects
+workflow in `application.legacy` delegate to it. The coordinator selects the scenario's effects
 and their order; it does not send messages or finalize receipts.
 
 [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) owns
@@ -179,10 +187,10 @@ coverage value or application entrypoint does not unify these protocols.
 `source_scorer.py` still own `FeedbackStore`, `SourceStats` and `SourceStateStore`
 and mix domain rules with codecs/adapters; the storage adapter's source-state types
 are type-only imports from that existing module. This is not a complete feedback or
-catalog-domain extraction. `main` retains legacy/discovery orchestration.
+catalog-domain extraction. Stage 5-A moves legacy/discovery orchestration into applications.
 Compatibility exports preserve the old Telegram result imports. In particular,
-the broad `LegacyOutcomePolicy` is a transitional in-memory run context pending
-#147, not an ideal domain policy or a persisted entity/schema. The following
+the broad `LegacyOutcomePolicy` remains a transitional in-memory handoff from the
+legacy application, not an ideal domain policy or a persisted entity/schema. The following
 review/source-attribution slice leaves these delivery ownership debts unchanged.
 
 ### Stage 4: review reuse and source attribution
@@ -228,6 +236,27 @@ execution and closing sidecar storage remain with their existing owners. Named
 subclasses and compatibility exports remain debt for #147/#148 alongside broader
 presentation/transport separation.
 
+### Stage 5-A: remaining application scenarios
+
+The local #147-A implementation is recorded in
+[ADR0019](decisions/0019-remaining-application-scenarios.md). It establishes no release.
+
+| Owner | Boundary |
+| --- | --- |
+| `application/execution.py` | Validate and select prepared/direct execution. Outer `run` finalizes unresolved coarse guards; `_run` deliberately does not. |
+| `application/legacy.py` | Approved-portfolio collection → analysis/presentation → preview or Markdown/Telegram publication → confirmed-outcome application. Explicit collection/publication handoffs retain existing mutable feedback/scoring coupling. |
+| `application/discovery.py` | Resolve one owner/target session, prepare and strictly reserve bounded proposals, then send through the existing persisted-pair and unknown-before-POST checks. |
+| `cli/` | Arguments, explicit diagnostics, one typed preview callback, terminal summaries and `GITHUB_OUTPUT` reporting. |
+| `main.py` | Public wrapper compatibility and dispatch. Discovery explicitly orders prepare → hash output → send; output failure blocks sending even in local `all`. |
+
+The direct-application effect matrix in stage 3 is unchanged. CLI flag precedence,
+radar-only's feedback/approval effects, guard cleanup, discovery budgets and exit
+mapping remain compatible. Legacy status HTTP now uses the existing Telegram
+adapter, retaining notice/footer failure policies and localized text. Lower layers
+never import main/CLI, including function-local and type-only imports. Config._runtime
+copy/sharing, provider execution and broader storage codecs remain pending #147-B
+or later scoped work.
+
 ### Target responsibility map
 
 ```text
@@ -270,7 +299,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios | Move CLI discovery/legacy workflows to explicit applications; separate provider runtime state from configuration; locate codecs with storage adapters. | Migrate one boundary at a time, preserving request counts, deadlines and existing configured routes. |
+| 5. Adapters and remaining scenarios — local #147-A | Explicit execution/legacy/discovery applications and CLI reporting; ADR0019 records the boundaries. #147-B provider runtime/configuration separation and broader codecs remain pending. | Preserve guard/write order, public APIs, output barriers, request counts, deadlines and configured routes. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -383,8 +412,9 @@ experiment, not external counter-evidence or a verified factual consensus.
 
 | Module | Responsibility |
 | --- | --- |
-| `main.py` | CLI dispatch/reporting plus legacy/discovery scenarios awaiting later migration |
-| `application/` | Prepared use cases, shared canonical analysis/presentation, confirmed-outcome application, run-state operations and execution results |
+| `main.py` | Public Python compatibility wrappers and CLI command dispatch |
+| `cli/` (#147-A) | Argument parsing, explicit diagnostics, preview/result reporting and managed-runtime outputs |
+| `application/` | Prepared/direct/discovery scenarios, execution validation/cleanup, shared analysis/presentation, confirmed-outcome application, run-state operations and typed results/previews |
 | `domain/catalog/`, `domain/editorial/` (#144, #146) | Article identity and canonical source occurrences; evidence/review/disposition/candidate values, distinct request/canonical validation and exact-request reuse; not the complete catalog or editorial workflow |
 | `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
 | `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |

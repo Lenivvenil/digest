@@ -91,4 +91,10 @@ implementation: shared exact-request review reuse, distinct request validation,
 canonical source occurrences with named compatibility types, and general exact-feed
 notices separated from optional closing. Immutable main-packet resolution remains an
 application boundary; existing hashes, recovery and presentation ordering are preserved.
-Merge, deployment, source activation and editorial acceptance remain separate.
+PR #152 and runtime PR #75 verified the scoped deployment on 2026-10-07;
+source activation and editorial acceptance remain separate.
+
+[0019](0019-remaining-application-scenarios.md) records the #147-A execution,
+legacy and discovery application boundary with explicit CLI output adapters.
+Public entrypoints, guard finalization and the discovery persistence/output/send
+barrier remain compatible; provider runtime ownership remains a later #147 slice.

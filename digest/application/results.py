@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from digest.domain.editorial.reviews import BlindReviewReport
+    from digest.irritator import IrritatorStatus
+    from digest.irritator.ranker import RankedSignal
+    from digest.radar.summarizer import ArticleSummary
 
 
 @dataclass
@@ -23,3 +30,26 @@ class RunStats:
     review_checkpoint: str = ""
     edition_status: str = ""
     ready_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class RadarPreview:
+    """Primary-only display content; translated cards are printed when requested."""
+
+    combined: str
+    cards: list[ArticleSummary]
+    show_cards: bool
+
+
+@dataclass(frozen=True)
+class DigestPreview:
+    """Complete legacy preview after optional investigation and presentation."""
+
+    combined: str
+    cards: list[ArticleSummary]
+    ranked: list[RankedSignal]
+    irritator_status: IrritatorStatus
+    review_report: BlindReviewReport | None
+
+
+Preview = RadarPreview | DigestPreview
