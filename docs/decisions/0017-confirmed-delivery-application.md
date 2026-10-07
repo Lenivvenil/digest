@@ -4,6 +4,10 @@ Status: implementation record for the scoped #145 structural migration.
 Merge, exact-head checks and runtime rollout evidence are tracked in
 [#145](https://github.com/Lenivvenil/digest/issues/145); this record does not establish
 runtime or editorial acceptance.
+On 2026-10-07, [PR #151](https://github.com/Lenivvenil/digest/pull/151) merged at
+`fbee27319751d2fdb94b30b0c83f6bddeb65b7e8`; runtime
+[PR #74](https://github.com/Lenivvenil/digest-prod/pull/74) deployed that pin at
+`0e658d815d241442250188559df69bb121daac45`. This verifies rollout, not editorial acceptance.
 
 Refs [the staged architecture](../ARCHITECTURE.md#structural-migration-current-stage-and-target),
 [ADR0007](0007-compact-issue-reservation.md),
@@ -93,6 +97,9 @@ change, separately from product acceptance.
 still mix policies and adapters: `FeedbackStore`, `SourceStats` and `SourceStateStore`
 remain there, with type-only source-state imports in the new storage adapter.
 `main` retains legacy/discovery orchestration. This slice does not complete the
-feedback/catalog domains or later review/source-attribution work.
+feedback/catalog domains.
+The scoped #146 ownership extraction is recorded separately in
+[ADR0018](0018-review-reuse-and-source-attribution.md); it leaves these delivery
+policies, receipt boundaries and remaining adapter debts unchanged.
 Rollback uses a compatible reviewed code revert or prior engine pin, retaining all
 runtime state and receipts without a format migration or state reset.

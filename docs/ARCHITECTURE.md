@@ -1,7 +1,9 @@
 # Architecture — Daily News Digest
 
-> Confirmed-delivery ownership reflects the scoped #145 implementation on 2026-10-07.
-> Release evidence is tracked in #145; implementation is not runtime or editorial acceptance.
+> Delivery, review-reuse and source-attribution ownership reflect the scoped
+> #145/#146 implementations on 2026-10-07. The #145 boundary is deployed through
+> engine PR #151 and runtime PR #74; #146 release evidence is tracked in its issue.
+> Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
 
@@ -19,8 +21,11 @@ merged in [PR #150](https://github.com/Lenivvenil/digest/pull/150) at engine
 `9d529cc84d9c1968feebe25d55da0658767cc3e7` with the one-line engine-pin update.
 Its boundaries are recorded in [ADR0016](decisions/0016-candidate-contracts-and-retirement.md).
 The confirmed-delivery application under [#145](https://github.com/Lenivvenil/digest/issues/145)
-is implemented as recorded in [ADR0017](decisions/0017-confirmed-delivery-application.md);
-that issue tracks merge, checks and rollout evidence. These statuses do not establish
+is implemented as recorded in [ADR0017](decisions/0017-confirmed-delivery-application.md).
+The scoped review/source-attribution implementation
+under [#146](https://github.com/Lenivvenil/digest/issues/146) is recorded in
+[ADR0018](decisions/0018-review-reuse-and-source-attribution.md). The implementing
+issues track merge, checks and rollout evidence. These statuses do not establish
 editorial acceptance or completion of the remaining migration stages.
 
 The target is a modular monolith: one deployable Python engine, the existing private
@@ -177,9 +182,51 @@ are type-only imports from that existing module. This is not a complete feedback
 catalog-domain extraction. `main` retains legacy/discovery orchestration.
 Compatibility exports preserve the old Telegram result imports. In particular,
 the broad `LegacyOutcomePolicy` is a transitional in-memory run context pending
-#147, not an ideal domain policy or a persisted entity/schema. Review/source
-attribution and these remaining ownership debts stay separate migration work under
-the existing plan.
+#147, not an ideal domain policy or a persisted entity/schema. The following
+review/source-attribution slice leaves these delivery ownership debts unchanged.
+
+### Stage 4: review reuse and source attribution
+
+The scoped #146 decision and compatibility details are in
+[ADR0018](decisions/0018-review-reuse-and-source-attribution.md).
+
+| Owner | Contract |
+| --- | --- |
+| [`domain/editorial/reviews.py`](../digest/domain/editorial/reviews.py) | Pure `ReviewReuseIdentity` and `reusable_model_review`, shared by review execution and resume planning. Configured slot/provider/model, bundle, prompt and eligible status must match before saved selections/provenance are validated. A valid copy marks reuse without mutating the input; mismatches return no result and malformed matches raise. |
+| [`domain/catalog/occurrences.py`](../digest/domain/catalog/occurrences.py) | Frozen seven-field `SourceOccurrence` and `occurrence_sha256`. Thin named frozen `CandidateArticle` and `ClosingOccurrence` subclasses preserve import paths, type-specific equality, repr, conversion and strict JSON restoration. |
+| [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) | Reviewed literal notices keyed by exact feed URL and a pure card-copy transform, independent of optional closing. Notices are not inferred licensing facts, source activation or item-specific rights clearance. |
+| [`application/source_attribution.py`](../digest/application/source_attribution.py) | Resolve main occurrences from the immutable candidate packet bound to the accepted report and validate identity before calls. Kept separate from `application.presentation` and its review/translation dependency chain. |
+| `closing.py` | Optional decision/provenance handling, sidecars and compatibility wrappers; no ownership of general main credits. |
+
+| Validation boundary | Preserved policy |
+| --- | --- |
+| Request/checkpoint evidence | `validate_request_evidence_bundle` checks types, IDs, HTTP(S) URLs, configured item/excerpt limits, JSON budget and bundle hash. The checkpoint entrypoint remains a configuration adapter. |
+| Stored canonical evidence/report | Existing integrity checks without imposing current request budgets on accepted work. |
+| Live response / cached selections | Live parsing retains configured detail limits, salvage and quote normalization; cached validation retains exact packet membership independently of publication capacity. |
+| Accepted preparation / ready edition | Existing recovery precedence, schemas and no-new-selection behavior; exact-request reuse does not replace recovery or certify source fidelity. |
+
+Required main attribution (a supported enabled feed or closing-contract snapshot)
+holds preparation before calls when packet proof is absent or inconsistent. Legacy
+recovery without either requirement permits absent proof; failed optional inspection
+warns and retains accepted presentation without inferred credit. Optional closing
+attribution failure omits closing. No source name, article host or normalized URL
+is substituted for the exact retained feed binding.
+
+Publication remains translation → literal credit → rendering/split checks → archive
+and immutable freeze. A required credited main card spanning chunks holds preparation
+without discarding it; unsafe optional insertion omits closing. Archive and frozen
+payload use identical final cards. Canonical evidence, translation request/cache
+inputs, fallback, request/deadline limits and sender/receipt behavior stay unchanged.
+
+Prompt hashes retain sorted ASCII-escaped JSON with default spaces; evidence hashes
+retain sorted non-ASCII JSON with default spaces; occurrence/retained-object hashes
+retain compact sorted UTF-8 JSON with non-finite numbers rejected. Article identity,
+object envelopes, report/sidecar hashes and preparation v1/v2 bytes remain compatible.
+`source_admission.py` and `article_source.py` are unchanged; no full-text prerequisite
+or source/closing activation is introduced. Review scheduling, prompts, provider
+execution and closing sidecar storage remain with their existing owners. Named
+subclasses and compatibility exports remain debt for #147/#148 alongside broader
+presentation/transport separation.
 
 ### Target responsibility map
 
@@ -202,8 +249,8 @@ digest/
   presentation/            Markdown and Telegram rendering
 ```
 
-This is the destination; only the application, candidate and delivery-outcome/storage
-boundaries described above exist in the current staged implementation. Domain code
+This is the destination; the application, candidate, delivery-outcome/storage and
+review/source-attribution boundaries described above are scoped implementations. Domain code
 owns invariants and transitions; it imports neither CLI/application orchestration,
 HTTP clients nor filesystem persistence. Applications coordinate domain operations
 and adapters. Adapters consume domain values and enforce external protocols. Small
@@ -222,7 +269,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 1. Prepared application — deployed | One ordinary recovery → collection/selection → accepted snapshot → presentation/freeze path; no lower-to-`main` imports. PR #149 and runtime PR #72 implement this boundary; legacy scenarios remain. | No wire/schema/provider changes. Revert the engine pin; retain all runtime state. |
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
-| 4. Review and source attribution | One review-reuse rule; general source credits independent of optional closing; explicit canonical occurrence ownership. | Preserve report/sidecar formats, exact source binding, fallback and optional omission semantics. |
+| 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
 | 5. Adapters and remaining scenarios | Move CLI discovery/legacy workflows to explicit applications; separate provider runtime state from configuration; locate codecs with storage adapters. | Migrate one boundary at a time, preserving request counts, deadlines and existing configured routes. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
@@ -307,10 +354,10 @@ failure isolation merely because they use the same presentation functions.
 | --- | --- |
 | Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
 | Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
-| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The #144 [`domain review contracts`](../digest/domain/editorial/reviews.py) and [`disposition contracts`](../digest/domain/editorial/dispositions.py) enforce shape, identity and dispositions; [`review.py`](../digest/review.py) retains model-execution ownership. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`review.py`](../digest/review.py) retains model-execution ownership. |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
 | Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
-| Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. Source-bound credits travel with cards; optional closing omission cannot silently discard required main cards. [`finish_preparation`](../digest/edition_runtime.py), [`closing.py`](../digest/closing.py) validate before freeze. |
+| Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. [`application/source_attribution.py`](../digest/application/source_attribution.py) resolves immutable main occurrences before calls; [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) adds reviewed notices after translation. [`finish_preparation`](../digest/edition_runtime.py) preflights credited cards before archive/freeze; optional closing omission cannot discard required main cards. |
 | Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`delivery/edition.py`](../digest/delivery/edition.py) enforces identity and state, while the runtime persists them remotely. |
 | Confirmed coverage → operational state (#145) | [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) projects complete article coverage. [`application/delivery.py`](../digest/application/delivery.py) applies scenario-specific attribution, deduplication and accounting; the caller marks receipts applied only afterward. Partial writes remain a held inspection boundary, not automatic recovery. |
 | Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
@@ -338,10 +385,13 @@ experiment, not external counter-evidence or a verified factual consensus.
 | --- | --- |
 | `main.py` | CLI dispatch/reporting plus legacy/discovery scenarios awaiting later migration |
 | `application/` | Prepared use cases, shared canonical analysis/presentation, confirmed-outcome application, run-state operations and execution results |
-| `domain/catalog/`, `domain/editorial/` (#144) | Feed-independent article identity, evidence/review/disposition/candidate values and pure proof validation; not the complete catalog or editorial workflow |
+| `domain/catalog/`, `domain/editorial/` (#144, #146) | Article identity and canonical source occurrences; evidence/review/disposition/candidate values, distinct request/canonical validation and exact-request reuse; not the complete catalog or editorial workflow |
 | `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
 | `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |
 | `application/delivery.py` (#145) | Explicit prepared/direct policies, confirmed attribution/deduplication/accounting coordination and ordered persistence |
+| `application/source_attribution.py` (#146) | Resolve main credits from accepted report-bound immutable packets before presentation calls; preserve required versus legacy recovery policy |
+| `presentation/source_attribution.py` (#146) | Exact-feed reviewed literal notices and pure attributed card copies, independent of optional closing |
+| `closing.py` | Optional designation/provenance, sidecar persistence and omission rules; compatibility wrappers for moved occurrence/attribution contracts |
 | `adapters/storage/` (#144, #145) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence in `delivery_state.py`. No scheduling, retirement or accounting policy |
 | `config.py` | YAML loading, dataclasses and validation |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |

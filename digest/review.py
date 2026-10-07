@@ -21,27 +21,30 @@ from digest.candidate_dispositions import CandidateDispositionCapture, capture_r
 from digest.closing import ClosingCapture, capture_closing, eligible_ids
 from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
 from digest.domain.catalog.articles import Article, article_hash
+from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS as MAX_EVIDENCE_JSON_CHARS
+from digest.domain.editorial.reviews import SCHEMA_VERSION as SCHEMA_VERSION
 from digest.domain.editorial.reviews import BlindReviewReport as BlindReviewReport
 from digest.domain.editorial.reviews import EvidenceBundle as EvidenceBundle
 from digest.domain.editorial.reviews import EvidenceItem as EvidenceItem
 from digest.domain.editorial.reviews import EvidenceSelection as EvidenceSelection
 from digest.domain.editorial.reviews import ModelReview as ModelReview
 from digest.domain.editorial.reviews import RejectedSelection as RejectedSelection
+from digest.domain.editorial.reviews import (
+    ReviewReuseIdentity,
+    delivery_review,
+    reusable_model_review,
+    review_prompt_hash,
+    validate_request_evidence_bundle,
+    validated_cached_selections,
+)
 from digest.domain.editorial.reviews import _parse_live_review as _parse_live_review
 from digest.domain.editorial.reviews import _parse_live_selection as _parse_live_selection
 from digest.domain.editorial.reviews import _parse_review as _parse_review
 from digest.domain.editorial.reviews import _parse_review_envelope as _parse_review_envelope
 from digest.domain.editorial.reviews import _rejected_output_diagnostics as _rejected_output_diagnostics
 from digest.domain.editorial.reviews import canonical_evidence_quote as canonical_evidence_quote
-from digest.domain.editorial.reviews import (
-    delivery_review,
-    validated_cached_selections,
-)
 from digest.llm import LLMRole, complete
 from digest.radar.summarizer import ArticleSummary
-
-SCHEMA_VERSION = 1
-MAX_EVIDENCE_JSON_CHARS = 16000
 
 # Retain the legacy import path while the pure validator belongs to the domain.
 _validated_cached_selections = validated_cached_selections
@@ -234,7 +237,7 @@ async def _review_slot(
     disposition_capture: CandidateDispositionCapture | None = None,
     closing_capture: ClosingCapture | None = None,
 ) -> ModelReview:
-    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    prompt_hash = review_prompt_hash(messages)
     result = ModelReview(slot, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable",
                          attempted_at=datetime.now(UTC).isoformat())
     text: str | None = None
@@ -307,14 +310,13 @@ async def run_primary_review(
     were attempted for delivery. The checkpoint keeps the identical evidence
     and prompt contract used by the later blind review stage.
     """
-    from digest.review_checkpoint import validate_evidence_bundle
-
     settings = config.review
     bundle = build_evidence_bundle(articles_by_category, settings)
-    validate_evidence_bundle(bundle, config)
+    validate_request_evidence_bundle(bundle, max_evidence_articles=settings.max_evidence_articles,
+                                     max_excerpt_chars=settings.max_excerpt_chars)
     messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources,
                                      closing=getattr(config, "closing", None))
-    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    prompt_hash = review_prompt_hash(messages)
     # Do not mutate the caller's retry policy or share its provider cooldowns.
     delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
     if getattr(getattr(config, "reading_brief", None), "enabled", False):
@@ -340,13 +342,12 @@ async def run_evidence_review(
     bundle: EvidenceBundle, config: Config, cached_reviews: list[ModelReview] | None = None,
 ) -> BlindReviewReport:
     """Resume only independently validated successes for the identical evidence and prompt."""
-    from digest.review_checkpoint import validate_evidence_bundle
-
-    validate_evidence_bundle(bundle, config)
     settings = config.review
+    validate_request_evidence_bundle(bundle, max_evidence_articles=settings.max_evidence_articles,
+                                     max_excerpt_chars=settings.max_excerpt_chars)
     messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources,
                                      closing=getattr(config, "closing", None))
-    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    prompt_hash = review_prompt_hash(messages)
     cached = {review.slot: review for review in cached_reviews or []}
     if len(cached) != len(cached_reviews or []):
         raise ValueError("Checkpoint contains duplicate review slots.")
@@ -355,12 +356,11 @@ async def run_evidence_review(
     models = {"primary": settings.primary, "secondary": settings.secondary, "third": settings.tie_breaker}
     for name, previous in cached.items():
         model = models.get(name)
-        if (model is not None and previous.status in {"ok", "partial", "abstained"}
-                and (previous.provider, previous.model, previous.bundle_id, previous.prompt_hash)
-                == (model.provider, model.model, bundle.bundle_id, prompt_hash)):
-            selections, limitations = _validated_cached_selections(previous, bundle)
-            reusable[name] = replace(previous, selections=selections, limitations=limitations,
-                                     reused_from_checkpoint=True)
+        identity = (ReviewReuseIdentity(name, model.provider, model.model, bundle.bundle_id, prompt_hash)
+                    if model is not None else None)
+        reused = reusable_model_review(previous, bundle, identity)
+        if reused is not None:
+            reusable[name] = reused
 
     async def slot(name: str, model: ReviewModelConfig) -> ModelReview:
         if name in reusable:
@@ -392,7 +392,7 @@ async def run_evidence_review(
 
 def primary_notice(report: BlindReviewReport, language: str) -> str:
     """Deterministic attribution, usable once for an entire compact issue."""
-    primary = _delivery_review(report)
+    primary = delivery_review(report)
     label = "Мнение модели" if language == "ru" else "Model view"
     label += f" ({primary.provider}/{primary.model})"
     if report.status != "complete":
@@ -408,7 +408,7 @@ def primary_cards(
     if max_cards is not None and (type(max_cards) is not int or max_cards < 1):
         raise ValueError("Publication card limit must be a positive integer.")
     originals = _ordered_unique_articles(articles_by_category)
-    primary = _delivery_review(report)
+    primary = delivery_review(report)
     if primary.status not in {"ok", "partial"}:
         return []
     label = primary_notice(report, language)

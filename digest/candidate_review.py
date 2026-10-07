@@ -38,17 +38,20 @@ from digest.domain.editorial.candidates import CandidateProgress as CandidatePro
 from digest.domain.editorial.candidates import CandidateStatus as CandidateStatus
 from digest.domain.editorial.candidates import latest_occurrence_packet as _latest_occurrence_packet
 from digest.domain.editorial.candidates import validate_progress as _validate
+from digest.domain.editorial.reviews import (
+    BlindReviewReport,
+    delivery_review,
+    review_prompt_hash,
+    validate_request_evidence_bundle,
+    validated_cached_selections,
+)
 from digest.domain.editorial.reviews import validate_canonical_report as _validate_report
 from digest.filters import is_blocked
 from digest.radar.collector import Article, CollectionInventory, article_hash
 from digest.review import (
-    BlindReviewReport,
-    _delivery_review,
-    _validated_cached_selections,
     build_evidence_bundle,
     build_review_messages,
 )
-from digest.review_checkpoint import validate_evidence_bundle
 
 # Candidate-only current-work capacity: source bodies and resolved history live
 # in independently verified objects. Accepted preparation keeps its 4 MB bound.
@@ -277,11 +280,11 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
                               for item in selected}, _instant(now).isoformat())
     packet.evidence = build_evidence_bundle(packet_articles(packet), config.review)
     packet.collection_json = progress.latest_collection_json
-    validate_evidence_bundle(packet.evidence, config)
-    packet.prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
+    validate_request_evidence_bundle(packet.evidence, max_evidence_articles=config.review.max_evidence_articles,
+                                     max_excerpt_chars=config.review.max_excerpt_chars)
+    packet.prompt_hash = review_prompt_hash(build_review_messages(
         packet.evidence, config.review, config.radar.language, sources=config.sources,
-        closing=getattr(config, "closing", None)),
-        sort_keys=True).encode()).hexdigest()
+        closing=getattr(config, "closing", None)))
     packet.max_selections = config.review.max_selections
     return packet
 
@@ -329,26 +332,26 @@ def reconcile_packet(
     """Keep only validated primary/fallback results; technical failure is unfinished."""
     if packet not in progress.packets or report.evidence != packet.evidence:
         raise ValueError("Candidate result does not match its planned evidence.")
-    validate_evidence_bundle(report.evidence, config)
+    validate_request_evidence_bundle(report.evidence, max_evidence_articles=config.review.max_evidence_articles,
+                                     max_excerpt_chars=config.review.max_excerpt_chars)
     _validate_report(report)
-    prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
+    prompt_hash = review_prompt_hash(build_review_messages(
         report.evidence, config.review, config.radar.language, sources=config.sources,
-        closing=getattr(config, "closing", None)),
-        sort_keys=True).encode()).hexdigest()
+        closing=getattr(config, "closing", None)))
     selected: set[str] = set()
     rejected: set[str] = set()
     valid = False
-    for review in [_delivery_review(report)]:
+    for review in [delivery_review(report)]:
         if review.slot not in {"primary", "secondary"} or review.status not in {"ok", "partial", "abstained"}:
             continue
         if review.prompt_hash != prompt_hash or review.prompt_hash != packet.prompt_hash:
             raise ValueError("Candidate result prompt differs from the planned review contract.")
-        selections, _ = _validated_cached_selections(review, report.evidence)
+        selections, _ = validated_cached_selections(review, report.evidence)
         selected.update(item.evidence_id for item in selections)
         rejected.update(item.evidence_id for item in review.rejected_items if item.evidence_id is not None)
         valid = True
         break  # Same primary-first fallback semantics as delivery.
-    delivery_review = _delivery_review(report)
+    selected_review = delivery_review(report)
     captured = None
     if disposition_capture is not None:
         for attempt in disposition_capture.attempts:
@@ -356,7 +359,7 @@ def reconcile_packet(
             if matching is None:
                 raise ValueError("Disposition capture has no matching review slot.")
             validate_disposition_attempt(attempt, packet.evidence, matching)
-            if attempt.slot == delivery_review.slot:
+            if attempt.slot == selected_review.slot:
                 if captured is not None:
                     raise ValueError("Duplicate delivery disposition capture.")
                 captured = attempt
@@ -399,7 +402,7 @@ def pending_completed_report(
     for packet in reversed(progress.packets):
         if packet.report is None or _digest(asdict(packet.report)) in (skip_reports or set()):
             continue
-        successful = _delivery_review(packet.report) if packet.report.reviews else None
+        successful = delivery_review(packet.report) if packet.report.reviews else None
         if successful is None or successful.status not in {"ok", "partial", "abstained"}:
             continue
         selections = successful.selections

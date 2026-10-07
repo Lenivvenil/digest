@@ -84,3 +84,11 @@ confirmed-outcome application, pure coverage projection and strict delivery-stat
 adapter. Explicit prepared/direct policies preserve accounting, write order and
 failure behavior. Successful-repeat counter deduplication does not authorize
 automatic reconciliation of interrupted application; release evidence is tracked in #145.
+PR #151 and runtime PR #74 verified this scoped rollout on 2026-10-07.
+
+[0018](0018-review-reuse-and-source-attribution.md) records the scoped #146
+implementation: shared exact-request review reuse, distinct request validation,
+canonical source occurrences with named compatibility types, and general exact-feed
+notices separated from optional closing. Immutable main-packet resolution remains an
+application boundary; existing hashes, recovery and presentation ordering are preserved.
+Merge, deployment, source activation and editorial acceptance remain separate.

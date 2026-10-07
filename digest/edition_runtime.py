@@ -56,12 +56,15 @@ async def finish_preparation(
     """Resume only presentation; accepted canonical work is already saved."""
     from digest.application.investigation import run_irritator
     from digest.application.presentation import deferred_review_status, publication_presentation
-    from digest.closing import _digest, attribute_closing_card, attribute_source_card, main_attribution_occurrences
+    from digest.application.source_attribution import main_attribution_occurrences
+    from digest.closing import attribute_closing_card
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
     from digest.delivery.telegram import _render_compact_issue
+    from digest.domain.catalog.occurrences import occurrence_sha256
     from digest.irritator import IrritatorStatus
     from digest.preparation import clear_preparation
+    from digest.presentation.source_attribution import attribute_source_card
     from digest.translation import ClosingPresentation, translate_publication_with_closing
 
     stats = _stats("no_ready" if selection_complete else "selection_incomplete", feedback=feedback)
@@ -100,7 +103,7 @@ async def finish_preparation(
     # archive and frozen delivery. Missing provenance was checked before calls.
     from digest.radar.collector import article_hash
 
-    cards = [attribute_source_card(card, occurrence, _digest(asdict(occurrence)))[0]
+    cards = [attribute_source_card(card, occurrence, occurrence_sha256(occurrence))[0]
              if (occurrence := main_attribution.get(article_hash(card.title, card.link))) is not None else card
              for card in cards]
     # Never discard a required main card to satisfy optional placement. Hold the

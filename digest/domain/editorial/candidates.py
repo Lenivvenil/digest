@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Literal
 
 from digest._serialization import canonical_json_bytes
-from digest.domain.catalog.articles import Article, article_hash
+from digest.domain.catalog.articles import article_hash
+from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
 from digest.domain.editorial.dispositions import (
     CandidateDisposition,
     CandidateDispositionAttempt,
@@ -34,18 +35,8 @@ CandidateStatus = Literal[
 
 
 @dataclass(frozen=True)
-class CandidateArticle:
-    title: str
-    link: str
-    description: str
-    source: str
-    category: str
-    published: str | None
-    source_url: str
-
-    def article(self) -> Article:
-        return Article(self.title, self.link, self.description, self.source, self.category,
-                       datetime.fromisoformat(self.published) if self.published else None)
+class CandidateArticle(SourceOccurrence):
+    """Transitional named compatibility value while #147/#148 retire old boundaries."""
 
 
 @dataclass
@@ -109,11 +100,12 @@ def validate_candidate_decision(candidate: Candidate, packets: Sequence[Candidat
     if (candidate.disposition.evidence_id != candidate.identity
             or candidate.status in {"selected", "not_selected", "duplicate"}
             and candidate.disposition.status != candidate.status
-            or candidate.decision_occurrence_sha256 != _digest(asdict(candidate.article))):
+            or candidate.decision_occurrence_sha256 != occurrence_sha256(candidate.article)):
         raise ValueError("Candidate decision source occurrence mismatch.")
     for packet in packets:
         if not any(article_hash(article.title, article.link) == candidate.identity
-                   and _digest(asdict(article)) == candidate.decision_occurrence_sha256 for article in packet.articles):
+                   and occurrence_sha256(article) == candidate.decision_occurrence_sha256
+                   for article in packet.articles):
             continue
         for attempt in packet.disposition_attempts:
             if (attempt.response_sha256 == candidate.decision_response_sha256

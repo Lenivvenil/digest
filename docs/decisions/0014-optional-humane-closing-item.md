@@ -140,6 +140,16 @@ translation call is introduced.
 
 ## Literal attribution support in this draft
 
+The #146 ownership extraction in
+[ADR0018](0018-review-reuse-and-source-attribution.md) places these general notices
+and card-copy validation in `presentation/source_attribution.py`. Immutable main
+occurrence resolution belongs to `application/source_attribution.py`, separate
+from translation orchestration. `closing.py` retains optional decision/provenance,
+sidecars and compatibility wrappers. Its named frozen `ClosingOccurrence` subclasses
+the canonical catalog `SourceOccurrence` without changing equality, repr or wire
+contracts. The required-main, optional-legacy and optional-closing policies below
+remain distinct; this extraction does not activate the feature or establish rights.
+
 Presentation supports two exact feed URLs: NHS England RSS and the Environment
 Agency GOV.UK Atom feed. It does not infer permission from an article hostname or
 normalize another URL into an approved binding. The selected canonical card and

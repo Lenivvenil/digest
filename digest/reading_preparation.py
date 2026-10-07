@@ -26,6 +26,7 @@ from digest.candidate_review import (
 from digest.config import Config
 from digest.domain.editorial.candidates import accepted_empty_packet as _accepted_empty_packet
 from digest.domain.editorial.candidates import proof_packets as _proof_packets
+from digest.domain.editorial.reviews import BlindReviewReport, delivery_review, validated_cached_selections
 from digest.llm import request_budget_remaining, set_request_limit
 from digest.reading_brief import _advance, _count_routes_held, _routes, _validate_progress
 from digest.reading_brief_state import (
@@ -39,7 +40,6 @@ from digest.reading_brief_state import (
     save_state,
     state_root,
 )
-from digest.review import BlindReviewReport, _delivery_review, _validated_cached_selections
 
 
 @dataclass(frozen=True)
@@ -105,7 +105,7 @@ def setup_reading_budget(config: Config) -> None:
 
 
 def _binding(packet: CandidatePacket, report: BlindReviewReport, identity: str) -> ReadingBinding:
-    review = _delivery_review(report)
+    review = delivery_review(report)
     if not review.response_sha256:
         raise ValueError("technical_selection_proof_missing")
     from digest.radar.collector import article_hash
@@ -240,8 +240,7 @@ def deferred_source_reports(progress: CandidateProgress, state_dir: Path, config
         if report is None or not report.reviews:
             continue
         try:
-            selections, _ = _validated_cached_selections(
-                _delivery_review(report), packet.evidence)
+            selections, _ = validated_cached_selections(delivery_review(report), packet.evidence)
             if not selections:
                 if _accepted_empty_packet(packet):
                     deferred.add(_hash(asdict(report)))
@@ -269,8 +268,8 @@ async def prepare_selected_sources(
     if packet.report != report or packet.evidence != report.evidence:
         raise ValueError("Reading requires the exact saved candidate report.")
     started = time.monotonic()
-    review = _delivery_review(report)
-    selections, _ = _validated_cached_selections(review, packet.evidence)
+    review = delivery_review(report)
+    selections, _ = validated_cached_selections(review, packet.evidence)
     routes = _routes(config)
     route = routes[0] if routes else Route(config.reading_brief.provider, config.reading_brief.model,
                                          1, config.reading_brief.max_output_tokens)

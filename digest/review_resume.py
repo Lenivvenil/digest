@@ -19,10 +19,14 @@ from typing import Any
 
 from digest._util import atomic_json_write
 from digest.config import Config, load_config
-from digest.review import (
+from digest.domain.editorial.reviews import (
     EvidenceBundle,
     ModelReview,
-    _validated_cached_selections,
+    ReviewReuseIdentity,
+    reusable_model_review,
+    review_prompt_hash,
+)
+from digest.review import (
     build_review_messages,
     render_review,
     run_evidence_review,
@@ -89,18 +93,16 @@ def _report_time(reviews: list[ModelReview]) -> datetime | None:
 def _reusable_slots(bundle: EvidenceBundle, reviews: list[ModelReview], config: Config) -> set[str]:
     messages = build_review_messages(bundle, config.review, config.radar.language, sources=config.sources,
                                      closing=getattr(config, "closing", None))
-    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    prompt_hash = review_prompt_hash(messages)
     models = {"primary": config.review.primary, "secondary": config.review.secondary,
               "third": config.review.tie_breaker}
     slots = set()
     for review in reviews:
         model = models.get(review.slot)
-        if (model is None or review.status not in {"ok", "partial", "abstained"}
-                or (review.provider, review.model, review.bundle_id, review.prompt_hash)
-                != (model.provider, model.model, bundle.bundle_id, prompt_hash)):
-            continue
-        _validated_cached_selections(review, bundle)
-        slots.add(review.slot)
+        identity = (ReviewReuseIdentity(review.slot, model.provider, model.model, bundle.bundle_id, prompt_hash)
+                    if model is not None else None)
+        if reusable_model_review(review, bundle, identity) is not None:
+            slots.add(review.slot)
     return slots
 
 

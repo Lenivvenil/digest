@@ -15,6 +15,7 @@ import pytest
 from digest.config import Config, ReviewModelConfig
 from digest.review import BlindReviewReport, EvidenceBundle, ModelReview, primary_cards, run_blind_review
 from digest.review_checkpoint import FullSourceEvidence
+from digest.review_resume import _reusable_slots
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 
 
@@ -146,18 +147,54 @@ async def test_abstained_cached_reviews_are_reused_without_third_model() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["model", "provider", "prompt_hash", "bundle_id", "slot"])
-async def test_cached_review_identity_must_match_current_slot(field: str) -> None:
+@pytest.mark.parametrize(("field", "value"), [
+    ("model", "stale-value"), ("provider", "stale-value"), ("prompt_hash", "stale-value"),
+    ("bundle_id", "stale-value"), ("slot", "secondary"), ("slot", "unknown"),
+])
+async def test_cached_review_identity_must_match_before_selections_are_validated(field: str, value: str) -> None:
     from digest.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
     stale = deepcopy(original.reviews[0])
-    setattr(stale, field, "secondary" if field == "slot" else "stale-value")
+    setattr(stale, field, value)
+    stale.selections[0] = replace(stale.selections[0], quote="Absent from the supplied evidence.")
+    before = asdict(stale)
+    assert _reusable_slots(original.evidence, [stale], config) == set()
     with patch("digest.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, [stale])
     assert complete.call_count == 3
     assert _report_content(resumed) == _report_content(original)
+    assert asdict(stale) == before
+
+
+@pytest.mark.asyncio
+async def test_reuse_identity_must_match_the_supplied_bundle() -> None:
+    from digest.domain.editorial.reviews import ReviewReuseIdentity, reusable_model_review
+
+    original = await _report(_trial_config())
+    review = original.reviews[0]
+    identity = ReviewReuseIdentity(review.slot, review.provider, review.model, review.bundle_id, review.prompt_hash)
+    other_bundle = replace(original.evidence, bundle_id="another-evidence-bundle")
+    assert reusable_model_review(review, other_bundle, identity) is None
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_third_review_is_not_revalidated_or_reused() -> None:
+    from digest.review import run_evidence_review
+
+    config = _trial_config()
+    original = await _report(config)
+    config.review.tie_breaker = None
+    original.reviews[2].selections[0] = replace(original.reviews[2].selections[0], quote="Not supplied.")
+    before = asdict(original)
+    assert _reusable_slots(original.evidence, original.reviews, config) == {"primary", "secondary"}
+    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("Configured reviews are reusable"))):
+        resumed = await run_evidence_review(original.evidence, config, original.reviews)
+    assert [review.slot for review in resumed.reviews] == ["primary", "secondary"]
+    assert all(review.reused_from_checkpoint for review in resumed.reviews)
+    assert resumed.third_model_reason == "third_model_not_configured"
+    assert asdict(original) == before
 
 
 @pytest.mark.asyncio
@@ -236,6 +273,8 @@ async def test_cached_reviews_are_revalidated_before_reuse(kind: str) -> None:
 
     with patch("digest.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
+            _reusable_slots(original.evidence, cached, config)
+        with pytest.raises(ValueError):
             await run_evidence_review(original.evidence, config, cached)
     complete.assert_not_called()
 
@@ -249,6 +288,8 @@ async def test_failed_cached_slots_are_retried(status: str) -> None:
     original = await _report(config)
     cached = deepcopy(original.reviews)
     cached[0].status = status
+    cached[0].selections[0] = replace(cached[0].selections[0], quote="Not supplied.")
+    assert _reusable_slots(original.evidence, cached, config) == {"secondary", "third"}
     with patch("digest.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, cached)
     assert complete.call_count == 1

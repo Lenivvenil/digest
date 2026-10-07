@@ -96,3 +96,13 @@ step limit. A full 360-second comparison step leaves 40 seconds of the 720-secon
 for setup/persistence; the hard job timeout remains the final bound, not a guarantee
 that arbitrary runner/install latency will fit. Absent/disabled translation preserves
 the existing analysis runtime and call count.
+
+## Source-attribution ownership amendment (#146)
+
+[ADR0018](0018-review-reuse-and-source-attribution.md) places reviewed exact-feed
+notices in `presentation/source_attribution.py` and immutable main-occurrence lookup
+in `application/source_attribution.py`. Lookup validates required provenance before
+calls; literal notices are appended after translation and before rendering/split
+checks, archive and freeze. Canonical prose, translation request/cache bindings,
+fallback and allowances remain unchanged. This ownership extraction neither
+activates sources nor extends the finite semantic acceptance recorded above.
