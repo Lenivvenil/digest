@@ -717,17 +717,10 @@ async def _primary_presentation(
     combined: str, cards: list[ArticleSummary], config: Any, cache: Path, dry_run: bool,
 ) -> tuple[str, list[ArticleSummary]]:
     """Optional rendering only; source evidence and supplementary work stay canonical."""
-    translation = getattr(config, "translation", None)
-    if translation is None or not translation.enabled:
-        return combined, cards
-    from digest.translation import translate_primary_presentation
-
-    if dry_run:
-        from tempfile import TemporaryDirectory
-
-        with TemporaryDirectory(prefix="digest-translation-preview-") as temporary:
-            return await translate_primary_presentation(combined, cards, config, Path(temporary))
-    return await translate_primary_presentation(combined, cards, config, cache)
+    presented, translated_cards, _ = await _publication_presentation(
+        combined, cards, [], config, cache, dry_run,
+    )
+    return presented, translated_cards
 
 
 async def _publication_presentation(

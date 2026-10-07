@@ -31,7 +31,7 @@ unaccepted proposal, not a previously accepted policy. Literal copying is not ne
 for a useful grounded search, and a match by itself does not establish neutrality,
 relevance or useful retrieval.
 
-## Revised proposed decision
+## Revised accepted decision
 
 Ask for useful topic/entity searches grounded in the supplied evidence and its
 qualification context, without requiring a copied phrase. Queries may paraphrase or
@@ -63,11 +63,10 @@ exclusion or semantic ranking acceptance.
 
 ## Compatibility and rollout scope
 
-This revision removes the proposed mandatory gate from BOTH bounded RSS and full-source
-Irritator execution. It is not gated by reading_brief.enabled. Production remains
-unchanged while this revision is local and undeployed; a later rollout would affect RSS
-investigation even with source reading disabled. The standalone legacy query generator
-remains unchanged.
+This accepted revision permits bounded RSS and full-source Irritator execution without
+a mandatory literal-match gate. The deployed RSS behavior is independent of
+`reading_brief.enabled`; full-source reading remains disabled. The standalone legacy
+query generator remains unchanged.
 
 SearchQuery and model response fields stay unchanged. Results add optional derived
 query_anchor metadata; absence in older archives means no recorded proof, never a
@@ -84,8 +83,8 @@ actual full-source bundle binding, quoted/case/source-language variants, technic
 boundaries and genuine source negative terms. Exact self-source exclusions remain
 covered. The saved failure is preserved privately; public fixtures are synthetic.
 Actual model compliance, search recall and useful sourced relations remain empirical
-acceptance gates. No automatic ranking success or runtime activation follows from this
-proposed contract.
+acceptance gates. Acceptance of this contract does not establish semantic ranking
+quality or authorize full-source activation.
 
 ## Known self-source hits are not external evidence
 

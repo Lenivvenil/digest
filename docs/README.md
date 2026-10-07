@@ -33,7 +33,7 @@ Original versions of translated documents remain available through git history. 
 section anchors referenced by existing documents are retained where required. Historical
 issues and PR discussions are not translated or erased.
 
-## Current work boundary — 2026-10-03
+## Current work boundary — 2026-10-07
 
 English documentation/onboarding and configurable primary/supplementary translation
 are implemented and deployed. The finite acceptance under
@@ -42,8 +42,8 @@ ordinary archived narrative using prompt v2, exact canonical fallback after a pr
 rate limit, and a confirmed compact edition with persisted archive/state. It does not
 claim general translation accuracy or Russian delivery for that English-fallback edition.
 
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains an open full-source
-factual-quality requirement. [PR #93](https://github.com/Lenivvenil/digest/pull/93) was
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
+daily content. Full-source processing is an optional experimental mechanism. [PR #93](https://github.com/Lenivvenil/digest/pull/93) was
 closed without merging; its experimental enrichment is not available on main. The
 ordered requirements and acceptance status live in [#91](https://github.com/Lenivvenil/digest/issues/91).
 

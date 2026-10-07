@@ -56,7 +56,8 @@ async def test_saved_candidate_selection_becomes_technical_handoff_without_prese
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as model,
           patch("digest.review.complete", side_effect=AssertionError("No repeated RSS selection")),
-          patch("digest.translation.translate_primary_presentation", side_effect=AssertionError("No presentation"))):
+          patch("digest.translation.translate_publication_presentation",
+                side_effect=AssertionError("No presentation"))):
         first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
         second = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
     assert first.technical_complete == second.technical_complete == 1

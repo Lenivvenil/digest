@@ -6,7 +6,7 @@ instructions. Editorial quality remains open in [#55](https://github.com/Lenivve
 Optional primary and supplementary presentation translation is documented in
 [README](../README.md#language-and-optional-post-translation) and
 [ADR-0005](decisions/0005-optional-presentation-translation.md). Its presentation acceptance
-is separate from #55's full-source factual-quality requirement. Current work order is
+is separate from #55's useful, faithful editorial-output requirement. Current work order is
 tracked in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 `review.enabled` adds provider-neutral independent selection to the existing RSS,
@@ -314,7 +314,7 @@ query input consumes existing request capacity; exact-wire full-source admission
 hold without dropping context. Calls, configured budgets and response schemas do not
 increase. Input separation proves neither claim truth, search recall nor relation fidelity.
 
-The local [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
+The accepted [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
 asks for useful grounded queries in both bounded RSS and full-source investigation,
 without requiring a copied source phrase. It supersedes the earlier unaccepted
 mandatory-anchor proposal. Exploratory hypotheses stay in `intent`, distinct from
@@ -322,7 +322,7 @@ source claims. A whole-query literal match, when available, remains exact derive
 provenance metadata. Its absence does not block an otherwise valid query set or mark
 it incomplete. Existing lexical/schema checks, source validation, exact cited/final-URL
 self-source exclusions, query/model/request limits and deadlines remain unchanged.
-This local revision does not establish semantic quality or useful live retrieval.
+This deployed revision does not establish semantic quality or useful live retrieval.
 
 Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
 `context` or `insufficient` against the supplied claim. Every entry must pass field,
@@ -333,7 +333,7 @@ score. Bounded results record fixed omission counts for the three non-counter
 relations in the existing limitations list. An all-non-counter response is `empty`,
 not a ranking failure; an unknown relation fails the response closed. The relation
 filter leaves existing public result fields, quote identity, request counts and
-ranking caps unchanged; the proposed private audit extension below is separate.
+ranking caps unchanged; the private audit extension below is separate.
 This filter enforces the declared classification; it cannot prove that the model
 assigned the semantically correct relation.
 
@@ -517,9 +517,9 @@ objects are not read. Unsupported undeployed prototype codecs fail explicitly, w
 deployed accepted preparation and ready-edition formats remain compatible. Do not
 delete evidence or delivery markers to bypass a recovery error.
 
-### Proposed private ranking audit
+### Private ranking audit
 
-The local [ADR0012 proposal](decisions/0012-private-ranking-evidence.md) adds a versioned
+The accepted [ADR0012 decision](decisions/0012-private-ranking-evidence.md) adds a versioned
 `ranking_audit` to the companion private `.irritator.json`. It preserves exact admitted
 source records, explicitly truncated diagnostic previews of omitted candidates,
 original hashes/lengths, query lineage, admission causes and fully validated model
@@ -528,10 +528,10 @@ dispositions. `not_returned` means absent from a valid bounded model response;
 
 Only JSON retains this trace; Markdown gets a concise summary/reference, and Telegram
 and translation keep their existing selected-prose inputs. The omitted-text allocation
-reuses 16,000 characters as a new proposed archive policy, not a ranking threshold.
-See the proposal for serialization bounds and the limits of truncated evidence. Old
+uses the accepted 16,000-character archive allocation, not a ranking threshold.
+See the decision for serialization bounds and the limits of truncated evidence. Old
 archives lack this evidence and cannot be retrospectively audited from hashes alone.
-This local proposal has not been accepted or deployed.
+This private trace is deployed; semantic counter-evidence acceptance remains open.
 
 ### Deployed Groq GPT-OSS metadata-review output controls
 

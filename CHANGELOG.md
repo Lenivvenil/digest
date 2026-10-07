@@ -36,10 +36,11 @@
   data, not decompressor allocations or XML-parser memory. Existing MD5 article/source
   IDs remain byte-identical and are explicitly marked as non-security hashing.
 
-- Draft investigation query floor (#77) requires one source-anchored topic query
-  within the existing slots. Ungrounded nonempty sets remain technical incomplete
-  before search. This affects bounded RSS and full-source investigation on rollout,
-  regardless of the reading flag; literal anchoring is not semantic acceptance.
+- Bounded investigation queries (#77) use optional literal source provenance.
+  Valid nonempty queries proceed without a copied source phrase; the mandatory
+  anchor proposal was superseded before deployment. Query planning receives labelled
+  hypotheses separately from source claims; ranking still excludes those hypotheses.
+  Useful retrieval and semantic relations remain acceptance gaps.
   Exact cited target/final URLs are excluded from external candidates with explicit
   diagnostics; different documents from the same publisher remain eligible.
 - Draft source admission (#122) reuses complete-source acquisition and exact/estimated
