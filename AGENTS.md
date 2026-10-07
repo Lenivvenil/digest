@@ -1,4 +1,4 @@
-# CLAUDE.md — Daily News Digest
+# Repository working guide — Daily News Digest
 
 ## Project Context
 
@@ -40,13 +40,41 @@ This is the **engine repo** — source code, tests, CI only. Production runtime 
 - `config.yaml`, `.cache/`, `digests/` are **not** in this repo — they live in `digest-prod`.
 - Entry point: `python -m digest` (installed via `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"`).
 
+## Working agreement
+
+Tracked discipline: [#148](https://github.com/Lenivvenil/digest/issues/148).
+
+- Before implementation, use an existing issue or create a scoped one with the
+  problem, acceptance, affected contracts and current status. Check its placement
+  and status on the existing project board; do not invent a replacement board.
+- Keep one reviewable scope per change. Link the implementing issue and applicable
+  ADR/domain evidence in the PR. Use an automatic closing reference only when the
+  issue's full acceptance is satisfied; partial progress must leave remaining work open.
+- After merge, verify the exact main checks and, when applicable, the deployed engine
+  pin and retained runtime state. Update the issue and board from observed results.
+  Do not equate a green check with editorial or real-runtime acceptance.
+- Reconcile merged branches only after checking current tips, main ancestry and
+  outstanding PR/dependent work. Preserve history and a recoverable commit reference.
+- A blocked board update, deployment, check or cleanup is unfinished. Record the
+  specific blocker and continue independent authorized work; never report a step as
+  completed without readback evidence.
+- Maintain code, comments, documentation, ADRs, issues, PRs and commit messages in
+  English. Preserve historical discussions, quoted source evidence and deliberately
+  localized product output; this does not authorize publishing private runtime data.
+
+The implementation task for the first structural migration is
+[#143](https://github.com/Lenivvenil/digest/issues/143). Architecture and staged ownership
+remain in [the existing architecture reference](docs/ARCHITECTURE.md), not in a parallel
+agent-only design.
+
 ## Project Structure
 
 ```
 ├── digest/
+│   ├── application/         # prepared scenarios and shared analysis/presentation/run operations
 │   ├── __init__.py          # __version__
 │   ├── __main__.py          # enables `python -m digest`
-│   ├── main.py              # 6-phase pipeline orchestrator, CLI flags
+│   ├── main.py              # CLI dispatch and remaining legacy/discovery scenarios
 │   ├── config.py            # config loading and validation
 │   ├── llm.py               # LLM provider abstraction (Groq, Gemini, DeepSeek)
 │   ├── filters.py           # blocklist keyword filtering
@@ -77,8 +105,7 @@ This is the **engine repo** — source code, tests, CI only. Production runtime 
 │   ├── test_irritator_orchestrator.py
 │   ├── test_sources_arxiv.py, test_sources_devto.py
 │   ├── test_sources_hackernews.py, test_sources_lobsters.py
-│   ├── test_sources_init.py, test_sources_reddit.py
-│   └── test_ruff_config.py
+│   └── test_sources_init.py, test_sources_reddit.py
 ├── .github/workflows/
 │   └── ci.yml               # lint + typecheck + test on push/PR
 ├── pyproject.toml            # package name "digest", ruff, mypy, pytest config

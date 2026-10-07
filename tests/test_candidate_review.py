@@ -841,8 +841,8 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
 
 @pytest.mark.parametrize("kind", ["deferred", "missing", "complete", "legacy"])
 def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferral(tmp_path: Path, kind: str) -> None:
+    from digest.application.preparation import _save_candidate_preparation
     from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
-    from digest.main import _save_candidate_preparation
     from digest.preparation import PreparationSnapshot, load_preparation
 
     config, articles = population(2)

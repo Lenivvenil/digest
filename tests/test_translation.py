@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.application.presentation import primary_presentation as _primary_presentation
 from digest.config import ProviderConfig, TranslationConfig, load_config
-from digest.main import _primary_presentation
 from digest.radar.collector import article_hash
 from digest.radar.summarizer import ArticleSummary
 from digest.translation import _parse, translate_fields, translate_primary_presentation
@@ -293,11 +293,12 @@ async def test_radar_only_preview_translates_without_running_irritator(
     with (
         patch("digest.config.load_config", return_value=cfg),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-        patch("digest.main._analyze_articles", AsyncMock(return_value=(
+        patch("digest.application.analysis.analyze_articles", AsyncMock(return_value=(
             [CategorySummary("Category", "Only clients.", 1)], None, [card], None,
         ))),
         patch("digest.translation.complete", side_effect=translate) as translation,
-        patch("digest.main._run_irritator", AsyncMock(side_effect=AssertionError("No supplementary stage"))) as stage,
+        patch("digest.application.investigation.run_irritator",
+              AsyncMock(side_effect=AssertionError("No supplementary stage"))) as stage,
     ):
         result = await run("fixture.yaml", True, True, False)
     assert "Перевод: " in capsys.readouterr().out

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -23,7 +24,7 @@ from digest.closing import ClosingCapture
 from digest.config import Config, ReviewModelConfig, load_config
 from digest.delivery.edition import READY_FILE
 from digest.feedback import FeedbackStore
-from digest.main import _analyze_candidate_articles, _preparation_closing, _run, main
+from digest.main import _run, main
 from digest.preparation import load_preparation
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates, article_hash
 from digest.review import _groq_review_format, build_evidence_bundle, build_review_messages, run_primary_review
@@ -191,8 +192,9 @@ async def test_enabled_closing_preserves_technical_empty_status_and_complete_abs
     now = datetime.now(UTC)
     observed = [replace(articles["Society"][0], pub_date=now)]
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
-    monkeypatch.setattr("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.main._apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
+          AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
 
     async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
         inventory = kwargs["inventory"]

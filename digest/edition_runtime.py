@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from digest._util import atomic_json_write
+from digest.application.results import RunStats
 
 if TYPE_CHECKING:
-    from digest.main import RunStats
     from digest.preparation import PreparationSnapshot
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,6 @@ def publish_outputs(**values: str) -> None:
 
 
 def _stats(status: str, *, feedback: int = 0, ready_sha: str = "") -> RunStats:
-    from digest.main import RunStats
-
     return RunStats(0, 0, 0, False, False, False, "", feedback_collected=feedback,
                     edition_status=status, ready_sha256=ready_sha)
 
@@ -56,12 +54,13 @@ async def finish_preparation(
     publication_date: date | None = None, selection_complete: bool = True,
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
+    from digest.application.investigation import run_irritator
+    from digest.application.presentation import deferred_review_status, publication_presentation
     from digest.closing import _digest, attribute_closing_card, attribute_source_card, main_attribution_occurrences
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
     from digest.delivery.telegram import _render_compact_issue
     from digest.irritator import IrritatorStatus
-    from digest.main import _deferred_review_status, _publication_presentation, _run_irritator
     from digest.preparation import clear_preparation
     from digest.translation import ClosingPresentation, translate_publication_with_closing
 
@@ -79,9 +78,9 @@ async def finish_preparation(
     )
     ranked: list[Any] = []
     if config.review.enabled and config.review.review_led_only:
-        status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
+        status = IrritatorStatus(deferred_review_status(config.radar.language), "deferred")
     else:
-        _, ranked, status = await _run_irritator(snapshot.summaries, config, verbose)
+        _, ranked, status = await run_irritator(snapshot.summaries, config, verbose)
     closing = getattr(snapshot, "closing", None)
     closing_presentation: ClosingPresentation | None = None
     if closing is not None and closing.status == "selected":
@@ -92,7 +91,7 @@ async def finish_preparation(
             selection_binding=asdict(closing),
         )
     else:
-        text, cards, ranked = await _publication_presentation(
+        text, cards, ranked = await publication_presentation(
             snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
         )
         if closing is not None:

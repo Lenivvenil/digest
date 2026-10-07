@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -105,13 +104,16 @@ async def test_new_process_pacing_reads_previous_stage_reservation(
 async def test_budget_failure_does_not_block_accepted_presentation_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from digest.main import _resume_if_preparing
+    from digest.application.preparation import prepare_edition
+    from digest.application.results import RunStats
+    from scripts.review_fixture import fixture_config
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DIGEST_MODEL_BUDGET_REQUIRED", "1")
-    config: Any = _make_config([])
-    expected = object()
+    config = fixture_config()
+    expected = RunStats(0, 0, 0, False, False, False, "", edition_status="ready")
     from unittest.mock import AsyncMock
 
     with patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)):
-        assert await _resume_if_preparing(True, config, 0, False, None) is expected
+        assert await prepare_edition(config, "config.yaml", verbose=False, feedback_precollected=True,
+                                     publication_date=None, started_at=0) is expected

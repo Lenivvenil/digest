@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.application.analysis import analyze_articles as _analyze_articles
 from digest.config import ProviderConfig, ReviewConfig, _load_review, load_config
 from digest.delivery import ArticleDeliveryResult
-from digest.main import _analyze_articles, run
+from digest.main import run
 from digest.radar.summarizer import CategorySummary
 from digest.review import build_evidence_bundle, build_review_messages
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture

@@ -63,3 +63,9 @@ and ordinary recommendation quality remain open; owner approval on 2026-10-06 co
 closing designation in the existing primary selection response, strict preparation
 v1/v2 compatibility and optional presentation before immutable freeze. Source
 activation, translated capacity and semantic acceptance remain open under #127.
+
+
+[0015](0015-application-workflow-ownership.md) records stage 1 of the structural
+migration: explicit prepared application ownership, removal of lower-to-entrypoint
+imports, and fail-before-effects preparation/preview validation. Implementation and
+rollout status are tracked in #143; persisted formats and product acceptance remain separate.

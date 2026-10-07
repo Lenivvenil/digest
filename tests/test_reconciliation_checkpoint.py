@@ -553,7 +553,7 @@ async def test_main_preparation_emits_executable_batch_in_both_reading_branches(
     with (
         patch("digest.candidate_review._instant", return_value=NOW),
         patch("digest.config.load_config", return_value=runtime.config),
-        patch("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))),
+        patch("digest.application.run_state.collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))),
         patch("digest.radar.collect", side_effect=collect),
         patch(
             "digest.reading_brief.fetch_article",

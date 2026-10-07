@@ -3,7 +3,7 @@
 Current English entry points:
 
 - [Product and onboarding](../README.md)
-- [Architecture](ARCHITECTURE.md)
+- [Architecture and staged migration](ARCHITECTURE.md#structural-migration-current-stage-and-target)
 - [Digest domain](domain/digest/overview.md)
 - [Irritator domain](domain/irritator/overview.md)
 - [Project principles](principles.md)
