@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING
 from digest.adapters.storage import delivery_state
 
 if TYPE_CHECKING:
-    from digest.config import Config, SourceConfig
+    from digest.config import Config
+    from digest.domain.catalog.sources import SourceConfig, SourceStateStore, SourceStats
     from digest.domain.delivery.outcomes import ArticleDeliveryResult, IssueDeliveryResult
     from digest.domain.feedback.values import FeedbackStore
     from digest.radar.collector import Article, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary
-    from digest.source_scorer import SourceStateStore, SourceStats
 
 
 @dataclass(frozen=True)
@@ -94,14 +94,10 @@ def apply_confirmed_outcome(policy: PreparedOutcomePolicy | LegacyOutcomePolicy)
 
 def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
     from digest.adapters.storage.feedback import load_feedback, save_feedback
+    from digest.adapters.storage.sources import load_source_state, load_stats
+    from digest.application.source_scoring import evaluate_trial_sources
+    from digest.domain.catalog.source_rules import apply_trial_decisions_to_cache, record_delivered_articles
     from digest.domain.feedback.rules import apply_delivery_attribution
-    from digest.source_scorer import (
-        apply_trial_decisions_to_cache,
-        evaluate_trial_sources,
-        load_source_state,
-        load_stats,
-        record_delivered_articles,
-    )
 
     outcome = policy.outcome
     if not outcome.delivered_hashes:
@@ -135,16 +131,12 @@ def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
 
 def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
     from digest.adapters.storage.feedback import save_feedback
+    from digest.adapters.storage.sources import save_source_category_map, save_source_state, save_stats
     from digest.application.run_state import record_source_stats
+    from digest.application.source_scoring import evaluate_trial_sources
+    from digest.domain.catalog.source_rules import apply_trial_decisions_to_cache
     from digest.domain.feedback.rules import apply_delivery_attribution
     from digest.radar.collector import article_hash
-    from digest.source_scorer import (
-        apply_trial_decisions_to_cache,
-        evaluate_trial_sources,
-        save_source_category_map,
-        save_source_state,
-        save_stats,
-    )
 
     outcome = policy.outcome
     delivered_hashes = set(outcome.delivered_hashes)

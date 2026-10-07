@@ -1,7 +1,8 @@
 # 0021. Separate proposal and feedback rules from persistence and Telegram
 
-Status: #147-C implemented locally on the reviewed #147-B tree on 2026-10-07.
-No merge, deployment, source activation or editorial acceptance is established here.
+Status: #147-C deployed through engine PR #155 and runtime PR #78 on 2026-10-07.
+The first remaining source-catalog slice below is implemented locally on that foundation.
+Its deployment, source activation and editorial acceptance are not established here.
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-c-catalog-and-feedback-boundaries),
 [ADR0003](0003-source-state-split.md), [ADR0006](0006-batch-message-voting.md),
@@ -106,3 +107,56 @@ storage/application, compatibility value identity and explicit-time rules.
 These are offline structural checks, not real runtime or editorial acceptance.
 Rollback is a compatible reviewed code revert or engine pin retaining every
 runtime file, decision and receipt; no state reset or automatic replay is needed.
+
+
+## Source-catalog ownership continuation — 2026-10-07
+
+Before this slice, `config.py` defined source/adaptive declarations and
+`source_scorer.py` combined source values, implicit clock reads, source rules,
+JSON codecs and `/bubble` rendering. Prepared delivery separately encoded the
+same statistics/lifecycle JSON. After this slice:
+
+- `domain/catalog/sources.py` owns the unchanged declaration, statistics and
+  lifecycle dataclasses. `config.SourceConfig`, `config.AdaptiveConfig` and the
+  source-scoring value exports alias those exact classes. Their field order,
+  defaults, mutability, runtime type hints and dataclass restoration are retained.
+- `domain/catalog/source_rules.py` owns quality factors and weights, trending,
+  effective/feedback-only priority arithmetic, fetch and confirmed-inclusion
+  accounting, trial eligibility/thresholds and lifecycle mutations. Pure score
+  preparation computes existing factors and parses recency before the time
+  observation; final scoring receives the observation explicitly.
+- `application/source_scoring.py` composes those rules and retains public
+  signatures and sampling points: one sample per fetch; one sample per scored
+  source only for nonzero fetches and valid `last_seen`; separate eligible-source
+  observations in priorities and trials; no sample for skipped trials. Trial
+  eligibility still uses the supplied `today`, while recency uses its independently
+  observed clock. It does not reuse the run start or publication timestamp.
+- `presentation/bubble.py` renders unchanged text from an explicit report time.
+  The application samples once at the former entry point after the caller's reads.
+- `adapters/storage/sources.py` owns permissive loaders/writers and shared encoders
+  for source statistics, lifecycle state and category mapping. Prepared delivery
+  shares the encoders without adopting legacy setup, pruning or error handling.
+  Production imports use these owners; `source_scorer.py` retains aliases.
+
+Legacy save ordering is intentionally observable: create parent directory → prune
+inactive statistics in the caller → encode → try atomic replacement. A directory
+failure precedes pruning; an encoding failure propagates after pruning; a write
+failure is logged and can leave the caller pruned. State and category-map saves
+likewise keep setup and encoding outside their caught-write blocks. Prepared source
+writes do not create directories, prune sources or swallow failures. Encoding keeps
+field/source insertion order, default JSON escaping/indentation and absent trailing
+newline. Strict and permissive loading policies are not unified by sharing encoders.
+
+Existing source, configuration, bubble, delivery, main and restoration regressions
+remain the first validation. Focused additions cover exact alias/restoration identity,
+per-source clock sampling across date boundaries, byte parity, source-save setup and
+encoding failures, mutation on failed legacy writes, and strict prepared failures.
+The existing effect-free import check also covers both catalog source modules.
+
+Remaining work is explicit: discovery generation, exploration rotation/cooldown,
+delivery metadata, approval transport, source history and YAML editing still belong
+to the mixed `discovery.py` owner. Discovery extraction is a separate later slice.
+Broader delivery codec/transport separation and historical domain documentation
+reconciliation also remain. No source activation, quota, algorithm, clock policy,
+provider call, runtime setting, persisted schema or deployment changes are authorized
+by this source ownership slice. #147 remains open.

@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Literal
 
 from digest._sanitize import sanitize_article
 from digest._serialization import extract_json as _extract_json
-from digest.config import ClosingConfig, SourceConfig
+from digest.config import ClosingConfig
 from digest.domain.catalog.articles import article_hash
 from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
+from digest.domain.catalog.sources import SourceConfig
 from digest.domain.editorial.reviews import delivery_review, validated_cached_selections
 from digest.presentation.source_attribution import attribute_source_card as attribute_source_card
 from digest.radar.summarizer import ArticleSummary

@@ -2,6 +2,13 @@
 
 This document is a contract. Every decision is checked against it; every violation must be deliberate and recorded in an ADR.
 
+Implementation scope, checked 2026-10-07: the tracked [CI workflow](../.github/workflows/ci.yml)
+installs dependencies and runs Ruff, mypy and pytest. The claude-mini commands, roles
+and hooks below describe installation-dependent local tooling from
+[ADR0001](decisions/0001-adopt-claude-mini-governance.md), not additional tracked CI jobs.
+The review discipline below remains the working agreement; local tooling and manual
+review evidence must not be inferred from a green CI result.
+
 <a id="четыре-директивы"></a>
 
 ## Four directives
@@ -32,13 +39,16 @@ Classify every pipeline step by risk.
 
 **With approval:** architectural decisions, library selection, interpreting ambiguous requirements, security-sensitive changes, production configuration, migrations, and merging into main.
 
-In practice: `auto-mode` covers the first category; `deny-rules` prevent secret leaks; `governance-hook` blocks commits without an issue reference or, for architectural changes, an ADR link.
+In the historical claude-mini setup, `auto-mode` covers the first category,
+`deny-rules` restrict sensitive operations, and an installed `governance-hook` checks
+commit issue references and architectural ADR links. Their presence and result depend
+on local installation; the repository CI does not run these checks.
 
 <a id="4-knowledge-в-инструментах-не-в-памяти"></a>
 
 ### 4. Knowledge belongs in tools, not memory
 
-Everything significant belongs in git (`docs/adr/`, `docs/domain/`, the `CLAUDE.md` index) and GitHub (Issues, Projects v2, PRs). Claude's memory is a cache, not the source of truth.
+Everything significant belongs in git (`docs/decisions/`, `docs/domain/`, the `CLAUDE.md` index) and GitHub (Issues, Projects v2, PRs). Claude's memory is a cache, not the source of truth.
 
 **Test:** any colleague (or you, three months later) can enter the repository and recover the context within an hour **without chat history or conversations**. If a verbal introduction is required, the documentation has regressed.
 
@@ -56,12 +66,14 @@ Owner clarification, 2026-10-04: Claude review is optional.
 - [ ] When both reviews are performed, disagreements between Claude and Codex are resolved in the PR thread (consensus or a recorded disagreement)
 - [ ] Human self-review is complete
 - [ ] Security scans are clean: `uv pip audit` / `cargo audit` / `npm audit --audit-level=high` / `govulncheck`, depending on the language
-- [ ] Documentation is updated: README (for public changes), the relevant runbook, and CHANGELOG (through release-please)
+- [ ] Documentation is updated: README (for public changes), the relevant runbook, and CHANGELOG. The historical release-please workflow is not installed in tracked CI.
 - [ ] CI is green for all required jobs
-- [ ] Conventional Commits are used; the governance-hook check has passed
+- [ ] Conventional Commits are used; where the local governance-hook is installed, its check has passed
 - [ ] The PR body references the implementing issue and applicable ADR. Use `Closes #NNN` only when all issue acceptance is met; partial changes reference the issue without auto-closing unfinished work.
 
-This checklist is copied into `pull_request_template.md` and checked on every PR.
+Use this checklist during PR review. No tracked `pull_request_template.md` copies it,
+and CI does not verify the whole checklist. Record the applicable review and
+verification evidence in the PR.
 
 <a id="5-scope-инструмента-ограничен-явной-установкой"></a>
 

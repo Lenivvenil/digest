@@ -7,13 +7,14 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from digest.source_scorer import SourceStateStore
+from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+
+from digest.domain.catalog.sources import AdaptiveConfig as AdaptiveConfig
+from digest.domain.catalog.sources import SourceConfig as SourceConfig
+from digest.domain.catalog.sources import SourceStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -86,18 +87,6 @@ class IrritatorConfig:
 
 
 @dataclass
-class SourceConfig:
-    name: str
-    url: str
-    category: str
-    enabled: bool
-    priority: int = 3
-    trial: bool = False
-    trial_days: int = 7
-    recency_hours: int = 24
-
-
-@dataclass
 class FiltersConfig:
     blocklist_keywords: list[str] = field(default_factory=list)
 
@@ -116,17 +105,6 @@ class TelegramConfig:
 class ObsidianConfig:
     enabled: bool = True
     output_dir: str = "digests"
-
-
-@dataclass
-class AdaptiveConfig:
-    enabled: bool
-    feedback_weight: float = 0.3
-    score_weight: float = 0.5
-    base_weight: float = 0.2
-    trial_slots: int = 2
-    min_priority: int = 1
-    max_priority: int = 5
 
 
 @dataclass(frozen=True)

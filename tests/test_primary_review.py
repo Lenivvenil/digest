@@ -197,7 +197,7 @@ async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
         patch("digest.delivery.send_counter_signals", AsyncMock()) as counter_signals,
         patch("digest.delivery.telegram._send_chunk", AsyncMock()) as footer,
         patch("digest.delivery.telegram.escape_markdownv2", side_effect=lambda text: text),
-        patch("digest.source_scorer.save_source_category_map", side_effect=save_state),
+        patch("digest.adapters.storage.sources.save_source_category_map", side_effect=save_state),
     ):
         exit_code = await main(["--config", "fixture.yaml"])
     assert exit_code == (1 if failure else 0)

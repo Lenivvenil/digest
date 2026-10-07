@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from digest.config import Config
     from digest.delivery.issue_guard import IssueGuard
     from digest.domain.catalog.articles import Article
+    from digest.domain.catalog.sources import SourceStateStore, SourceStats
     from digest.domain.delivery.outcomes import IssueDeliveryResult
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.domain.feedback.values import FeedbackStore
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from digest.irritator.ranker import RankedSignal
     from digest.radar.collector import SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary
-    from digest.source_scorer import SourceStateStore, SourceStats
 
 
 @dataclass(frozen=True)
@@ -76,14 +76,11 @@ async def _collect_legacy(
 ) -> LegacyCollection:
     """Apply feedback and approved sources before observing the current portfolio."""
     from digest._util import cleanup_stale_tmp
+    from digest.adapters.storage.sources import load_source_state, load_stats
+    from digest.application.source_scoring import calculate_effective_priorities
+    from digest.domain.catalog.source_rules import calculate_feedback_priorities
     from digest.domain.feedback.rules import get_source_feedback_score
     from digest.radar import AllFeedsFailedError, collect
-    from digest.source_scorer import (
-        calculate_effective_priorities,
-        calculate_feedback_priorities,
-        load_source_state,
-        load_stats,
-    )
 
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
     review_led_only = _review_led(config)
@@ -151,8 +148,8 @@ async def run_legacy(
 ) -> RunStats:
     """Choose preview or publication after collection and canonical analysis."""
     from digest.adapters.storage.feedback import save_feedback
+    from digest.adapters.storage.sources import save_stats
     from digest.application.delivery import save_delivery_cache
-    from digest.source_scorer import save_stats
 
     collected = await _collect_legacy(
         config, config_path, dry_run, radar_only, feedback_precollected, execution=execution,
@@ -348,7 +345,7 @@ def _build_nano_status(
     effective_priorities: dict[str, int] | None,
 ) -> str:
     """Build a two-line status footer for the digest message."""
-    from digest.source_scorer import calculate_score
+    from digest.application.source_scoring import calculate_score
 
     provider_names: list[str] = []
     seen: set[str] = set()

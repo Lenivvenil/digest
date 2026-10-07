@@ -6,7 +6,8 @@
 > engine PR #152 and runtime PR #75.
 > #147-A is deployed through engine PR #153 and runtime PR #76.
 > #147-B is deployed through engine PR #154 and runtime PR #77.
-> #147-C adds catalog proposal/feedback rules, codecs and collect/persist/ack boundaries.
+> #147-C is deployed through engine PR #155 and runtime PR #78.
+> Its next local slice gives source values, quality/trial rules and JSON codecs explicit owners.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -34,7 +35,7 @@ editorial acceptance or completion of the remaining migration stages. The deploy
 #147-A scenario extraction is recorded in
 [ADR0019](decisions/0019-remaining-application-scenarios.md); the deployed provider
 runtime/configuration separation under #147-B is recorded in
-[ADR0020](decisions/0020-explicit-model-execution.md). The local #147-C feedback
+[ADR0020](decisions/0020-explicit-model-execution.md). The deployed #147-C feedback
 boundary is recorded in [ADR0021](decisions/0021-catalog-feedback-boundaries.md).
 
 The target is a modular monolith: one deployable Python engine, the existing private
@@ -149,7 +150,7 @@ The delivery domain has no imports from other project modules.
 
 The existing owners retain their policies: `feedback.apply_delivery_attribution`
 merges confirmed article/source mappings and sets last-digest metadata only for
-complete Telegram output; `source_scorer.record_delivered_articles` updates prepared
+complete Telegram output; `domain.catalog.source_rules.record_delivered_articles` updates prepared
 inclusion accounting without another fetch. Direct runs use
 `application.run_state.record_source_stats` for fetch observations and inclusion.
 [`adapters/storage/delivery_state.py`](../digest/adapters/storage/delivery_state.py)
@@ -189,10 +190,11 @@ coverage value or application entrypoint does not unify these protocols.
 
 `delivery/edition.py` still combines claim/receipt validation, storage and sending;
 `delivery/telegram.py` still combines rendering and transport. Stage 5-C now owns
-feedback values/rules, storage and polling/acknowledgement separately. `source_scorer.py`
-still owns `SourceStats`, `SourceStateStore`, adaptive scoring, lifecycle and their
-codecs; the delivery-state adapter's source-state types remain type-only imports
-from that module. The catalog extraction is limited to proposal identity/eligibility.
+feedback values/rules, storage and polling/acknowledgement separately. Its source
+slice moves `SourceStats` and `SourceStateStore` into `domain/catalog/sources.py`,
+quality/accounting/trial rules into `source_rules.py`, and their JSON codecs into
+`adapters/storage/sources.py`. Prepared delivery shares those source encoders while
+retaining strict write behavior; `source_scorer.py` is a compatibility facade.
 Stage 5-A moves legacy/discovery orchestration into applications.
 Compatibility exports preserve the old Telegram result imports. In particular,
 the broad `LegacyOutcomePolicy` remains a transitional in-memory handoff from the
@@ -284,7 +286,7 @@ compatible. Broader adapter extraction and release acceptance remain separate.
 
 ### Stage 5-C: catalog and feedback boundaries
 
-The local #147-C implementation is recorded in
+The deployed #147-C implementation (engine PR #155, runtime PR #78) is recorded in
 [ADR0021](decisions/0021-catalog-feedback-boundaries.md). `domain/catalog/proposals.py`
 owns the mutable five-field proposal, unchanged URL hash/binding and explicit-time
 eligibility. `domain/feedback/` owns feedback values, latest-vote scoring, known
@@ -304,8 +306,31 @@ persists cleared terminal replies. The runtime still supplies remote durability.
 config/history/pending/feedback application, preserving ordered partial writes,
 caught failures and config reload with a new model execution holder. Public feedback
 and discovery exports remain compatible; production imports use actual owners.
-Adaptive lifecycle, discovery generation/metadata/YAML policy and broader delivery
-transport ownership remain separate work. No state migration or activation occurs.
+The next local catalog slice replaces the former source/configuration dependency:
+`domain/catalog/sources.py` owns the unchanged `SourceConfig`, `AdaptiveConfig`,
+`DailySnapshot`, `SourceStats`, `SourceStateEntry` and `SourceStateStore` values.
+`config.py` loads declarations and re-exports the same classes. `source_rules.py`
+owns quality factors/weights, trending, priority adjustment, fetch/delivery accounting
+and trial eligibility/transitions. It receives observations and imports no config,
+clock or effect owner. `application/source_scoring.py` samples per fetch and per
+eligible dated score at the original points, including independent trial-day and
+score-recency observations. Pure score-factor preparation precedes the conditional
+clock read; zero-fetch, missing-date and malformed-date scores do not sample it.
+The `/bubble` text renderer is in `presentation/bubble.py`, supplied the existing
+single report-time observation. Public source-scoring signatures remain compatible.
+
+`adapters/storage/sources.py` owns source state/statistics/category-map codecs and
+legacy persistence. Both legacy and prepared writers use the same exact source JSON
+encoders. Legacy writers create the directory before statistics pruning; pruning
+mutates the caller even if the later write fails. Setup/encoding errors still escape,
+while only the existing atomic-write failures are caught. Prepared delivery creates
+no directory, prunes nothing, and propagates every failure. No new transaction,
+rollback, schema, source setting, quota, provider call or state migration is added.
+
+Discovery generation, exploration rotation/cooldowns, delivery metadata, approval
+transport, history and YAML editing remain in `discovery.py` for a separate slice.
+Broader delivery transport ownership and the historical domain-page reconciliation
+remain open; this extraction does not complete #147 or establish deployed behavior.
 
 ### Target responsibility map
 
@@ -349,7 +374,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — #147-A/B deployed; C local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback rules, codecs and collect/persist/ack (ADR0021). Broader codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
+| 5. Adapters and remaining scenarios — #147-A/B/C deployed; source follow-through local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback and source quality/lifecycle values, rules and codecs (ADR0021). Discovery and broader delivery codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -491,7 +516,7 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
 | `source_scorer.py` | Fetch/delivered-source accounting, effective priorities, trial lifecycle state, persistence and bubble diagnostics |
 | `discovery.py` | Discovery delivery metadata, URL validation, approval cards and approved additions to runtime config; compatible proposal/storage exports |
-| `_dns_pinning.py`, `_sanitize.py` | Outbound URL/DNS protection and untrusted feed-text sanitization |
+| `_dns_pinning.py`, `_sanitize.py` | URL validation/DNS pinning for feed/article acquisition and untrusted feed-text sanitization |
 | `_util.py` | Atomic JSON write and temporary-file utilities |
 
 ## Adaptive priority system
@@ -713,7 +738,9 @@ The first slice of [#132](https://github.com/Lenivvenil/digest/issues/132) cover
 and finite validation retries only. Approval-to-candidate protection of professional
 signals and non-starving exploratory admission remain open, as does ordinary-output
 evaluation. No scheduler adjustment, fixed daily fraction or automatic feed activation
-is implied. The proposed additive state decision is [ADR-0013](decisions/0013-discovery-exploration-state.md).
+is implied. The accepted first-slice state decision is
+[ADR-0013](decisions/0013-discovery-exploration-state.md); owner approval on 2026-10-06
+covered PR #133 and its engine-pin rollout, with those remaining gates still open.
 
 No source-discovery schedule is installed by the engine. The runtime owns its cadence
 and serialized access to the same state as the main digest.
@@ -756,10 +783,20 @@ remaining daily-output acceptance is tracked separately; full-source experiments
 
 ## Security
 
-RSS/public-source requests use the URL validation and DNS-pinning path to reject private
-and loopback destinations and reduce DNS-rebinding risk. Feed titles/descriptions are
-untrusted content: sanitization removes HTML, decodes entities, normalizes whitespace
-and limits the description supplied to existing RSS prompts. Sanitization does not turn
+[`radar/collector.py`](../digest/radar/collector.py) validates the initial configured
+feed URL and pins that hostname's resolved addresses. Its HTTP client follows redirects
+automatically; a redirect to another hostname uses ordinary DNS resolution without
+that initial URL validation/pinning guard. [`discovery_feed.py`](../digest/discovery_feed.py)
+and optional article acquisition in [`article_source.py`](../digest/article_source.py)
+instead follow bounded redirects explicitly and validate/pin each requested hop,
+rejecting non-global destinations. These are distinct acquisition boundaries, not a
+universal outbound-HTTP guarantee. The fixed-endpoint Hacker News, Reddit and arXiv
+[search clients](../digest/irritator/sources/) use their own HTTP requests; optional
+signal URL liveness checks are separate in
+[`irritator/validator.py`](../digest/irritator/validator.py).
+
+Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
+entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
 an excerpt into a full article or guarantee immunity to all malicious instructions.
 
 Keep real keys/tokens in runtime environment variables or Actions secrets. The engine
@@ -785,8 +822,9 @@ causes as known provider limits.
 
 - Free provider quotas and GitHub Actions minute allowances are account-dependent.
   Verify actual capacity; multiplying an assumed short run time is not a throughput test.
-- Scheduled Telegram polling delays acknowledgements. Coupling it to adaptation is an
-  open feedback defect, not the desired product contract.
+- Scheduled Telegram polling delays acknowledgements and can miss upstream retention
+  windows. Polling is independent of `adaptive.enabled`; ordinary collector acceptance
+  of recorded-vote influence remains open in #48.
 - RSS selection has bounded excerpt/candidate coverage. Missing candidates are not
   proven irrelevant; #55 keeps this quality gap explicit.
 - Renaming a configured source affects its statistics identity; inactive statistics may

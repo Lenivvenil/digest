@@ -75,12 +75,8 @@ def _command_reply(command: str, store: FeedbackStore, cache_dir: str) -> str:
             f"Last digest: {store.last_digest_time or 'unknown'}\n"
             f"Sources: {len(store.last_digest_sources)}"
         )
-    from digest.source_scorer import (
-        compute_bubble_report,
-        load_source_category_map,
-        load_source_state,
-        load_stats,
-    )
+    from digest.adapters.storage.sources import load_source_category_map, load_source_state, load_stats
+    from digest.application.source_scoring import compute_bubble_report
     return compute_bubble_report(
         store, load_stats(cache_dir), load_source_state(cache_dir),
         category_map=load_source_category_map(cache_dir) or None,

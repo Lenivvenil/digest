@@ -20,8 +20,9 @@ from digest._sanitize import sanitize_article
 from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
 from digest.closing import ClosingCapture, capture_closing, eligible_ids
-from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
+from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig
 from digest.domain.catalog.articles import Article, article_hash
+from digest.domain.catalog.sources import SourceConfig
 from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS as MAX_EVIDENCE_JSON_CHARS
 from digest.domain.editorial.reviews import SCHEMA_VERSION as SCHEMA_VERSION
 from digest.domain.editorial.reviews import BlindReviewReport as BlindReviewReport

@@ -18,9 +18,10 @@ import httpx
 from digest._dns_pinning import pin_dns as _pin_dns
 from digest._dns_pinning import validate_url as _validate_url
 from digest._util import atomic_json_write
-from digest.config import Config, SourceConfig
+from digest.config import Config
 from digest.domain.catalog.articles import Article as Article
 from digest.domain.catalog.articles import article_hash as article_hash
+from digest.domain.catalog.sources import SourceConfig
 from digest.filters import is_blocked
 
 logger = logging.getLogger(__name__)
