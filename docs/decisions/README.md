@@ -30,8 +30,9 @@ verification and ordinary translated output do not establish universal semantic 
 and computed priority influence are verified; daily retention limitations remain explicit.
 
 [0007](0007-compact-issue-reservation.md) records compact daily presentation and its
-coarse pre-publication reservation. Local implementation is under review; no automatic
-resend lifecycle or exactly-once guarantee is implied.
+coarse pre-publication reservation, followed by the ready-edition amendment and the
+#145 application-ownership extraction. No automatic resend lifecycle or exactly-once
+guarantee is implied; the dated record preserves its separate acceptance boundaries.
 
 
 [0008](0008-candidate-selection-progress.md) proposes candidate accounting and
@@ -71,8 +72,15 @@ imports, and fail-before-effects preparation/preview validation. Implementation 
 rollout are verified through engine PR #149 (`de595797282b7b289561105820a55d467f8379a2`)
 and runtime PR #72 under #143; persisted formats and product acceptance remain separate.
 
-[0016](0016-candidate-contracts-and-retirement.md) records the implemented
+[0016](0016-candidate-contracts-and-retirement.md) records the deployed
 candidate-ownership slice under #144: pure values/proof validators, storage adapters,
-and explicit verified retirement versus persistence without retirement. Existing
-formats and policies remain unchanged; scheduler ownership and later structural
-stages remain open. This implementation record is not deployment or semantic acceptance.
+and explicit verified retirement versus persistence without retirement. Engine PR #150
+merged at `6c5d7db7a6c0f5520d36f3a89b60fbb8e73fdda6`; runtime PR #73 merged the one-line
+pin at `9d529cc84d9c1968feebe25d55da0658767cc3e7`. Existing formats/policies remain;
+scheduler ownership, later stages and semantic acceptance are separate.
+
+[0017](0017-confirmed-delivery-application.md) records the implemented #145
+confirmed-outcome application, pure coverage projection and strict delivery-state
+adapter. Explicit prepared/direct policies preserve accounting, write order and
+failure behavior. Successful-repeat counter deduplication does not authorize
+automatic reconciliation of interrupted application; release evidence is tracked in #145.

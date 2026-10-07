@@ -1,8 +1,11 @@
 # 0016. Separate candidate contracts, storage and retirement
 
-Status: implementation record for the scoped #144 structural migration.
-Merge and runtime rollout evidence is tracked in #144; this record does not establish
-semantic acceptance.
+Status: scoped #144 implementation merged and deployed on 2026-10-07.
+[PR #150](https://github.com/Lenivvenil/digest/pull/150) merged at engine
+`6c5d7db7a6c0f5520d36f3a89b60fbb8e73fdda6`; the one-line engine-pin update in runtime
+[PR #73](https://github.com/Lenivvenil/digest-prod/pull/73) merged at
+`9d529cc84d9c1968feebe25d55da0658767cc3e7`. Release evidence is tracked in #144;
+this record does not establish semantic acceptance.
 
 Refs [#144](https://github.com/Lenivvenil/digest/issues/144),
 [the staged architecture](../ARCHITECTURE.md#structural-migration-current-stage-and-target),
@@ -58,8 +61,10 @@ limits, eligibility, scheduling and retry policies are unchanged. No new framewo
 store, retention period or evidence cleanup is introduced.
 
 `candidate_review.py` still coordinates scheduling and eligibility with configuration,
-collector and review code. Review prompt/model execution, legacy/discovery scenarios,
-confirmed-delivery application and the other target domains remain later work.
+collector and review code. Confirmed-delivery application is the next implemented
+slice, recorded in [ADR0017](0017-confirmed-delivery-application.md), with release
+evidence tracked separately in #145. Review prompt/model execution, legacy/discovery
+scenarios and the other target domains retain their remaining ownership debt.
 Pure candidate contracts do not make all existing domain behavior isolated or complete.
 
 ## Verification and rollback

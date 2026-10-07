@@ -6,7 +6,7 @@ import json
 import logging
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -287,6 +287,33 @@ def update_stats(
 
     if len(s.history) > HISTORY_MAX_DAYS:
         s.history = s.history[-HISTORY_MAX_DAYS:]
+
+
+def record_delivered_articles(
+    stats: dict[str, SourceStats],
+    new_hashes: set[str],
+    article_source_map: dict[str, str],
+    publication_day: date,
+) -> None:
+    """Count new confirmed coverage on its publication day without another fetch.
+
+    The application owns deduplication and passes only hashes absent from its
+    current delivered cache. This operation alone is not safe to replay after a
+    partial multi-file write.
+    """
+    for identity in new_hashes:
+        source = article_source_map.get(identity[:8])
+        if source in stats:
+            stats[source].articles_included_in_digest += 1
+            day = publication_day.isoformat()
+            history = stats[source].history
+            entry = next((item for item in history if item.date == day), None)
+            if entry is None:
+                entry = DailySnapshot(day, 0, 0, False)
+                history.append(entry)
+                history.sort(key=lambda item: item.date)
+            entry.articles_included += 1
+            stats[source].history = history[-HISTORY_MAX_DAYS:]
 
 
 def calculate_score(stats: SourceStats) -> float:

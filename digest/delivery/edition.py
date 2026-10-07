@@ -21,7 +21,8 @@ import httpx
 
 from digest.delivery.issue_guard import ISSUE_FILE, _safe
 from digest.delivery.issue_guard import _read as _read_legacy
-from digest.delivery.telegram import IssueDeliveryResult, _render_compact_issue
+from digest.delivery.telegram import _render_compact_issue
+from digest.domain.delivery.outcomes import ArticleCoverage, IssueDeliveryResult, project_issue_coverage
 from digest.radar.summarizer import ArticleSummary
 
 READY_FILE = "prepared_edition.json"
@@ -424,26 +425,20 @@ def claim_edition(
 
 
 def _result(data: _Edition, receipts: _Receipts) -> IssueDeliveryResult:
-    result = IssueDeliveryResult(
+    return project_issue_coverage(
+        (
+            ArticleCoverage(article.full_hash, article.source, tuple(article.covering_chunks))
+            for article in data.articles
+        ),
+        outcome=(
+            "sent"
+            if receipts.state == "confirmed"
+            else ("failed" if receipts.state in {"failed", "partial"} else "unknown")
+        ),
         total_chunks=len(data.payloads),
         attempted_chunks=receipts.attempted,
         confirmed_chunks=len(receipts.confirmed),
     )
-    result.outcome = (
-        "sent"
-        if receipts.state == "confirmed"
-        else ("failed" if receipts.state in {"failed", "partial"} else "unknown")
-    )
-    for article in data.articles:
-        if any(index < result.attempted_chunks for index in article.covering_chunks):
-            result.attempted += 1
-            if all(index < result.confirmed_chunks for index in article.covering_chunks):
-                result.sent += 1
-                result.delivered_hashes.add(article.full_hash)
-                result.article_source_map[article.full_hash[:8]] = article.source
-            else:
-                result.failed += 1
-    return result
 
 
 def _accepted(response: httpx.Response, owner: str) -> int | None:

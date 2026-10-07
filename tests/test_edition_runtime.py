@@ -142,27 +142,66 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_file", [
+    "feedback.json", "source_stats.json", "source_state.json", "seen_articles.json",
+])
 async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, failed_file: str,
 ) -> None:
+    from digest._util import atomic_json_write
+    from digest.delivery.edition import RECEIPTS_FILE
+    from digest.source_scorer import SourceStats, load_stats, save_stats
+
     config, snapshot = setup
+    config.adaptive = SimpleNamespace(enabled=True)
+    config.enabled_sources = [SourceConfig("Source", "https://example.com/feed", "Tech", True, trial=True)]
     stats = await finish_preparation(snapshot, config)
     assert await delivery_phase("claim", "config.yaml", stats.ready_sha256, None) == 0
-    import hashlib
-
     claim_sha = hashlib.sha256(Path(".cache", CLAIM_FILE).read_bytes()).hexdigest()
-    monkeypatch.setattr("digest.edition_runtime._merge_delivery", lambda *_: (_ for _ in ()).throw(OSError("disk")))
+    current = FeedbackStore(last_update_id=999, article_source_map={"old": "Previous source"})
+    save_feedback(current, ".cache", strict=True)
+    save_stats({"Source": SourceStats("Source", total_fetches=2, successful_fetches=2)}, ".cache")
+    atomic_json_write(Path(".cache/seen_articles.json"), {"old": "previous timestamp"})
+    write_order = ["feedback.json", "source_stats.json", "source_state.json", "seen_articles.json"]
+    writes: list[str] = []
+
+    def fail_write(path: Path, data: Any) -> None:
+        writes.append(path.name)
+        if path.name == failed_file:
+            raise OSError("synthetic application write failure")
+        atomic_json_write(path, data)
+
+    monkeypatch.setattr("digest.feedback.atomic_json_write", fail_write)
+    monkeypatch.setattr("digest.adapters.storage.delivery_state.atomic_json_write", fail_write)
     with respx.mock() as router:
-        router.post("https://api.telegram.org/bottest-token/sendMessage").mock(
+        route = router.post("https://api.telegram.org/bottest-token/sendMessage").mock(
             return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 52, "chat": {"id": 12345}}}),
         )
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match="application write failure"):
             await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha)
+        assert route.call_count == 1
+    assert writes == write_order[:write_order.index(failed_file) + 1]
+    receipts = json.loads(Path(".cache", RECEIPTS_FILE).read_text())
+    assert receipts["state"] == "confirmed" and receipts["applied"] is False
+    assert receipts["confirmed"][0]["message_id"] == 52
+    persisted = load_feedback(".cache", strict=True)
+    assert persisted.last_update_id == 999
+    card = snapshot.top_articles[0]
+    identity = article_hash(card.title, card.link)
+    assert (identity[:8] in persisted.article_source_map) is (failed_file != "feedback.json")
+    source = load_stats(".cache")["Source"]
+    assert source.articles_included_in_digest == int(failed_file in {"source_state.json", "seen_articles.json"})
+    assert source.total_fetches == source.successful_fetches == 2
+    assert Path(".cache/source_state.json").exists() is (failed_file == "seen_articles.json")
+    assert json.loads(Path(".cache/seen_articles.json").read_text()) == {"old": "previous timestamp"}
     assert inspect_edition()[2] == "held"
+    retained = {path: path.read_bytes() for path in Path(".cache").glob("*.json")}
     with respx.mock(assert_all_called=False) as router:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="held"):
             await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha)
         assert not router.calls
+    assert writes == write_order[:write_order.index(failed_file) + 1]
+    assert {path: path.read_bytes() for path in retained} == retained
 
 
 @pytest.mark.asyncio

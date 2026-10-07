@@ -50,6 +50,8 @@ Tracked discipline: [#148](https://github.com/Lenivvenil/digest/issues/148).
 - Keep one reviewable scope per change. Link the implementing issue and applicable
   ADR/domain evidence in the PR. Use an automatic closing reference only when the
   issue's full acceptance is satisfied; partial progress must leave remaining work open.
+  Use `Refs #…` for incomplete work; closing keywords still trigger GitHub automation
+  inside negated sentences, so do not pair them with an issue reference.
 - After merge, verify the exact main checks and, when applicable, the deployed engine
   pin and retained runtime state. Update the issue and board from observed results.
   Do not equate a green check with editorial or real-runtime acceptance.
