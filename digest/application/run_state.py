@@ -11,7 +11,7 @@ from digest.adapters.models.execution import ModelExecution
 
 if TYPE_CHECKING:
     from digest.config import Config
-    from digest.feedback import FeedbackStore
+    from digest.domain.feedback.values import FeedbackStore
     from digest.radar.collector import Article, SourceFetchMetrics
     from digest.source_scorer import SourceStats
 
@@ -22,26 +22,18 @@ def process_pending_approvals(
     """Apply only decisions bound to a still-current proposal, independently of delivery."""
     from copy import deepcopy
 
-    from digest.discovery import (
-        add_source_to_config,
-        load_pending,
-        proposal_binding,
-        record_source_history,
-        resolve_pending_proposal,
-        save_pending,
-    )
-    from digest.feedback import save_feedback
+    from digest.adapters.storage.feedback import save_feedback
+    from digest.adapters.storage.pending_sources import load_pending, save_pending
+    from digest.discovery import add_source_to_config, record_source_history
+    from digest.domain.feedback.rules import applicable_source_decision
 
     logger = logging.getLogger(__name__)
     pending = load_pending(cache_dir, strict=True)
     candidate = deepcopy(feedback_store)
     remaining = list(pending)
     for ps in pending:
-        decision = candidate.source_decisions.get(ps.source_hash)
-        current = resolve_pending_proposal(pending, ps.source_hash)
-        if (decision not in ("approved", "rejected") or current is None
-                or candidate.source_decision_bindings.get(ps.source_hash) != proposal_binding(current)):
-            # Legacy unbound decisions remain historical; they cannot authorize a future proposal.
+        decision = applicable_source_decision(candidate, pending, ps.source_hash, now=datetime.now(tz=timezone.utc))
+        if decision is None:
             continue
         if decision == "approved":
             try:
@@ -129,7 +121,9 @@ async def collect_run_feedback(
     config: Config, cache_dir: str, dry_run: bool, precollected: bool,
 ) -> tuple[FeedbackStore, bool, int]:
     """Feedback durability is independent of today's analysis/delivery outcome."""
-    from digest.feedback import FeedbackStore, collect_feedback, load_feedback
+    from digest.adapters.storage.feedback import load_feedback
+    from digest.application.feedback import collect_feedback
+    from digest.domain.feedback.values import FeedbackStore
 
     logger = logging.getLogger(__name__)
     try:

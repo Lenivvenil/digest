@@ -338,7 +338,7 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
         return ProposalDelivery("confirmed", 42)
 
     transport = AsyncMock(side_effect=send)
-    monkeypatch.setattr("digest.discovery.save_pending", persist_pending)
+    monkeypatch.setattr("digest.adapters.storage.pending_sources.save_pending", persist_pending)
     monkeypatch.setattr("digest.discovery.save_delivery", persist_delivery)
     monkeypatch.setattr(reporting, "publish_discovery_prepared", report)
     monkeypatch.setattr("digest.discovery.send_source_approval_message", transport)

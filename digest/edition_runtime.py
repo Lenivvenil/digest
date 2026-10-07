@@ -216,9 +216,9 @@ def _merge_delivery(result: IssueDeliveryResult, manifest: dict[str, Any], confi
 
 
 async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, claim_sha: str | None) -> int:
+    from digest.adapters.storage.feedback import load_feedback
     from digest.config import load_config
     from digest.delivery.edition import claim_edition, inspect_edition, mark_applied, send_prepared_edition
-    from digest.feedback import load_feedback
 
     config = load_config(config_path)
     manifest, actual_sha, status = inspect_edition()

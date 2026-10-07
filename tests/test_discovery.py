@@ -272,7 +272,7 @@ def test_save_pending_strict_propagates_write_failure(
     def fail_write(path: Path, data: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("digest.discovery.atomic_json_write", fail_write)
+    monkeypatch.setattr("digest.adapters.storage.pending_sources.atomic_json_write", fail_write)
     with pytest.raises(OSError, match="disk full"):
         save_pending([], str(tmp_path), strict=True)
     assert load_pending(str(tmp_path)) == [original]

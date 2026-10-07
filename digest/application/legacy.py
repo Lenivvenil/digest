@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from digest.domain.catalog.articles import Article
     from digest.domain.delivery.outcomes import IssueDeliveryResult
     from digest.domain.editorial.reviews import BlindReviewReport
-    from digest.feedback import FeedbackStore
+    from digest.domain.feedback.values import FeedbackStore
     from digest.irritator import IrritatorStatus
     from digest.irritator.ranker import RankedSignal
     from digest.radar.collector import SourceFetchMetrics
@@ -76,7 +76,7 @@ async def _collect_legacy(
 ) -> LegacyCollection:
     """Apply feedback and approved sources before observing the current portfolio."""
     from digest._util import cleanup_stale_tmp
-    from digest.feedback import get_source_feedback_score
+    from digest.domain.feedback.rules import get_source_feedback_score
     from digest.radar import AllFeedsFailedError, collect
     from digest.source_scorer import (
         calculate_effective_priorities,
@@ -103,7 +103,7 @@ async def _collect_legacy(
     saved_article_source_map = dict(feedback_store.article_source_map)
     feedback_scores: dict[str, float] = {}
     for source in config.enabled_sources:
-        score = get_source_feedback_score(feedback_store, source.name)
+        score = get_source_feedback_score(feedback_store, source.name, now=datetime.now(tz=timezone.utc))
         if score is not None:
             feedback_scores[source.name] = score
     if config.adaptive.enabled:
@@ -150,8 +150,8 @@ async def run_legacy(
     feedback_precollected: bool = False, issue_guard: IssueGuard | None = None,
 ) -> RunStats:
     """Choose preview or publication after collection and canonical analysis."""
+    from digest.adapters.storage.feedback import save_feedback
     from digest.application.delivery import save_delivery_cache
-    from digest.feedback import save_feedback
     from digest.source_scorer import save_stats
 
     collected = await _collect_legacy(

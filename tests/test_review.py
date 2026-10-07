@@ -304,7 +304,7 @@ async def test_trial_isolates_cache_and_never_calls_delivery(
         patch("digest.review_trial.run_blind_review", AsyncMock(return_value=report)),
         patch("digest.delivery.send_article_cards", side_effect=AssertionError("No Telegram")),
         patch("digest.radar.save_dedup_cache", side_effect=AssertionError("No state writes")),
-        patch("digest.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
+        patch("digest.application.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
     ):
         assert await run_trial(tmp_path / "fixture.yaml", tmp_path / "output", execution=execution) == 0
     assert Path.cwd() == tmp_path

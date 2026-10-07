@@ -14,7 +14,7 @@ from digest._util import atomic_json_write
 
 if TYPE_CHECKING:
     from digest.config import AdaptiveConfig, SourceConfig
-    from digest.feedback import FeedbackStore
+    from digest.domain.feedback.values import FeedbackStore
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,8 @@
 > engine PR #151 and runtime PR #74. The #146 boundary is deployed through
 > engine PR #152 and runtime PR #75.
 > #147-A is deployed through engine PR #153 and runtime PR #76.
-> #147-B adds explicit model execution holders; its release evidence is tracked in #147.
+> #147-B is deployed through engine PR #154 and runtime PR #77.
+> #147-C adds catalog proposal/feedback rules, codecs and collect/persist/ack boundaries.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -29,11 +30,12 @@ The scoped review/source-attribution implementation
 under [#146](https://github.com/Lenivvenil/digest/issues/146) is recorded in
 [ADR0018](decisions/0018-review-reuse-and-source-attribution.md). The implementing
 issues track merge, checks and rollout evidence. These statuses do not establish
-editorial acceptance or completion of the remaining migration stages. The local
+editorial acceptance or completion of the remaining migration stages. The deployed
 #147-A scenario extraction is recorded in
-[ADR0019](decisions/0019-remaining-application-scenarios.md); the local provider
+[ADR0019](decisions/0019-remaining-application-scenarios.md); the deployed provider
 runtime/configuration separation under #147-B is recorded in
-[ADR0020](decisions/0020-explicit-model-execution.md).
+[ADR0020](decisions/0020-explicit-model-execution.md). The local #147-C feedback
+boundary is recorded in [ADR0021](decisions/0021-catalog-feedback-boundaries.md).
 
 The target is a modular monolith: one deployable Python engine, the existing private
 runtime, and no additional services or workflow framework. Organization follows who
@@ -152,8 +154,9 @@ inclusion accounting without another fetch. Direct runs use
 `application.run_state.record_source_stats` for fetch observations and inclusion.
 [`adapters/storage/delivery_state.py`](../digest/adapters/storage/delivery_state.py)
 owns the strict delivered-cache codec and prepared cache/statistics/lifecycle writes.
-Feedback persistence remains in `feedback.py`; legacy persistence stays with its
-existing owner functions. The following effects preserve the pre-extraction behavior:
+Feedback persistence now belongs to `adapters/storage/feedback.py` under #147-C;
+legacy persistence stays with its existing owner functions. The following effects
+preserve the pre-extraction behavior:
 
 | Effect | Prepared edition | Legacy direct run, including direct compact |
 | --- | --- | --- |
@@ -185,11 +188,12 @@ fallback. Legacy cards retain their existing retry/fallback behavior. Sharing a
 coverage value or application entrypoint does not unify these protocols.
 
 `delivery/edition.py` still combines claim/receipt validation, storage and sending;
-`delivery/telegram.py` still combines rendering and transport. `feedback.py` and
-`source_scorer.py` still own `FeedbackStore`, `SourceStats` and `SourceStateStore`
-and mix domain rules with codecs/adapters; the storage adapter's source-state types
-are type-only imports from that existing module. This is not a complete feedback or
-catalog-domain extraction. Stage 5-A moves legacy/discovery orchestration into applications.
+`delivery/telegram.py` still combines rendering and transport. Stage 5-C now owns
+feedback values/rules, storage and polling/acknowledgement separately. `source_scorer.py`
+still owns `SourceStats`, `SourceStateStore`, adaptive scoring, lifecycle and their
+codecs; the delivery-state adapter's source-state types remain type-only imports
+from that module. The catalog extraction is limited to proposal identity/eligibility.
+Stage 5-A moves legacy/discovery orchestration into applications.
 Compatibility exports preserve the old Telegram result imports. In particular,
 the broad `LegacyOutcomePolicy` remains a transitional in-memory handoff from the
 legacy application, not an ideal domain policy or a persisted entity/schema. The following
@@ -240,7 +244,7 @@ presentation/transport separation.
 
 ### Stage 5-A: remaining application scenarios
 
-The local #147-A implementation is recorded in
+The deployed #147-A implementation (engine PR #153, runtime PR #76) is recorded in
 [ADR0019](decisions/0019-remaining-application-scenarios.md). It establishes no release.
 
 | Owner | Boundary |
@@ -260,7 +264,7 @@ below separates provider execution state; broader storage codecs remain later wo
 
 ### Stage 5-B: explicit model execution
 
-The local #147-B implementation is recorded in
+The deployed #147-B implementation (engine PR #154, runtime PR #77) is recorded in
 [ADR0020](decisions/0020-explicit-model-execution.md). `adapters/models/execution.py`
 owns a concrete `ModelExecution` holder with lazy per-loop request state; configuration
 contains settings only. Applications create the owner once and explicitly pass it
@@ -277,6 +281,31 @@ Construction does not inspect model allowance, preserving accepted/cached recove
 Required internal execution arguments are an approved Python helper API break;
 public CLI/run signatures, request counts, deadlines and persisted formats remain
 compatible. Broader adapter extraction and release acceptance remain separate.
+
+### Stage 5-C: catalog and feedback boundaries
+
+The local #147-C implementation is recorded in
+[ADR0021](decisions/0021-catalog-feedback-boundaries.md). `domain/catalog/proposals.py`
+owns the mutable five-field proposal, unchanged URL hash/binding and explicit-time
+eligibility. `domain/feedback/` owns feedback values, latest-vote scoring, known
+attribution, replay namespaces and bound source decision rules. Pure rules receive
+time explicitly; storage validity deliberately differs from decision eligibility.
+
+`adapters/storage/feedback.py` and `pending_sources.py` own the existing codecs,
+pruning, file-existence checks and exact-byte hash/verified batch reads.
+`adapters/telegram/feedback.py` owns owner checks, envelopes, cursor freshness,
+payloads, one bounded poll and bounded terminal replies without reading state files.
+`application/feedback.py` visibly orders strict reload → webhook/poll → relevant
+strict pending read → copy/reduce → strict save → optional exact-byte ack/reload.
+Ack validates the exact bytes and owner, dispatches bounded UI work, then strictly
+persists cleared terminal replies. The runtime still supplies remote durability.
+
+`application/run_state.py` revalidates the exact proposal again immediately before
+config/history/pending/feedback application, preserving ordered partial writes,
+caught failures and config reload with a new model execution holder. Public feedback
+and discovery exports remain compatible; production imports use actual owners.
+Adaptive lifecycle, discovery generation/metadata/YAML policy and broader delivery
+transport ownership remain separate work. No state migration or activation occurs.
 
 ### Target responsibility map
 
@@ -320,7 +349,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — local #147-A/B | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); explicit model-execution ownership outside configuration (ADR0020). Broader codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
+| 5. Adapters and remaining scenarios — #147-A/B deployed; C local | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); model-execution ownership outside configuration (ADR0020); proposal/feedback rules, codecs and collect/persist/ack (ADR0021). Broader codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -443,7 +472,9 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `application/source_attribution.py` (#146) | Resolve main credits from accepted report-bound immutable packets before presentation calls; preserve required versus legacy recovery policy |
 | `presentation/source_attribution.py` (#146) | Exact-feed reviewed literal notices and pure attributed card copies, independent of optional closing |
 | `closing.py` | Optional designation/provenance, sidecar persistence and omission rules; compatibility wrappers for moved occurrence/attribution contracts |
-| `adapters/storage/` (#144, #145) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence in `delivery_state.py`. No scheduling, retirement or accounting policy |
+| `domain/catalog/proposals.py`, `domain/feedback/` (#147-C) | Proposal identity/eligibility, feedback values, vote/replay/source decision rules and confirmed attribution with explicit decision times |
+| `adapters/storage/` (#144, #145, #147-C) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence; feedback and pending-source codecs/pruning. No scheduling, retirement or accounting policy |
+| `application/feedback.py`, `adapters/telegram/feedback.py` (#147-C) | Collect/persist/ack ordering and exact-byte acknowledgement; owner/update/cursor protocol and bounded Telegram replies, respectively |
 | `config.py` | YAML settings loading, dataclasses and validation; no model execution state |
 | `adapters/models/execution.py` (#147-B) | Explicit lazy model-execution holders and per-loop request state; independent from the durable cycle budget |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
@@ -457,9 +488,9 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `delivery/telegram.py` | Telegram rendering, cards, vote buttons and transport; compatibility exports for domain delivery result values |
 | `delivery/markdown.py` | Markdown archive and review checkpoint output |
 | `preparation.py`, `edition_runtime.py`, `delivery/edition.py` | Resumable canonical preparation, immutable ready edition and payload-bound sender receipts |
-| `feedback.py` | Telegram polling, vote parsing, confirmed article/source attribution, persistence and bot commands |
+| `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
 | `source_scorer.py` | Fetch/delivered-source accounting, effective priorities, trial lifecycle state, persistence and bubble diagnostics |
-| `discovery.py` | Proposed feeds, URL validation, approval cards and approved additions to runtime config |
+| `discovery.py` | Discovery delivery metadata, URL validation, approval cards and approved additions to runtime config; compatible proposal/storage exports |
 | `_dns_pinning.py`, `_sanitize.py` | Outbound URL/DNS protection and untrusted feed-text sanitization |
 | `_util.py` | Atomic JSON write and temporary-file utilities |
 

@@ -15,7 +15,8 @@ import os
 import re
 from pathlib import Path
 
-from digest.feedback import FEEDBACK_FILE, acknowledge_feedback, collect_feedback, load_feedback
+from digest.adapters.storage.feedback import FEEDBACK_FILE, load_feedback
+from digest.application.feedback import acknowledge_feedback, collect_feedback
 
 
 async def main(argv: list[str] | None = None) -> int:

@@ -402,7 +402,7 @@ async def test_trial_resume_skips_collection_preserves_input_and_writes_separate
         patch("digest.review.complete", side_effect=fixture_response) as complete,
         patch("digest.delivery.send_article_cards", side_effect=AssertionError("No Telegram")),
         patch("digest.radar.save_dedup_cache", side_effect=AssertionError("No state writes")),
-        patch("digest.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
+        patch("digest.application.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
     ):
         assert await run_trial(tmp_path / "fixture.yaml", output, resume_path=source, execution=execution) == 0
     collect.assert_not_called()

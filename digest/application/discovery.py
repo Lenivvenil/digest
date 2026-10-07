@@ -20,7 +20,7 @@ from digest.adapters.models.execution import ModelExecution
 
 if TYPE_CHECKING:
     from digest.config import Config
-    from digest.discovery import PendingSource
+    from digest.domain.catalog.proposals import PendingSource
 
 
 @dataclass(frozen=True)
@@ -84,15 +84,9 @@ def start_session(config_path: str, phase: str) -> DiscoverySession:
 
 async def prepare_and_reserve(session: DiscoverySession) -> PreparedDiscovery:
     """Persist strict pending state and reservations before exposing either hash."""
-    from digest.discovery import (
-        DELIVERY_FILE,
-        PENDING_FILE,
-        prepare_pending_offers,
-        proposal_binding,
-        prune_discovery_state,
-        save_delivery,
-        save_pending,
-    )
+    from digest.adapters.storage.pending_sources import PENDING_FILE, save_pending
+    from digest.discovery import DELIVERY_FILE, prepare_pending_offers, prune_discovery_state, save_delivery
+    from digest.domain.catalog.proposals import proposal_binding
 
     config, cache_dir = session.config, session.cache_dir
     counts = _empty_counts()
@@ -126,8 +120,9 @@ async def _generate_offers(
     now: datetime, validations: int, counts: dict[str, int],
 ) -> list[PendingSource]:
     """Generate within the remaining three-validation budget and existing routes."""
-    from digest.discovery import PendingSource, proposal_binding, save_delivery, select_exploration_area
+    from digest.discovery import save_delivery, select_exploration_area
     from digest.discovery_feed import validate_feed_url
+    from digest.domain.catalog.proposals import PendingSource, proposal_binding
     from digest.llm import LLMRole, _resolve_routed_providers, complete
 
     config, cache_dir, cycle = session.config, session.cache_dir, session.cycle

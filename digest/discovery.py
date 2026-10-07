@@ -12,7 +12,7 @@ import logging
 import re
 import shutil
 import textwrap
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -21,131 +21,37 @@ import httpx
 import yaml
 
 from digest._util import atomic_json_write
+from digest.adapters.storage.pending_sources import (
+    PENDING_FILE as PENDING_FILE,
+)
+from digest.adapters.storage.pending_sources import (
+    load_pending as load_pending,
+)
+from digest.adapters.storage.pending_sources import (
+    save_pending as save_pending,
+)
+from digest.domain.catalog.proposals import (
+    PendingSource as PendingSource,
+)
+from digest.domain.catalog.proposals import (
+    proposal_binding as proposal_binding,
+)
+from digest.domain.catalog.proposals import (
+    resolve_pending_proposal as _resolve_pending_proposal,
+)
+from digest.domain.catalog.proposals import (
+    source_hash as source_hash,
+)
 
 logger = logging.getLogger(__name__)
 
-PENDING_FILE = "pending_sources.json"
 DELIVERY_FILE = "discovery_delivery.json"
 METADATA_MAX_BYTES = 256000
 
 
-def source_hash(url: str) -> str:
-    """Return an 8-character hex hash of the URL for source decisions."""
-    return hashlib.md5(url.encode(), usedforsecurity=False).hexdigest()[:8]
-
-
-@dataclass
-class PendingSource:
-    name: str
-    url: str
-    category: str
-    discovered_at: str
-    source_hash: str = field(default="")
-
-    def __post_init__(self) -> None:
-        if not self.source_hash:
-            self.source_hash = source_hash(self.url)
-
-
-def resolve_pending_proposal(
-    pending: list[PendingSource], hash8: str,
-) -> PendingSource | None:
-    """Resolve exactly one unexpired proposal whose hash matches its URL."""
-    if not isinstance(hash8, str) or not re.fullmatch(r"[0-9a-f]{8}", hash8):
-        return None
-    matches = [source for source in pending if source.source_hash == hash8]
-    if len(matches) != 1:
-        return None
-    source = matches[0]
-    if any(not isinstance(value, str) or not value.strip() for value in asdict(source).values()):
-        return None
-    if source_hash(source.url) != hash8:
-        return None
-    try:
-        discovered = datetime.fromisoformat(source.discovered_at)
-        if discovered.tzinfo is None:
-            discovered = discovered.replace(tzinfo=timezone.utc)
-        age = datetime.now(tz=timezone.utc) - discovered
-    except (TypeError, ValueError):
-        return None
-    if not timedelta(0) <= age <= timedelta(days=30):
-        return None
-    return source
-
-
-def proposal_binding(source: PendingSource) -> str:
-    """Bind a decision to the exact proposal, including its discovery timestamp."""
-    identity = json.dumps(asdict(source), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
-
-
-def load_pending(cache_dir: str, *, strict: bool = False) -> list[PendingSource]:
-    """Load proposals; strict mode raises on unreadable or malformed cache data."""
-    path = Path(cache_dir) / PENDING_FILE
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict) or not isinstance(data.get("pending"), list):
-            raise ValueError("Pending source cache must contain a pending list.")
-        sources: list[PendingSource] = []
-        for item in data["pending"]:
-            try:
-                if not isinstance(item, dict) or any(
-                    not isinstance(item.get(key), str) or not item[key].strip()
-                    for key in ("name", "url", "category", "discovered_at")
-                ):
-                    raise ValueError("Pending source entries must contain nonempty string identity fields.")
-                datetime.fromisoformat(item["discovered_at"])
-                hash8 = item.get("source_hash", source_hash(item["url"]))
-                if not isinstance(hash8, str) or not re.fullmatch(r"[0-9a-f]{8}", hash8):
-                    raise ValueError("Pending source hashes must contain eight lowercase hexadecimal characters.")
-                sources.append(
-                    PendingSource(
-                        name=item["name"],
-                        url=item["url"],
-                        category=item["category"],
-                        discovered_at=item["discovered_at"],
-                        source_hash=hash8,
-                    )
-                )
-            except (KeyError, TypeError, ValueError) as exc:
-                if strict:
-                    raise
-                logger.warning("Skipping malformed pending source entry: %s", exc)
-        return sources
-    except FileNotFoundError:
-        return []
-    except Exception as exc:
-        logger.warning("Failed to load pending sources: %s", exc)
-        if strict:
-            raise
-        return []
-
-
-def save_pending(
-    sources: list[PendingSource], cache_dir: str, *, strict: bool = False,
-) -> None:
-    """Save pending sources, pruning old entries; optionally propagate I/O errors."""
-    path = Path(cache_dir) / PENDING_FILE
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=30)
-    pruned: list[PendingSource] = []
-    for s in sources:
-        try:
-            ts = datetime.fromisoformat(s.discovered_at)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            if ts >= cutoff:
-                pruned.append(s)
-        except ValueError:
-            pruned.append(s)
-    data = {"pending": [asdict(s) for s in pruned]}
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_json_write(path, data)
-    except Exception as exc:
-        logger.warning("Failed to save pending sources: %s", exc)
-        if strict:
-            raise
+def resolve_pending_proposal(pending: list[PendingSource], hash8: str) -> PendingSource | None:
+    """Compatibility entrypoint; callers with a decision time use the catalog rule."""
+    return _resolve_pending_proposal(pending, hash8, now=datetime.now(tz=timezone.utc))
 
 
 @dataclass(frozen=True)
@@ -292,7 +198,7 @@ def prune_discovery_state(
                 data["history"].append({"binding": binding, "url": source.url,
                                         "name": source.name, "category": source.category,
                                         "decision": "expired", "recorded_at": now.isoformat()})
-        elif resolve_pending_proposal(pending, source.source_hash) is None:
+        elif _resolve_pending_proposal(pending, source.source_hash, now=datetime.now(tz=timezone.utc)) is None:
             raise ValueError("Ambiguous or invalid pending source identity.")
         else:
             kept.append(source)
@@ -457,7 +363,8 @@ async def send_reserved_proposals(
     for binding in batch["bindings"]:
         source = by_binding.get(binding)
         receipt = data["deliveries"].get(binding, {})
-        if (source is None or resolve_pending_proposal(pending, source.source_hash) != source
+        if (source is None
+                or _resolve_pending_proposal(pending, source.source_hash, now=datetime.now(tz=timezone.utc)) != source
                 or receipt.get("status") != "reserved" or receipt.get("owner") != owner):
             raise ValueError("Discovery offer no longer matches its reservation.")
     for binding in batch["bindings"]:
