@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -56,11 +56,14 @@ async def finish_preparation(
     publication_date: date | None = None, selection_complete: bool = True,
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
+    from digest.closing import _digest, attribute_closing_card, attribute_source_card, main_attribution_occurrences
     from digest.delivery import write_digest
     from digest.delivery.edition import prepare_edition
+    from digest.delivery.telegram import _render_compact_issue
     from digest.irritator import IrritatorStatus
     from digest.main import _deferred_review_status, _publication_presentation, _run_irritator
     from digest.preparation import clear_preparation
+    from digest.translation import ClosingPresentation, translate_publication_with_closing
 
     stats = _stats("no_ready" if selection_complete else "selection_incomplete", feedback=feedback)
     stats.review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
@@ -70,14 +73,69 @@ async def finish_preparation(
         else:
             logger.info("Edition preparation: no selected articles; no ready edition created")
         return stats
+    main_attribution = main_attribution_occurrences(
+        snapshot.review_report, snapshot.top_articles, getattr(config, "sources", ()),
+        closing_snapshot=getattr(snapshot, "closing", None) is not None,
+    )
     ranked: list[Any] = []
     if config.review.enabled and config.review.review_led_only:
         status = IrritatorStatus(_deferred_review_status(config.radar.language), "deferred")
     else:
         _, ranked, status = await _run_irritator(snapshot.summaries, config, verbose)
-    text, cards, ranked = await _publication_presentation(
-        snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
-    )
+    closing = getattr(snapshot, "closing", None)
+    closing_presentation: ClosingPresentation | None = None
+    if closing is not None and closing.status == "selected":
+        if closing.card is None:
+            raise ValueError("Selected closing decision is missing its canonical card.")
+        text, cards, ranked, closing_presentation = await translate_publication_with_closing(
+            snapshot.combined, snapshot.top_articles, ranked, closing.card, config, Path(".cache/translations"),
+            selection_binding=asdict(closing),
+        )
+    else:
+        text, cards, ranked = await _publication_presentation(
+            snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
+        )
+        if closing is not None:
+            closing_presentation = ClosingPresentation(closing.status, closing.reason)
+    # Credits stay outside canonical text and model/cache inputs, but enter both
+    # archive and frozen delivery. Missing provenance was checked before calls.
+    from digest.radar.collector import article_hash
+
+    cards = [attribute_source_card(card, occurrence, _digest(asdict(occurrence)))[0]
+             if (occurrence := main_attribution.get(article_hash(card.title, card.link))) is not None else card
+             for card in cards]
+    # Never discard a required main card to satisfy optional placement. Hold the
+    # accepted preparation before archive/freeze/send when its credit would split.
+    _, main_ranges = _render_compact_issue(cards, config, text)
+    if any(item.full_hash in main_attribution and len(item.covering_chunks) != 1 for item in main_ranges):
+        raise ValueError("Main source attribution spans delivery chunks; accepted preparation retained. "
+                         "Review its presentation before resuming; no article was sent or discarded.")
+    if closing_presentation is not None and closing_presentation.card is not None:
+        attributed = attribute_closing_card(closing, closing_presentation.card) if closing is not None else None
+        if attributed is None:
+            closing_presentation = replace(
+                closing_presentation, status="incomplete", reason="attribution_unavailable", card=None,
+            )
+        else:
+            assembled = [*cards, attributed]
+            try:
+                _, ranges = _render_compact_issue(assembled, config, text)
+            except ValueError as exc:
+                logger.warning("Closing presentation omitted after render preflight: %s", exc)
+                closing_presentation = replace(
+                    closing_presentation, status="incomplete", reason="rendering_failed", card=None,
+                )
+            else:
+                # A visible partial article cannot lose its required credit if
+                # a later chunk fails. Omit optional content; leave main intact.
+                if any((item.full_hash in main_attribution or item is ranges[-1])
+                       and len(item.covering_chunks) != 1 for item in ranges):
+                    closing_presentation = replace(
+                        closing_presentation, status="incomplete", reason="attribution_split", card=None,
+                    )
+                else:
+                    closing_presentation = replace(closing_presentation, card=attributed)
+                    cards = assembled
     archive = write_digest(
         text, config, top_articles=cards, ranked_signals=ranked or None,
         review_report=snapshot.review_report, irritator_status=status,
@@ -101,16 +159,20 @@ async def finish_preparation(
         for path in paths:
             relative = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
             references[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    canonical = {
+    canonical: dict[str, Any] = {
         "combined": snapshot.combined,
         "cards": [asdict(card) for card in snapshot.top_articles],
         "contributing_sources": snapshot.contributing_sources,
         "source_count": snapshot.source_count,
         "article_count": snapshot.article_count,
     }
+    presentation: dict[str, Any] = {"combined": text, "cards": [asdict(card) for card in cards]}
+    if closing is not None and closing_presentation is not None:
+        canonical["closing"] = asdict(closing)
+        presentation["closing"] = asdict(closing_presentation)
     _, digest = prepare_edition(
         cards, config, notice=text, canonical_metadata=canonical,
-        presentation_metadata={"combined": text, "cards": [asdict(card) for card in cards]},
+        presentation_metadata=presentation,
         checkpoint_refs=references, producing_engine=_engine_provenance(), publication_date=publication_date,
     )
     clear_preparation()

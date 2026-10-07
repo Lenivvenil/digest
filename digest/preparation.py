@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 from digest._util import atomic_json_write
+from digest.closing import ClosingDecision, validate_closing
 from digest.radar.summarizer import ArticleSummary, CategorySummary
 from digest.review import BlindReviewReport
 
 PREPARATION_FILE = "pending_preparation.json"
-SCHEMA_VERSION = 1
+LEGACY_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _MAX_BYTES = 4_000_000
 
 
@@ -35,6 +37,7 @@ class PreparationSnapshot:
     source_count: int
     article_count: int
     contributing_sources: list[str]
+    closing: ClosingDecision | None = None
 
 
 def _safe(path: Path) -> Path:
@@ -99,7 +102,16 @@ def _restore(value: Any, expected: Any) -> Any:
     return value
 
 
-def _snapshot(payload: object) -> PreparationSnapshot:
+def _snapshot(payload: object, version: int = LEGACY_SCHEMA_VERSION) -> PreparationSnapshot:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid preparation snapshot.")
+    legacy_fields = {field.name for field in fields(PreparationSnapshot)} - {"closing"}
+    if version == LEGACY_SCHEMA_VERSION:
+        if set(payload) != legacy_fields:
+            raise ValueError("Invalid legacy preparation fields.")
+        payload = {**payload, "closing": None}
+    elif version != SCHEMA_VERSION or set(payload) != legacy_fields | {"closing"} or payload["closing"] is None:
+        raise ValueError("Invalid versioned preparation fields.")
     snapshot: PreparationSnapshot = _restore(payload, PreparationSnapshot)
     if (snapshot.source_count < 0 or snapshot.article_count < 0
             or len(set(snapshot.contributing_sources)) != len(snapshot.contributing_sources)
@@ -107,6 +119,14 @@ def _snapshot(payload: object) -> PreparationSnapshot:
         raise ValueError("Invalid preparation checkpoint counts or sources.")
     if snapshot.review_report is not None:
         _validate_report(snapshot.review_report)
+    if snapshot.closing is not None:
+        validate_closing(snapshot.closing, snapshot.review_report)
+        if snapshot.closing.card is not None:
+            from digest.radar.collector import article_hash
+
+            identity = article_hash(snapshot.closing.card.title, snapshot.closing.card.link)
+            if any(article_hash(card.title, card.link) == identity for card in snapshot.top_articles):
+                raise ValueError("Closing card duplicates the main selection.")
     return snapshot
 
 
@@ -145,14 +165,17 @@ def save_preparation(
     """Atomically replace the one pending preparation with accepted canonical work."""
     # JSON roundtrip also converts the evidence tuple to its serialized list form.
     payload = json.loads(_canonical(asdict(snapshot)))
-    _snapshot(payload)
+    version = LEGACY_SCHEMA_VERSION if snapshot.closing is None else SCHEMA_VERSION
+    if version == LEGACY_SCHEMA_VERSION:
+        payload.pop("closing")
+    _snapshot(payload, version)
     instant = _instant(now)
     target = _target(publication_date, instant)
     if target < instant.date().isoformat():
         raise ValueError("Cannot prepare an edition for a past publication date.")
     # Validate any existing active snapshot before replacing canonical accepted work.
     load_preparation(cache_dir, instant, publication_date)
-    body = {"schema_version": SCHEMA_VERSION, "utc_date": instant.date().isoformat(),
+    body = {"schema_version": version, "utc_date": instant.date().isoformat(),
             "created_at": instant.isoformat(), "publication_date": target, "snapshot": payload}
     record = {**body, "sha256": hashlib.sha256(_canonical(body)).hexdigest()}
     if len(json.dumps(record, indent=2).encode("utf-8")) > _MAX_BYTES:
@@ -182,7 +205,8 @@ def load_preparation(
         if (not isinstance(record, dict)
                 or set(record) != {"schema_version", "utc_date", "created_at",
                                    "publication_date", "snapshot", "sha256"}
-                or type(record["schema_version"]) is not int or record["schema_version"] != SCHEMA_VERSION
+                or type(record["schema_version"]) is not int
+                or record["schema_version"] not in {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
                 or not isinstance(record["utc_date"], str)
                 or date.fromisoformat(record["utc_date"]).isoformat() != record["utc_date"]
                 or not isinstance(record["publication_date"], str)
@@ -192,7 +216,7 @@ def load_preparation(
         body = {key: value for key, value in record.items() if key != "sha256"}
         if record["sha256"] != hashlib.sha256(_canonical(body)).hexdigest():
             raise ValueError("Checkpoint hash mismatch.")
-        snapshot = _snapshot(record["snapshot"])
+        snapshot = _snapshot(record["snapshot"], record["schema_version"])
         created_at = datetime.fromisoformat(record["created_at"])
         if (created_at.tzinfo is None or created_at.utcoffset() != timedelta(0)
                 or created_at.isoformat() != record["created_at"]

@@ -52,9 +52,13 @@ next eligible ordinary preparation, reconcile saved work with current source,
 blocklist, recency and delivered-history boundaries before planning a later packet.
 Candidate age remains visible. No new TTL or permanently active queue is established.
 
-**Deployed #132 admission-order correction.** PR [#134](https://github.com/Lenivvenil/digest/pull/134)
-merged as `ef68d46e` and was pinned by runtime
-[#63](https://github.com/Lenivvenil/digest-prod/pull/63) (`e1e7a133`). Within each unseen/technical
+**Deployed #132 admission-order correction.** Owner approval on 2026-10-06
+authorized PR [#134](https://github.com/Lenivvenil/digest/pull/134) (`ef68d46e`) and
+runtime [#63](https://github.com/Lenivvenil/digest-prod/pull/63) (`e1e7a133`). This
+accepted removal of alphabetical admission bias, not the unresolved professional-core
+protection policy. The original ordering below was subsequently adjusted by the
+October 7 freshness/continuation correction recorded later in this decision.
+Within each unseen/technical
 status class, admit one candidate per source per round.
 Keep each source in first-observed order and re-order its remaining head each round:
 oldest observation first, effective priority for coeval heads, then stable source
@@ -231,12 +235,15 @@ PR #135's optional closing item is not deployed. Five detailed entries cannot
 guarantee five main cards plus one closing item: integration must explicitly review
 the shared detail budget and retest main preservation before closing activation.
 
-## Proposed freshness and technical continuation correction (#121 / #132)
+## Deployed freshness and technical continuation correction (#121 / #132)
 
 The October 7 private-state replay exposed two limits in the deployed ordering:
 new same-source entries wait behind that source's entire unseen inventory, and
-unseen work can exclude every technical retry. This draft changes admission only;
-it is not deployed or evidence of better editorial relevance.
+unseen work can exclude every technical retry. Owner approval on 2026-10-07
+authorized engine [#139](https://github.com/Lenivvenil/digest/pull/139) (`e0740534`)
+and runtime [#67](https://github.com/Lenivvenil/digest-prod/pull/67) (`50e2768d`).
+The deployed correction changes admission only; it is not evidence of better
+editorial relevance.
 
 Source turns are class-local: unseen and technical work have separate source
 rounds, not a global one-item-per-source quota. Within unseen work, turns alternate between
@@ -282,7 +289,7 @@ characters) versus 16 unseen plus four retries (12,460 characters). After real
 begin/save/load in a temporary copy, the next packet used four different retry IDs.
 These are technical probes, not provider or editorial acceptance. Important older stories did not uniformly improve: the digital-gilt
 story moved 49 to 84, Stripe/FedEx 58 to 57, and Plaid risk models 130 to 70 in the
-unreserved unseen ordering. The proposed four-retry packet displaces four unseen
+unreserved unseen ordering. The four-retry replay packet displaces four unseen
 opportunities and still contains eligible future-dated events through ordinary
 age/retry turns. No source is automatically accepted, and no fintech quota is
 introduced. With 96 new entries and at most 20 admissions per ordinary window,

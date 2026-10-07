@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from digest.candidate_review import CandidatePacket, CandidateProgress
+    from digest.closing import ClosingDecision
     from digest.config import Config
     from digest.delivery.issue_guard import IssueGuard
     from digest.delivery.telegram import IssueDeliveryResult
@@ -957,11 +958,21 @@ async def _analyze_candidate_articles(
         return await _analyze_articles(articles, config)
     from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.candidate_review import reconcile_packet
+    from digest.closing import ClosingCapture, decide_closing, save_closing
     from digest.review import primary_cards, run_primary_review
 
     capture = CandidateDispositionCapture()
-    report = await run_primary_review(articles, config, disposition_capture=capture)
+
+    closing_capture = ClosingCapture() if getattr(getattr(config, "closing", None), "enabled", False) else None
+    kwargs = {"closing_capture": closing_capture} if closing_capture is not None else {}
+    report = await run_primary_review(articles, config, disposition_capture=capture, **kwargs)
     reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
+    if closing_capture is not None:
+        try:
+            decision = decide_closing(report, packet, closing_capture, config.closing, config.sources)
+            save_closing(decision, report, cache_dir)
+        except (OSError, ValueError, TypeError, KeyError):
+            logging.getLogger(__name__).warning("Optional closing capture unavailable; main review remains accepted.")
     cards = primary_cards(report, articles, config.radar.language, max_cards=config.review.max_selections,
                           include_attribution=config.telegram.delivery_mode != "compact")
     return [], None, cards, report
@@ -977,6 +988,37 @@ def _save_prepared_fetch_stats(
     if not already_failed:
         _record_source_stats(source_stats, fetch_metrics, articles, set())
         save_stats(source_stats, cache_dir, active_sources={source.name for source in config.enabled_sources})
+
+
+def _validate_closing_mode(config: Config, prepare_only: bool) -> None:
+    if getattr(getattr(config, "closing", None), "enabled", False) and not prepare_only:
+        raise ValueError("Closing items require immutable edition preparation (--prepare-edition).")
+
+
+def _preparation_closing(
+    cards: list[ArticleSummary], report: BlindReviewReport | None,
+    articles: dict[str, list[Article]], config: Config, cache_dir: str,
+) -> tuple[list[ArticleSummary], ClosingDecision | None]:
+    from digest.closing import ClosingDecision, eligible_ids, load_closing
+    from digest.review import primary_cards
+
+    if not getattr(getattr(config, "closing", None), "enabled", False):
+        return cards, None
+    decision = (load_closing(report, cache_dir) if report is not None
+                else ClosingDecision("incomplete", "missing_delivery_review"))
+    if decision.provenance is not None and report is not None:
+        occurrence = decision.provenance.occurrence
+        if (decision.provenance.evidence_id not in eligible_ids(report.evidence, config.closing, config.sources)
+                or not any((binding.name, binding.url, binding.category) == (
+                    occurrence.source, occurrence.source_url, occurrence.category)
+                    for binding in config.closing.approved_sources)):
+            return cards, ClosingDecision("unavailable", "source_no_longer_eligible_for_closing")
+        main_cards = primary_cards(report, articles, config.radar.language, max_cards=config.review.max_selections,
+                                   include_attribution=False, exclude_ids=frozenset({decision.provenance.evidence_id}))
+        if not main_cards:
+            return cards, ClosingDecision("unavailable", "closing_would_empty_main_selection")
+        cards = main_cards
+    return cards, decision
 
 
 def _save_candidate_preparation(
@@ -1054,6 +1096,7 @@ async def _run(
     from digest.reading_preparation import validate_reading_mode
 
     validate_reading_mode(config, prepare_only)
+    _validate_closing_mode(config, prepare_only)
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
     _validate_compact_run(compact, dry_run, radar_only, issue_guard, prepare_only)
     review_led_only = _review_led(config)
@@ -1185,10 +1228,13 @@ async def _run(
         from digest.edition_runtime import finish_preparation
         from digest.preparation import PreparationSnapshot
 
+        top_articles, closing = _preparation_closing(
+            top_articles, review_report, articles_by_category, config, cache_dir,
+        )
         snapshot = PreparationSnapshot(
             top_articles=top_articles, summaries=summaries, combined=combined,
             review_report=review_report, source_count=len(articles_by_category),
-            article_count=total_articles, contributing_sources=contributing_sources,
+            article_count=total_articles, contributing_sources=contributing_sources, closing=closing,
         )
         preparation_accepted = _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
         _handoff_candidate(candidate_progress, candidate_packet, review_report, cache_dir, edition_date)

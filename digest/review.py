@@ -19,7 +19,8 @@ from urllib.parse import urlparse
 
 from digest._sanitize import sanitize_article
 from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
-from digest.config import Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
+from digest.closing import ClosingCapture, capture_closing, eligible_ids
+from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
 from digest.llm import LLMRole, _extract_json, complete
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
@@ -163,7 +164,7 @@ def _configured_category_interests(bundle: EvidenceBundle, sources: Sequence[Sou
 
 def build_review_messages(
     bundle: EvidenceBundle, settings: ReviewConfig, language: str,
-    *, sources: Sequence[SourceConfig] = (),
+    *, sources: Sequence[SourceConfig] = (), closing: ClosingConfig | None = None,
 ) -> list[dict[str, str]]:
     """One bounded, config-aware prompt; no earlier judgments or new source data."""
     system = (
@@ -205,6 +206,18 @@ def build_review_messages(
         "Other useful items MUST have deferred dispositions with a concise response-capacity reason, "
         "not not_selected. Missing/invalid entries remain unresolved. No additional fields."
     )
+    if closing is not None and closing.enabled:
+        system += (
+            " Closing contract v1: additionally return closing as {schema_version: 1, evidence_id: ID or null}. "
+            "Designate at most one validated selection from closing_eligible_ids as a humane final story outside "
+            "the usual professional agenda: concrete kindness, relief, community connection, restored access or "
+            "everyday wonder supported by the supplied evidence. Use its ordinary selection reason and quote. "
+            "Preserve caveats and distinguish announced plans from achieved outcomes. Reject promotion, speculative "
+            "benefits, misleading optimism and stale or unsupported events. A translation/update date is not proof "
+            "of a fresh original event. Feed membership alone is no evidence of a humane result. Do not force a "
+            "choice; null means no suitable story in this packet. This optional designation does not reduce main "
+            "publication capacity. Do not add a second reason or invented facts."
+        )
     task = {
         "schema_version": SCHEMA_VERSION,
         "language": language,
@@ -218,14 +231,21 @@ def build_review_messages(
                    "treating it as factual source evidence or a publication quota. Do not require architecture "
                    "detail when the stated priority is business, regulatory or operational relevance. "
                    "Still assess the supplied evidence; an announcement is not automatically useful.")
+    if closing is not None and closing.enabled:
+        task["closing_contract_version"] = 1
+        task["closing_eligible_ids"] = eligible_ids(bundle, closing, sources)
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
 
 
-def _parse_review_envelope(text: str, max_entries: int) -> tuple[list[object], list[str]]:
+def _parse_review_envelope(
+    text: str, max_entries: int, *, allow_closing: bool = False,
+) -> tuple[list[object], list[str]]:
     if len(text) > 32000:
         raise ValueError("response exceeds review budget")
     raw = _extract_json(text)
+    if allow_closing and isinstance(raw, dict):
+        raw = {key: value for key, value in raw.items() if key != "closing"}
     if (not isinstance(raw, dict)
             or set(raw) not in ({"selections", "limitations"}, {"selections", "limitations", "dispositions"})):
         raise ValueError("expected selections and limitations")
@@ -301,10 +321,11 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
 
 def _parse_live_review(
     text: str, bundle: EvidenceBundle, *, max_detailed_selections: int | None = None,
+    allow_closing: bool = False,
 ) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
     """Salvage individual entries only after the complete envelope is valid."""
     limit = len(bundle.items) if max_detailed_selections is None else min(len(bundle.items), max_detailed_selections)
-    selections, limitations = _parse_review_envelope(text, limit)
+    selections, limitations = _parse_review_envelope(text, limit, allow_closing=allow_closing)
     known = {item.evidence_id for item in bundle.items}
     accepted: list[EvidenceSelection] = []
     rejected: list[RejectedSelection] = []
@@ -373,7 +394,7 @@ def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, b
     return reason, cleaned[:32000], len(cleaned) > 32000
 
 
-def _groq_review_format() -> dict[str, Any]:
+def _groq_review_format(*, allow_closing: bool = False) -> dict[str, Any]:
     """Closed wire shape only; local validation still owns counts, IDs and exact quotes."""
     def closed(properties: dict[str, Any]) -> dict[str, Any]:
         return {"type": "object", "properties": properties,
@@ -394,6 +415,12 @@ def _groq_review_format() -> dict[str, Any]:
                     "reason": text, "retained_id": text}),
         ]}},
     })
+    if allow_closing:
+        schema["properties"]["closing"] = closed({
+            "schema_version": {"type": "integer", "enum": [1]},
+            "evidence_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        })
+        schema["required"].append("closing")
     return {"type": "json_schema", "json_schema": {"name": "rss_selection_v1", "strict": True, "schema": schema}}
 
 
@@ -413,6 +440,7 @@ async def _review_slot(
     slot: str, model: ReviewModelConfig, bundle: EvidenceBundle,
     messages: list[dict[str, str]], config: Config,
     disposition_capture: CandidateDispositionCapture | None = None,
+    closing_capture: ClosingCapture | None = None,
 ) -> ModelReview:
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
     result = ModelReview(slot, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable",
@@ -421,15 +449,18 @@ async def _review_slot(
     finish_reason: str | None = None
 
     def captured() -> ModelReview:
+        if closing_capture is not None:
+            closing_capture.attempts.append(capture_closing(result, text, finish_reason))
         if disposition_capture is not None:
             disposition_capture.attempts.append(
                 capture_review_dispositions(bundle, result, text, finish_reason=finish_reason),
             )
         return result
 
+    closing_enabled = getattr(getattr(config, "closing", None), "enabled", False)
     options: dict[str, Any] = {}
     if (model.provider, model.model) == ("groq", "openai/gpt-oss-120b"):
-        options = {"reasoning_effort": "low", "response_format": _groq_review_format()}
+        options = {"reasoning_effort": "low", "response_format": _groq_review_format(allow_closing=closing_enabled)}
     try:
         text, usage = await complete(
             LLMRole.REVIEW_EVIDENCE, messages, config, temperature=0.2,
@@ -451,6 +482,7 @@ async def _review_slot(
             raise ValueError("provider reported unfinished response")
         result.selections, result.limitations, result.rejected_items = _parse_live_review(
             text, bundle, max_detailed_selections=config.review.max_detailed_selections,
+            allow_closing=closing_enabled,
         )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
@@ -475,6 +507,7 @@ async def run_blind_review(articles_by_category: dict[str, list[Article]], confi
 async def run_primary_review(
     articles_by_category: dict[str, list[Article]], config: Config,
     *, disposition_capture: CandidateDispositionCapture | None = None,
+    closing_capture: ClosingCapture | None = None,
 ) -> BlindReviewReport:
     """Select delivery cards with one primary attempt and at most one fallback.
 
@@ -487,7 +520,8 @@ async def run_primary_review(
     settings = config.review
     bundle = build_evidence_bundle(articles_by_category, settings)
     validate_evidence_bundle(bundle, config)
-    messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources)
+    messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources,
+                                     closing=getattr(config, "closing", None))
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
     # Do not mutate the caller's retry policy or share its provider cooldowns.
     delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
@@ -495,14 +529,15 @@ async def run_primary_review(
         from digest.llm import _request_state
 
         delivery_config.llm._runtime = _request_state(config)
-    primary = await _review_slot("primary", settings.primary, bundle, messages, delivery_config, disposition_capture)
+    primary = await _review_slot("primary", settings.primary, bundle, messages, delivery_config,
+                                 disposition_capture, closing_capture)
     secondary = ModelReview(
         "secondary", settings.secondary.provider, settings.secondary.model,
         bundle.bundle_id, prompt_hash, "unavailable", error="pending_independent_review",
     )
     if primary.status in {"invalid", "unavailable"}:
         secondary = await _review_slot(
-            "secondary", settings.secondary, bundle, messages, delivery_config, disposition_capture,
+            "secondary", settings.secondary, bundle, messages, delivery_config, disposition_capture, closing_capture,
         )
     return BlindReviewReport(
         SCHEMA_VERSION, bundle, [primary, secondary], "incomplete", None, [], "pending_independent_review",
@@ -517,7 +552,8 @@ async def run_evidence_review(
 
     validate_evidence_bundle(bundle, config)
     settings = config.review
-    messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources)
+    messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources,
+                                     closing=getattr(config, "closing", None))
     prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
     cached = {review.slot: review for review in cached_reviews or []}
     if len(cached) != len(cached_reviews or []):
@@ -581,7 +617,7 @@ def primary_notice(report: BlindReviewReport, language: str) -> str:
 
 def primary_cards(
     report: BlindReviewReport, articles_by_category: dict[str, list[Article]], language: str,
-    *, include_attribution: bool = True, max_cards: int | None = None,
+    *, include_attribution: bool = True, max_cards: int | None = None, exclude_ids: frozenset[str] = frozenset(),
 ) -> list[ArticleSummary]:
     """Apply publication capacity in review order without trimming the saved review."""
     if max_cards is not None and (type(max_cards) is not int or max_cards < 1):
@@ -592,7 +628,8 @@ def primary_cards(
         return []
     label = primary_notice(report, language)
     cards = []
-    for selection in primary.selections[:max_cards]:
+    selections = [selection for selection in primary.selections if selection.evidence_id not in exclude_ids]
+    for selection in selections[:max_cards]:
         article = originals[selection.evidence_id]
         summary = f"{label}: {selection.reason}" if include_attribution else selection.reason
         cards.append(ArticleSummary(article.title, article.link, article.source, article.category, summary))

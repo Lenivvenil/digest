@@ -456,3 +456,331 @@ async def test_generated_card_conditions_and_conflict_share_translation_field(tm
         _, cards = await translate_primary_presentation("", [card], cfg, tmp_path)
     assert cards[0].summary == translated
     assert card.summary == brief
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_language", ["ru", "de"])
+async def test_closing_uses_one_existing_request_and_replays_exact_combined_cache(
+    tmp_path: Path, target_language: str,
+) -> None:
+    from digest.llm import _request_state
+    from digest.translation import _request_hash, translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    cfg.translation = replace(cfg.translation, max_calls=1, target_language=target_language)
+    main = ArticleSummary("Main", "https://example.com/main", "Main source", "Tech", "Only 20 pilot clients.")
+    closing = ArticleSummary("Closing", "https://example.com/good", "Closing source", "World", "Volunteers helped.")
+    state = _request_state(cfg)
+    calls: list[list[dict[str, str]]] = []
+
+    async def answer(_role, messages, routed, **kwargs):
+        assert _request_state(routed) is state and routed.llm.max_retries == 0
+        assert kwargs["max_output_tokens"] == cfg.translation.max_output_tokens
+        fields = json.loads(messages[1]["content"])["fields"]
+        calls.append(fields)
+        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                                             for item in fields]}), {"finish_reason": "stop"}
+
+    with (patch("digest.translation.complete", side_effect=answer) as complete,
+          patch("digest.translation.translate_fields", wraps=translate_fields) as translate):
+        first = await translate_publication_with_closing(
+            "Overview.", [main], [], closing, cfg, tmp_path, selection_binding="accepted-response",
+        )
+        replay = await translate_publication_with_closing(
+            "Overview.", [main], [], closing, cfg, tmp_path, selection_binding="accepted-response",
+        )
+    assert first[:3] == replay[:3] and first[3].card == replay[3].card
+    assert first[1][0].summary == "Перевод: Only 20 pilot clients."
+    assert first[3].card.summary == "Перевод: Volunteers helped."
+    assert (first[3].card.title, first[3].card.link, first[3].card.source) == (
+        closing.title, closing.link, closing.source,
+    )
+    assert {item["id"] for item in calls[0]} == {
+        "category_digest", f"article:{article_hash(main.title, main.link)}", "closing.summary",
+    }
+    assert replay[3].translation.cache_hits == 1
+    assert translate.await_count == 2
+    complete.assert_awaited_once()
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert record["schema_version"] == 2 and record["status"] == "translated"
+    assert len(record["response_sha256"]) == 64 and "response" not in record
+    assert "closing.summary" not in record["required_fields"]
+    assert record["canonical"]["closing.summary"] == closing.summary
+    assert record["optional"]["status"] == "translated"
+    assert record["selection_sha256"]
+    assert record["request_sha256"] == _request_hash(record["canonical"], cfg.translation)
+    assert record["max_output_tokens"] == cfg.translation.max_output_tokens and record["temperature"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["missing", "number", "duplicate", "wrong_id", "invalid_id"])
+async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
+    tmp_path: Path, defect: str,
+) -> None:
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Only 20 clients.")
+    closing = replace(main, title="Closing", link="https://example.com/good", summary="Helped 10 people.")
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        entries = [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                   for item in fields if item["id"] != "closing.summary"]
+        optional = {"id": "closing.summary", "text": "Помогли 10 людям."}
+        if defect == "number":
+            optional["text"] = "Помогли 99 людям."
+        elif defect == "wrong_id":
+            optional["id"] = "unexpected.optional"
+        elif defect == "invalid_id":
+            optional["id"] = ["closing.summary"]
+        if defect != "missing":
+            entries.append(optional)
+        if defect == "duplicate":
+            entries.append(optional)
+        return json.dumps({"translations": entries}), {"finish_reason": "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer) as complete:
+        first = await translate_publication_with_closing("Overview.", [main], [], closing, cfg, tmp_path)
+        replay = await translate_publication_with_closing("Overview.", [main], [], closing, cfg, tmp_path)
+    assert first[:3] == replay[:3]
+    assert first[1][0].summary == "Перевод: Only 20 clients."
+    assert first[0].startswith("Перевод: Overview.")
+    assert first[3].card is replay[3].card is None
+    assert first[3].translation.reasons == replay[3].translation.reasons == ["closing_contract_invalid"]
+    complete.assert_awaited_once()
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert record["status"] == "translated" and record["optional"]["status"] == "fallback"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["missing_main", "changed_main_number", "invalid_json", "truncated"])
+async def test_invalid_main_keeps_existing_canonical_fallback_without_closing_repair(
+    tmp_path: Path, defect: str,
+) -> None:
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Only 20 clients.")
+    closing = replace(main, title="Closing", link="https://example.com/good", summary="Volunteers helped.")
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        entries = [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]
+        if defect == "missing_main":
+            entries = [item for item in entries if item["id"] == "closing.summary"]
+        elif defect == "changed_main_number":
+            entries[0]["text"] = "Only 99 clients."
+        response = "{" if defect == "invalid_json" else json.dumps({"translations": entries})
+        return response, {"finish_reason": "length" if defect == "truncated" else "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer) as complete:
+        first = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+        replay = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+    assert first[1] == replay[1] == [main]
+    assert "canonical English text retained" in first[0]
+    assert first[3].card == replay[3].card == closing
+    assert first[3].reason == replay[3].reason == "main_canonical_fallback"
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("oversized", ["a" * 20000, "я" * 8000])
+async def test_oversized_closing_keeps_exact_main_request_cache_bytes_and_output(
+    tmp_path: Path, oversized: str,
+) -> None:
+    from datetime import UTC, datetime
+
+    from digest.translation import translate_publication_presentation, translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    cfg.translation = replace(cfg.translation, max_input_chars=16000)
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main claim.")
+    closing = replace(main, title="Closing", link="https://example.com/good", summary=oversized)
+    requests = []
+
+    async def answer(_role, messages, _config, **_kwargs):
+        requests.append(messages)
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                                             for item in fields]}), {"finish_reason": "stop"}
+
+    with (patch("digest.translation.complete", side_effect=answer),
+          patch("digest.translation.datetime") as clock):
+        clock.now.return_value = datetime(2026, 1, 1, tzinfo=UTC)
+        baseline = await translate_publication_presentation("Overview.", [main], [], cfg, tmp_path / "legacy")
+        actual = await translate_publication_with_closing("Overview.", [main], [], closing, cfg, tmp_path / "optional")
+    assert actual[:3] == baseline and actual[3].card is None
+    assert requests[0] == requests[1]
+    original = next((tmp_path / "legacy").glob("*.json"))
+    optional = next((tmp_path / "optional").glob("*.json"))
+    assert original.name == optional.name and original.read_bytes() == optional.read_bytes()
+    assert json.loads(optional.read_text())["schema_version"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "response_sha256", "optional", "required_fields", "selection_sha256", "schema_version",
+])
+async def test_corrupt_combined_cache_cannot_repair_or_publish_unbound_prose(
+    tmp_path: Path, field: str,
+) -> None:
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main claim.")
+    closing = replace(main, title="Closing", link="https://example.com/good")
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                                             for item in fields]}), {"finish_reason": "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer):
+        await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+    path = next(tmp_path.glob("*.json"))
+    record = json.loads(path.read_text())
+    record[field] = 2.0 if field == "schema_version" else "tampered"
+    path.write_text(json.dumps(record))
+    with patch("digest.translation.complete", AsyncMock(side_effect=AssertionError("No repair"))) as complete:
+        result = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+    assert result[1] == [main] and result[3].card == closing
+    assert result[3].reason == "main_canonical_fallback"
+    complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_combined_cache_is_bound_to_accepted_selection(tmp_path: Path) -> None:
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main claim.")
+    closing = replace(main, title="Closing", link="https://example.com/good")
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                                             for item in fields]}), {"finish_reason": "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer) as complete:
+        for selection in ("accepted-one", "accepted-two"):
+            result = await translate_publication_with_closing(
+                "", [main], [], closing, cfg, tmp_path, selection_binding=selection,
+            )
+            assert result[3].status == "presented"
+    assert complete.await_count == 2
+    records = [json.loads(path.read_text()) for path in tmp_path.glob("*.json")]
+    assert len({record["selection_sha256"] for record in records}) == 2
+    assert len({record["binding"] for record in records}) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_oversized_optional_output_keeps_main_with_bounded_terminal_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, malformed: bool,
+) -> None:
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main claim.")
+    closing = replace(main, title="Closing", link="https://example.com/good")
+    monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", 4096)
+
+    async def answer(_role, messages, _config, **_kwargs):
+        fields = json.loads(messages[1]["content"])["fields"]
+        entries = [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                   for item in fields if item["id"] != "closing.summary"]
+        optional = {"id": "closing.summary", "text": "я" * 3000}
+        if malformed:
+            optional["unexpected"] = "я" * 3000
+        entries.append(optional)
+        return json.dumps({"translations": entries}), {"finish_reason": "stop"}
+
+    with patch("digest.translation.complete", side_effect=answer) as complete:
+        first = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+        replay = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path)
+    assert first[:3] == replay[:3] and first[1][0].summary == "Перевод: Main claim."
+    assert first[3].card is replay[3].card is None
+    reason = "closing_contract_invalid" if malformed else "closing_output_allowance"
+    assert first[3].translation.reasons == replay[3].translation.reasons == [reason]
+    path = next(tmp_path.glob("*.json"))
+    assert path.stat().st_size <= 4096 and "response" not in json.loads(path.read_text())
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_optional_reservation_overflow_keeps_legacy_main_request_cache_and_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    cfg = config()
+    identity = "article:" + "a" * 32
+    fields = {identity: "This is the accepted main claim."}
+    requests = []
+    monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", 730)
+
+    async def answer(_role, messages, _config, **_kwargs):
+        requests.append(messages)
+        return json.dumps({"translations": [{"id": identity, "text": "Translated."}]}), {"finish_reason": "stop"}
+
+    with (patch("digest.translation.complete", side_effect=answer) as complete,
+          patch("digest.translation.datetime") as clock):
+        clock.now.return_value = datetime(2026, 1, 1, tzinfo=UTC)
+        baseline = await translate_fields(fields, cfg, tmp_path / "legacy")
+        actual = await translate_fields(fields, cfg, tmp_path / "optional", closing_summary="Kind.")
+        replay = await translate_fields(fields, cfg, tmp_path / "optional", closing_summary="Kind.")
+    assert baseline.status == actual.status == replay.status == "translated"
+    assert baseline.fields == actual.fields == replay.fields == {identity: "Translated."}
+    assert actual.optional.status == replay.optional.status == "fallback"
+    assert actual.calls == 1 and replay.calls == 0 and replay.cache_hits == 1
+    assert complete.await_count == 2 and requests[0] == requests[1]
+    original = next((tmp_path / "legacy").glob("*.json"))
+    optional = next((tmp_path / "optional").glob("*.json"))
+    assert original.stat().st_size < 730
+    assert original.name == optional.name and original.read_bytes() == optional.read_bytes()
+    assert json.loads(optional.read_text())["schema_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_combined_cache_write_failure_preserves_main_without_fabricating_legacy_cache(
+    tmp_path: Path,
+) -> None:
+    from digest import translation
+
+    cfg = config()
+    fields = {"main": "Claim."}
+    real_write = translation.atomic_json_write
+
+    async def answer(_role, messages, _config, **_kwargs):
+        supplied = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": "Translated."}
+                                             for item in supplied]}), {"finish_reason": "stop"}
+
+    def fail_combined_write(path, record):
+        if record["schema_version"] == 2:
+            raise OSError("Optional combined metadata cannot be persisted")
+        real_write(path, record)
+
+    with (patch("digest.translation.complete", side_effect=answer) as complete,
+          patch("digest.translation.atomic_json_write", side_effect=fail_combined_write)):
+        first = await translate_fields(fields, cfg, tmp_path / "combined", closing_summary="Kind.")
+        replay = await translate_fields(fields, cfg, tmp_path / "combined", closing_summary="Kind.")
+    assert first.status == "translated" and first.fields == {"main": "Translated."}
+    assert first.optional.status == "fallback" and first.optional.reasons == ["closing_cache_unavailable"]
+    assert replay.status == "fallback" and replay.fields == fields and replay.calls == 0
+    assert "previous_attempt_incomplete" in replay.reasons
+    complete.assert_awaited_once()
+    records = [json.loads(path.read_text()) for path in (tmp_path / "combined").glob("*.json")]
+    assert len(records) == 1 and records[0]["schema_version"] == 2 and records[0]["status"] == "reserved"
+    assert "translated" not in records[0]
+    with (patch("digest.translation.complete", side_effect=answer),
+          patch("digest.translation.atomic_json_write", side_effect=OSError("Required main cache failed"))):
+        required = await translate_fields(fields, cfg, tmp_path / "main-only")
+    assert required.status == "fallback" and required.fields == fields
