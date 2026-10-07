@@ -83,6 +83,7 @@ def _candidate_inputs(
 ) -> tuple[CandidatePacket | None, BlindReviewReport | None, dict[str, list[Article]]]:
     if progress is None:
         return None, None, allocated
+    from digest.application.candidate_lifecycle import checkpoint_candidates
     from digest.candidate_review import (
         MAX_BYTES,
         begin_packet,
@@ -92,7 +93,6 @@ def _candidate_inputs(
         pending_completed_report,
         plan_packet,
         progress_size,
-        save_candidate_progress,
     )
     from digest.radar import AllFeedsFailedError
     from digest.radar.collector import _prune_cache
@@ -111,7 +111,7 @@ def _candidate_inputs(
     if packet is not None and report is None:
         begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
     else:
-        save_candidate_progress(progress, cache_dir, skipped_empty_reports=deferred)
+        checkpoint_candidates(progress, cache_dir, skipped_empty_reports=deferred)
         if report is not None:
             ensure_report_accounting(progress, report, cache_dir)
     logging.getLogger(__name__).info(

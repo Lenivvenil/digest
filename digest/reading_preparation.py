@@ -13,18 +13,20 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from digest._serialization import canonical_json_bytes as _canonical
+from digest._serialization import restore_dataclass as _restore
 from digest._util import atomic_json_write
+from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.candidate_review import (
     Candidate,
     CandidateArticle,
     CandidatePacket,
     CandidateProgress,
-    _accepted_empty_packet,
-    _proof_packets,
 )
 from digest.config import Config
+from digest.domain.editorial.candidates import accepted_empty_packet as _accepted_empty_packet
+from digest.domain.editorial.candidates import proof_packets as _proof_packets
 from digest.llm import request_budget_remaining, set_request_limit
-from digest.preparation import _canonical, _restore, _safe
 from digest.reading_brief import _advance, _count_routes_held, _routes, _validate_progress
 from digest.reading_brief_state import (
     BriefState,

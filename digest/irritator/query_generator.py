@@ -7,10 +7,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from digest._serialization import extract_json as _extract_json
 from digest.config import Config
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, lexical_atoms
-from digest.llm import LLMRole, _extract_json, complete
+from digest.llm import LLMRole, complete
 
 logger = logging.getLogger(__name__)
 

@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from digest._sanitize import sanitize_article
+from digest._serialization import extract_json as _extract_json
 from digest.config import ClosingConfig, SourceConfig
-from digest.llm import _extract_json
 from digest.radar.collector import article_hash
 from digest.radar.summarizer import ArticleSummary
 
@@ -95,8 +95,8 @@ def main_attribution_occurrences(
     *, closing_snapshot: bool, cache_dir: str | Path = ".cache",
 ) -> dict[str, ClosingOccurrence]:
     """Resolve main credits before calls; legacy recovery remains explicit."""
-    from digest.candidate_storage import read_packet
-    from digest.preparation import _safe
+    from digest.adapters.storage.candidate_objects import read_packet
+    from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 
     required = closing_snapshot or any(source.enabled and source.url in _CLOSING_SOURCE_CREDITS
                                       for source in sources)
@@ -314,7 +314,7 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
 def save_closing(decision: ClosingDecision, report: BlindReviewReport, cache_dir: str | Path) -> None:
     """Called after completed report persistence; no overwrite of a terminal sidecar."""
     from digest._util import atomic_json_write
-    from digest.preparation import _safe
+    from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 
     validate_closing(decision, report)
     path = _safe(Path(cache_dir) / "closing_decisions" / f"{_digest(asdict(report))}.json")
@@ -331,7 +331,9 @@ def save_closing(decision: ClosingDecision, report: BlindReviewReport, cache_dir
 
 def load_closing(report: BlindReviewReport, cache_dir: str | Path) -> ClosingDecision:
     """Absent/corrupt optional capture omits only closing; no selection retry."""
-    from digest.preparation import _restore, _safe, _unique_object
+    from digest._serialization import restore_dataclass as _restore
+    from digest._serialization import unique_object as _unique_object
+    from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 
     try:
         identity = _digest(asdict(report))

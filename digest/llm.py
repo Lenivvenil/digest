@@ -9,16 +9,19 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import json
 import logging
 import math
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+from digest._serialization import extract_json
+
+# Compatibility export; JSON parsing is owned by the pure serialization module.
+_extract_json = extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -676,30 +679,3 @@ async def complete(
                     logger.info("Retrying %s in %.1fs", provider.name, delay)
                     await asyncio.sleep(delay)
     raise RuntimeError(f"All providers failed for role '{role.value}'. Last error: {last_error}")
-
-
-def _extract_json(text: str) -> Any:
-    """Extract JSON from LLM response text.
-
-    Handles: raw JSON, JSON in markdown code fences, JSON embedded in text.
-    Raises ValueError if no valid JSON is found.
-    """
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if fence_match:
-        try:
-            return json.loads(fence_match.group(1).strip())
-        except json.JSONDecodeError:
-            pass
-    for pattern in (r"\{[\s\S]*\}", r"\[[\s\S]*\]"):
-        match = re.search(pattern, text)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-    raise ValueError(f"No valid JSON found in LLM response: {text[:200]!r}")

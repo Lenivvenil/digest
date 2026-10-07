@@ -9,16 +9,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-import os
-import types
-from dataclasses import asdict, dataclass, fields, is_dataclass
-from datetime import UTC, date, datetime, timedelta
+from dataclasses import asdict, dataclass, fields
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, get_args, get_origin, get_type_hints
 
+from digest._serialization import canonical_json_bytes as _canonical
+from digest._serialization import restore_dataclass as _restore
+from digest._serialization import unique_object as _unique_object
 from digest._util import atomic_json_write
+from digest._util import utc_instant as _instant
+from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.closing import ClosingDecision, validate_closing
+from digest.domain.editorial.reviews import validate_canonical_report as _validate_report
 from digest.radar.summarizer import ArticleSummary, CategorySummary
 from digest.review import BlindReviewReport
 
@@ -40,66 +42,10 @@ class PreparationSnapshot:
     closing: ClosingDecision | None = None
 
 
-def _safe(path: Path) -> Path:
-    path = Path(os.path.abspath(path))
-    if any(part.is_symlink() for part in (path, *path.parents)):
-        raise ValueError("Preparation checkpoint paths must not contain symlinks.")
-    return path
-
-
-def _instant(now: datetime | None) -> datetime:
-    instant = now or datetime.now(UTC)
-    if instant.tzinfo is None or instant.utcoffset() is None:
-        raise ValueError("Preparation checkpoint requires a timezone-aware time.")
-    return instant.astimezone(UTC)
-
-
 def _target(publication_date: date | None, instant: datetime) -> str:
     if publication_date is not None and type(publication_date) is not date:
         raise ValueError("Publication date must be a date without a time component.")
     return (publication_date or instant.date()).isoformat()
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True,
-                      separators=(",", ":"), allow_nan=False).encode("utf-8")
-
-
-def _restore(value: Any, expected: Any) -> Any:
-    """Decode only the exact declared dataclasses and JSON primitives."""
-    origin, args = get_origin(expected), get_args(expected)
-    if origin is types.UnionType:
-        for candidate in args:
-            try:
-                return _restore(value, candidate)
-            except ValueError:
-                continue
-        raise ValueError("Invalid optional checkpoint field.")
-    if origin is Literal:
-        if value not in args or not isinstance(value, str):
-            raise ValueError("Invalid checkpoint enum.")
-        return value
-    if origin in (list, tuple):
-        if not isinstance(value, list):
-            raise ValueError("Invalid checkpoint collection.")
-        items = [_restore(item, args[0]) for item in value]
-        return tuple(items) if origin is tuple else items
-    if origin is dict:
-        if not isinstance(value, dict):
-            raise ValueError("Invalid checkpoint mapping.")
-        return {_restore(key, args[0]): _restore(item, args[1]) for key, item in value.items()}
-    if isinstance(expected, type) and is_dataclass(expected):
-        if not isinstance(value, dict) or set(value) != {field.name for field in fields(expected)}:
-            raise ValueError("Invalid checkpoint dataclass fields.")
-        hints = get_type_hints(expected)
-        return expected(**{key: _restore(item, hints[key]) for key, item in value.items()})
-    if expected is float:
-        if type(value) not in (int, float) or not math.isfinite(value):
-            raise ValueError("Invalid checkpoint numeric value.")
-        return value
-    if type(value) is not expected:
-        raise ValueError("Invalid checkpoint primitive field.")
-    return value
 
 
 def _snapshot(payload: object, version: int = LEGACY_SCHEMA_VERSION) -> PreparationSnapshot:
@@ -128,34 +74,6 @@ def _snapshot(payload: object, version: int = LEGACY_SCHEMA_VERSION) -> Preparat
             if any(article_hash(card.title, card.link) == identity for card in snapshot.top_articles):
                 raise ValueError("Closing card duplicates the main selection.")
     return snapshot
-
-
-def _validate_report(report: BlindReviewReport) -> None:
-    bundle = report.evidence
-    evidence_payload = asdict(bundle)
-    evidence_payload.pop("bundle_id")
-    evidence_hash = hashlib.sha256(json.dumps(
-        evidence_payload, ensure_ascii=False, sort_keys=True,
-    ).encode()).hexdigest()
-    known = {item.evidence_id: item for item in bundle.items}
-    if (report.schema_version != 1 or bundle.schema_version != 1
-            or bundle.evidence_kind != "sanitized_rss_excerpt" or bundle.omitted_articles < 0
-            or bundle.bundle_id != evidence_hash or len(known) != len(bundle.items)
-            or any(not key for key in known)
-            or len(report.reviews) > 3
-            or len({review.slot for review in report.reviews}) != len(report.reviews)
-            or any(identity not in known for identity in report.disputed_ids)
-            or report.selection_overlap is not None and not 0 <= report.selection_overlap <= 1):
-        raise ValueError("Invalid canonical review evidence or report metadata.")
-    for review in report.reviews:
-        if (review.slot not in {"primary", "secondary", "third"} or review.bundle_id != bundle.bundle_id
-                or len({item.evidence_id for item in review.selections}) != len(review.selections)):
-            raise ValueError("Invalid canonical review identity.")
-        for selection in review.selections:
-            evidence = known.get(selection.evidence_id)
-            if (evidence is None or not selection.quote.strip() or not selection.reason.strip()
-                    or selection.quote not in evidence.title and selection.quote not in evidence.excerpt):
-                raise ValueError("Canonical review quote is not in stored evidence.")
 
 
 def save_preparation(
@@ -230,15 +148,6 @@ def load_preparation(
         return snapshot
     except (ValueError, TypeError, KeyError, UnicodeError) as exc:
         raise ValueError("Invalid preparation checkpoint; inspect or clear it before preparing again.") from exc
-
-
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("Duplicate checkpoint JSON key.")
-        result[key] = value
-    return result
 
 
 def clear_preparation(cache_dir: str | Path = ".cache") -> None:

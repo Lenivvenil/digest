@@ -9,6 +9,12 @@
 Tracked by [#143](https://github.com/Lenivvenil/digest/issues/143) under the
 [#126 migration umbrella](https://github.com/Lenivvenil/digest/issues/126), with the
 [stage-1 ownership decision](decisions/0015-application-workflow-ownership.md).
+Stage 1 merged in [PR #149](https://github.com/Lenivvenil/digest/pull/149) at engine
+`de595797282b7b289561105820a55d467f8379a2` and was deployed through runtime PR #72.
+The candidate-ownership slice under [#144](https://github.com/Lenivvenil/digest/issues/144)
+is implemented in this change; its boundaries are recorded in
+[ADR0016](decisions/0016-candidate-contracts-and-retirement.md). Neither status establishes
+editorial acceptance or completion of the remaining migration stages.
 
 The target is a modular monolith: one deployable Python engine, the existing private
 runtime, and no additional services or workflow framework. Organization follows who
@@ -64,6 +70,41 @@ No lower module imports `main`; the executable `__main__` remains its caller.
 Existing candidate, checkpoint and delivery internals retain known ownership debt.
 In particular, this is not a redesign of their serialized records or retry policies.
 
+### Stage 2: candidate contracts and explicit retirement
+
+The current #144 implementation separates candidate contracts from scheduling and
+persistence without changing the accepted accounting behavior in
+[ADR0008](decisions/0008-candidate-selection-progress.md):
+
+- [`domain/catalog/articles.py`](../digest/domain/catalog/articles.py) owns `Article`
+  and the existing title/link identity. [`domain/editorial/`](../digest/domain/editorial/)
+  owns evidence/review, disposition and candidate values plus pure occurrence,
+  packet and decision-proof validators. Storage validates the retained object
+  directly; it does not manufacture an aggregate or an empty report for validation.
+- [`_serialization.py`](../digest/_serialization.py) supplies stdlib-only JSON
+  encoding and dataclass restoration. It performs no filesystem operations.
+  [`adapters/storage/`](../digest/adapters/storage/) owns path guards, candidate
+  object envelopes, verified object writes and active-checkpoint persistence.
+- [`application/candidate_lifecycle.py`](../digest/application/candidate_lifecycle.py)
+  makes the effect explicit: `checkpoint_candidates` materializes source references,
+  retires eligible-for-retirement work only after verified object/index writes, then
+  writes the active checkpoint. `persist_candidates` materializes and writes without
+  retiring candidates or proof packets. Report reconciliation uses the latter before
+  freezing report accounting; preparation handoff uses the former.
+
+Retirement removes work from the active checkpoint, not its retained evidence.
+Existing unresolved empty-report and unsent-selection recovery rules still apply;
+policy exclusion is not editorial completion. A prior active record takes precedence
+after interruption before the new active checkpoint is persisted. These ordered
+file writes are not an atomic transaction or a remote-persistence guarantee.
+
+`candidate_storage.py` remains a compatibility facade, and the old candidate save
+API still dispatches to the same retirement or persistence behavior. Existing
+collector/review/disposition imports retain the moved value identities. Scheduling,
+eligibility reconciliation and prompt orchestration still involve
+`candidate_review.py`, `review.py` and collector/configuration code. This slice does
+not claim a pure scheduler, a completed catalog domain or full legacy isolation.
+
 ### Target responsibility map
 
 ```text
@@ -85,7 +126,8 @@ digest/
   presentation/            Markdown and Telegram rendering
 ```
 
-This is the destination, not a claim that these packages already exist. Domain code
+This is the destination; only the application and candidate-related domain/storage
+boundaries described above exist in the current staged implementation. Domain code
 owns invariants and transitions; it imports neither CLI/application orchestration,
 HTTP clients nor filesystem persistence. Applications coordinate domain operations
 and adapters. Adapters consume domain values and enforce external protocols. Small
@@ -101,8 +143,8 @@ and interrupted-application recovery must remain observable.
 
 | Stage | Concrete change and acceptance | Compatibility and rollback |
 | --- | --- | --- |
-| 1. Prepared application | One ordinary recovery → collection/selection → accepted snapshot → presentation/freeze path; no lower-to-`main` imports. Preserve legacy CLI behavior and existing lifecycle tests. | No wire/schema/provider changes. Revert the engine pin; retain all runtime state. |
-| 2. Candidate ownership | Move existing entities and pure occurrence/packet/decision validators below both selection and storage. Storage must not construct fake aggregates just to validate an object. Make retirement explicit. | Preserve hashes, envelope versions and verified-write-before-removal order. Verify historical objects and bounded continuation before deployment. |
+| 1. Prepared application — deployed | One ordinary recovery → collection/selection → accepted snapshot → presentation/freeze path; no lower-to-`main` imports. PR #149 and runtime PR #72 implement this boundary; legacy scenarios remain. | No wire/schema/provider changes. Revert the engine pin; retain all runtime state. |
+| 2. Candidate ownership — #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Application operations distinguish verified retirement from persistence without retirement. Scheduler and remaining domain ownership are still staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Verify historical objects and bounded continuation before deployment; release evidence is tracked in #144. |
 | 3. Confirmed-delivery application | One explicit operation updates attribution, deduplication and accounting through their owners; remove duplicated prepared/direct update algorithms. | Preserve partial-send receipts, unknown-send holds and per-file recovery. Never rewrite receipt history for migration. |
 | 4. Review and source attribution | One review-reuse rule; general source credits independent of optional closing; explicit canonical occurrence ownership. | Preserve report/sidecar formats, exact source binding, fallback and optional omission semantics. |
 | 5. Adapters and remaining scenarios | Move CLI discovery/legacy workflows to explicit applications; separate provider runtime state from configuration; locate codecs with storage adapters. | Migrate one boundary at a time, preserving request counts, deadlines and existing configured routes. |
@@ -188,7 +230,8 @@ failure isolation merely because they use the same presentation functions.
 | Entity / transition | Invariant and implementation boundary |
 | --- | --- |
 | Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
-| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. [`review.py`](../digest/review.py), [`candidate_dispositions.py`](../digest/candidate_dispositions.py) enforce shape, identity and dispositions. |
+| Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. In local #144, [`domain review contracts`](../digest/domain/editorial/reviews.py) and [`disposition contracts`](../digest/domain/editorial/dispositions.py) enforce shape, identity and dispositions; [`review.py`](../digest/review.py) retains model-execution ownership. |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
 | Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
 | Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. Source-bound credits travel with cards; optional closing omission cannot silently discard required main cards. [`finish_preparation`](../digest/edition_runtime.py), [`closing.py`](../digest/closing.py) validate before freeze. |
@@ -218,6 +261,9 @@ experiment, not external counter-evidence or a verified factual consensus.
 | --- | --- |
 | `main.py` | CLI dispatch/reporting plus legacy/discovery scenarios awaiting later migration |
 | `application/` | Prepared use cases, shared canonical analysis/presentation, run-state operations and execution results |
+| `domain/catalog/`, `domain/editorial/` (#144) | Feed-independent article identity, evidence/review/disposition/candidate values and pure proof validation; not the complete catalog or editorial workflow |
+| `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
+| `adapters/storage/` (#144) | Checkpoint path guards, candidate objects/envelopes, verified writes and active-record codecs; no scheduling or retirement selection |
 | `config.py` | YAML loading, dataclasses and validation |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,3 +41,10 @@ def cleanup_stale_tmp(directory: Path, max_age_seconds: int = 300) -> None:
                 logger.info("Removed stale tmp file: %s (age %.0fs)", tmp, age)
         except OSError:
             pass
+
+
+def utc_instant(now: datetime | None) -> datetime:
+    instant = now or datetime.now(UTC)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("Preparation checkpoint requires a timezone-aware time.")
+    return instant.astimezone(UTC)

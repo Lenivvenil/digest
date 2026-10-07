@@ -47,7 +47,7 @@ from digest.radar.collector import (
 def test_article_hash_preserves_existing_ids_without_security_use(title: str, link: str, expected: str) -> None:
     import hashlib
 
-    with patch("digest.radar.collector.hashlib.md5", wraps=hashlib.md5) as md5:
+    with patch("digest.domain.catalog.articles.hashlib.md5", wraps=hashlib.md5) as md5:
         assert article_hash(title, link) == expected
     md5.assert_called_once_with(f"{title}|{link}".encode(), usedforsecurity=False)
 

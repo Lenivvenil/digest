@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import html as html_lib
 import json
 import logging
@@ -20,6 +19,8 @@ from digest._dns_pinning import pin_dns as _pin_dns
 from digest._dns_pinning import validate_url as _validate_url
 from digest._util import atomic_json_write
 from digest.config import Config, SourceConfig
+from digest.domain.catalog.articles import Article as Article
+from digest.domain.catalog.articles import article_hash as article_hash
 from digest.filters import is_blocked
 
 logger = logging.getLogger(__name__)
@@ -37,16 +38,6 @@ CACHE_MAX_AGE_DAYS = 7
 CACHE_MAX_ENTRIES = 5000
 DESCRIPTION_MAX_CHARS = 500
 FEED_ENTRY_LIMIT = 200
-
-
-@dataclass
-class Article:
-    title: str
-    link: str
-    description: str
-    source: str
-    category: str
-    pub_date: datetime | None
 
 
 @dataclass
@@ -153,10 +144,6 @@ def _strip_html(text: str) -> str:
     text = html_lib.unescape(text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
-
-
-def article_hash(title: str, link: str) -> str:
-    return hashlib.md5(f"{title}|{link}".encode(), usedforsecurity=False).hexdigest()
 
 
 def _parse_pub_date(entry: Any) -> datetime | None:

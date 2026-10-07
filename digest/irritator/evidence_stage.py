@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from digest._serialization import extract_json as _extract_json
 from digest.config import Config, ProviderConfig
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import (
@@ -40,7 +41,7 @@ from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.irritator.validator import validate_signals
-from digest.llm import LLMRole, _extract_json, complete
+from digest.llm import LLMRole, complete
 from digest.review import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundle, validate_full_source_evidence
 from digest.source_admission import (

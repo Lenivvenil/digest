@@ -297,7 +297,7 @@ def test_capacity_failure_preserves_previous_checkpoint(tmp_path: Path, monkeypa
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     path = save_candidate_progress(progress, tmp_path)
     original = path.read_bytes()
-    monkeypatch.setattr("digest.candidate_review.MAX_BYTES", 5)
+    monkeypatch.setattr("digest.adapters.storage.candidate_progress.MAX_BYTES", 5)
     with pytest.raises(ValueError, match="no manifest was truncated"):
         save_candidate_progress(progress, tmp_path)
     assert path.read_bytes() == original
@@ -534,6 +534,7 @@ def test_observed_cache_fact_outlives_pruning_without_inventing_delivery_on_hand
 def test_report_persistence_boundaries_recover_without_false_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_boundary: str,
 ) -> None:
+    import digest.adapters.storage.candidate_progress as progress_storage
     import digest.candidate_review as candidate_review
 
     config, articles = population(2)
@@ -542,7 +543,7 @@ def test_report_persistence_boundaries_recover_without_false_completion(
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    original_write = candidate_review.atomic_json_write
+    original_write = progress_storage.atomic_json_write
 
     def fail_one_write(path: Path, data: object) -> None:
         is_progress = path.name == candidate_review.CANDIDATE_FILE
@@ -551,8 +552,8 @@ def test_report_persistence_boundaries_recover_without_false_completion(
             raise OSError("synthetic interrupted persistence")
         original_write(path, data)
 
-    monkeypatch.setattr(candidate_review, "atomic_json_write", fail_one_write)
-    monkeypatch.setattr("digest.candidate_storage.atomic_json_write", fail_one_write)
+    monkeypatch.setattr(progress_storage, "atomic_json_write", fail_one_write)
+    monkeypatch.setattr("digest.adapters.storage.candidate_objects.atomic_json_write", fail_one_write)
     with pytest.raises(OSError, match="interrupted persistence"):
         reconcile_packet(progress, packet, report, config, tmp_path)
     restored = load_candidate_progress(tmp_path)
@@ -563,8 +564,8 @@ def test_report_persistence_boundaries_recover_without_false_completion(
         assert not list((tmp_path / "candidate_reports").glob("*.json"))
     else:
         assert pending_completed_report(restored) == report
-        monkeypatch.setattr(candidate_review, "atomic_json_write", original_write)
-        monkeypatch.setattr("digest.candidate_storage.atomic_json_write", original_write)
+        monkeypatch.setattr(progress_storage, "atomic_json_write", original_write)
+        monkeypatch.setattr("digest.adapters.storage.candidate_objects.atomic_json_write", original_write)
         frozen = candidate_review.ensure_report_accounting(restored, report, tmp_path)
         assert frozen.exists()
         assert candidate_review.ensure_report_accounting(restored, report, tmp_path) == frozen
@@ -676,6 +677,7 @@ def test_active_schema_requires_exact_integer(tmp_path: Path) -> None:
 def test_interrupted_retirement_keeps_previous_active_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import digest.adapters.storage.candidate_progress as progress_storage
     import digest.candidate_review as candidate_review
 
     progress, _, _ = compactable_fixture(tmp_path)
@@ -686,7 +688,7 @@ def test_interrupted_retirement_keeps_previous_active_checkpoint(
     def interrupted_write(path: Path, data: object) -> None:
         raise OSError("synthetic interrupted compaction")
 
-    monkeypatch.setattr(candidate_review, "atomic_json_write", interrupted_write)
+    monkeypatch.setattr(progress_storage, "atomic_json_write", interrupted_write)
     with pytest.raises(OSError, match="interrupted compaction"):
         save_candidate_progress(progress, tmp_path)
     assert path.read_bytes() == original

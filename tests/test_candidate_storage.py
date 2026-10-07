@@ -134,14 +134,14 @@ def test_index_write_failure_leaves_old_state_readable(tmp_path: Path) -> None:
     candidate = next(iter(progress.candidates.values()))
     save_candidate(candidate, (), tmp_path)
     changed = replace(candidate, eligible=False, eligibility_reason="current_blocklist")
-    from digest.candidate_storage import atomic_json_write
+    from digest.adapters.storage.candidate_objects import atomic_json_write
 
     def interrupt_index(path: Path, body: object) -> None:
         if path.parent.name == "candidate_index":
             raise OSError("Interrupted index replacement")
         atomic_json_write(path, body)
 
-    with patch("digest.candidate_storage.atomic_json_write", side_effect=interrupt_index):
+    with patch("digest.adapters.storage.candidate_objects.atomic_json_write", side_effect=interrupt_index):
         with pytest.raises(OSError, match="Interrupted"):
             save_candidate(changed, (), tmp_path)
     assert load_candidate(candidate.identity, tmp_path) == candidate
@@ -213,7 +213,8 @@ def test_latest_header_never_expands_sources_or_reports(tmp_path: Path) -> None:
     progress, _ = completed_packet()
     candidate = next(iter(progress.candidates.values()))
     save_candidate(candidate, (), tmp_path)
-    with patch("digest.candidate_storage.read_article", side_effect=AssertionError("Unexpected source read")):
+    with patch("digest.adapters.storage.candidate_objects.read_article",
+               side_effect=AssertionError("Unexpected source read")):
         header = read_candidate_header(candidate.identity, tmp_path)
     assert header is not None and header["status"] == "not_presented"
     assert header["identity"] == candidate.identity
