@@ -53,7 +53,7 @@ def existing_preparation(
 
 async def finish_preparation(
     snapshot: PreparationSnapshot, config: Any, feedback: int = 0, *, verbose: bool = False,
-    publication_date: date | None = None,
+    publication_date: date | None = None, selection_complete: bool = True,
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
     from digest.delivery import write_digest
@@ -64,10 +64,13 @@ async def finish_preparation(
     from digest.preparation import clear_preparation
     from digest.translation import ClosingPresentation, translate_publication_with_closing
 
-    stats = _stats("no_ready", feedback=feedback)
+    stats = _stats("no_ready" if selection_complete else "selection_incomplete", feedback=feedback)
     stats.review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
-        logger.info("Edition preparation: no selected articles; no ready edition created")
+        if not selection_complete:
+            logger.error("Selection did not complete; candidate evidence remains pending and no edition is ready.")
+        else:
+            logger.info("Edition preparation: no selected articles; no ready edition created")
         return stats
     ranked: list[Any] = []
     if config.review.enabled and config.review.review_led_only:

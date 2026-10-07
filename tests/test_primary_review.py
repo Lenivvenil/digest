@@ -256,6 +256,8 @@ async def test_reading_primary_incomplete_completion_never_implies_editorial_rej
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", side_effect=select):
         report = await run_primary_review(fixture_articles(), config, disposition_capture=capture)
-    assert report.reviews[0].selections  # Existing valid-card salvage is preserved.
+    assert bool(report.reviews[0].selections) is (finish is None)
+    if finish is not None:
+        assert report.reviews[0].error == "provider reported unfinished response"
     assert capture.attempts[0].status == "incomplete"
     assert not any(item.status in {"not_selected", "duplicate"} for item in capture.attempts[0].dispositions)

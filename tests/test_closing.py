@@ -243,6 +243,7 @@ def test_closing_default_disabled_and_stale_binding_does_not_block_config(tmp_pa
 review:
   enabled: true
   review_led_only: true
+  max_detailed_selections: 6
 telegram:
   delivery_mode: compact
 closing:

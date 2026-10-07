@@ -43,6 +43,7 @@ from scripts.review_fixture import fixture_config
 
 def _inputs(now: datetime) -> tuple[Config, dict[str, list[Article]]]:
     config = fixture_config()
+    config.review.max_detailed_selections = 8  # Exercise publication overflow independently of response detail.
     config.review.review_led_only = True
     config.sources = [SourceConfig("Source", "https://example.com/feed", "Tech", True, recency_hours=168)]
     articles = {

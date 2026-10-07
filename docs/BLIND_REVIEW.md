@@ -94,7 +94,11 @@ selection or factuality.
 Primary selection becomes canonical Telegram cards, labeled as model opinion.
 `max_selections` limits those publication cards in the review's order; it is not
 sent to the reviewer as a relevance quota. The full validated selection list stays
-in the report, bounded by the exact evidence packet and existing response budget.
+in the report. `max_detailed_selections` separately bounds detailed entries in a new
+response (default 5); useful overflow must be explicitly deferred and stays pending.
+The full evidence packet is still considered, and publication capacity is never an
+editorial rejection reason. Old validated reports retain their original selections.
+A provider-reported unfinished response is rejected, including syntactically closed JSON.
 Secondary/third opinions do not generate extra Telegram card floods. All reviews,
 quotes, confidence, provider/model identities, token usage, prompt hashes,
 completeness and escalation decisions appear in Markdown and a sibling
@@ -117,6 +121,8 @@ review:
   max_evidence_articles: 20
   max_excerpt_chars: 500
   max_selections: 5
+  max_detailed_selections: 5
+  editorial_context: ""  # Optional operator-owned relevance priorities, at most 1000 characters.
   max_output_tokens: 4096
   disagreement_threshold: 0.5
 ```
@@ -260,13 +266,14 @@ remains `invalid`. The original bounded, credential-redacted response and its
 original SHA-256 are retained for diagnosis. No citation is synthesized.
 
 Quotes remain literal excerpts from the supplied title or RSS text. The only
-allowed live-response repair aligns ASCII `-`, U+2010 HYPHEN and U+2011
-NON-BREAKING HYPHEN, each a single character. The validator retrieves the actual
+allowed live-response alignment maps ASCII `-`, U+2010 HYPHEN and U+2011
+NON-BREAKING HYPHEN together, and ASCII space, U+00A0 NO-BREAK SPACE and
+U+202F NARROW NO-BREAK SPACE together. Every mapping is one character to one character. The validator retrieves the actual
 source substring at the same indices and stores that exact text, recording
 `typography_normalized: true` on the accepted selection. The 200-character limit
 is checked before any repair. Semantic minus U+2212, dashes, ellipses, case,
-whitespace, paraphrases and Unicode compatibility transformations are not
-normalized. Checkpoint reuse requires the saved quote to match source text exactly.
+other whitespace, whitespace runs, paraphrases and Unicode compatibility transformations
+are not normalized. The shared RSS Irritator citation path uses the same exact-source alignment. Checkpoint reuse requires the saved quote to match source text exactly.
 
 The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
@@ -519,3 +526,81 @@ reuses 16,000 characters as a new proposed archive policy, not a ranking thresho
 See the proposal for serialization bounds and the limits of truncated evidence. Old
 archives lack this evidence and cannot be retrospectively audited from hashes alone.
 This local proposal has not been accepted or deployed.
+
+### Groq GPT-OSS metadata-review output controls
+
+For the explicitly configured `groq/openai/gpt-oss-120b` review slot only, the
+proposed correction sends `reasoning_effort: low` and strict JSON Schema for the
+existing response shape. Other providers and models retain their existing request options; the clarified
+review prompt is shared by all review slots. Other roles retain their existing wire requests. There is no format-repair request, model switch or increased output
+allowance. The five-detail response cap, 4096 output tokens, ordinary fallback and
+all finish-reason, ID, quote and disposition checks remain in force.
+
+The schema uses required fields, closed objects and nested `anyOf` for selected,
+not-selected/deferred and duplicate disposition shapes. It forbids a per-selection
+`limitations` field; limitations belongs only at the top level. No unsupported
+`maxItems` or `maxLength` constraint is assumed: local validation still checks
+counts, text budgets, evidence membership and exact quotes. Strict structure does
+not verify relevance or factuality and does not prevent a length cutoff.
+
+The second Oct 7 failed response respected five detailed selections but added
+forbidden limitations inside each, then stopped during its sixteenth disposition.
+Its saved usage contains 4222 prompt and 4096 completion tokens; the historical
+reasoning breakdown is unknown. New diagnostics retain only a nonnegative integer
+`completion_tokens_details.reasoning_tokens`, when supplied, plus allowlisted
+numeric rate-limit values. Missing or invalid values stay absent. Reasoning text,
+arbitrary headers and credentials are never copied into review diagnostics.
+
+The compact strict-schema controls add 1327 serialized wire characters. This is
+not a token count or proof of quota headroom. Ordinary RSS selection currently has
+request-count/pacing guards, not the experimental source-reading token preflight.
+The public 8K TPM profile is not verified remaining account quota; actual server
+usage and rate-limit diagnostics must be inspected after any separately authorized
+run. Output allowance and provider quotas are not increased.
+
+Provider references: [reasoning controls](https://console.groq.com/docs/reasoning),
+[strict structured output](https://console.groq.com/docs/structured-outputs), and
+[completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
+
+### Proposed editorial context and quantitative-qualifier correction
+
+`review.editorial_context` is an optional operator-owned string (maximum 1000
+characters, empty by default). A nonempty value enters the identical primary and
+fallback request and its prompt hash. It describes reader priorities, not source
+truth, automatic acceptance or a category quota. The empty setting adds no reader
+profile; configured category names and numerical source priorities are not inferred
+to encode the owner's professional priorities. No runtime profile is enabled by
+the engine change alone.
+
+The Oct 7 packet already contained four Banking & Fintech candidates. Their
+non-selection reasons required architecture detail despite the existing prompt's
+business/operational-relevance instructions. The finite scope-review cases are:
+
+- An intent-monitoring partnership: assess its stated fraud/control relevance
+- Payment-verification results: assess the reported operating-control outcome
+- A programmable-money event teaser: it may still lack a concrete new development
+- A generic future resilience event: its thin evidence may still justify non-selection
+
+The correction makes the operator's actual priorities explicit; it does not
+mechanically establish those items' usefulness or certify future model compliance.
+Changed context affects future planned reviews. It does not reset or reopen
+unchanged terminal not-selected/duplicate history, or rewrite previous prompts,
+responses, accepted preparation or delivered editions. Explicit reconsideration
+of prior decisions remains an open #121/#132 outcome.
+
+Primary instructions now require a quantitative claim to keep its comparator,
+value, unit, statistic/percentile and material conditions together, preferably as
+a short literal measurement quotation within concise generated prose. Translation
+v3 preserves that quotation and prohibits stronger alternative magnitude claims;
+it does not infer qualifiers missing from its canonical input. Existing quote
+invariants remain, and the changed prompt/version has a distinct translation cache
+binding. Older cache records and accepted delivery evidence are left untouched.
+
+The saved Cloudflare failure had two stages: primary prose dropped p99 from the
+source measurement, then Russian prose added a submillisecond assertion while
+retaining the digit 2. Offline tests explicitly show that digit equality still
+accepts this class of semantic error. A protected literal measurement quote catches
+changes inside that quote, not arbitrary invented wording elsewhere. Prompt
+assertions, exact quotations and numeric invariants are not semantic acceptance.
+Faithful output under the revised contract remains to be checked; no additional
+model call, blanket English fallback or mandatory full-article gate is introduced.

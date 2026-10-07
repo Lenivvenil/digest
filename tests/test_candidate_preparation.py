@@ -147,3 +147,61 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
 
         stats = load_stats('.cache')['Source']
         assert stats.total_fetches == 2 and stats.successful_fetches == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["truncated", "deferred", "abstained", "no_candidates"])
+async def test_preparation_reports_technical_empty_without_failing_editorial_abstention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    from digest.main import main
+    from digest.preparation import load_preparation
+
+    monkeypatch.chdir(tmp_path)
+    config = fixture_config()
+    config.review.review_led_only = True
+    config.telegram.delivery_mode = "compact"
+    config.sources = [SourceConfig("Source", "https://example.com/feed", "Tech", True)]
+    now = datetime.now(UTC)
+    observed = ([] if outcome == "no_candidates" else
+                [Article("Evidence", "https://example.com/item", "Literal evidence", "Source", "Tech", now)])
+    monkeypatch.setattr("digest.config.load_config", lambda _: config)
+    monkeypatch.setattr("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr("digest.main._apply_pending_approvals", lambda c, *args, **kwargs: c)
+
+    async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
+        inventory = kwargs["inventory"]
+        inventory.sources = [SourceCollectionOutcome("Source", "https://example.com/feed", "Tech", 3)]
+        _capture_candidates(inventory, c.enabled_sources, [observed], {}, now, [], {})
+        return ({"Tech": observed} if observed else {}), {}
+
+    async def model(role: Any, messages: list[dict[str, str]], c: Any, **kwargs: Any) -> tuple[str, dict]:
+        items = json.loads(messages[1]["content"])["evidence"]["items"]
+        if outcome == "truncated":
+            return '{"selections":[', {"finish_reason": "length"}
+        return json.dumps({"selections": [], "limitations": ["Fixture explanation"], "dispositions": [
+            {"evidence_id": item["evidence_id"],
+             "status": "deferred" if outcome == "deferred" else "not_selected",
+             "reason": "Response capacity" if outcome == "deferred" else "No relevant development in excerpt"}
+            for item in items]}), {"finish_reason": "stop"}
+
+    monkeypatch.setattr("digest.radar.collect", collect)
+    completion = AsyncMock(side_effect=model)
+    monkeypatch.setattr("digest.review.complete", completion)
+    stats = await _run("config.yaml", False, False, False, prepare_only=True)
+    incomplete = outcome in {"truncated", "deferred"}
+    assert (stats.edition_status == "selection_incomplete") is incomplete
+    assert not Path(".cache", READY_FILE).exists()
+    assert (load_preparation() is not None) is (outcome == "abstained")
+    if incomplete:
+        progress = load_candidate_progress()
+        assert all(candidate.status == "technical_pending" for candidate in progress.candidates.values())
+        assert progress.packets[0].report is not None
+        assert not progress.packets[0].handed_to_preparation
+    if outcome == "no_candidates":
+        completion.assert_not_awaited()
+    monkeypatch.setattr("digest.main.run", AsyncMock(return_value=stats))
+    output = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    assert await main(["--config", "config.yaml", "--prepare-edition"]) == int(incomplete)
+    assert f"edition_status={stats.edition_status or 'no_ready'}" in output.read_text()

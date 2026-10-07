@@ -149,9 +149,11 @@ class ReviewConfig:
     max_evidence_articles: int = 20
     max_excerpt_chars: int = 500
     max_selections: int = 5  # Publication card cap; relevance is judged over the complete evidence packet.
+    max_detailed_selections: int = 5  # Response detail budget, independent of publication capacity.
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
+    editorial_context: str = ""  # Operator-owned relevance priorities, never source evidence.
 
 
 @dataclass(frozen=True)
@@ -724,6 +726,10 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     if not isinstance(section, dict):
         raise ValueError("review must be a mapping.")
     defaults = ReviewConfig()
+    editorial_context = section.get("editorial_context", "")
+    if not isinstance(editorial_context, str) or len(editorial_context) > 1000:
+        raise ValueError("review.editorial_context must be a string of at most 1000 characters.")
+    editorial_context = editorial_context.strip()
     enabled = section.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ValueError("review.enabled must be a boolean.")
@@ -752,9 +758,12 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     if len(set(slots)) != len(slots):
         raise ValueError("review slots must use distinct provider/model identities.")
     bounds = {"max_evidence_articles": (20, 1, 100), "max_excerpt_chars": (500, 50, 1000),
-              "max_selections": (5, 1, 10), "max_output_tokens": (4096, 128, 8192)}
+              "max_selections": (5, 1, 10), "max_detailed_selections": (5, 1, 10),
+              "max_output_tokens": (4096, 128, 8192)}
     values: dict[str, int] = {}
     for key, (default, low, high) in bounds.items():
+        if key == "max_detailed_selections" and isinstance(section.get(key), bool):
+            raise ValueError("review.max_detailed_selections must be an integer.")
         value = _safe_int(section.get(key, default), key, "review")
         if not low <= value <= high:
             raise ValueError(f"review.{key} must be between {low} and {high}.")
@@ -764,7 +773,8 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only,
+        editorial_context=editorial_context, **values,
     )
 
 
@@ -883,6 +893,9 @@ def _load_closing(
     if enabled and (not bindings or not review.enabled or not review.review_led_only
                     or telegram.delivery_mode != "compact" or reading_brief.enabled):
         raise ValueError("Closing requires approved feeds, compact review-led preparation and no reading_brief.")
+    if enabled and min(review.max_detailed_selections, review.max_evidence_articles) < review.max_selections + 1:
+        raise ValueError("Closing requires explicit detail and evidence limits of at least max_selections + 1; "
+                         "the output-token allowance is unchanged.")
     return ClosingConfig(enabled, tuple(bindings))
 
 

@@ -5,6 +5,9 @@ Status: proposed; implemented, disabled by default, for
 production rollout, daily-availability guarantee or editorial acceptance is implied.
 The issue remains open.
 
+This reconciliation uses the reviewed PR #138 code, now merged into main.
+It does not activate closing or approve its source and attribution choices.
+
 ## Context
 
 A short final story can offer kindness, relief, community connection, restored
@@ -30,6 +33,19 @@ exact `name`, `url` (feed URL) and `category` entries and enable the feature. On
 unambiguously matching, currently enabled sources qualify. Missing, disabled or
 changed bindings grant no closing eligibility and do not block ordinary delivery.
 No new licensing or approval framework is introduced.
+
+Enabled configuration must explicitly allow at least `review.max_selections + 1`
+in both `max_detailed_selections` and `max_evidence_articles`. The default remains
+five detailed entries: enabling a five-main-card issue therefore requires a
+separately reviewed setting of at least six detailed entries. Nothing silently
+raises the 4096-token output allowance or lowers the main card cap. This checks
+configured capacity, not actual evidence-byte fit, provider completion or a
+guaranteed number of useful cards.
+
+The Groq GPT-OSS strict schema adds its closed `closing` property only while
+closing is enabled; the valid no-story value has `evidence_id: null`. Disabled
+mode retains the current three-field response schema and request behavior. Local
+ID, source eligibility, quote, detail-budget and unfinished-response checks remain.
 
 Add a versioned `closing` designation to the existing primary/fallback review
 response: `{"schema_version": 1, "evidence_id": "selected ID"}` or an ID of `null`.
@@ -105,6 +121,21 @@ metadata; archive references bind the corresponding files by hash. Required
 archive failures and corruption remain failures. The sender, article hash,
 voting attribution, chunk coverage and delivery receipts are unchanged; no
 post-freeze addition or separate Telegram push is introduced.
+
+## Current preparation and translation boundaries
+
+Keep technical empty selection as `selection_incomplete`, with its existing
+nonzero CLI result after persistence. A missing or invalid optional designation
+cannot turn valid main work into that failure, and null cannot turn all-deferred
+main work into a complete editorial abstention. The deployed sender recovery and
+reporting workflow are unchanged.
+
+The reconciled combined translator uses presentation-translation-v3, including
+its quantitative-qualifier instructions. Main-only cache bindings retain their
+existing v3 shape; combined requests remain explicitly bound to required fields,
+closing selection, route and output allowance. Cache schema2 is distinct from
+prompt version3. No old record is rewritten or relabelled, and no second closing
+translation call is introduced.
 
 ## Activation and acceptance still required
 

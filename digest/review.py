@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import zip_longest
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from digest._sanitize import sanitize_article
@@ -179,12 +179,18 @@ def build_review_messages(
         "state what the supplied title/excerpt actually says, then explain relevance as an explicitly conditional "
         "inference when it is not stated by the source. Do not attribute unstated mechanisms, implementation details, "
         "benefits or results to the article. A matching quote does not substantiate other claims in the reason. "
+        "When using a quantitative claim, retain its comparator, value, unit, statistic or percentile, "
+        "and material conditions together. Prefer a short literal measurement quotation within the reason. "
+        "If it cannot fit faithfully, omit the whole quantitative claim rather than dropping its qualifiers. "
         "If evidence is insufficient, say what the excerpt does not establish; do not infer that the full article "
         "lacks value or detail. Apply the same factual restraint to non-selection and duplicate reasons. "
         "Return only JSON with selections, limitations and dispositions. "
         "Each selection has evidence_id, reason (1-2 sentences, at most 600 characters), "
         "quote (an exact non-empty excerpt from title or excerpt, at most 200 characters), "
         "confidence (low, medium or high). Use known unique IDs only. "
+        'A selection has exactly this shape: {"evidence_id":"<supplied ID>","reason":"<brief reason>",'
+        '"quote":"<literal source text>","confidence":"high"}. Do not copy placeholder values. '
+        "limitations belongs only at the top level, never inside a selection. "
         "limitations is a list of at most 5 short strings. If selecting nothing, explain why in limitations. "
         "Keep all text concise to fit the existing output allowance. dispositions contains exactly one entry for "
         "EVERY supplied evidence_id. Each entry has evidence_id and status: "
@@ -194,8 +200,10 @@ def build_review_messages(
         "different supplied ID with a validated selected disposition (no chains or cycles). Explain the actual "
         "redundancy; a shared topic or URL alone does not establish semantic duplication. Preserve materially contrary "
         "reports as eligible. not_selected means an explicit metadata selection judgment, never full-source reading "
-        "or quality verification. Select every useful supplied item in priority order. Publication capacity is "
-        "applied separately after this review. Useful items omitted only for output capacity MUST be deferred, "
+        "or quality verification. Consider every supplied item for relevance, then give detailed selections for "
+        "at most max_detailed_selections useful items in priority order. This is a response-detail budget, "
+        "not an editorial rejection rule. Publication capacity is applied separately after this review. "
+        "Other useful items MUST have deferred dispositions with a concise response-capacity reason, "
         "not not_selected. Missing/invalid entries remain unresolved. No additional fields."
     )
     if closing is not None and closing.enabled:
@@ -213,9 +221,16 @@ def build_review_messages(
     task = {
         "schema_version": SCHEMA_VERSION,
         "language": language,
+        "max_detailed_selections": settings.max_detailed_selections,
         "configured_category_interests": _configured_category_interests(bundle, sources),
         "evidence": asdict(bundle),
     }
+    if settings.editorial_context:
+        task["operator_editorial_context"] = settings.editorial_context
+        system += (" Operator editorial context states the reader's relevance priorities; apply it without "
+                   "treating it as factual source evidence or a publication quota. Do not require architecture "
+                   "detail when the stated priority is business, regulatory or operational relevance. "
+                   "Still assess the supplied evidence; an announcement is not automatically useful.")
     if closing is not None and closing.enabled:
         task["closing_contract_version"] = 1
         task["closing_eligible_ids"] = eligible_ids(bundle, closing, sources)
@@ -275,21 +290,21 @@ def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelec
 
 
 def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length: int = 200) -> tuple[str, bool]:
-    """Return literal source text; only ASCII/U+2010/U+2011 hyphens may align."""
+    """Return the exact source slice after one-to-one hyphen/nonbreaking-space alignment."""
     if not isinstance(quote, str) or not quote.strip() or len(quote) > max_length:
         raise ValueError("invalid selection text budget")
     if quote in title or quote in excerpt:
         return quote, False
-    hyphens = str.maketrans({"\u2010": "-", "\u2011": "-"})
+    typography = str.maketrans({"\u2010": "-", "\u2011": "-", "\u00a0": " ", "\u202f": " "})
     for source in (title, excerpt):
-        start = source.translate(hyphens).find(quote.translate(hyphens))
+        start = source.translate(typography).find(quote.translate(typography))
         if start >= 0:
             return source[start:start + len(quote)], True
     raise ValueError("quote is not in supplied evidence")
 
 
 def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: list[str]) -> EvidenceSelection:
-    """Repair narrow hyphen typography only after schema/types/budgets validate."""
+    """Align narrow typography only after schema, types and budgets validate."""
     text = json.dumps({"selections": [item], "limitations": limitations})
     try:
         return _parse_review(text, bundle)[0][0]
@@ -305,10 +320,12 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
 
 
 def _parse_live_review(
-    text: str, bundle: EvidenceBundle, *, allow_closing: bool = False,
+    text: str, bundle: EvidenceBundle, *, max_detailed_selections: int | None = None,
+    allow_closing: bool = False,
 ) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
     """Salvage individual entries only after the complete envelope is valid."""
-    selections, limitations = _parse_review_envelope(text, len(bundle.items), allow_closing=allow_closing)
+    limit = len(bundle.items) if max_detailed_selections is None else min(len(bundle.items), max_detailed_selections)
+    selections, limitations = _parse_review_envelope(text, limit, allow_closing=allow_closing)
     known = {item.evidence_id for item in bundle.items}
     accepted: list[EvidenceSelection] = []
     rejected: list[RejectedSelection] = []
@@ -365,7 +382,7 @@ def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, b
         "invalid selection count", "invalid limitations", "abstention needs an explanation",
         "invalid selection schema", "selection fields must be strings", "unknown evidence id",
         "duplicated evidence id", "invalid selection text budget", "invalid confidence",
-        "quote is not in supplied evidence",
+        "quote is not in supplied evidence", "provider reported unfinished response",
     }
     reason = str(exc) if str(exc) in known_reasons else "invalid JSON or review contract"
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
@@ -375,6 +392,48 @@ def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, b
     )
     cleaned = re.sub(r"(?i)Bearer\s+[A-Za-z0-9._-]{16,}", "Bearer [redacted]", cleaned)
     return reason, cleaned[:32000], len(cleaned) > 32000
+
+
+def _groq_review_format(*, allow_closing: bool = False) -> dict[str, Any]:
+    """Closed wire shape only; local validation still owns counts, IDs and exact quotes."""
+    def closed(properties: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "object", "properties": properties,
+                "required": list(properties), "additionalProperties": False}
+
+    text = {"type": "string"}
+    schema = closed({
+        "selections": {"type": "array", "items": closed({
+            "evidence_id": text, "reason": text, "quote": text,
+            "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        })},
+        "limitations": {"type": "array", "items": text},
+        "dispositions": {"type": "array", "items": {"anyOf": [
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["selected"]}}),
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["not_selected", "deferred"]},
+                    "reason": text}),
+            closed({"evidence_id": text, "status": {"type": "string", "enum": ["duplicate"]},
+                    "reason": text, "retained_id": text}),
+        ]}},
+    })
+    if allow_closing:
+        schema["properties"]["closing"] = closed({
+            "schema_version": {"type": "integer", "enum": [1]},
+            "evidence_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        })
+        schema["required"].append("closing")
+    return {"type": "json_schema", "json_schema": {"name": "rss_selection_v1", "strict": True, "schema": schema}}
+
+
+def _review_usage(usage: dict[str, Any]) -> dict[str, int]:
+    """Retain allowlisted numeric diagnostics, never reasoning text or arbitrary headers."""
+    keys = {"prompt_tokens", "completion_tokens", "rate_limit_limit_requests", "rate_limit_remaining_requests",
+            "rate_limit_limit_tokens", "rate_limit_remaining_tokens"}
+    result = {key: value for key, value in usage.items() if key in keys and type(value) is int and value >= 0}
+    details = usage.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    if type(reasoning) is int and reasoning >= 0:
+        result["reasoning_tokens"] = reasoning
+    return result
 
 
 async def _review_slot(
@@ -398,11 +457,15 @@ async def _review_slot(
             )
         return result
 
+    closing_enabled = getattr(getattr(config, "closing", None), "enabled", False)
+    options: dict[str, Any] = {}
+    if (model.provider, model.model) == ("groq", "openai/gpt-oss-120b"):
+        options = {"reasoning_effort": "low", "response_format": _groq_review_format(allow_closing=closing_enabled)}
     try:
         text, usage = await complete(
             LLMRole.REVIEW_EVIDENCE, messages, config, temperature=0.2,
             provider_override=ProviderConfig(model.provider, model.model, ["review_evidence"]),
-            max_output_tokens=config.review.max_output_tokens,
+            max_output_tokens=config.review.max_output_tokens, **options,
         )
     except Exception as exc:
         result.error = type(exc).__name__  # Never retain response bodies or credentials.
@@ -413,11 +476,13 @@ async def _review_slot(
     result.response_sha256 = hashlib.sha256(text.encode()).hexdigest()
     resolved_model = usage.get("resolved_model")
     result.resolved_model = resolved_model if isinstance(resolved_model, str) else None
-    result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
-                    and type(v) is int and v >= 0}
+    result.usage = _review_usage(usage)
     try:
+        if finish_reason is not None and finish_reason not in {"stop", "STOP", "end_turn"}:
+            raise ValueError("provider reported unfinished response")
         result.selections, result.limitations, result.rejected_items = _parse_live_review(
-            text, bundle, allow_closing=getattr(getattr(config, "closing", None), "enabled", False),
+            text, bundle, max_detailed_selections=config.review.max_detailed_selections,
+            allow_closing=closing_enabled,
         )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"
@@ -592,7 +657,7 @@ def render_review(report: BlindReviewReport) -> str:
             lines.append(f"- [{item.title}]({item.url}): {selection.reason} (confidence: {selection.confidence})")
             lines.append(f"  Evidence excerpt: {selection.quote}")
             if selection.typography_normalized:
-                lines.append("  Quote provenance: hyphen typography repaired to exact supplied source text.")
+                lines.append("  Quote provenance: hyphen/space typography aligned to exact supplied source text.")
         lines.extend(f"- Limitation: {limitation}" for limitation in review.limitations)
         for rejected in review.rejected_items:
             lines.append(f"- Rejected selection {rejected.index}: {rejected.reason}")
