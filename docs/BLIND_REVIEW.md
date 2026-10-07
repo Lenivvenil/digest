@@ -122,6 +122,7 @@ review:
   max_excerpt_chars: 500
   max_selections: 5
   max_detailed_selections: 5
+  editorial_context: ""  # Optional operator-owned relevance priorities, at most 1000 characters.
   max_output_tokens: 4096
   disagreement_threshold: 0.5
 ```
@@ -265,13 +266,14 @@ remains `invalid`. The original bounded, credential-redacted response and its
 original SHA-256 are retained for diagnosis. No citation is synthesized.
 
 Quotes remain literal excerpts from the supplied title or RSS text. The only
-allowed live-response repair aligns ASCII `-`, U+2010 HYPHEN and U+2011
-NON-BREAKING HYPHEN, each a single character. The validator retrieves the actual
+allowed live-response alignment maps ASCII `-`, U+2010 HYPHEN and U+2011
+NON-BREAKING HYPHEN together, and ASCII space, U+00A0 NO-BREAK SPACE and
+U+202F NARROW NO-BREAK SPACE together. Every mapping is one character to one character. The validator retrieves the actual
 source substring at the same indices and stores that exact text, recording
 `typography_normalized: true` on the accepted selection. The 200-character limit
 is checked before any repair. Semantic minus U+2212, dashes, ellipses, case,
-whitespace, paraphrases and Unicode compatibility transformations are not
-normalized. Checkpoint reuse requires the saved quote to match source text exactly.
+other whitespace, whitespace runs, paraphrases and Unicode compatibility transformations
+are not normalized. The shared RSS Irritator citation path uses the same exact-source alignment. Checkpoint reuse requires the saved quote to match source text exactly.
 
 The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
@@ -559,3 +561,46 @@ run. Output allowance and provider quotas are not increased.
 Provider references: [reasoning controls](https://console.groq.com/docs/reasoning),
 [strict structured output](https://console.groq.com/docs/structured-outputs), and
 [completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
+
+### Proposed editorial context and quantitative-qualifier correction
+
+`review.editorial_context` is an optional operator-owned string (maximum 1000
+characters, empty by default). A nonempty value enters the identical primary and
+fallback request and its prompt hash. It describes reader priorities, not source
+truth, automatic acceptance or a category quota. The empty setting adds no reader
+profile; configured category names and numerical source priorities are not inferred
+to encode the owner's professional priorities. No runtime profile is enabled by
+the engine change alone.
+
+The Oct 7 packet already contained four Banking & Fintech candidates. Their
+non-selection reasons required architecture detail despite the existing prompt's
+business/operational-relevance instructions. The finite scope-review cases are:
+
+- An intent-monitoring partnership: assess its stated fraud/control relevance
+- Payment-verification results: assess the reported operating-control outcome
+- A programmable-money event teaser: it may still lack a concrete new development
+- A generic future resilience event: its thin evidence may still justify non-selection
+
+The correction makes the operator's actual priorities explicit; it does not
+mechanically establish those items' usefulness or certify future model compliance.
+Changed context affects future planned reviews. It does not reset or reopen
+unchanged terminal not-selected/duplicate history, or rewrite previous prompts,
+responses, accepted preparation or delivered editions. Explicit reconsideration
+of prior decisions remains an open #121/#132 outcome.
+
+Primary instructions now require a quantitative claim to keep its comparator,
+value, unit, statistic/percentile and material conditions together, preferably as
+a short literal measurement quotation within concise generated prose. Translation
+v3 preserves that quotation and prohibits stronger alternative magnitude claims;
+it does not infer qualifiers missing from its canonical input. Existing quote
+invariants remain, and the changed prompt/version has a distinct translation cache
+binding. Older cache records and accepted delivery evidence are left untouched.
+
+The saved Cloudflare failure had two stages: primary prose dropped p99 from the
+source measurement, then Russian prose added a submillisecond assertion while
+retaining the digit 2. Offline tests explicitly show that digit equality still
+accepts this class of semantic error. A protected literal measurement quote catches
+changes inside that quote, not arbitrary invented wording elsewhere. Prompt
+assertions, exact quotations and numeric invariants are not semantic acceptance.
+Faithful output under the revised contract remains to be checked; no additional
+model call, blanket English fallback or mandatory full-article gate is introduced.

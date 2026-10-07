@@ -178,6 +178,9 @@ def build_review_messages(
         "state what the supplied title/excerpt actually says, then explain relevance as an explicitly conditional "
         "inference when it is not stated by the source. Do not attribute unstated mechanisms, implementation details, "
         "benefits or results to the article. A matching quote does not substantiate other claims in the reason. "
+        "When using a quantitative claim, retain its comparator, value, unit, statistic or percentile, "
+        "and material conditions together. Prefer a short literal measurement quotation within the reason. "
+        "If it cannot fit faithfully, omit the whole quantitative claim rather than dropping its qualifiers. "
         "If evidence is insufficient, say what the excerpt does not establish; do not infer that the full article "
         "lacks value or detail. Apply the same factual restraint to non-selection and duplicate reasons. "
         "Return only JSON with selections, limitations and dispositions. "
@@ -209,6 +212,12 @@ def build_review_messages(
         "configured_category_interests": _configured_category_interests(bundle, sources),
         "evidence": asdict(bundle),
     }
+    if settings.editorial_context:
+        task["operator_editorial_context"] = settings.editorial_context
+        system += (" Operator editorial context states the reader's relevance priorities; apply it without "
+                   "treating it as factual source evidence or a publication quota. Do not require architecture "
+                   "detail when the stated priority is business, regulatory or operational relevance. "
+                   "Still assess the supplied evidence; an announcement is not automatically useful.")
     return [{"role": "system", "content": system},
             {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
 
@@ -261,21 +270,21 @@ def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelec
 
 
 def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length: int = 200) -> tuple[str, bool]:
-    """Return literal source text; only ASCII/U+2010/U+2011 hyphens may align."""
+    """Return the exact source slice after one-to-one hyphen/nonbreaking-space alignment."""
     if not isinstance(quote, str) or not quote.strip() or len(quote) > max_length:
         raise ValueError("invalid selection text budget")
     if quote in title or quote in excerpt:
         return quote, False
-    hyphens = str.maketrans({"\u2010": "-", "\u2011": "-"})
+    typography = str.maketrans({"\u2010": "-", "\u2011": "-", "\u00a0": " ", "\u202f": " "})
     for source in (title, excerpt):
-        start = source.translate(hyphens).find(quote.translate(hyphens))
+        start = source.translate(typography).find(quote.translate(typography))
         if start >= 0:
             return source[start:start + len(quote)], True
     raise ValueError("quote is not in supplied evidence")
 
 
 def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: list[str]) -> EvidenceSelection:
-    """Repair narrow hyphen typography only after schema/types/budgets validate."""
+    """Align narrow typography only after schema, types and budgets validate."""
     text = json.dumps({"selections": [item], "limitations": limitations})
     try:
         return _parse_review(text, bundle)[0][0]
@@ -611,7 +620,7 @@ def render_review(report: BlindReviewReport) -> str:
             lines.append(f"- [{item.title}]({item.url}): {selection.reason} (confidence: {selection.confidence})")
             lines.append(f"  Evidence excerpt: {selection.quote}")
             if selection.typography_normalized:
-                lines.append("  Quote provenance: hyphen typography repaired to exact supplied source text.")
+                lines.append("  Quote provenance: hyphen/space typography aligned to exact supplied source text.")
         lines.extend(f"- Limitation: {limitation}" for limitation in review.limitations)
         for rejected in review.rejected_items:
             lines.append(f"- Rejected selection {rejected.index}: {rejected.reason}")
