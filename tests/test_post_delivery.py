@@ -492,7 +492,7 @@ async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
         raise httpx.ReadTimeout("Uncertain second chunk")
 
     client.post = AsyncMock(side_effect=post)
-    monkeypatch.setattr("digest.post_delivery._SUPPLEMENT_DISPATCH_SECONDS", 0.02)
+    monkeypatch.setattr("digest.adapters.telegram.delivery._POST_DELIVERY_DISPATCH_SECONDS", 0.02)
     with (
         patch("digest.post_delivery.load_config", return_value=config),
         patch("httpx.AsyncClient", return_value=client),
@@ -659,3 +659,29 @@ async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyP
     with patch("httpx.AsyncClient", return_value=client):
         assert await _send_supplement(result, config) == "sent"
     assert "PRIVATE" not in json.dumps([call.kwargs for call in client.post.await_args_list])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,error", [
+    (200, {"ok": False}, ValueError),
+    (200, [], ValueError),
+    (400, {"ok": False}, httpx.HTTPStatusError),
+    (500, {"ok": True}, httpx.HTTPStatusError),
+])
+async def test_supplement_rejection_never_retries_or_falls_back(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any, error: type[Exception],
+) -> None:
+    config = fixture_config()
+    config.telegram.enabled = True
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
+    client = _client_context()
+    client.post = AsyncMock(return_value=httpx.Response(
+        status, json=body, request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendMessage"),
+    ))
+    with patch("httpx.AsyncClient", return_value=client), pytest.raises(error):
+        await _send_supplement(_stage_result("bundle"), config)
+    client.post.assert_awaited_once()
+    assert client.post.call_args.kwargs["json"]["parse_mode"] == "MarkdownV2"
+    assert client.post.call_args.kwargs["json"]["disable_notification"] is True
+    assert client.post.call_args.kwargs["timeout"] == 30.0

@@ -52,6 +52,27 @@ partial-write behavior are unchanged. This remains local structural work. Broade
 historical policy/owner tables
 below still need reconciliation; they must not be treated as current code ownership.
 
+### Telegram delivery ownership reconciliation — local implementation, 2026-10-07
+
+The first delivery continuation under #147 places Telegram card/compact/supplement
+copy, escaping, keyboards and coverage ranges in `presentation/telegram.py`; shared
+lossless signal text/splitting is in `presentation/supplement.py`. These imports load
+no HTTP, environment or storage owner. `edition_runtime` attribution preflight and
+prepared-edition freeze consume the same pure renderer.
+
+`adapters/telegram/delivery.py` owns legacy retry/fallback delivery, direct compact
+one-attempt delivery and silent post-delivery supplements as separate protocols.
+`post_delivery.py` keeps marker/archive/model ordering and the compact archive-only
+path. Compatibility modules and lazy delivery-package exports retain existing public
+imports. The [effect matrix](../../ARCHITECTURE.md#stage-5-first-telegram-delivery-ownership-slice)
+and [ADR0017 continuation](../../decisions/0017-confirmed-delivery-application.md#telegram-presentation-and-transport-continuation)
+record the deliberately different receipt acceptance and failure policies.
+
+Prepared edition claim/receipt storage, per-chunk dispatch and recovery still share
+`delivery/edition.py`; separating those storage and application responsibilities remains
+open. This slice changes no file format, receipt, state, source identity or accepted
+editorial content and establishes no deployment or ordinary-run acceptance.
+
 ### Product intent comes before the latest implementation
 
 The [README](../../../README.md) remains the product entry point. Its dated setup

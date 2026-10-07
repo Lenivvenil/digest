@@ -2,8 +2,8 @@
 
 Status: #147-C deployed through engine PR #155 and runtime PR #78 on 2026-10-07.
 The source-catalog continuation deployed through engine PR #156 and runtime PR #79.
-The discovery continuation below is implemented locally on that foundation.
-Its deployment, source activation and editorial acceptance are not established here.
+The discovery continuation deployed through engine PR #157 and runtime PR #80.
+These ownership releases do not establish source activation or editorial acceptance.
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-c-catalog-and-feedback-boundaries),
 [ADR0003](0003-source-state-split.md), [ADR0006](0006-batch-message-voting.md),
