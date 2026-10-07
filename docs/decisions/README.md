@@ -47,11 +47,11 @@ source-point representation for #55. It does not approve a new prompt or publica
 [0011](0011-source-anchored-investigation-queries.md) revises the unaccepted mandatory
 literal-query guard into optional provenance diagnostics for bounded RSS and full-source
 investigation under #77. Useful grounded searches need no copied phrase; neutrality and
-useful retrieval remain empirical gates. The revision remains local and undeployed.
+useful retrieval remain empirical gates. The optional-provenance revision is accepted and deployed; full-source activation remains separate.
 
-[0012](0012-private-ranking-evidence.md) proposes bounded candidate/admission and
+[0012](0012-private-ranking-evidence.md) records accepted bounded candidate/admission and
 validated ranking-decision evidence in the existing private JSON archive under #77.
-It is a local retention proposal, not owner acceptance, publication or deployment.
+The private archive trace is deployed; recorded decisions are not semantic acceptance.
 
 [0013](0013-discovery-exploration-state.md) records the accepted first slice: configurable exploration areas,
 fair passes with least-recent-offer preference, and finite pending-feed validation

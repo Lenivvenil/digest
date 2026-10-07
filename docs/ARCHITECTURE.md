@@ -1,6 +1,7 @@
 # Architecture — Daily News Digest
 
-> Current engine reference, checked against main at `1cd1a97` on 2026-10-01.
+> Prepared delivery and presentation contracts checked against main `5fbb26ac` on 2026-10-07.
+> Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
 
 ## Overview
@@ -29,29 +30,68 @@ freezes technical source evidence before accepted preparation. It does not publi
 draft reading-angle concatenation or mark independent comparison complete. Request
 intents preserve ambiguous generation holds; count uncertainty is separate. Proposed
 [ADR0009](decisions/0009-selected-source-admission.md) records this integration. #55
-still owns source reconciliation and factual presentation; runtime activation is off.
+owns useful, faithful editorial output; full-source reconciliation is an optional
+experimental mechanism, with runtime activation off.
 
-## Data flow
+## Prepared-edition data flow
+
+The deployed review-led path separates model work from sending. Recovery inspects
+existing ready editions and accepted preparation before fresh collection/selection.
 
 ```mermaid
 flowchart TD
-    RUN[Runtime schedule or manual invocation] --> CFG[Load config and runtime state]
-    CFG --> FB{Feedback precollected or dry run?}
-    FB -->|No, configured private owner| POLL[Collect and durably persist feedback before ack]
-    FB -->|Yes| COL[Collect RSS with bounded feedback-derived priorities]
-    POLL --> COL
-    COL --> MODE{Review enabled?}
-    MODE -->|No| CAT[Category summaries, perspectives and trends]
-    MODE -->|Yes| REV[Independent RSS selection]
-    REV --> RLO{Review-led only?}
-    RLO -->|No| CAT
-    RLO -->|Yes| PRIMARY[Primary or fallback selection cards]
-    CAT --> SYNC[Synchronous external Irritator unless skipped]
-    SYNC --> DELIVERY[Telegram and Markdown]
-    PRIMARY --> DELIVERY
-    DELIVERY --> RECEIPT[Record delivery outcomes and runtime state]
-    RECEIPT --> OPTIONAL[Separately reserved supplementary stage when configured by runtime]
+    RUN[Preparation invocation] --> STATE{Existing durable work?}
+    STATE -->|Existing frozen edition| READY[Inspect frozen edition and receipts]
+    STATE -->|Accepted canonical preparation| CANON[Inspect accepted canonical snapshot]
+    STATE -->|No reusable work| COL[Collect RSS and retain candidate occurrences]
+    COL --> PACKET[Admit bounded candidate packet]
+    PACKET --> REVIEW[Primary review or explicit fallback]
+    REVIEW -->|Accepted selection or genuine abstention| ACCEPT[Save canonical preparation]
+    REVIEW -->|Technical failure| PENDING[Retain pending candidates; no ready edition]
+    ACCEPT --> CANON
+    CANON -->|Cards available| PRESENT[Presentation and optional translation]
+    CANON -->|Genuine empty editorial result| EMPTY[No ready edition; successful abstention]
+    PRESENT --> FREEZE[Archive evidence and freeze final payloads]
+    FREEZE --> PERSIST[Runtime persists ready state]
+    PERSIST --> READY
+    READY -->|Ready| CLAIM[Claim exact ready hash]
+    READY -->|Confirmed| RECOVER[Reuse already applied confirmation; no resend]
+    READY -->|Held or pending window| HOLD[Wait for recovery or publication window]
+    CLAIM --> CLAIMSAVE[Runtime persists exact claim]
+    CLAIMSAVE --> SEND[Send only frozen payloads]
+    SEND --> RECEIPT[Persist chunk receipts and apply confirmed delivery]
+    RECEIPT -.->|Only if runtime reservation permits| OPTIONAL[Separately bounded supplementary work]
+    RECOVER -.->|Only if runtime reservation permits| OPTIONAL
 ```
+
+The runtime owns the remote persistence barriers; local atomic writes alone do not
+survive loss of a runner. The sender uses frozen payloads and makes no model calls.
+A confirmed chunk is not replayed; an uncertain send remains held for reconciliation.
+Accepted preparation may still need presentation work, including translation on a
+cache miss. It is not equivalent to a ready edition.
+
+Legacy category-summary/direct-delivery modes remain supported. They can run
+synchronous Irritator analysis before delivery and do not inherit the prepared-path
+failure isolation merely because they use the same presentation functions.
+
+### Entities, contracts and enforcement
+
+| Entity / transition | Invariant and implementation boundary |
+| --- | --- |
+| Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. [`review.py`](../digest/review.py), [`candidate_dispositions.py`](../digest/candidate_dispositions.py) enforce shape, identity and dispositions. |
+| Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
+| Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`main.py`](../digest/main.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
+| Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. Source-bound credits travel with cards; optional closing omission cannot silently discard required main cards. [`finish_preparation`](../digest/edition_runtime.py), [`closing.py`](../digest/closing.py) validate before freeze. |
+| Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`delivery/edition.py`](../digest/delivery/edition.py) enforces identity and state, while the runtime persists them remotely. |
+| Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
+
+These are deterministic identity, recovery and bounded-execution contracts. Useful
+selection, faithful translation and meaningful counter-evidence remain empirical
+acceptance under #55/#77; no row certifies model semantics. Existing regression entry
+points are `test_candidate_preparation.py`, `test_preparation.py`,
+`test_edition_runtime.py`, `test_prepared_edition.py`, `test_translation.py` and
+`test_irritator_evidence.py`.
 
 `--radar-only` prints Radar summary output and returns before normal delivery or
 Irritator. It can still collect/analyse sources; use `--dry-run` as well to suppress
@@ -144,6 +184,16 @@ Review slots are pinned to provider/model identities. Their opinions remain inde
 reusing a first review as a second model's input would break that contract. The leading
 successful primary/secondary slot may supply cards, with incomplete comparison explicit.
 See [BLIND_REVIEW.md](BLIND_REVIEW.md) for evidence limits, retry budgets and semantics.
+
+Enabled translation and optional reading briefs reuse a provider/model identity
+already present in `llm.providers` or an explicitly supplied `review.primary`,
+`review.secondary` or `review.tie_breaker` mapping. Implicit review defaults and
+category-routing entries do not authorize reuse. [`_configured_model_routes` and its
+loader callers](../digest/config.py) enforce this before execution; feature-specific
+language and mode checks remain separate. Reuse does not change ordinary provider
+roles or unify the features' fallback policies. See [ADR0005](decisions/0005-optional-presentation-translation.md),
+`test_explicit_review_translation_route_preserves_ordinary_roles_and_cache_identity`
+and `test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes`.
 
 Free-only operation requires actual account/model entitlement. Context size does not
 specify TPM, RPM, daily allowance or price. A timeout or empty result must not be reported
@@ -334,7 +384,7 @@ procedure in the review runbook. Retain prior engine/config pins for rollback. D
 merge experimental full-source code merely because unit tests or transport succeeded.
 The unresolved product gates and their current dispositions are tracked in #91 and
 #55. English documentation, configured translation and message voting are implemented;
-compact daily presentation and full-source quality must still meet their stated gates.
+remaining daily-output acceptance is tracked separately; full-source experiments do not define a mandatory release gate.
 
 ## Security
 

@@ -5,7 +5,7 @@ to merge [PR #107](https://github.com/Lenivvenil/digest/pull/107) and update dig
 The approval covers this bounded private audit under [#77](https://github.com/Lenivvenil/digest/issues/77);
 semantic quality acceptance remains open.
 
-## Context and proposed decision
+## Context and accepted decision
 
 Accepted signals, aggregate omissions and request/response hashes do not identify
 omitted candidates or expose rejected relation judgments. Extend the existing private
@@ -52,11 +52,11 @@ errors, timeout and full-source request-admission holds retain admission evidenc
 existing stage error diagnostics. This is not crash-proof in-flight persistence or a
 change to external cancellation behavior.
 
-## Explicit proposed retention policy
+## Accepted retention policy
 
 Admitted evidence remains exact under the unchanged 8,000-JSON-character model packet
 bound. For omitted candidates only, reuse the existing `MAX_RESPONSE_CHARS` value
-(16,000) as a **new proposed archive allocation**, not a historically accepted policy.
+(16,000) as the archive allocation accepted in the engine-only release.
 Divide it equally across omitted candidates, retain the title prefix first and use
 any remaining allocation for a snippet prefix. Preserve original lengths and hashes;
 mark all shortening explicitly. Very long titles can exhaust a candidate's allocation,

@@ -170,6 +170,26 @@ async def test_primary_view_keeps_identity_and_dry_run_uses_only_temporary_cache
 
 
 @pytest.mark.asyncio
+async def test_primary_preview_cleans_temporary_cache_when_presentation_raises(tmp_path: Path) -> None:
+    temporary_cache: Path | None = None
+    failure = ValueError("Invalid presentation cache")
+
+    async def fail(_summary, _cards, signals, _config, cache):
+        nonlocal temporary_cache
+        assert signals == [] and cache.is_dir()
+        temporary_cache = cache
+        (cache / "partial.json").write_text("{}")
+        raise failure
+
+    with patch("digest.translation.translate_publication_presentation", side_effect=fail):
+        with pytest.raises(ValueError) as raised:
+            await _primary_presentation("Canonical", [], config(), tmp_path / "persistent", True)
+    assert raised.value is failure
+    assert temporary_cache is not None and not temporary_cache.exists()
+    assert not (tmp_path / "persistent").exists()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_uses_one_presentation_for_both_outputs_and_keeps_raw_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

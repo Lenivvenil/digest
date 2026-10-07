@@ -781,6 +781,19 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     )
 
 
+def _configured_model_routes(
+    data: dict[str, Any], llm: LLMConfig, review: ReviewConfig,
+) -> set[tuple[str, str]]:
+    """Routes explicitly configured by the operator, excluding implicit review defaults."""
+    configured = {(provider.name, provider.model) for provider in llm.providers}
+    review_section = data.get("review", {})
+    for slot in ("primary", "secondary", "tie_breaker"):
+        route = getattr(review, slot)
+        if isinstance(review_section.get(slot), dict) and route is not None:
+            configured.add((route.provider, route.model))
+    return configured
+
+
 def _load_translation(
     data: dict[str, Any], llm: LLMConfig, radar: RadarConfig, review: ReviewConfig,
 ) -> TranslationConfig:
@@ -821,14 +834,7 @@ def _load_translation(
         if radar.language != "en":
             raise ValueError("Translation requires radar.language: en canonical text. "
                              "Keep translation absent for legacy direct Russian generation.")
-        configured = {(p.name, p.model) for p in llm.providers}
-        review_section = data.get("review", {})
-        for slot in ("primary", "secondary", "tie_breaker"):
-            route = getattr(review, slot)
-            # Defaults are not operator-configured routes. Only validated explicit
-            # mappings can authorize reuse; ordinary provider roles stay unchanged.
-            if isinstance(review_section.get(slot), dict) and route is not None:
-                configured.add((route.provider, route.model))
+        configured = _configured_model_routes(data, llm, review)
         if not provider or not model or (provider, model) not in configured:
             raise ValueError("Translation requires an explicit provider/model already present in "
                              "llm.providers or an explicitly configured review route.")
@@ -858,12 +864,7 @@ def _load_reading_brief(
     if enabled:
         if radar.language != "en" or not review.enabled or not review.review_led_only:
             raise ValueError("Reading briefs require canonical English and review-led primary selection.")
-        configured = {(p.name, p.model) for p in llm.providers}
-        review_section = data.get("review", {})
-        for slot in ("primary", "secondary", "tie_breaker"):
-            route = getattr(review, slot)
-            if isinstance(review_section.get(slot), dict) and route is not None:
-                configured.add((route.provider, route.model))
+        configured = _configured_model_routes(data, llm, review)
         if not provider or not model or (provider, model) not in configured:
             raise ValueError("Reading briefs require an explicit existing configured provider/model route.")
     return ReadingBriefConfig(enabled=enabled, provider=provider, model=model, **values)

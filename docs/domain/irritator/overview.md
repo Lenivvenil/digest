@@ -2,16 +2,16 @@
 
 _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written against commit `cc974f5`; issue-#53 fixes incorporated)._
 
-## Current status — 2026-10-02
+## Current status — 2026-10-07
 
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
 distinguishes those observations from owner requirements and later implementation.
 English documentation and configurable primary/supplementary translation are implemented.
-[#94](https://github.com/Lenivvenil/digest/issues/94) still requires ordinary post-#102
-semantic and presentation acceptance. Earlier synthetic translation validation is limited
-historical evidence. [#55](https://github.com/Lenivvenil/digest/issues/55) remains the open
-full-source factual-quality requirement.
+Finite runtime acceptance under #94 is recorded in [ADR0005](../../decisions/0005-optional-presentation-translation.md);
+it does not establish universal semantic fidelity. #55 remains open for useful,
+faithful daily content. Full-source acquisition is an experimental option, not a
+mandatory processing or closure requirement.
 
 Irritator's product purpose remains genuine external counter-evidence. An
 independent model opinion or a Skeptic paragraph is not an external counter-signal.
@@ -40,9 +40,9 @@ the supplied sources. A literal quotation, relation label or valid JSON does not
 a meaningful counter-signal. Manual comparisons and source qualifications must remain
 distinct from automatic search/ranking acceptance.
 
-### Revised proposal for grounded queries and optional provenance
+### Grounded queries and optional provenance
 
-[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) now proposes
+[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) records
 useful grounded topic/entity searches without requiring a copied source phrase. Its
 earlier mandatory literal-match guard was an unaccepted draft proposal and is superseded,
 not an accepted policy being revoked. Exploratory hypotheses remain distinct from
@@ -50,21 +50,25 @@ source claims. A derived source-text match remains optional provenance metadata 
 it proves neither neutrality nor useful recall. Valid nonempty query sets without a
 match proceed unchanged to bounded search; no replacement query is fabricated.
 
-This proposed change affects the bounded RSS path even when source reading is disabled,
-as well as full-source investigation. This revision is local, unaccepted and undeployed.
+The accepted revision is deployed for bounded RSS investigation and also applies to
+the disabled full-source path. Source-reading activation remains unapproved.
 The standalone legacy generator, lexical/schema validation, query/model/request limits,
 deadlines, primary delivery and semantic acceptance remain unchanged.
+The deployed query-planning input also retains extracted hypotheses in a separate,
+unverified block. They can guide topic angles and intent; ranking still excludes them
+and evaluates the attributed claim. Request hashes bind the exact new input; historical
+attempts remain unchanged. See [PR140](https://github.com/Lenivvenil/digest/pull/140).
 Search results that exactly repeat a cited target URL or its verified final URL are
 excluded from external candidates, with explicit URLs/counts retained. Different
 documents on the same publisher remain eligible; no guessed alias or extra fetch is used.
 
-### Proposed private decision evidence
+### Private ranking evidence
 
-[ADR0012](../../decisions/0012-private-ranking-evidence.md) proposes a bounded private
+[ADR0012](../../decisions/0012-private-ranking-evidence.md) records a bounded private
 JSON trace of post-validation external candidates, admission omissions and fully
 validated ranking dispositions. Omitted-source previews explicitly record truncation;
-unknown or unreturned relevance is never relabeled as rejection. This local archive
-proposal does not change ranking behavior or establish semantic counter-evidence quality.
+unknown or unreturned relevance is never relabeled as rejection. This deployed private archive
+trace does not change ranking behavior or establish semantic counter-evidence quality.
 
 ---
 
