@@ -153,6 +153,7 @@ class ReviewConfig:
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
+    editorial_context: str = ""  # Operator-owned relevance priorities, never source evidence.
 
 
 @dataclass(frozen=True)
@@ -709,6 +710,10 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     if not isinstance(section, dict):
         raise ValueError("review must be a mapping.")
     defaults = ReviewConfig()
+    editorial_context = section.get("editorial_context", "")
+    if not isinstance(editorial_context, str) or len(editorial_context) > 1000:
+        raise ValueError("review.editorial_context must be a string of at most 1000 characters.")
+    editorial_context = editorial_context.strip()
     enabled = section.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ValueError("review.enabled must be a boolean.")
@@ -752,7 +757,8 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only,
+        editorial_context=editorial_context, **values,
     )
 
 
