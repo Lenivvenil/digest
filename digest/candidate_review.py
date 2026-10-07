@@ -88,7 +88,7 @@ class CandidatePacket:
     priorities: dict[str, int]
     planned_at: str
     prompt_hash: str = ""
-    max_selections: int = 5
+    max_selections: int = 5  # Planned publication cap; retained as frozen provenance, not a relevance bound.
     report: BlindReviewReport | None = None
     handed_to_preparation: bool = False
     disposition_attempts: tuple[CandidateDispositionAttempt, ...] = ()
@@ -229,49 +229,101 @@ def merge_candidates(
     return progress
 
 
-def plan_packet(progress: CandidateProgress, config: Config, now: datetime | None = None) -> CandidatePacket | None:
-    """Fix membership before the evidence builder's URL ordering can reorder it.
+def _latest_occurrence_packet(candidate: Candidate, packets: list[CandidatePacket]) -> CandidatePacket | None:
+    """A retained plan for this exact source occurrence, never proof of dispatch."""
+    matches = [packet for packet in packets if candidate.article in packet.articles
+               and any(item.evidence_id == candidate.identity for item in packet.evidence.items)]
+    return max(matches, key=lambda packet: datetime.fromisoformat(packet.planned_at)) if matches else None
 
-    Unseen identities precede technical retries. A too-large item does not stop
-    later fitting candidates. Bounds constrain requests, never editorial status.
-    """
-    candidates: list[Candidate] = []
-    for status in ("not_presented", "technical_pending"):
-        groups: dict[tuple[str, str], list[Candidate]] = {}
-        for candidate in progress.candidates.values():
-            if candidate.eligible and candidate.status == status:
-                groups.setdefault((candidate.article.category, candidate.article.source), []).append(candidate)
-        for group in groups.values():
-            group.sort(key=lambda item: (item.first_observed_at, item.identity))
-        # Interleave sources within categories, then categories. Priorities only
-        # choose the order of each turn, never a source's editorial allowance.
-        categories: dict[str, list[Candidate]] = {}
-        for category in sorted({key[0] for key in groups}):
-            sources = sorted((key for key in groups if key[0] == category),
-                             key=lambda key: (-groups[key][0].priority, key[1]))
-            ordered: list[Candidate] = []
-            while any(groups[key] for key in sources):
-                for key in sources:
-                    if groups[key]:
-                        ordered.append(groups[key].pop(0))
-            categories[category] = ordered
-        while any(categories.values()):
-            for group in categories.values():
-                if group:
-                    candidates.append(group.pop(0))
-    selected: list[CandidateArticle] = []
+
+def _freshness(candidate: Candidate, instant: datetime) -> datetime | None:
+    published = candidate.article.published
+    if published is None:
+        return None
+    value = datetime.fromisoformat(published)
+    # A timestamp future at first observation is not evidence of publication
+    # freshness, even after the advertised date passes. It remains eligible.
+    return value if value <= min(instant, datetime.fromisoformat(candidate.first_observed_at)) else None
+
+
+def _source_turns(
+    candidates: list[Candidate], instant: datetime, retry_times: dict[str, datetime] | None = None,
+) -> list[Candidate]:
+    groups: dict[tuple[str, str], list[Candidate]] = {}
     for candidate in candidates:
-        if len(selected) >= config.review.max_evidence_articles:
+        groups.setdefault((candidate.article.category, candidate.article.source), []).append(candidate)
+    ordered = []
+    round_number = 0
+    while groups:
+        heads = {}
+        for key, group in groups.items():
+            pool = group
+            if retry_times is None and round_number % 2 == 0:
+                dated = [(stamp, item) for item in group if (stamp := _freshness(item, instant)) is not None]
+                if dated:
+                    newest = max(stamp for stamp, _ in dated)
+                    pool = [item for stamp, item in dated if stamp == newest]
+            heads[key] = min(pool, key=lambda item: (
+                (retry_times or {}).get(item.identity, datetime.fromisoformat(item.first_observed_at)),
+                datetime.fromisoformat(item.first_observed_at), item.identity,
+            ))
+        for key in sorted(heads, key=lambda key: (
+            (retry_times or {}).get(heads[key].identity, datetime.fromisoformat(heads[key].first_observed_at)),
+            datetime.fromisoformat(heads[key].first_observed_at), -heads[key].priority,
+            key[1], heads[key].identity,
+        )):
+            head = heads[key]
+            ordered.append(head)
+            groups[key].remove(head)
+            if not groups[key]:
+                del groups[key]
+        round_number += 1
+    return ordered
+
+
+def _admit_candidate(selected: list[CandidateArticle], candidate: Candidate, config: Config) -> bool:
+    articles: dict[str, list[Article]] = {}
+    for saved in [*selected, candidate.article]:
+        articles.setdefault(saved.category, []).append(saved.article())
+    if len(build_evidence_bundle(articles, config.review).items) == len(selected) + 1:
+        selected.append(candidate.article)
+        return True
+    if not build_evidence_bundle({candidate.article.category: [candidate.article.article()]}, config.review).items:
+        candidate.status = "technical_pending"
+    return False
+
+
+def plan_packet(progress: CandidateProgress, config: Config, now: datetime | None = None) -> CandidatePacket | None:
+    """Bound fresh/age source turns and technical continuation in one request.
+
+    A fitting unseen item gets the first opportunity. Retry reservations consume
+    only actual admitted evidence, then unused count/character capacity backfills.
+    With a one-item limit, unseen work retains preference. No extra request or
+    editorial decision is implied by a turn, a byte skip or a saved plan.
+    """
+    instant = _instant(now)
+    unseen = [item for item in progress.candidates.values() if item.eligible and item.status == "not_presented"]
+    retries = [item for item in progress.candidates.values() if item.eligible and item.status == "technical_pending"]
+    retry_times = {}
+    for item in retries:
+        packet = _latest_occurrence_packet(item, progress.packets)
+        retry_times[item.identity] = datetime.fromisoformat(packet.planned_at if packet else item.first_observed_at)
+    unseen = _source_turns(unseen, instant)
+    retries = _source_turns(retries, instant, retry_times)
+    limit = config.review.max_evidence_articles
+    reserved = min(config.review.max_technical_retry_articles, max(0, limit - bool(unseen)))
+    selected: list[CandidateArticle] = []
+    # Count and byte protection for the first fitting unseen opportunity. Skips
+    # stay pending; do not reserve fictitious capacity for an unadmitted item.
+    while unseen and not selected:
+        _admit_candidate(selected, unseen.pop(0), config)
+    used_retries = 0
+    while retries and used_retries < reserved and len(selected) < limit:
+        used_retries += _admit_candidate(selected, retries.pop(0), config)
+    for candidate in [*unseen, *retries]:
+        if len(selected) >= limit:
             break
-        provisional = CandidatePacket(build_evidence_bundle({}, config.review),
-                                      tuple([*selected, candidate.article]), {}, _instant(now).isoformat())
-        bundle = build_evidence_bundle(packet_articles(provisional), config.review)
-        # Every fixed member must survive the existing JSON budget.
-        if len(bundle.items) == len(selected) + 1:
-            selected.append(candidate.article)
-        elif not build_evidence_bundle({candidate.article.category: [candidate.article.article()]},
-                                       config.review).items:
-            candidate.status = "technical_pending"
+        _admit_candidate(selected, candidate, config)
     if not selected:
         return None
     packet = CandidatePacket(build_evidence_bundle({}, config.review), tuple(selected),
@@ -281,7 +333,9 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
     packet.collection_json = progress.latest_collection_json
     validate_evidence_bundle(packet.evidence, config)
     packet.prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        packet.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        packet.evidence, config.review, config.radar.language, sources=config.sources,
+        closing=getattr(config, "closing", None)),
+        sort_keys=True).encode()).hexdigest()
     packet.max_selections = config.review.max_selections
     return packet
 
@@ -294,7 +348,10 @@ def _current_occurrences(candidate: Candidate) -> None:
     candidate.occurrences = tuple(item for item in latest.values() if item != candidate.article)
 
 
-def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache") -> Path:
+def begin_packet(
+    progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache", *,
+    skipped_empty_reports: set[str] | None = None,
+) -> Path:
     """Persist a planned attempt; this is not evidence that dispatch occurred."""
     if packet.report is not None:
         raise ValueError("Cannot begin an already completed candidate packet.")
@@ -305,7 +362,7 @@ def begin_packet(progress: CandidateProgress, packet: CandidatePacket, cache_dir
             _index_candidate(candidate, progress, cache_dir)
         _clear_disposition(candidate)
         candidate.status = "technical_pending"
-    path = save_candidate_progress(progress, cache_dir)
+    path = save_candidate_progress(progress, cache_dir, skipped_empty_reports=skipped_empty_reports)
     if progress_size(progress, cache_dir) + RESPONSE_STORAGE_RESERVE > MAX_BYTES:
         raise ValueError(
             "Insufficient candidate working-set capacity before model work; no input was truncated.")
@@ -329,7 +386,9 @@ def reconcile_packet(
     validate_evidence_bundle(report.evidence, config)
     _validate_report(report)
     prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        report.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        report.evidence, config.review, config.radar.language, sources=config.sources,
+        closing=getattr(config, "closing", None)),
+        sort_keys=True).encode()).hexdigest()
     selected: set[str] = set()
     rejected: set[str] = set()
     valid = False
@@ -338,7 +397,7 @@ def reconcile_packet(
             continue
         if review.prompt_hash != prompt_hash or review.prompt_hash != packet.prompt_hash:
             raise ValueError("Candidate result prompt differs from the planned review contract.")
-        selections, _ = _validated_cached_selections(review, report.evidence, config.review.max_selections)
+        selections, _ = _validated_cached_selections(review, report.evidence)
         selected.update(item.evidence_id for item in selections)
         rejected.update(item.evidence_id for item in review.rejected_items if item.evidence_id is not None)
         valid = True
@@ -382,7 +441,9 @@ def reconcile_packet(
     return path
 
 
-def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport | None:
+def pending_completed_report(
+    progress: CandidateProgress, *, skip_reports: set[str] | None = None,
+) -> BlindReviewReport | None:
     """Recover undelivered selection after callers honor ready/preparation precedence.
 
     Handoff means accepted preparation, never confirmed delivery. Once that
@@ -390,7 +451,7 @@ def pending_completed_report(progress: CandidateProgress) -> BlindReviewReport |
     abstentions stay consumed; mixed eligibility returns useful work to planning.
     """
     for packet in reversed(progress.packets):
-        if packet.report is None:
+        if packet.report is None or _digest(asdict(packet.report)) in (skip_reports or set()):
             continue
         successful = _delivery_review(packet.report) if packet.report.reviews else None
         if successful is None or successful.status not in {"ok", "partial", "abstained"}:
@@ -499,7 +560,7 @@ def _validate(progress: CandidateProgress) -> None:
                 raise ValueError("Candidate report evidence mismatch.")
             for review in packet.report.reviews:
                 if review.status in {"ok", "partial", "abstained"}:
-                    _validated_cached_selections(review, packet.evidence, packet.max_selections)
+                    _validated_cached_selections(review, packet.evidence)
                     if review.prompt_hash != packet.prompt_hash:
                         raise ValueError("Candidate report prompt mismatch.")
 
@@ -536,7 +597,6 @@ def _restore_relevant_history(
         for packet in storage.load_candidate_packets(identity, cache_dir):
             key = storage.packet_key(packet)
             if key not in known_packets:
-                packet.handed_to_preparation = True
                 progress.packets.append(packet)
                 known_packets.add(key)
 
@@ -561,27 +621,41 @@ def _proof_packets(candidate: Candidate, packets: list[CandidatePacket]) -> list
             attempt.response_sha256 == candidate.decision_response_sha256
             and attempt.prompt_hash == candidate.decision_prompt_hash
             and candidate.disposition in attempt.dispositions for attempt in packet.disposition_attempts)]
-    return [max(reversed(matches), key=lambda packet: packet.planned_at)] if matches else []
+    proof = [max(reversed(matches), key=lambda packet: datetime.fromisoformat(packet.planned_at))] if matches else []
+    # Keep existing decision/history proof, plus the current occurrence's latest
+    # planning opportunity when rebinding makes them different. At most two.
+    if candidate.status == "technical_pending":
+        current = _latest_occurrence_packet(candidate, packets)
+        if current is not None and current not in proof:
+            proof.append(current)
+    return proof
 
 
 def _index_candidate(candidate: Candidate, progress: CandidateProgress, cache_dir: str | Path) -> None:
     from digest import candidate_storage as storage
 
     keys = []
+    handoffs = {}
     for packet in _proof_packets(candidate, progress.packets):
         storage.freeze_packet(packet, {}, cache_dir)
-        keys.append(storage.packet_key(packet))
-    storage.save_candidate(candidate, tuple(keys), cache_dir)
+        key = storage.packet_key(packet)
+        keys.append(key)
+        handoffs[key] = packet.handed_to_preparation
+    storage.save_candidate(candidate, tuple(keys), cache_dir, report_handoffs=handoffs)
 
 
-def _retire_indexed_work(progress: CandidateProgress, cache_dir: str | Path) -> None:
+def _retire_indexed_work(
+    progress: CandidateProgress, cache_dir: str | Path, skipped_empty_reports: set[str] | None = None,
+) -> None:
     """Verified index first, active removal last; excluded work is not completed work."""
     from digest import candidate_storage as storage
 
     retiring = []
     for identity, candidate in progress.candidates.items():
         proof = _proof_packets(candidate, progress.packets)
-        unconsumed = any(_accepted_empty_packet(packet) and not packet.handed_to_preparation for packet in proof)
+        unconsumed = any(packet.report is not None and _accepted_empty_packet(packet)
+                         and not packet.handed_to_preparation
+                         and _digest(asdict(packet.report)) not in (skipped_empty_reports or set()) for packet in proof)
         if candidate.eligible and (candidate.status not in {"not_selected", "duplicate"} or unconsumed):
             continue
         _index_candidate(candidate, progress, cache_dir)
@@ -655,6 +729,7 @@ def progress_size(progress: CandidateProgress, cache_dir: str | Path | None = No
 
 def save_candidate_progress(
     progress: CandidateProgress, cache_dir: str | Path = ".cache", *, retire: bool = True,
+    skipped_empty_reports: set[str] | None = None,
 ) -> Path:
     from digest.candidate_storage import encode_active_candidate, put_article, write_policy
 
@@ -667,7 +742,7 @@ def save_candidate_progress(
     for packet in progress.packets:
         packet.collection_json = _materialize_collection(packet.collection_json, cache_dir)
     if retire:
-        _retire_indexed_work(progress, cache_dir)
+        _retire_indexed_work(progress, cache_dir, skipped_empty_reports)
     record = _working_record(progress, cache_dir)
     if len(json.dumps(record, indent=2).encode("utf-8")) > MAX_BYTES:
         raise ValueError(f"Candidate progress exceeds {MAX_BYTES}-byte budget; no manifest was truncated.")

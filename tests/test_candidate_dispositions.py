@@ -123,7 +123,7 @@ async def test_legacy_is_readable_without_fabricated_omission_reasons() -> None:
     data = payload()
     del data["dispositions"]
     bundle = build_evidence_bundle(fixture_articles(), ReviewConfig())
-    assert _parse_review(json.dumps(data), bundle, 5)[0]
+    assert _parse_review(json.dumps(data), bundle)[0]
     report, capture = await run(data)
     assert report.reviews[0].status == "ok"
     assert not capture.attempts[0].dispositions
@@ -278,14 +278,16 @@ async def test_persisted_attempt_tampering_is_rejected(kind: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS", "content_filter", "unknown", "", "stop",
                                           "STOP", "end_turn", None])
-async def test_provider_finish_reason_bounds_capture_without_changing_cards(finish_reason: str | None) -> None:
+async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reason: str | None) -> None:
     text = json.dumps(payload())
     capture = CandidateDispositionCapture()
     usage = {} if finish_reason is None else {"finish_reason": finish_reason}
     with patch("digest.review.complete", return_value=(text, usage)) as complete:
         report = await run_primary_review(fixture_articles(), fixture_config(), disposition_capture=capture)
-    assert complete.call_count == 1
-    assert report.reviews[0].status == "ok" and report.reviews[0].selections
+    terminal = finish_reason is None or finish_reason in {"stop", "STOP", "end_turn"}
+    assert complete.call_count == (1 if terminal else 2)
+    assert report.reviews[0].status == ("ok" if terminal else "invalid")
+    assert bool(report.reviews[0].selections) is terminal
     assert "finish_reason" not in asdict(report.reviews[0])
     attempt = capture.attempts[0]
     assert attempt.finish_reason == finish_reason

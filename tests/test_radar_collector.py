@@ -40,6 +40,18 @@ from digest.radar.collector import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("title,link,expected", [
+    ("Test Article", "https://example.com/article", "ac36d73068dc3b021b42302614323b25"),
+    ("Заголовок café", "https://example.com/путь?q=1", "02c0db6f6b4a1e88c27f3b38fe81575d"),
+])
+def test_article_hash_preserves_existing_ids_without_security_use(title: str, link: str, expected: str) -> None:
+    import hashlib
+
+    with patch("digest.radar.collector.hashlib.md5", wraps=hashlib.md5) as md5:
+        assert article_hash(title, link) == expected
+    md5.assert_called_once_with(f"{title}|{link}".encode(), usedforsecurity=False)
+
+
 def _rfc2822(hours_ago: int = 2) -> str:
     """Return an RFC 2822 date string for a recent time."""
     dt = datetime.now(tz=timezone.utc) - timedelta(hours=hours_ago)

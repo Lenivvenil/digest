@@ -9,6 +9,7 @@ import pytest
 
 from digest.config import (
     Config,
+    DiscoveryConfig,
     LLMConfig,
     load_config,
 )
@@ -63,6 +64,28 @@ def test_defaults_applied(tmp_path: Path) -> None:
     assert config.obsidian.enabled is True
     assert config.obsidian.output_dir == "digests"
     assert config.filters.blocklist_keywords == []
+    assert config.discovery.exploration_areas == [
+        "fintech/banking/architecture", "science", "society/institutions", "history/culture", "environment", "design",
+    ]
+
+
+def test_discovery_configuration_does_not_change_professional_sources(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG)
+                         + "\ndiscovery:\n  exploration_areas: ['  history  ', 'biology']\n")
+    config = load_config(path)
+    assert config.discovery.exploration_areas == ["history", "biology"]
+    assert config.sources[0].category == "Test"
+    assert config.sources[0].priority == 3
+    config.discovery.exploration_areas.append("art")
+    assert "art" not in DiscoveryConfig().exploration_areas
+
+
+@pytest.mark.parametrize("value", ["[]", "science", "[null]", "['']", "['  ']", "[science, SCIENCE]",
+                                  "['" + "a" * 81 + "']", "[" + ",".join(str(n) for n in range(17)) + "]"])
+def test_discovery_configuration_rejects_invalid_areas(tmp_path: Path, value: str) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f"\ndiscovery:\n  exploration_areas: {value}\n")
+    with pytest.raises(ValueError, match="discovery.exploration_areas"):
+        load_config(path)
 
 
 def test_provider_roles(tmp_path: Path) -> None:
@@ -607,3 +630,35 @@ def test_compact_delivery_is_explicit_and_legacy_default_is_preserved(tmp_path: 
     with pytest.raises(ValueError, match="delivery_mode"):
         cfg = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ntelegram: {delivery_mode: arbitrary}\n")
         load_config(cfg)
+
+
+def test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes(tmp_path: Path) -> None:
+    import yaml
+
+    base = yaml.safe_load(textwrap.dedent(MINIMAL_CONFIG))
+    path = tmp_path / 'config.yaml'
+    path.write_text(yaml.safe_dump(base))
+    assert not load_config(path).reading_brief.enabled
+    base.update({
+        'radar': {'language': 'en'},
+        'review': {'enabled': True, 'review_led_only': True,
+                   'primary': {'provider': 'gemini', 'model': 'gemini-3.8-flash'}},
+        'reading_brief': {'enabled': True, 'provider': 'gemini', 'model': 'gemini-3.8-flash'},
+    })
+    path.write_text(yaml.safe_dump(base))
+    loaded = load_config(path)
+    settings = loaded.reading_brief
+    assert settings.max_requests_per_run == 10 and settings.max_output_tokens == 2048
+    assert (settings.provider, settings.model) == ('gemini', 'gemini-3.8-flash')
+    base['reading_brief']['model'] = 'unconfigured-model'
+    path.write_text(yaml.safe_dump(base))
+    with pytest.raises(ValueError, match='explicit existing'):
+        load_config(path)
+    base['reading_brief']['model'] = 'gemini-3.8-flash'
+    base['review'].pop('primary')
+    path.write_text(yaml.safe_dump(base))
+    with pytest.raises(ValueError, match='explicit existing'):
+        load_config(path)
+    base['reading_brief']['enabled'] = False
+    path.write_text(yaml.safe_dump(base))
+    assert not load_config(path).reading_brief.enabled

@@ -147,11 +147,14 @@ class ReviewConfig:
     )
     tie_breaker: ReviewModelConfig | None = None
     max_evidence_articles: int = 20
+    max_technical_retry_articles: int = 4  # Fitting continuation opportunities within the same packet.
     max_excerpt_chars: int = 500
-    max_selections: int = 5
+    max_selections: int = 5  # Publication card cap; relevance is judged over the complete evidence packet.
+    max_detailed_selections: int = 5  # Response detail budget, independent of publication capacity.
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
+    editorial_context: str = ""  # Operator-owned relevance priorities, never source evidence.
 
 
 @dataclass(frozen=True)
@@ -168,6 +171,41 @@ class TranslationConfig:
     max_input_chars: int = 12000
 
 
+@dataclass(frozen=True)
+class ClosingSourceBinding:
+    name: str
+    url: str
+    category: str
+
+
+@dataclass(frozen=True)
+class ClosingConfig:
+    """Explicit eligible feed bindings; approval and attribution are activation gates."""
+
+    enabled: bool = False
+    approved_sources: tuple[ClosingSourceBinding, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReadingBriefConfig:
+    """Opt-in full-source reading briefs on an explicitly configured route."""
+
+    enabled: bool = False
+    provider: str = ""
+    model: str = ""
+    max_output_tokens: int = 2048
+    max_requests_per_run: int = 10
+
+
+@dataclass
+class DiscoveryConfig:
+    """Exploration targets for source proposals, independent of active categories."""
+
+    exploration_areas: list[str] = field(default_factory=lambda: [
+        "fintech/banking/architecture", "science", "society/institutions", "history/culture", "environment", "design",
+    ])
+
+
 @dataclass
 class Config:
     llm: LLMConfig
@@ -182,6 +220,9 @@ class Config:
     )
     review: ReviewConfig = field(default_factory=ReviewConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
+    reading_brief: ReadingBriefConfig = field(default_factory=ReadingBriefConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    closing: ClosingConfig = field(default_factory=ClosingConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -457,6 +498,22 @@ def _load_irritator(data: dict[str, Any]) -> IrritatorConfig:
     )
 
 
+def _load_discovery(data: dict[str, Any]) -> DiscoveryConfig:
+    section = data.get("discovery")
+    if section is None:
+        return DiscoveryConfig()
+    if not isinstance(section, dict):
+        raise ValueError("Config field 'discovery' must be a mapping.")
+    areas = section.get("exploration_areas", DiscoveryConfig().exploration_areas)
+    if (not isinstance(areas, list) or not 1 <= len(areas) <= 16
+            or any(not isinstance(area, str) or not 1 <= len(area.strip()) <= 80 for area in areas)):
+        raise ValueError("discovery.exploration_areas must contain 1–16 nonempty strings of at most 80 characters.")
+    normalized = [area.strip() for area in areas]
+    if len({area.casefold() for area in normalized}) != len(normalized):
+        raise ValueError("discovery.exploration_areas must not contain duplicate areas.")
+    return DiscoveryConfig(exploration_areas=normalized)
+
+
 def _load_sources(data: dict[str, Any]) -> list[SourceConfig]:
     raw_sources = _require(data, "sources", "root")
     if not isinstance(raw_sources, list):
@@ -670,6 +727,10 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     if not isinstance(section, dict):
         raise ValueError("review must be a mapping.")
     defaults = ReviewConfig()
+    editorial_context = section.get("editorial_context", "")
+    if not isinstance(editorial_context, str) or len(editorial_context) > 1000:
+        raise ValueError("review.editorial_context must be a string of at most 1000 characters.")
+    editorial_context = editorial_context.strip()
     enabled = section.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ValueError("review.enabled must be a boolean.")
@@ -697,10 +758,15 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     slots = [primary, secondary] + ([tie_breaker] if tie_breaker else [])
     if len(set(slots)) != len(slots):
         raise ValueError("review slots must use distinct provider/model identities.")
-    bounds = {"max_evidence_articles": (20, 1, 100), "max_excerpt_chars": (500, 50, 1000),
-              "max_selections": (5, 1, 10), "max_output_tokens": (4096, 128, 8192)}
+    bounds = {"max_evidence_articles": (20, 1, 100), "max_technical_retry_articles": (4, 0, 100),
+              "max_excerpt_chars": (500, 50, 1000),
+              "max_selections": (5, 1, 10), "max_detailed_selections": (5, 1, 10),
+              "max_output_tokens": (4096, 128, 8192)}
     values: dict[str, int] = {}
     for key, (default, low, high) in bounds.items():
+        if (key == "max_technical_retry_articles" and type(section.get(key, default)) is not int
+                or key == "max_detailed_selections" and isinstance(section.get(key), bool)):
+            raise ValueError(f"review.{key} must be an integer.")
         value = _safe_int(section.get(key, default), key, "review")
         if not low <= value <= high:
             raise ValueError(f"review.{key} must be between {low} and {high}.")
@@ -710,7 +776,8 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
         raise ValueError("review.disagreement_threshold must be between 0 and 1.")
     return ReviewConfig(
         enabled=enabled, primary=primary, secondary=secondary, tie_breaker=tie_breaker,
-        disagreement_threshold=threshold, review_led_only=review_led_only, **values,
+        disagreement_threshold=threshold, review_led_only=review_led_only,
+        editorial_context=editorial_context, **values,
     )
 
 
@@ -769,6 +836,72 @@ def _load_translation(
                              timeout_seconds=float(timeout), **values)
 
 
+def _load_reading_brief(
+    data: dict[str, Any], llm: LLMConfig, radar: RadarConfig, review: ReviewConfig,
+) -> ReadingBriefConfig:
+    section = data.get("reading_brief", {})
+    if not isinstance(section, dict):
+        raise ValueError("reading_brief must be a mapping.")
+    enabled = section.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("reading_brief.enabled must be a boolean.")
+    provider, model = section.get("provider", ""), section.get("model", "")
+    if not isinstance(provider, str) or not isinstance(model, str):
+        raise ValueError("reading_brief provider/model must be strings.")
+    values: dict[str, int] = {}
+    for key, default, lower, upper in (("max_output_tokens", 2048, 256, 4096),
+                                       ("max_requests_per_run", 10, 1, 10)):
+        value = section.get(key, default)
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError(f"reading_brief.{key} must be an integer between {lower} and {upper}.")
+        values[key] = value
+    if enabled:
+        if radar.language != "en" or not review.enabled or not review.review_led_only:
+            raise ValueError("Reading briefs require canonical English and review-led primary selection.")
+        configured = {(p.name, p.model) for p in llm.providers}
+        review_section = data.get("review", {})
+        for slot in ("primary", "secondary", "tie_breaker"):
+            route = getattr(review, slot)
+            if isinstance(review_section.get(slot), dict) and route is not None:
+                configured.add((route.provider, route.model))
+        if not provider or not model or (provider, model) not in configured:
+            raise ValueError("Reading briefs require an explicit existing configured provider/model route.")
+    return ReadingBriefConfig(enabled=enabled, provider=provider, model=model, **values)
+
+
+def _load_closing(
+    data: dict[str, Any], review: ReviewConfig,
+    telegram: TelegramConfig, reading_brief: ReadingBriefConfig,
+) -> ClosingConfig:
+    section = data.get("closing", {})
+    if not isinstance(section, dict) or set(section) - {"enabled", "approved_sources"}:
+        raise ValueError("closing must contain only enabled and approved_sources.")
+    enabled = section.get("enabled", False)
+    values = section.get("approved_sources", [])
+    if type(enabled) is not bool or not isinstance(values, list) or len(values) > 20:
+        raise ValueError("Invalid closing.enabled or closing.approved_sources.")
+    bindings = []
+    for value in values:
+        if (not isinstance(value, dict) or set(value) != {"name", "url", "category"}
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 2048
+                       for item in value.values())):
+            raise ValueError("Each closing.approved_sources entry requires name, url and category.")
+        binding = ClosingSourceBinding(**value)
+        if binding in bindings:
+            raise ValueError("Duplicate closing approved source binding.")
+        parsed_url = urlparse(binding.url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise ValueError("Closing approved source binding requires an HTTP(S) feed URL.")
+        bindings.append(binding)
+    if enabled and (not bindings or not review.enabled or not review.review_led_only
+                    or telegram.delivery_mode != "compact" or reading_brief.enabled):
+        raise ValueError("Closing requires approved feeds, compact review-led preparation and no reading_brief.")
+    if enabled and min(review.max_detailed_selections, review.max_evidence_articles) < review.max_selections + 1:
+        raise ValueError("Closing requires explicit detail and evidence limits of at least max_selections + 1; "
+                         "the output-token allowance is unchanged.")
+    return ClosingConfig(enabled, tuple(bindings))
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -800,6 +933,9 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     adaptive = _load_adaptive(data)
     review = _load_review(data)
     translation = _load_translation(data, llm, radar, review)
+    reading_brief = _load_reading_brief(data, llm, radar, review)
+    discovery = _load_discovery(data)
+    closing = _load_closing(data, review, telegram, reading_brief)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -819,4 +955,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         adaptive=adaptive,
         review=review,
         translation=translation,
+        reading_brief=reading_brief,
+        discovery=discovery,
+        closing=closing,
     )

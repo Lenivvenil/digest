@@ -118,14 +118,14 @@ def test_invalid_entry_rejects_whole_review(kind: str) -> None:
     else:
         data["selections"] *= 6
     with pytest.raises(ValueError):
-        _parse_review(json.dumps(data), bundle, 5)
+        _parse_review(json.dumps(data), bundle)
 
 
 def test_abstention_is_valid_only_with_explanation() -> None:
     bundle, _ = _valid_output()
-    assert _parse_review('{"selections": [], "limitations": ["Insufficient evidence"]}', bundle, 5)[0] == []
+    assert _parse_review('{"selections": [], "limitations": ["Insufficient evidence"]}', bundle)[0] == []
     with pytest.raises(ValueError):
-        _parse_review('{"selections": [], "limitations": []}', bundle, 5)
+        _parse_review('{"selections": [], "limitations": []}', bundle)
 
 
 def test_duplicate_slot_identity_rejected() -> None:

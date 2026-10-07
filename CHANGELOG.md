@@ -2,6 +2,50 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Disabled-by-default humane closing slice (#127): optional same-response
+  designation, exact delivery-slot/source provenance, strict preparation v1/v2
+  compatibility and isolated presentation before archive/freeze. Main capacity,
+  sender and receipts stay unchanged. Source activation, translated capacity and
+  editorial acceptance remain open. A fitting closing explanation shares the
+  existing translation request, with independent optional-field validation. Exact-feed
+  NHS/Environment Agency credits share the final archive/frozen card path; optional
+  split attribution is omitted, while required-main attribution holds before send.
+
+- First discovery slice (#132): configurable cross-field proposal targets, deterministic
+  least-recent-offer preference within fair passes, and finite exact-proposal validation
+  cooldowns in existing delivery metadata. Legacy approval bindings and send barriers
+  stay intact; active feeds and daily candidate scheduling are unchanged. Professional
+  coverage after approval and real recommendation quality remain open.
+
+- Prepared-edition summaries retain actual collection, review and archive results;
+  cache-only resumes do not report historical work as new fetching (#55, #120).
+- Relevance selection no longer receives the publication-card cap. The complete
+  validated report is retained, while locally capped overflow stays eligible for
+  ordinary later processing instead of becoming editorial rejection (#121).
+
+- Offline reconciliation response binding validates a sparse evidence input against
+  exact request/admission/completion metadata and original citation IDs. It preserves
+  nominated conditions without claiming semantic completeness or adding dispatch.
+
+- External evidence responses enforce the existing 512,000-byte decoded-body limit
+  during streaming; the fixed-endpoint arXiv adapter applies the same bound in both
+  investigation paths. The fixed arXiv endpoint explicitly rejects redirects, including
+  when a custom caller enables them; owned pipeline callers already rejected them.
+  Oversized bodies fail explicitly without parsing a prefix.
+  Accepted bytes and charset decoding are retained. This bounds accumulated response
+  data, not decompressor allocations or XML-parser memory. Existing MD5 article/source
+  IDs remain byte-identical and are explicitly marked as non-security hashing.
+
+- Draft investigation query floor (#77) requires one source-anchored topic query
+  within the existing slots. Ungrounded nonempty sets remain technical incomplete
+  before search. This affects bounded RSS and full-source investigation on rollout,
+  regardless of the reading flag; literal anchoring is not semantic acceptance.
+  Exact cited target/final URLs are excluded from external candidates with explicit
+  diagnostics; different documents from the same publisher remain eligible.
+- Draft source admission (#122) reuses complete-source acquisition and exact/estimated
+  request accounting from #107, bound to current saved candidate selections. Durable
+  generation-intent holds and actual per-page fallback provenance remain separate from
+  #55 semantic acceptance; technical completion does not publish draft prose.
 - Candidate accounting (#121): ordinary review-led preparation captures pre-slot
   identities and resumes later bounded packets through persisted selection evidence.
   Existing accepted editions still take precedence. Same-response typed per-ID

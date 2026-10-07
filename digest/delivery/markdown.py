@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,16 +36,18 @@ def _build_frontmatter(
     )
 
 
-def _build_top_articles_section(top_articles: list[Any]) -> str:
+def _build_top_articles_section(top_articles: list[Any], *, literal_passages: bool = False) -> str:
     """Build Obsidian callout block for per-article LLM summaries."""
     if not top_articles:
         return ""
 
     lines = ["\n\n## Top Articles\n"]
     for a in top_articles:
+        summary = ("\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages
+                   else f"> {a.summary}")
         lines.append(
             f"> [!note] [{a.title}]({a.link})\n"
-            f"> {a.summary}\n"
+            f"{summary}\n"
             f"> *{a.source} · {a.category}*\n"
         )
     return "\n".join(lines)
@@ -63,6 +66,23 @@ def _build_counter_signals_section(ranked_signals: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _build_source_evidence_appendix(top_articles: list[Any], quotations: dict[str, str]) -> str:
+    """Keep original quotations separate from the compact publication cards."""
+    from digest.radar.collector import article_hash
+
+    lines = ["\n\n## Original source evidence (archive only)\n",
+             "Model-selected quotations and source qualifications are preserved below in their original language. "
+             "They support the reading briefs; they are not independent verification.\n"]
+    for card in top_articles:
+        quotation = quotations.get(article_hash(card.title, card.link))
+        if quotation is None:
+            continue
+        # Choose a fence that cannot be closed by the unmodified source text.
+        fence = "`" * max(3, 1 + max((len(match) for match in re.findall(r"`+", quotation)), default=0))
+        lines.append(f"### [{card.title}]({card.link})\n\n{fence}text\n{quotation}\n{fence}\n")
+    return "\n".join(lines)
+
+
 def write_digest(
     summary: str,
     config: Any,
@@ -74,6 +94,7 @@ def write_digest(
     date: datetime | None = None,
     sources_count: int = 0,
     articles_count: int = 0,
+    source_quotations: dict[str, str] | None = None,
 ) -> Path | None:
     """Write digest markdown file to the configured output directory.
 
@@ -92,7 +113,9 @@ def write_digest(
     content = f"{frontmatter}\n{summary}\n"
 
     if top_articles:
-        content += _build_top_articles_section(top_articles)
+        content += _build_top_articles_section(
+            top_articles, literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
+        )
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)
@@ -104,6 +127,9 @@ def write_digest(
         from digest.review import render_review
 
         content += render_review(review_report) + "\n"
+
+    if source_quotations and getattr(getattr(config, "reading_brief", None), "enabled", False):
+        content += _build_source_evidence_appendix(top_articles or [], source_quotations)
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)

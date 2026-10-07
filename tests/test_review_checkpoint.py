@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.config import Config, ReviewModelConfig
-from digest.review import BlindReviewReport, ModelReview, primary_cards, run_blind_review
+from digest.review import BlindReviewReport, EvidenceBundle, ModelReview, primary_cards, run_blind_review
+from digest.review_checkpoint import FullSourceEvidence
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 
 
@@ -494,3 +495,145 @@ async def test_mutable_evidence_item_container_is_rejected_before_model_calls() 
         with pytest.raises(ValueError):
             await run_evidence_review(bundle, config)
     complete.assert_not_called()
+
+
+def _full_source_evidence(
+    tmp_path: Path, bundle: EvidenceBundle, *, fallback: bool = False, final_url: str | None = None,
+) -> FullSourceEvidence:
+    from digest.article_source import FetchedArticle
+    from digest.reading_brief_state import BriefState, Page, PageResult, Route, Selection, save_source
+    from digest.review_checkpoint import build_full_source_evidence
+
+    # This stored backlog article intentionally is not a member of today's RSS bundle.
+    selection = Selection("Provider rollout announcement", "https://provider.example/rollout",
+                          "Provider engineering", "technology", None)
+    body = ("Opening context without the selected evidence. " * 20 + "\n\n"
+            "The provider reports API-powered deployments improved reliability.\n\n"
+            "The reported result applies only to the trial deployment, not every customer.")
+    snapshot, source = save_source(tmp_path, selection, FetchedArticle(
+        body, final_url or selection.link, "2026-10-02T12:00:00+00:00", None, "article",
+    ))
+    page = Page(0, len(source.spans), "a" * 64, PageResult(
+        [span.id for span in source.spans], [2], [3], "A model-only reading angle", [2], False,
+    ))
+    state = BriefState(selection, Route("gemini", "exact-source-reader", 10000, 2000),
+                       "2026-10-02T12:00:00+00:00", "2026-10-02T12:00:00+00:00",
+                       status="ready", source_sha256=snapshot, pages=[page])
+    if fallback:
+        page.route = Route("groq", "actual-fallback", 8000, 2000)
+    # Reading-brief validation is tested by its owner; this adapter receives only checked states.
+    with patch("digest.reading_brief.ready_brief_evidence", return_value=(state, source)):
+        result = build_full_source_evidence(bundle, tmp_path, [selection.identity])
+    assert source.text == body
+    return result
+
+
+@pytest.mark.asyncio
+async def test_full_source_checkpoint_roundtrip_preserves_rss_and_selected_literal_provenance(tmp_path: Path) -> None:
+    from digest.review_checkpoint import load_full_source_evidence, load_review_checkpoint
+
+    config = _trial_config()
+    original = await _report(config)
+    source_evidence = _full_source_evidence(tmp_path, original.evidence)
+    path = tmp_path / "review.json"
+    payload = _archive(path, original)
+    payload["full_source_required"] = True
+    payload["full_source_evidence"] = asdict(source_evidence)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes()
+
+    rss_bundle, cached = load_review_checkpoint(path, config)
+    loaded = load_full_source_evidence(path, rss_bundle, config)
+
+    assert rss_bundle == original.evidence and cached == original.reviews
+    assert loaded == source_evidence
+    assert loaded.rss_bundle_id == original.evidence.bundle_id
+    assert len(loaded.items) == 2
+    assert loaded.items[0].start > 500
+    assert loaded.items[0].roles == ("angle_support", "selected")
+    assert loaded.items[1].roles == ("qualification",)
+    assert all(item.article_id not in {item.evidence_id for item in rss_bundle.items} for item in loaded.items)
+    serialized = json.dumps(asdict(loaded))
+    assert "Opening context without" not in serialized
+    assert "A model-only reading angle" not in serialized
+    assert "trial deployment, not every customer" in serialized
+    assert path.read_bytes() == before
+    with pytest.raises(FrozenInstanceError):
+        loaded.items[0].excerpt = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_has_no_full_source_authority(tmp_path: Path) -> None:
+    from digest.review_checkpoint import load_full_source_evidence
+
+    config = _trial_config()
+    original = await _report(config)
+    path = tmp_path / "review.json"
+    _archive(path, original)
+    assert load_full_source_evidence(path, original.evidence, config) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", [
+    "excerpt", "offset", "span_boolean", "body_hash", "article_identity", "source_url", "rss_link", "schema",
+    "duplicate",
+])
+async def test_full_source_checkpoint_rejects_tampered_provenance(mutation: str, tmp_path: Path) -> None:
+    from digest.review_checkpoint import load_full_source_evidence
+
+    config = _trial_config()
+    original = await _report(config)
+    source_evidence = _full_source_evidence(tmp_path, original.evidence)
+    path = tmp_path / "review.json"
+    payload = _archive(path, original)
+    evidence = json.loads(json.dumps(asdict(source_evidence)))
+    item = evidence["items"][0]
+    if mutation == "excerpt":
+        item["excerpt"] = "Fabricated evidence"
+    elif mutation == "offset":
+        item["end"] += 1
+    elif mutation == "span_boolean":
+        item["span_id"] = True
+    elif mutation == "body_hash":
+        item["body_sha256"] = "not-a-source-hash"
+    elif mutation == "article_identity":
+        item["article_id"] = "not-the-original-article"
+    elif mutation == "source_url":
+        item["final_url"] = "file:///etc/passwd"
+    elif mutation == "rss_link":
+        evidence["rss_bundle_id"] = "an-unrelated-checkpoint"
+    elif mutation == "schema":
+        evidence["schema_version"] = True
+    else:
+        evidence["items"].append(deepcopy(item))
+    # Rehashing the outer container must not hide corrupt span identity/provenance.
+    _rehash_evidence(evidence)
+    payload["full_source_evidence"] = evidence
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_full_source_evidence(path, original.evidence, config)
+
+
+def test_full_source_transport_budget_rejects_without_truncating(tmp_path: Path) -> None:
+    from digest.review import build_evidence_bundle
+    from digest.review_checkpoint import validate_full_source_evidence
+
+    config = _trial_config()
+    rss_bundle = build_evidence_bundle(fixture_articles(), config.review)
+    evidence = _full_source_evidence(tmp_path, rss_bundle)
+    before = asdict(evidence)
+    with patch("digest.review_checkpoint.MAX_FULL_SOURCE_BYTES", 100):
+        with pytest.raises(ValueError, match="exceeds checkpoint budget"):
+            validate_full_source_evidence(evidence, rss_bundle)
+    assert asdict(evidence) == before
+
+
+def test_full_source_provenance_names_actual_page_fallback(tmp_path: Path) -> None:
+    from digest.review import build_evidence_bundle
+
+    config = _trial_config()
+    bundle = build_evidence_bundle(fixture_articles(), config.review)
+    evidence = _full_source_evidence(tmp_path, bundle, fallback=True)
+    assert evidence.items
+    assert all(item.selection_provider == "groq" and item.selection_model == "actual-fallback"
+               for item in evidence.items)

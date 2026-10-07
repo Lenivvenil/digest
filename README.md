@@ -58,8 +58,9 @@ The package version is **2.0.0**. Product rehabilitation is tracked in
 [#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
 suite does not establish editorial quality. Full-source quality work in
 [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains open: full-source support
-and useful factual output are current requirements, with no deferred-task status.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
+daily output and sustainable delivery. Mandatory complete-source processing was an
+assistant-proposed mechanism, not an established owner requirement or closure gate.
 [#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
 optional post translation, now implemented with explicit compatibility and recovery.
 The current priority is one compact daily edition within the documented
@@ -67,7 +68,26 @@ The current priority is one compact daily edition within the documented
 Compact delivery is implemented and deployed: a production edition confirmed five
 articles in one Telegram chunk, with its archive and delivery state persisted.
 Translation and recovery acceptance covers the observed cases described below;
-full-source factual quality remains open in #55.
+editorial quality remains open in #55.
+
+Full-source reading briefs are off by default. The `reading_brief` setting requires
+English canonical text, review-led selection, and an explicitly configured model
+route. Gemini 3.8 Flash uses an exact count; Groq GPT-OSS 120B supports a pinned
+local tokenizer estimate with explicit framing headroom and output reserve. Unknown
+profiles (including Qwen without a verified current framing profile) remain technical
+pending. An unavailable route may use at most one other supported route already in
+`llm.providers`, within the same deadline, pacing and request cap, without retries.
+See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
+Advertised context and the local request allowance do not establish free-account quota.
+The draft integration runs only through `--prepare-edition`; unsupported preview/direct
+publish modes stop before source/model work. It uses exact saved candidate selections and current occurrence
+eligibility before source work. Completed pages become a technical evidence handoff
+for #55; they do not publish concatenated draft prose or create an accepted edition.
+Unknown generation outcomes hold across later invocations and route changes. Known
+count uncertainty remains distinct from generation uncertainty. See proposed
+[ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
+reuse and the proposed shared per-cycle request allocation. The finite factual-quality,
+reconciliation and throughput gates remain open; reading stays off.
 
 This is the **engine repository**. Your separate runtime repository holds configuration,
 secrets references, schedules, `.cache/` and generated `digests/`; see
@@ -317,6 +337,20 @@ instead produces explicitly attributed model-selection cards from RSS evidence; 
 current limitations are described in the review runbook. Neither format should invent
 benefits, certainty or facts to fill a template.
 
+An optional humane final story is implemented behind `closing.enabled: false`
+for compact review-led edition preparation. It uses one validated selection from
+the existing evidence packet and explicit eligible feed bindings; it adds no
+selection request and preserves the main-card cap. Source approval, attribution
+review and finite editorial/capacity acceptance are still required. Closing prose
+can join an existing translation request only when it fits without displacing main
+fields; invalid optional output preserves valid main translation. Exact NHS/Environment
+Agency feed attribution is added only to presentation, including ordinary main cards
+from those feeds. A split optional credit omits the closer; missing required proof
+or a split main credit holds preparation before sending. Source activation remains
+unapproved, and sparse feed supply does not establish a daily positive story. See
+[ADR-0014](docs/decisions/0014-optional-humane-closing-item.md) for configuration,
+recovery boundaries and the remaining #127 acceptance work.
+
 <a id="автоматическое-обнаружение-источников"></a>
 
 ## External counter-signals and source discovery
@@ -329,10 +363,47 @@ tracked in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
 `python -m digest --discover` separately proposes feeds for underrepresented categories,
 checks their URLs, saves candidates and requests operator approval through Telegram.
+Discovery targets a configurable list that includes professional source refresh and
+broader disciplines, independent of the active professional source portfolio:
+
+```yaml
+discovery:
+  exploration_areas:
+    - fintech/banking/architecture
+    - science
+    - society/institutions
+    - history/culture
+    - environment
+    - design
+```
+
+These are provisional defaults when the section is absent, not historical preferences
+or an owner-mandated proportion. Professional refresh stays eligible; cross-field
+requests do not require a contrived technology, finance or banking connection.
+Use 1–16 distinct nonempty names, at most 80 characters each. Within each complete
+pass through this list, discovery prefers the least recently offered area, breaking
+ties in configured order. Empty or failed attempts advance the pass without counting
+as offers, so an unavailable field cannot monopolize every generation. Confirmed
+Telegram messages and uncertain possible sends remain distinguishable; reservations
+and explicit API rejections do not count as offers. Requested areas are not verified
+classifications or evidence of semantic novelty.
+
 Approved candidates enter the source lifecycle; runtime configuration and lifecycle
 state are separate under [ADR-0003](docs/decisions/0003-source-state-split.md). Do not
 assume an approval changes the engine repository or that a weekly schedule exists
 without a corresponding runtime workflow.
+
+Discovery retains one logical generation on at most two configured routes, three feed
+checks/offers and a 2,048-token output limit. An invalid pending proposal consumes its
+current check, then skips one later eligible prepare cycle before retry; managed run
+retries do not consume that skip. Expiry and exact approval identity stay unchanged.
+See the [discovery state contract](docs/ARCHITECTURE.md#trial-source-lifecycle-and-discovery).
+
+This is the first proposal-generation slice of [#132](https://github.com/Lenivvenil/digest/issues/132).
+It leaves active feeds and daily candidate scheduling unchanged. Approval still adds
+a priority-3 trial source; protection of important fintech/banking/architecture work
+after admission remains open. `adaptive.trial_slots` alone does not enforce that
+protection. Ordinary delivered recommendations still need editorial evaluation.
 
 ## Cache and persistence
 
@@ -345,6 +416,7 @@ is required. GitHub Actions persistence is the runtime workflow's responsibility
 | `source_stats.json` | Source observations and recent history |
 | `feedback.json` | Votes, polling offset and article-to-source mapping |
 | `pending_sources.json` | Source suggestions awaiting operator decisions |
+| `discovery_delivery.json` | Proposal delivery receipts/history, exploration attempts/offers and validation cooldowns |
 | `source_state.json` | Trial/graduation/demotion lifecycle state |
 | `source_category_map.json` | Category mapping for diagnostics |
 

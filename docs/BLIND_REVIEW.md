@@ -21,7 +21,7 @@ Markdown and Telegram pipeline. It defaults to false for existing configurations
    article count, excerpt length and a 16,000-character evidence-item JSON budget.
    The omission count is recorded. This is excerpt evidence, not full articles.
 3. Give primary and secondary slots exactly the same messages, language,
-   temperature, selection limit and maximum output tokens. No category summary,
+   temperature, evidence packet bound and maximum output tokens. No category summary,
    prior opinion, prior selection or other model identity enters the prompt.
 4. Pin each slot to its specified provider/model. There is no role/provider
    fallback for review slots. A failed model remains unavailable rather than
@@ -40,9 +40,65 @@ Markdown and Telegram pipeline. It defaults to false for existing configurations
    At most one third-model task is requested. HTTP retries remain independently
    bounded by the shared LLM retry policy.
 
+## Configured interests and reason fidelity
+
+The shared selection prompt retains the technology-architect audience and considers
+practical, operational and business relevance across operator-defined categories.
+Its `configured_category_interests` contains only distinct category labels already
+present in the exact RSS packet, with an unambiguous match to an enabled configured
+source. Matching follows the existing source sanitization and category truncation;
+collisions, including disabled look-alikes, convey no configured intent. Missing
+context never removes evidence or establishes irrelevance. There is no new reader
+profile, category quota or mandatory category coverage.
+
+No feed URLs, unrelated/disabled source list, personal profile, feedback or allocation
+priorities are added to the prompt. Priorities retain their allocation role and do
+not become editorial scores. The context is bounded by the existing packet count
+and 200-character category field. It adds input text without reducing the existing
+16,000-character evidence allowance or increasing requests, output limits or routes.
+Input headroom therefore decreases: the revised system text adds 970 UTF-8 bytes
+(166 content tokens with the existing local `o200k_base` tokenizer). With arbitrary
+JSON-escaped labels, the added context has a conservative ceiling of 24,115 UTF-8
+bytes at 20 evidence items, or 64,235 bytes across the supported 100-item setting
+and existing evidence-character bound. These are safety bounds, not typical usage;
+normal short category labels are much smaller. For byte-based `o200k_base`, standalone
+context token counts are at most those byte ceilings. These estimates exclude
+provider framing and do not establish Gemini or other provider token accounting,
+free-tier entitlement or guaranteed prompt fit. No counting call is added.
+
+Reasons must distinguish a supplied observation from conditional relevance inference,
+avoid attributing unstated mechanisms/results, and describe insufficient excerpt
+evidence without judging the unseen full article. The same restraint applies to
+non-selection and duplicate reasons. Existing strict quote/provenance checks remain;
+they cannot mechanically prove that every generated claim follows from its quotation.
+Capacity-only omissions still require `deferred`, never editorial rejection.
+
+All selection, planned-packet, reconciliation and resume paths hash the same complete
+messages. The changed prompt cannot silently reuse an older model-review result as a
+new-contract review. Historical reports, completed candidate judgments and accepted
+preparations stay readable and keep their original hashes; this change does not
+reopen prior editorial rejections. Technical-deferred work retains existing eligibility
+and scheduling rules and is not considered re-reviewed merely because a new packet
+can be planned. No persisted-state or YAML migration is introduced.
+
+Offline fixtures verify this wiring, privacy boundary and provenance only. Semantic
+acceptance for #121/#55 remains open: inspect supported facts, relevance inferences,
+inadequate evidence and dispositions in a subsequent ordinary authorized run or an
+explicitly admitted bounded replay, preserving the original failed evidence and the
+unchanged request/provider/Actions budgets. A new paid/private evaluation is not
+required by this change. Do not claim the prompt or synthetic responses prove better
+selection or factuality.
+
 ## Output and integration
 
 Primary selection becomes canonical Telegram cards, labeled as model opinion.
+`max_selections` limits those publication cards in the review's order; it is not
+sent to the reviewer as a relevance quota. The full validated selection list stays
+in the report. `max_detailed_selections` separately bounds detailed entries in a new
+response (default 5); useful overflow must be explicitly deferred and stays pending.
+The full evidence packet is still considered, and publication capacity is never an
+editorial rejection reason. Old validated reports retain their original selections.
+A provider-reported unfinished response is rejected, including syntactically closed JSON.
 Secondary/third opinions do not generate extra Telegram card floods. All reviews,
 quotes, confidence, provider/model identities, token usage, prompt hashes,
 completeness and escalation decisions appear in Markdown and a sibling
@@ -65,6 +121,8 @@ review:
   max_evidence_articles: 20
   max_excerpt_chars: 500
   max_selections: 5
+  max_detailed_selections: 5
+  editorial_context: ""  # Optional operator-owned relevance priorities, at most 1000 characters.
   max_output_tokens: 4096
   disagreement_threshold: 0.5
 ```
@@ -208,13 +266,14 @@ remains `invalid`. The original bounded, credential-redacted response and its
 original SHA-256 are retained for diagnosis. No citation is synthesized.
 
 Quotes remain literal excerpts from the supplied title or RSS text. The only
-allowed live-response repair aligns ASCII `-`, U+2010 HYPHEN and U+2011
-NON-BREAKING HYPHEN, each a single character. The validator retrieves the actual
+allowed live-response alignment maps ASCII `-`, U+2010 HYPHEN and U+2011
+NON-BREAKING HYPHEN together, and ASCII space, U+00A0 NO-BREAK SPACE and
+U+202F NARROW NO-BREAK SPACE together. Every mapping is one character to one character. The validator retrieves the actual
 source substring at the same indices and stores that exact text, recording
 `typography_normalized: true` on the accepted selection. The 200-character limit
 is checked before any repair. Semantic minus U+2212, dashes, ellipses, case,
-whitespace, paraphrases and Unicode compatibility transformations are not
-normalized. Checkpoint reuse requires the saved quote to match source text exactly.
+other whitespace, whitespace runs, paraphrases and Unicode compatibility transformations
+are not normalized. The shared RSS Irritator citation path uses the same exact-source alignment. Checkpoint reuse requires the saved quote to match source text exactly.
 
 The captured public-RSS regression fixture in
 `tests/fixtures/partial_review.json` yields four accepted entries (three narrow
@@ -249,6 +308,16 @@ are excluded from these requests. Legacy query generation uses claim and categor
 only; legacy ranking remains claim-only. This input boundary does not verify claim
 truth or semantic counter-evidence quality.
 
+The local [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
+asks for useful grounded queries in both bounded RSS and full-source investigation,
+without requiring a copied source phrase. It supersedes the earlier unaccepted
+mandatory-anchor proposal. Exploratory hypotheses stay in `intent`, distinct from
+source claims. A whole-query literal match, when available, remains exact derived
+provenance metadata. Its absence does not block an otherwise valid query set or mark
+it incomplete. Existing lexical/schema checks, source validation, exact cited/final-URL
+self-source exclusions, query/model/request limits and deadlines remain unchanged.
+This local revision does not establish semantic quality or useful live retrieval.
+
 Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
 `context` or `insufficient` against the supplied claim. Every entry must pass field,
 identity, score, relation and reasoning validation before filtering; bounded ranking
@@ -256,8 +325,9 @@ also verifies its URL-bound quote ID. Only `contradicts` and `complicates` at th
 existing minimum score reach public results, even when another relation has a high
 score. Bounded results record fixed omission counts for the three non-counter
 relations in the existing limitations list. An all-non-counter response is `empty`,
-not a ranking failure; an unknown relation fails the response closed. Public and
-archived result shapes, quote identity, request counts and ranking caps are unchanged.
+not a ranking failure; an unknown relation fails the response closed. The relation
+filter leaves existing public result fields, quote identity, request counts and
+ranking caps unchanged; the proposed private audit extension below is separate.
 This filter enforces the declared classification; it cannot prove that the model
 assigned the semantically correct relation.
 
@@ -440,3 +510,104 @@ recoverable. Missing/corrupt required objects fail explicitly; unrelated histori
 objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
 deployed accepted preparation and ready-edition formats remain compatible. Do not
 delete evidence or delivery markers to bypass a recovery error.
+
+### Proposed private ranking audit
+
+The local [ADR0012 proposal](decisions/0012-private-ranking-evidence.md) adds a versioned
+`ranking_audit` to the companion private `.irritator.json`. It preserves exact admitted
+source records, explicitly truncated diagnostic previews of omitted candidates,
+original hashes/lengths, query lineage, admission causes and fully validated model
+dispositions. `not_returned` means absent from a valid bounded model response;
+`pending` means no wholly valid response was obtained. Neither means irrelevant.
+
+Only JSON retains this trace; Markdown gets a concise summary/reference, and Telegram
+and translation keep their existing selected-prose inputs. The omitted-text allocation
+reuses 16,000 characters as a new proposed archive policy, not a ranking threshold.
+See the proposal for serialization bounds and the limits of truncated evidence. Old
+archives lack this evidence and cannot be retrospectively audited from hashes alone.
+This local proposal has not been accepted or deployed.
+
+### Deployed Groq GPT-OSS metadata-review output controls
+
+For the explicitly configured `groq/openai/gpt-oss-120b` review slot only, the
+correction deployed through engine [#137](https://github.com/Lenivvenil/digest/pull/137)
+(`526b950c`) and runtime [#65](https://github.com/Lenivvenil/digest-prod/pull/65)
+(`a62f9f5a`) sends `reasoning_effort: low` and strict JSON Schema for the
+existing response shape. Other providers and models retain their existing request options; the clarified
+review prompt is shared by all review slots. Other roles retain their existing wire requests. There is no format-repair request, model switch or increased output
+allowance. The five-detail response cap, 4096 output tokens, ordinary fallback and
+all finish-reason, ID, quote and disposition checks remain in force.
+
+The schema uses required fields, closed objects and nested `anyOf` for selected,
+not-selected/deferred and duplicate disposition shapes. It forbids a per-selection
+`limitations` field; limitations belongs only at the top level. No unsupported
+`maxItems` or `maxLength` constraint is assumed: local validation still checks
+counts, text budgets, evidence membership and exact quotes. Strict structure does
+not verify relevance or factuality and does not prevent a length cutoff.
+
+The second Oct 7 failed response respected five detailed selections but added
+forbidden limitations inside each, then stopped during its sixteenth disposition.
+Its saved usage contains 4222 prompt and 4096 completion tokens; the historical
+reasoning breakdown is unknown. New diagnostics retain only a nonnegative integer
+`completion_tokens_details.reasoning_tokens`, when supplied, plus allowlisted
+numeric rate-limit values. Missing or invalid values stay absent. Reasoning text,
+arbitrary headers and credentials are never copied into review diagnostics.
+
+The compact strict-schema controls add 1327 serialized wire characters. This is
+not a token count or proof of quota headroom. Ordinary RSS selection currently has
+request-count/pacing guards, not the experimental source-reading token preflight.
+The public 8K TPM profile is not verified remaining account quota; actual server
+usage and rate-limit diagnostics must be inspected after any separately authorized
+run. Output allowance and provider quotas are not increased.
+
+Provider references: [reasoning controls](https://console.groq.com/docs/reasoning),
+[strict structured output](https://console.groq.com/docs/structured-outputs), and
+[completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
+
+### Deployed editorial context and quantitative-qualifier correction
+
+Engine [#138](https://github.com/Lenivvenil/digest/pull/138) (`a605ecf7`) and runtime
+[#66](https://github.com/Lenivvenil/digest-prod/pull/66) (`32341547`) deployed this
+correction and the reviewed banking/fintech/banking-architecture priority context.
+Real editorial and translation acceptance remains open for subsequent output.
+
+`review.editorial_context` is an optional operator-owned string (maximum 1000
+characters, empty by default). A nonempty value enters the identical primary and
+fallback request and its prompt hash. It describes reader priorities, not source
+truth, automatic acceptance or a category quota. The empty setting adds no reader
+profile; configured category names and numerical source priorities are not inferred
+to encode the owner's professional priorities. No runtime profile is enabled by
+the engine change alone.
+
+The Oct 7 packet already contained four Banking & Fintech candidates. Their
+non-selection reasons required architecture detail despite the existing prompt's
+business/operational-relevance instructions. The finite scope-review cases are:
+
+- An intent-monitoring partnership: assess its stated fraud/control relevance
+- Payment-verification results: assess the reported operating-control outcome
+- A programmable-money event teaser: it may still lack a concrete new development
+- A generic future resilience event: its thin evidence may still justify non-selection
+
+The correction makes the operator's actual priorities explicit; it does not
+mechanically establish those items' usefulness or certify future model compliance.
+Changed context affects future planned reviews. It does not reset or reopen
+unchanged terminal not-selected/duplicate history, or rewrite previous prompts,
+responses, accepted preparation or delivered editions. Explicit reconsideration
+of prior decisions remains an open #121/#132 outcome.
+
+Primary instructions now require a quantitative claim to keep its comparator,
+value, unit, statistic/percentile and material conditions together, preferably as
+a short literal measurement quotation within concise generated prose. Translation
+v3 preserves that quotation and prohibits stronger alternative magnitude claims;
+it does not infer qualifiers missing from its canonical input. Existing quote
+invariants remain, and the changed prompt/version has a distinct translation cache
+binding. Older cache records and accepted delivery evidence are left untouched.
+
+The saved Cloudflare failure had two stages: primary prose dropped p99 from the
+source measurement, then Russian prose added a submillisecond assertion while
+retaining the digit 2. Offline tests explicitly show that digit equality still
+accepts this class of semantic error. A protected literal measurement quote catches
+changes inside that quote, not arbitrary invented wording elsewhere. Prompt
+assertions, exact quotations and numeric invariants are not semantic acceptance.
+Faithful output under the revised contract remains to be checked; no additional
+model call, blanket English fallback or mandatory full-article gate is introduced.

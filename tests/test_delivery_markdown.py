@@ -245,3 +245,28 @@ def test_same_day_retries_preserve_previous_digests(tmp_path: Path) -> None:
     for path, expected in zip(paths, ["First", "Retry", "Evening"], strict=True):
         assert path is not None
         assert path.read_text(encoding="utf-8").endswith(f"{expected}\n")
+
+
+def test_reading_appendix_preserves_original_qualifications_and_safe_fences(tmp_path: Path) -> None:
+    from digest.config import ReadingBriefConfig
+    from digest.radar.collector import article_hash
+    from scripts.review_fixture import fixture_config
+
+    config = fixture_config()
+    config.obsidian.enabled = True
+    config.obsidian.output_dir = str(tmp_path)
+    config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
+    card = _make_article_summary(summary="Substantive brief. Only pilot clients; source conflict is unresolved.")
+    original = ("[S1] Original claim.\n```\n[S2] QUALIFICATION: only pilot clients.\n"
+                "[S3] Contradictory source statement.")
+    quotations = {article_hash(card.title, card.link): original}
+    path = write_digest("Global status.", config, top_articles=[card], source_quotations=quotations)
+    assert path is not None
+    brief, appendix = path.read_text().split("## Original source evidence (archive only)")
+    assert card.summary in brief and "Original claim" not in brief
+    assert original in appendix and "````text\n" + original + "\n````" in appendix
+    assert quotations == {article_hash(card.title, card.link): original}
+    config.reading_brief = ReadingBriefConfig()
+    legacy = write_digest("Global status.", config, top_articles=[card], source_quotations=quotations)
+    assert legacy is not None
+    assert "Original source evidence" not in legacy.read_text() and card.summary in legacy.read_text()

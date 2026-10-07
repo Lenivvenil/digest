@@ -6,8 +6,14 @@ requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0.3",
     "httpx>=0.28.1",
-    "feedparser>=6.0.12",
+    "feedparser>=6.0.14",
 ]
+
+[project.optional-dependencies]
+reading-brief = ["tiktoken==0.14.0"]
+
+[tool.setuptools]
+license-files = ["THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
 include = ["digest*"]

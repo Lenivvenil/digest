@@ -37,3 +37,29 @@ resend lifecycle or exactly-once guarantee is implied.
 [0008](0008-candidate-selection-progress.md) proposes candidate accounting and
 continuation within ordinary bounded preparation under #121. It is not a deployment
 or editorial-quality approval.
+
+[0009](0009-selected-source-admission.md) proposes candidate-bound source admission
+and technical handoff under #122; it does not approve semantic publication or runtime activation.
+
+[0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
+source-point representation for #55. It does not approve a new prompt or publication path.
+
+[0011](0011-source-anchored-investigation-queries.md) revises the unaccepted mandatory
+literal-query guard into optional provenance diagnostics for bounded RSS and full-source
+investigation under #77. Useful grounded searches need no copied phrase; neutrality and
+useful retrieval remain empirical gates. The revision remains local and undeployed.
+
+[0012](0012-private-ranking-evidence.md) proposes bounded candidate/admission and
+validated ranking-decision evidence in the existing private JSON archive under #77.
+It is a local retention proposal, not owner acceptance, publication or deployment.
+
+[0013](0013-discovery-exploration-state.md) records the accepted first slice: configurable exploration areas,
+fair passes with least-recent-offer preference, and finite pending-feed validation
+cooldowns in existing discovery metadata under #132. Approval-to-candidate protection
+and ordinary recommendation quality remain open; owner approval on 2026-10-06 covered PR #133 and its engine-pin rollout.
+
+
+[0014](0014-optional-humane-closing-item.md) proposes a disabled-by-default humane
+closing designation in the existing primary selection response, strict preparation
+v1/v2 compatibility and optional presentation before immutable freeze. Source
+activation, translated capacity and semantic acceptance remain open under #127.

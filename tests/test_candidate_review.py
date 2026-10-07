@@ -52,7 +52,8 @@ def report_for(
     item = packet.evidence.items[0]
     selections = [EvidenceSelection(item.evidence_id, "Useful", item.title, "high")] if status == "ok" else []
     prompt_hash = hashlib.sha256(json.dumps(build_review_messages(
-        packet.evidence, config.review, config.radar.language), sort_keys=True).encode()).hexdigest()
+        packet.evidence, config.review, config.radar.language, sources=config.sources),
+        sort_keys=True).encode()).hexdigest()
     review = ModelReview(slot, "test", "test", packet.evidence.bundle_id, prompt_hash, status,
                          selections=selections, limitations=["RSS only"])
     return BlindReviewReport(1, packet.evidence, [review], "incomplete", None, [], "pending_independent_review")
@@ -160,6 +161,79 @@ def test_packet_diversity_and_priority_are_scheduling_preferences() -> None:
     packet = plan_packet(progress, config, NOW)
     assert {item.source for item in packet.evidence.items} == {"A", "B"}
     assert packet.priorities == {"A": 5, "B": 1}
+
+
+@pytest.mark.parametrize("bank_category", ["Banking", "000 Banking"])
+def test_coeval_source_priority_precedes_category_names(bank_category: str) -> None:
+    config = fixture_config()
+    config.sources = [
+        SourceConfig(f"Art {index:02}", f"https://a{index}.example/feed", f"A{index:02}", True, priority=3)
+        for index in range(20)
+    ] + [SourceConfig("Bank", "https://bank.example/feed", bank_category, True, priority=1)]
+    articles = {source.category: [Article(source.name, source.url + "/article", "Short excerpt",
+                                         source.name, source.category, NOW)] for source in config.sources}
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, {"Bank": 5}, NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None and len(packet.articles) == 20
+    assert [article.source for article in packet.articles] == ["Bank", *[f"Art {index:02}" for index in range(19)]]
+    assert packet.priorities["Bank"] == 5
+    assert build_evidence_bundle(packet_articles(packet), config.review) == packet.evidence
+
+
+def test_older_source_head_precedes_fresh_higher_priority_after_resume(tmp_path: Path) -> None:
+    config, articles = population(1)
+    config.sources.append(SourceConfig("B", "https://b.example/feed", "z-science", True, priority=1))
+    older = Article("Older science", "https://b.example/1", "Evidence", "B", "z-science", NOW)
+    progress = merge_candidates(CandidateProgress(), {"z-science": [older]}, config, {}, now=NOW)
+    save_candidate_progress(progress, tmp_path)
+    restored = load_candidate_progress(tmp_path)
+    later = NOW + timedelta(hours=1)
+    merge_candidates(restored, {**articles, "z-science": [older]}, config, {}, {"A": 5}, later)
+    config.review.max_evidence_articles = 1
+    packet = plan_packet(restored, config, later)
+    assert packet is not None and packet.articles[0].source == "B"
+    candidate = next(item for item in restored.candidates.values() if item.article.source == "B")
+    assert candidate.first_observed_at == NOW.isoformat()
+
+
+def test_source_round_rechecks_head_age_before_priority() -> None:
+    config, articles = population(2)
+    config.sources.append(SourceConfig("B", "https://b.example/feed", "science", True, priority=1))
+    science = [Article(f"Science {index}", f"https://b.example/{index}", "Evidence", "B", "science", NOW)
+               for index in range(2)]
+    progress = merge_candidates(CandidateProgress(), {"tech": articles["tech"][:1]}, config, {}, now=NOW)
+    merge_candidates(progress, {"science": science}, config, {}, now=NOW + timedelta(hours=1))
+    merge_candidates(progress, articles, config, {}, {"A": 5}, NOW + timedelta(hours=2))
+    config.review.max_evidence_articles = 3
+    packet = plan_packet(progress, config, NOW + timedelta(hours=2))
+    assert packet is not None and [article.source for article in packet.articles] == ["A", "B", "B"]
+
+
+def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: Path) -> None:
+    config, articles = population(3)
+    config.sources.append(SourceConfig("B", "https://b.example/feed", "science", True, priority=1))
+    articles["science"] = [Article("Science", "https://b.example/1", "Evidence", "B", "science", NOW)]
+    config.review.max_evidence_articles = 1
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, {"A": 5}, NOW)
+    observed_at = {identity: candidate.first_observed_at for identity, candidate in progress.candidates.items()}
+    served = []
+    for window in range(1, 5):
+        later = NOW + timedelta(hours=window)
+        fresh = {"tech": [Article(f"Fresh {window}-{index}", f"https://a.example/{window}-{index}", "Evidence",
+                                  "A", "tech", later) for index in range(3)]}
+        merge_candidates(progress, fresh, config, {}, {"A": 5}, later)
+        packet = plan_packet(progress, config, later)
+        assert packet is not None
+        served.append(packet.articles[0].source)
+        begin_packet(progress, packet, tmp_path)
+        reconcile_packet(progress, packet, report_for(packet, config), config, tmp_path)
+        mark_prepared(progress, packet.evidence.bundle_id, tmp_path)
+        progress = load_candidate_progress(tmp_path)
+    # A's freshness turn exposes its newer head; B's older observation now
+    # precedes that head. Its opportunity no longer waits for A's old backlog.
+    assert served == ["B", "A", "A", "A"]
+    assert all(candidate.first_observed_at == observed_at[identity]
+               for identity, candidate in progress.candidates.items() if identity in observed_at)
 
 
 def test_partial_keeps_rejected_identity_technical_and_fallback_matches_delivery(tmp_path: Path) -> None:
@@ -664,7 +738,7 @@ def test_consumed_resolved_packet_retires_active_work_and_preserves_indexed_deci
     assert pending_completed_report(restored) is None and plan_packet(restored, config, NOW) is None
     for identity, candidate in expected.items():
         assert load_candidate(identity, tmp_path) == candidate
-        assert load_candidate_packets(identity, tmp_path) == (replace(packet, handed_to_preparation=False),)
+        assert load_candidate_packets(identity, tmp_path) == (packet,)
         assert candidate.status == "not_selected" and candidate.disposition.reason
 
 
@@ -814,6 +888,7 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     config.sources = [SourceConfig("A", "https://x/rss", "c", True)]
     config.review.max_evidence_articles = 100
     config.review.max_selections = 10
+    config.review.max_detailed_selections = 10  # Nine valid entries plus one rejected quote test storage capacity.
     config.review.max_excerpt_chars = 50
     articles = {"c": [Article(f"T{i}", f"https://x/{i}", "D", "A", "c", None) for i in range(100)]}
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -838,3 +913,41 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     growth = progress_size(progress) - before
     assert 1_048_576 < growth <= RESPONSE_STORAGE_RESERVE
     assert provider.await_count == 2 and [review.status for review in report.reviews] == ["invalid", "partial"]
+
+
+def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_path: Path) -> None:
+    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+
+    config, articles = population(1)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    begin_packet(progress, packet, tmp_path)
+    report = report_for(packet, config, "abstained")
+    raw = json.dumps({"selections": [], "limitations": ["RSS only"], "dispositions": [
+        {"evidence_id": item.evidence_id, "status": "deferred", "reason": "Useful but output capacity exhausted."}
+        for item in packet.evidence.items]})
+    report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
+    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
+    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    # Emulate a valid archived report from a different prompt contract, preserving
+    # every matching provenance reference before the ordinary save/load boundary.
+    old_hash = hashlib.sha256(b"older selection contract").hexdigest()
+    packet.prompt_hash = report.reviews[0].prompt_hash = old_hash
+    packet.disposition_attempts = tuple(replace(attempt, prompt_hash=old_hash)
+                                        for attempt in packet.disposition_attempts)
+    candidate = next(iter(progress.candidates.values()))
+    candidate.decision_prompt_hash = old_hash
+    save_candidate_progress(progress, tmp_path)
+    restored = load_candidate_progress(tmp_path)
+    merge_candidates(restored, {}, config, {}, now=NOW + timedelta(hours=1))
+    candidate = next(iter(restored.candidates.values()))
+    assert candidate.eligible and candidate.status == "technical_pending"
+    assert candidate.disposition.status == "deferred"
+    assert candidate.decision_prompt_hash == old_hash
+    assert pending_completed_report(restored) is None
+    next_packet = plan_packet(restored, config, NOW + timedelta(hours=1))
+    assert next_packet is not None and next_packet.evidence == packet.evidence
+    assert next_packet.prompt_hash != old_hash and next_packet.report is None
+    assert restored.packets[0].report.reviews[0].prompt_hash == old_hash
+    assert candidate.status == "technical_pending" and candidate.decision_prompt_hash == old_hash

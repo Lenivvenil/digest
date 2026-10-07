@@ -2,24 +2,69 @@
 
 _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written against commit `cc974f5`; issue-#53 fixes incorporated)._
 
-## Current status — 2026-10-01
+## Current status — 2026-10-02
 
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
 distinguishes those observations from owner requirements and later implementation.
-Productization [#94](https://github.com/Lenivvenil/digest/issues/94)
-is the sole active item. English documentation/onboarding #95 is merged; primary-post
-translation is under review while supplementary translation remains pending. Editorial quality
-[#55](https://github.com/Lenivvenil/digest/issues/55) awaits real-output verification.
-These scoped changes do not alter the production runtime or the external-search contract.
+English documentation and configurable primary/supplementary translation are implemented.
+[#94](https://github.com/Lenivvenil/digest/issues/94) still requires ordinary post-#102
+semantic and presentation acceptance. Earlier synthetic translation validation is limited
+historical evidence. [#55](https://github.com/Lenivvenil/digest/issues/55) remains the open
+full-source factual-quality requirement.
 
 Irritator's product purpose remains genuine external counter-evidence. An
 independent model opinion or a Skeptic paragraph is not an external counter-signal.
 The primary-first delivery recovery isolates optional-stage failures without
-removing that purpose. Statements below that the pipeline is wholly transient
+removing that purpose; compact mode retains actual supplementary results in the archive.
+Statements below that the pipeline is wholly transient
 or that nothing is persisted describe the April snapshot, not the later
-follow-up checkpoints; source-contract repairs remain queued under
-[#77](https://github.com/Lenivvenil/digest/issues/77).
+follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
+acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
+
+### Draft source-context preservation under #77/#122
+
+The disabled full-source integration retains known qualification passages beside the
+original narrative citations for query generation and ranking. Only passages from the
+exact cited article and source/body snapshot can be added; the claim and its quotations
+remain unchanged. Oversized complete context is technical incomplete under the existing
+evidence-envelope bound, not silently shortened. This bound is not provider admission.
+The full-source path separately reuses the reader's exact Gemini or labelled local Groq
+admission on each actual stage request, sharing its existing counter and deadline.
+Unknown/oversized admission holds optional analysis; legacy RSS behavior is unchanged.
+Account quota and live acceptance remain unverified. See [proposed ADR0009](../../decisions/0009-selected-source-admission.md).
+
+This fixes loss of supplied evidence, not the model's ability to judge applicability.
+The saved Apple/Progent explanation still invented a necessity comparison absent from
+the supplied sources. A literal quotation, relation label or valid JSON does not prove
+a meaningful counter-signal. Manual comparisons and source qualifications must remain
+distinct from automatic search/ranking acceptance.
+
+### Revised proposal for grounded queries and optional provenance
+
+[ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) now proposes
+useful grounded topic/entity searches without requiring a copied source phrase. Its
+earlier mandatory literal-match guard was an unaccepted draft proposal and is superseded,
+not an accepted policy being revoked. Exploratory hypotheses remain distinct from
+source claims. A derived source-text match remains optional provenance metadata only;
+it proves neither neutrality nor useful recall. Valid nonempty query sets without a
+match proceed unchanged to bounded search; no replacement query is fabricated.
+
+This proposed change affects the bounded RSS path even when source reading is disabled,
+as well as full-source investigation. This revision is local, unaccepted and undeployed.
+The standalone legacy generator, lexical/schema validation, query/model/request limits,
+deadlines, primary delivery and semantic acceptance remain unchanged.
+Search results that exactly repeat a cited target URL or its verified final URL are
+excluded from external candidates, with explicit URLs/counts retained. Different
+documents on the same publisher remain eligible; no guessed alias or extra fetch is used.
+
+### Proposed private decision evidence
+
+[ADR0012](../../decisions/0012-private-ranking-evidence.md) proposes a bounded private
+JSON trace of post-validation external candidates, admission omissions and fully
+validated ranking dispositions. Omitted-source previews explicitly record truncation;
+unknown or unreturned relevance is never relabeled as rejection. This local archive
+proposal does not change ranking behavior or establish semantic counter-evidence quality.
 
 ---
 
