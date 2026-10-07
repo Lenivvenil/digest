@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
 from digest.review import _parse_review, build_evidence_bundle, primary_cards, run_blind_review
@@ -34,6 +35,7 @@ def test_evidence_is_deterministic_and_changes_when_excerpt_changes() -> None:
 
 @pytest.mark.asyncio
 async def test_every_slot_is_blind_and_gets_identical_evidence() -> None:
+    execution = ModelExecution()
     requests = []
 
     async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
@@ -46,7 +48,7 @@ async def test_every_slot_is_blind_and_gets_identical_evidence() -> None:
         return text, usage
 
     with patch("digest.review.complete", side_effect=adapter):
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert len(requests) == 3
     assert all(request == requests[0] for request in requests)
     assert "PRIMARY_ONLY_SENTINEL" not in json.dumps(requests)
@@ -58,6 +60,7 @@ async def test_every_slot_is_blind_and_gets_identical_evidence() -> None:
 
 @pytest.mark.asyncio
 async def test_agreement_does_not_call_third_model() -> None:
+    execution = ModelExecution()
     response = None
 
     async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
@@ -67,7 +70,7 @@ async def test_agreement_does_not_call_third_model() -> None:
         return response
 
     with patch("digest.review.complete", side_effect=adapter) as complete:
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert complete.call_count == 2
     assert report.selection_overlap == 1
     assert report.disputed_ids == []
@@ -76,6 +79,7 @@ async def test_agreement_does_not_call_third_model() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [RuntimeError("quota"), "invalid JSON"])
 async def test_peer_failure_is_incomplete_not_disagreement(failure: object) -> None:
+    execution = ModelExecution()
     async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
         if kwargs["provider_override"].name == "groq":
             if isinstance(failure, Exception):
@@ -84,7 +88,7 @@ async def test_peer_failure_is_incomplete_not_disagreement(failure: object) -> N
         return await fixture_response(role, messages, config, **kwargs)
 
     with patch("digest.review.complete", side_effect=adapter) as complete:
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert complete.call_count == 2
     assert report.status == "incomplete"
     assert report.selection_overlap is None
@@ -135,8 +139,9 @@ def test_duplicate_slot_identity_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp_path: Path) -> None:
+    execution = ModelExecution()
     with patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP is forbidden")):
-        report = await run_fixture()
+        report = await run_fixture(execution=execution)
     config = fixture_config()
     config.obsidian.enabled = True
     config.obsidian.output_dir = str(tmp_path)
@@ -149,27 +154,30 @@ async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp
 
 @pytest.mark.asyncio
 async def test_completion_order_does_not_change_slot_attribution() -> None:
+    execution = ModelExecution()
     async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
         if kwargs["provider_override"].name == "gemini":
             await asyncio.sleep(0.001)
         return await fixture_response(role, messages, config, **kwargs)
 
     with patch("digest.review.complete", side_effect=adapter):
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert [r.slot for r in report.reviews] == ["primary", "secondary", "third"]
 
 
 @pytest.mark.asyncio
 async def test_selection_survives_category_prose_failure() -> None:
+    execution = ModelExecution()
     from digest.application.analysis import analyze_articles as _analyze_articles
 
-    report = await run_fixture()
+    report = await run_fixture(execution=execution)
     with (
         patch("digest.review.run_blind_review", AsyncMock(return_value=report)),
         patch("digest.radar.summarize_all", AsyncMock(return_value=([], None))),
         patch("digest.radar.pick_top_articles", AsyncMock()) as legacy_picker,
     ):
-        summaries, trends, cards, actual = await _analyze_articles(fixture_articles(), fixture_config())
+        summaries, trends, cards, actual = await _analyze_articles(fixture_articles(), fixture_config(),
+            execution=execution)
     assert summaries == [] and trends is None
     assert len(cards) == 2 and actual is report
     legacy_picker.assert_not_called()
@@ -177,13 +185,14 @@ async def test_selection_survives_category_prose_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_duplicate_article_identity_uses_same_canonical_source_for_cards() -> None:
+    execution = ModelExecution()
     from dataclasses import replace
 
     articles = fixture_articles()
     original = next(a for a in articles["Architecture"] if a.link.endswith("idempotency"))
     articles["zz_duplicate"] = [replace(original, source="DIFFERENT_SOURCE", category="zz_duplicate")]
     with patch("digest.review.complete", side_effect=fixture_response):
-        report = await run_blind_review(articles, fixture_config())
+        report = await run_blind_review(articles, fixture_config(), execution=execution)
     evidence = {i.url: i for i in report.evidence.items}[original.link]
     card = next(c for c in primary_cards(report, articles, "en") if c.link == original.link)
     assert evidence.source == card.source == original.source
@@ -192,10 +201,11 @@ async def test_duplicate_article_identity_uses_same_canonical_source_for_cards()
 
 @pytest.mark.asyncio
 async def test_disagreement_below_threshold_is_not_labeled_agreement() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.review.disagreement_threshold = 0.1
     with patch("digest.review.complete", side_effect=fixture_response) as complete:
-        report = await run_blind_review(fixture_articles(), config)
+        report = await run_blind_review(fixture_articles(), config, execution=execution)
     assert report.disputed_ids
     assert report.third_model_reason == "selection_disagreement_not_escalated"
     assert complete.call_count == 2
@@ -206,11 +216,12 @@ async def test_disagreement_below_threshold_is_not_labeled_agreement() -> None:
 async def test_empty_selection_review_diagnostics_survive_pipeline(
     abstained: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     from digest.irritator import IrritatorStatus
     from digest.main import run
 
     monkeypatch.chdir(tmp_path)
-    report = await run_fixture()
+    report = await run_fixture(execution=execution)
     for review in report.reviews:
         review.status = "abstained" if abstained else "unavailable"
         review.selections = []
@@ -251,9 +262,10 @@ def test_oversized_or_non_web_evidence_is_omitted_once_for_every_model() -> None
 
 @pytest.mark.asyncio
 async def test_telegram_status_exposes_incomplete_peer_review() -> None:
+    execution = ModelExecution()
     from digest.application.legacy import _review_status_line
 
-    report = await run_fixture()
+    report = await run_fixture(execution=execution)
     report.status = "incomplete"
     report.reviews[1].status = "unavailable"
     status = _review_status_line(report)
@@ -265,6 +277,7 @@ async def test_telegram_status_exposes_incomplete_peer_review() -> None:
 async def test_trial_isolates_cache_and_never_calls_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     from digest.review_trial import run_trial
 
     monkeypatch.chdir(tmp_path)
@@ -275,7 +288,7 @@ async def test_trial_isolates_cache_and_never_calls_delivery(
     config = fixture_config()
     config.telegram.enabled = True
     config.llm.max_retries = 3
-    report = await run_fixture()
+    report = await run_fixture(execution=execution)
 
     async def collector(actual: object) -> tuple:
         assert Path.cwd() != tmp_path
@@ -293,7 +306,7 @@ async def test_trial_isolates_cache_and_never_calls_delivery(
         patch("digest.radar.save_dedup_cache", side_effect=AssertionError("No state writes")),
         patch("digest.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
     ):
-        assert await run_trial(tmp_path / "fixture.yaml", tmp_path / "output") == 0
+        assert await run_trial(tmp_path / "fixture.yaml", tmp_path / "output", execution=execution) == 0
     assert Path.cwd() == tmp_path
     assert state.read_text() == '{"production": "untouched"}'
     assert (tmp_path / "output/review.json").exists()
@@ -302,11 +315,12 @@ async def test_trial_isolates_cache_and_never_calls_delivery(
 
 @pytest.mark.asyncio
 async def test_invalid_review_preserves_reason_and_rejected_model_text() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     raw = ('{"selections":[{"evidence_id":"invented","reason":"Useful",'
            '"quote":"text","confidence":"high"}],"limitations":[]}')
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))):
-        report = await run_blind_review(fixture_articles(), config)
+        report = await run_blind_review(fixture_articles(), config, execution=execution)
     assert report.reviews[0].error == "unknown evidence id"
     assert report.reviews[0].rejected_output == raw
     assert report.reviews[0].response_sha256

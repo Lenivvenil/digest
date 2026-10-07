@@ -10,6 +10,7 @@ from typing import Literal
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_review import (
     CandidatePacket,
     CandidateProgress,
@@ -880,6 +881,7 @@ def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferr
 async def test_response_storage_reserve_covers_supported_escaped_unicode_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
     from digest.candidate_dispositions import CandidateDispositionCapture
@@ -910,7 +912,8 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     provider = AsyncMock(side_effect=[("😀" * 32000, {}), (raw, {})])
     monkeypatch.setattr("digest.review.complete", provider)
     capture = CandidateDispositionCapture()
-    report = await run_primary_review(packet_articles(packet), config, disposition_capture=capture)
+    report = await run_primary_review(packet_articles(packet), config,
+        execution=model_execution, disposition_capture=capture)
     reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
     growth = progress_size(progress) - before
     assert 1_048_576 < growth <= RESPONSE_STORAGE_RESERVE

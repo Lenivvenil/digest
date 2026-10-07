@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest import llm
+from digest.adapters.models.execution import ModelExecution
 from digest.article_source import FetchedArticle
 from digest.config import Config, ReadingBriefConfig
 from digest.reading_brief import enrich_selected_cards, mark_briefs_delivered, ready_brief_evidence
@@ -52,6 +53,7 @@ def response(messages: list[dict[str, str]], *, abstain: bool = False) -> tuple[
 
 @pytest.mark.asyncio
 async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     article = make_article()
     text = "OPENING CLAIM\n\n" + "\n\n".join(f"Section {i}: " + "context " * 50 for i in range(150))
     text += "\n\nFINAL QUALIFICATION: failed deployments are excluded."
@@ -66,7 +68,8 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=150_000)) as count,
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
         assert len(run.cards) == 1 and run.pending == 0 and run.abstained == 0
         identity = next(iter(run.quotations))
         assert run.cards[0].summary.startswith("Reading brief: ")
@@ -81,19 +84,22 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
         assert "Published: 2026-09-20 (source)" in run.provenance[identity]
         assert "Images not assessed." in run.provenance[identity]
         assert fetch.call_count == count.call_count == call.call_count == 1
-        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
         assert again.quotations == run.quotations and call.call_count == 1
         with pytest.raises(ValueError):
             mark_briefs_delivered(tmp_path, {"0" * 32})
         assert load_state(tmp_path, identity).status == "ready"
         mark_briefs_delivered(tmp_path, {identity})
         assert load_state(tmp_path, identity).status == "delivered"
-        assert not (await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)).cards
+        assert not (await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                                execution=model_execution)).cards
         assert call.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dropping(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     text = "\n\n".join(f"QUALIFICATION {index}: condition {index}." for index in range(8))
     counted: list[list[int]] = []
     generated: list[list[int]] = []
@@ -117,14 +123,16 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
-        first = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        first = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
         assert first.pending == 1 and not first.cards and first.abstained == 0
         identity = next(state_root(tmp_path).glob("*.json")).stem
         state = load_state(tmp_path, identity)
         assert state.error_class == "technical_quota_or_budget" and state.attempts == 1
         assert state.pages[0].result is not None
         assert generated == [[1, 2], [3, 4]]
-        second = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+        second = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                             execution=model_execution)
         assert second.pending == 0 and len(second.cards) == 1
         assert counted[0] == list(range(1, 9))
         assert generated == [[1, 2], [3, 4], [3, 4], [5, 6], [7, 8]]
@@ -140,6 +148,7 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
 @pytest.mark.parametrize("damage", ["truncated", "unknown_id", "partial_coverage", "no_angle_citations",
                                     "missing_brief", "bad_type"])
 async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path: Path, damage: str) -> None:
+    model_execution = ModelExecution()
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         text, usage = response(messages)
         data = json.loads(text)
@@ -160,35 +169,42 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Claim.\n\nQualification."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
     assert not run.cards and run.pending == 1 and run.abstained == 0 and call.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_abstention_is_semantic_only_after_every_page_completes(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages, abstain=True)
 
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Public routine announcement."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
-        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
+        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
     assert not run.cards and run.pending == 0 and run.abstained == again.abstained == 1
     assert call.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_rejections(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     cfg = config()
-    llm.set_request_limit(cfg, 0)
+    llm.set_request_limit(cfg, model_execution, 0)
     with (patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=ValueError("coverage_incomplete"))),
           patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
-        first = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
+        first = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
     assert first.pending == 1 and first.abstained == 0 and first.oldest_pending
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
-        second = await enrich_selected_cards([], cfg, tmp_path, time.monotonic() + 1000)
+        second = await enrich_selected_cards([], cfg, tmp_path, time.monotonic() + 1000,
+                                             execution=model_execution)
     assert second.pending == 1 and second.abstained == 0 and count.call_count == 0
 
 
@@ -197,6 +213,7 @@ async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_reje
 async def test_deadline_admits_a_clipped_useful_window_after_pacing(
     tmp_path: Path, remaining: float, expected_calls: int,
 ) -> None:
+    model_execution = ModelExecution()
     async def generate_response(_role: Any, messages: list[dict[str, str]], *_args: Any, **kwargs: Any) -> Any:
         assert 30 <= kwargs["request_timeout_seconds"] <= remaining - 5 - 0.25
         assert kwargs["request_timeout_seconds"] < 120
@@ -206,13 +223,15 @@ async def test_deadline_admits_a_clipped_useful_window_after_pacing(
           patch("digest.llm.request_wait_seconds", return_value=5),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate_response) as generate):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + remaining)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + remaining,
+                                          execution=model_execution)
     assert run.pending == 1 - expected_calls and count.call_count == 1 and generate.call_count == expected_calls
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("damage", ["result_id", "angle", "ready_before_coverage", "route", "source"])
 async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(tmp_path: Path, damage: str) -> None:
+    model_execution = ModelExecution()
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
@@ -220,7 +239,8 @@ async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=full_source)),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
         identity = next(iter(run.quotations))
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
@@ -240,7 +260,8 @@ async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(
             source_path.write_text(json.dumps(source))
         envelope["sha256"] = checksum(data)
         path.write_text(json.dumps(envelope))
-        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                           execution=model_execution)
         assert not held.cards and held.pending == 1 and call.call_count == 1
         with pytest.raises(ValueError):
             mark_briefs_delivered(tmp_path, {identity})
@@ -249,15 +270,18 @@ async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(
 
 @pytest.mark.asyncio
 async def test_unknown_profile_holds_admitted_selection_without_fetch_or_fallback(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     cfg = config()
     cfg.reading_brief = replace(cfg.reading_brief, model="unprofiled-model")
     with patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch:
-        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
     assert run.pending == 1 and not run.cards and fetch.call_count == 0
 
 
 @pytest.mark.asyncio
 async def test_acknowledgment_persistence_failure_propagates_and_reconciliation_is_exact(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     from digest.reading_brief import reconcile_briefs_delivered
 
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
@@ -268,7 +292,8 @@ async def test_acknowledgment_persistence_failure_propagates_and_reconciliation_
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate)):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
     identity = next(iter(run.quotations))
     assert load_state(tmp_path, identity).pages[0].usage == {
         "prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180,
@@ -286,6 +311,7 @@ async def test_acknowledgment_persistence_failure_propagates_and_reconciliation_
 
 @pytest.mark.asyncio
 async def test_original_rss_context_survives_metadata_drift_but_does_not_enter_reader_prompt(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     original = make_article(description="UNVERIFIED RSS ANNOUNCEMENT", category="Original category")
     messages_seen = []
 
@@ -296,31 +322,37 @@ async def test_original_rss_context_survives_metadata_drift_but_does_not_enter_r
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete actual source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        first = await enrich_selected_cards([original], config(), tmp_path, time.monotonic() + 1000)
+        first = await enrich_selected_cards([original], config(), tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
         later = replace(original, description="Changed RSS teaser", category="Changed category", pub_date=None)
-        second = await enrich_selected_cards([later], config(), tmp_path, time.monotonic() + 1000)
+        second = await enrich_selected_cards([later], config(), tmp_path, time.monotonic() + 1000,
+                                             execution=model_execution)
     assert second.cards == first.cards and second.articles[0] == original and call.call_count == 1
     assert "UNVERIFIED RSS ANNOUNCEMENT" not in json.dumps(messages_seen)
 
 
 @pytest.mark.asyncio
 async def test_corrupt_backlog_has_unknown_age_and_cannot_be_readmitted(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     from digest.radar.collector import article_hash
 
     article = make_article()
     identity = article_hash(article.title, article.link)
     (state_root(tmp_path) / f"{identity}.json").write_text("damaged file")
     with patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch:
-        result = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000)
+        result = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000,
+                                             execution=model_execution)
     assert result.pending == 1 and result.oldest_pending is None and fetch.call_count == 0
 
 
 @pytest.mark.asyncio
 async def test_fetch_transport_failure_is_persisted_as_technical_pending(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     import httpx
 
     with patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=httpx.ConnectError("offline"))):
-        result = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        result = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                             execution=model_execution)
     assert result.pending == 1 and not result.cards and result.abstained == 0
 
 
@@ -328,6 +360,7 @@ async def test_fetch_transport_failure_is_persisted_as_technical_pending(tmp_pat
 async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separate_from_quote_archive(
     tmp_path: Path,
 ) -> None:
+    model_execution = ModelExecution()
     text = (
         "The cache places hot keys in memory to reduce lookup latency.\n\n"
         "The overview says cached values persist across a process restart.\n\n"
@@ -368,7 +401,8 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
     identity = next(iter(run.quotations))
     assert run.cards[0].summary == f"Reading brief: {brief}"
     assert all(part in run.quotations[identity] for part in text.split("\n\n"))
@@ -383,13 +417,15 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
 async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
     tmp_path: Path, previous_version: str,
 ) -> None:
+    model_execution = ModelExecution()
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        ready = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000)
+        ready = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
+                                            execution=model_execution)
         identity = next(iter(ready.quotations))
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
@@ -398,13 +434,15 @@ async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
         envelope["sha256"] = checksum(envelope["payload"])
         legacy_bytes = json.dumps(envelope).encode()
         path.write_bytes(legacy_bytes)
-        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000)
+        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
+                                           execution=model_execution)
     assert held.pending == 1 and not held.cards and not held.provenance and call.call_count == 1
     assert path.read_bytes() == legacy_bytes
 
 
 @pytest.mark.asyncio
 async def test_abstaining_later_page_qualification_remains_literal_in_retained_evidence(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     claim = "The cache accelerates every read."
     condition = "The result applies only to the pilot deployment; production traffic was not evaluated."
     text = claim + "\n\n" + condition
@@ -430,7 +468,8 @@ async def test_abstaining_later_page_qualification_remains_literal_in_retained_e
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
-        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000)
+        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
+                                          execution=model_execution)
     identity = next(iter(run.quotations))
     assert generated_pages == [[1], [2]] and run.pending == 0 and len(run.cards) == 1
     assert load_state(tmp_path, identity).pages[1].result.abstain is True

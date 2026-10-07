@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import (
     CandidateDisposition,
     CandidateDispositionCapture,
@@ -37,10 +38,12 @@ def payload() -> dict[str, Any]:
 
 
 async def run(data: dict[str, Any] | str) -> tuple[Any, CandidateDispositionCapture]:
+    model_execution = ModelExecution()
     capture = CandidateDispositionCapture()
     text = data if isinstance(data, str) else json.dumps(data)
     with patch("digest.review.complete", return_value=(text, {})) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(), disposition_capture=capture)
+        report = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution, disposition_capture=capture)
     assert complete.call_count == (2 if report.reviews[0].status == "invalid" else 1)
     assert all(call.kwargs["max_output_tokens"] == 4096 for call in complete.call_args_list)
     return report, capture
@@ -132,11 +135,13 @@ async def test_legacy_is_readable_without_fabricated_omission_reasons() -> None:
 
 @pytest.mark.asyncio
 async def test_truncation_and_provider_failure_preserve_unresolved_packet() -> None:
+    model_execution = ModelExecution()
     _, capture = await run(json.dumps(payload())[:-8])
     assert all(attempt.status == "incomplete" and attempt.unresolved_ids for attempt in capture.attempts)
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", side_effect=RuntimeError("offline")) as complete:
-        await run_primary_review(fixture_articles(), fixture_config(), disposition_capture=capture)
+        await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 2
     assert [attempt.slot for attempt in capture.attempts] == ["primary", "secondary"]
     assert all(attempt.response_sha256 is None and attempt.unresolved_ids for attempt in capture.attempts)
@@ -145,6 +150,7 @@ async def test_truncation_and_provider_failure_preserve_unresolved_packet() -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language,escaped", [("en", False), ("ru", False), ("ru", True)])
 async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escaped: bool) -> None:
+    model_execution = ModelExecution()
     articles = {"Tech": [make_article(title=f'Architecture "{index}"\\path', link=f"https://example.com/{index}")
                           for index in range(20)]}
     config = fixture_config()
@@ -173,7 +179,7 @@ async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escap
         return text, {}
 
     with patch("digest.review.complete", side_effect=adapter) as complete:
-        report = await run_primary_review(articles, config, disposition_capture=capture)
+        report = await run_primary_review(articles, config, execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 1
     assert len(report.evidence.items) == 20 and len(report.reviews[0].selections) == 5
     assert capture.attempts[0].status == "complete"
@@ -183,11 +189,13 @@ async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escap
 
 @pytest.mark.asyncio
 async def test_fallback_capture_binds_only_its_own_response() -> None:
+    model_execution = ModelExecution()
     data = payload()
     text = json.dumps(data)
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", side_effect=[("invalid", {}), (text, {})]) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(), disposition_capture=capture)
+        report = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 2
     primary, secondary = capture.attempts
     assert primary.slot == "primary" and primary.status == "incomplete"
@@ -279,11 +287,13 @@ async def test_persisted_attempt_tampering_is_rejected(kind: str) -> None:
 @pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS", "content_filter", "unknown", "", "stop",
                                           "STOP", "end_turn", None])
 async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reason: str | None) -> None:
+    model_execution = ModelExecution()
     text = json.dumps(payload())
     capture = CandidateDispositionCapture()
     usage = {} if finish_reason is None else {"finish_reason": finish_reason}
     with patch("digest.review.complete", return_value=(text, usage)) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(), disposition_capture=capture)
+        report = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution, disposition_capture=capture)
     terminal = finish_reason is None or finish_reason in {"stop", "STOP", "end_turn"}
     assert complete.call_count == (1 if terminal else 2)
     assert report.reviews[0].status == ("ok" if terminal else "invalid")

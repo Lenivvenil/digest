@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import (
     Config,
     FiltersConfig,
@@ -191,6 +192,7 @@ class TestBuildTrendsPrompt:
 class TestSummarizeAll:
     @pytest.mark.asyncio
     async def test_success_two_categories(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles_by_cat = _make_articles_by_category()
 
@@ -202,7 +204,7 @@ class TestSummarizeAll:
             ]
         )
         with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, trends = await summarize_all(articles_by_cat, config)
+            summaries, trends = await summarize_all(articles_by_cat, config, execution=execution)
 
         assert len(summaries) == 2
         summary_texts = {s.category: s.summary_text for s in summaries}
@@ -215,6 +217,7 @@ class TestSummarizeAll:
 
     @pytest.mark.asyncio
     async def test_partial_failure_one_category(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles_by_cat = _make_articles_by_category()
 
@@ -229,7 +232,7 @@ class TestSummarizeAll:
 
         mock_complete = AsyncMock(side_effect=_side_effect)
         with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, trends = await summarize_all(articles_by_cat, config)
+            summaries, trends = await summarize_all(articles_by_cat, config, execution=execution)
 
         # Only one category succeeded, so trends should be None (len(summaries) <= 1)
         assert len(summaries) == 1
@@ -237,24 +240,26 @@ class TestSummarizeAll:
 
     @pytest.mark.asyncio
     async def test_all_categories_fail(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles_by_cat = _make_articles_by_category()
 
         mock_complete = AsyncMock(side_effect=RuntimeError("LLM error"))
         with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, trends = await summarize_all(articles_by_cat, config)
+            summaries, trends = await summarize_all(articles_by_cat, config, execution=execution)
 
         assert summaries == []
         assert trends is None
 
     @pytest.mark.asyncio
     async def test_single_category_no_trends(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles_by_cat = {"AI": [_make_article(category="AI")]}
 
         mock_complete = AsyncMock(return_value=("Summary for AI", {}))
         with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, trends = await summarize_all(articles_by_cat, config)
+            summaries, trends = await summarize_all(articles_by_cat, config, execution=execution)
 
         assert len(summaries) == 1
         assert trends is None
@@ -263,6 +268,7 @@ class TestSummarizeAll:
 
     @pytest.mark.asyncio
     async def test_trends_failure_returns_none(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles_by_cat = _make_articles_by_category()
 
@@ -277,19 +283,20 @@ class TestSummarizeAll:
 
         mock_complete = AsyncMock(side_effect=_side_effect)
         with patch("digest.radar.summarizer.complete", mock_complete):
-            summaries, trends = await summarize_all(articles_by_cat, config)
+            summaries, trends = await summarize_all(articles_by_cat, config, execution=execution)
 
         assert len(summaries) == 2
         assert trends is None
 
     @pytest.mark.asyncio
     async def test_passes_messages_to_complete(self) -> None:
+        execution = ModelExecution()
         config = _make_config(language="en")
         articles_by_cat = {"Tech": [_make_article(title="Tech Article", category="Tech")]}
 
         mock_complete = AsyncMock(return_value=("Summary", {}))
         with patch("digest.radar.summarizer.complete", mock_complete):
-            await summarize_all(articles_by_cat, config)
+            await summarize_all(articles_by_cat, config, execution=execution)
 
         assert mock_complete.call_count == 1
         _role, messages, _cfg = mock_complete.call_args[0]
@@ -379,6 +386,7 @@ class TestParseArticleSummaries:
 @pytest.mark.asyncio
 class TestPickTopArticles:
     async def test_returns_parsed_summaries(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article(title="Article 1", category="Tech")]}
         llm_response = (
@@ -387,32 +395,35 @@ class TestPickTopArticles:
         )
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=5)
+            result = await pick_top_articles(articles, config, max_articles=5, execution=execution)
 
         assert len(result) == 1
         assert result[0].title == "Article 1"
         assert result[0].category == "Tech"
 
     async def test_llm_failure_returns_empty(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article()]}
 
         with patch("digest.radar.summarizer.complete", AsyncMock(side_effect=RuntimeError("fail"))):
-            result = await pick_top_articles(articles, config)
+            result = await pick_top_articles(articles, config, execution=execution)
 
         assert result == []
 
     async def test_malformed_picker_json_returns_empty(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article()]}
         llm_response = '[{"title": "A",}]'
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config)
+            result = await pick_top_articles(articles, config, execution=execution)
 
         assert result == []
 
     async def test_parser_failure_returns_empty(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article()]}
 
@@ -420,11 +431,12 @@ class TestPickTopArticles:
             patch("digest.radar.summarizer.complete", AsyncMock(return_value=("[]", {}))),
             patch("digest.radar.summarizer._parse_article_summaries", side_effect=ValueError("bad JSON")),
         ):
-            result = await pick_top_articles(articles, config)
+            result = await pick_top_articles(articles, config, execution=execution)
 
         assert result == []
 
     async def test_non_string_summary_is_skipped(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article()]}
         llm_response = (
@@ -433,11 +445,12 @@ class TestPickTopArticles:
         )
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config)
+            result = await pick_top_articles(articles, config, execution=execution)
 
         assert result == []
 
     async def test_respects_max_articles(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [
             _make_article(title=title, link=f"https://{title.lower()}.com")
@@ -450,11 +463,12 @@ class TestPickTopArticles:
         )
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=2)
+            result = await pick_top_articles(articles, config, max_articles=2, execution=execution)
 
         assert len(result) == 2
 
     async def test_picker_preserves_original_article_identity(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         original = _make_article(title="A" * 220, source="Original Source")
         articles = {"Original Category": [original]}
@@ -466,7 +480,7 @@ class TestPickTopArticles:
         }])
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config)
+            result = await pick_top_articles(articles, config, execution=execution)
 
         assert len(result) == 1
         assert result[0].title == original.title
@@ -476,6 +490,7 @@ class TestPickTopArticles:
         assert result[0].summary == "Useful summary."
 
     async def test_unknown_and_duplicate_links_do_not_consume_slots(self) -> None:
+        execution = ModelExecution()
         config = _make_config()
         first = _make_article(title="First", link="https://example.com/1")
         second = _make_article(title="Second", link="https://example.com/2")
@@ -488,7 +503,7 @@ class TestPickTopArticles:
         ])
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=2)
+            result = await pick_top_articles(articles, config, max_articles=2, execution=execution)
 
         assert [a.link for a in result] == [first.link, second.link]
         assert [a.summary for a in result] == ["First summary.", "Second summary."]
@@ -606,6 +621,7 @@ class TestTersePromptInstructions:
 @pytest.mark.asyncio
 class TestPickTopArticlesSentenceCap:
     async def test_long_summary_is_capped_to_two_sentences(self) -> None:
+        execution = ModelExecution()
         config = _make_config(language="en")
         articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
         long_summary = (
@@ -616,12 +632,13 @@ class TestPickTopArticlesSentenceCap:
             f'"source": "TechCrunch", "summary": "{long_summary}"}}]'
         )
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=5)
+            result = await pick_top_articles(articles, config, max_articles=5, execution=execution)
 
         assert len(result) == 1
         assert result[0].summary == "First sentence. Second sentence."
 
     async def test_short_summary_is_not_modified(self) -> None:
+        execution = ModelExecution()
         config = _make_config(language="en")
         articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
         short_summary = "Just one sentence here."
@@ -630,11 +647,12 @@ class TestPickTopArticlesSentenceCap:
             f'"source": "TechCrunch", "summary": "{short_summary}"}}]'
         )
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=5)
+            result = await pick_top_articles(articles, config, max_articles=5, execution=execution)
 
         assert result[0].summary == short_summary
 
     async def test_cyrillic_summary_is_capped(self) -> None:
+        execution = ModelExecution()
         config = _make_config(language="ru")
         articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
         ru_summary = "Это важно. Вот почему это так. И ещё одна мысль."
@@ -643,6 +661,6 @@ class TestPickTopArticlesSentenceCap:
             f'"source": "RuSource", "summary": "{ru_summary}"}}]'
         )
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=5)
+            result = await pick_top_articles(articles, config, max_articles=5, execution=execution)
 
         assert result[0].summary == "Это важно. Вот почему это так."

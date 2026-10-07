@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
 from digest.candidate_review import (
     CandidateProgress,
@@ -89,6 +90,7 @@ def response(messages: list[dict[str, str]], closing: object = "first") -> str:
 async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_and_identity(
     monkeypatch: pytest.MonkeyPatch, feed: str, credit: str | None,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     config.sources[0].url = feed
     config.closing = replace(config.closing, approved_sources=(ClosingSourceBinding("Community", feed, "Society"),))
@@ -100,7 +102,7 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
     capture = ClosingCapture()
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.review.complete", completion)
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
     assert decision.card is not None and decision.provenance is not None
     canonical = _canonical((asdict(decision), asdict(report), asdict(packet)))
@@ -131,11 +133,12 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
 async def test_bad_optional_designation_preserves_all_main_selections(
     monkeypatch: pytest.MonkeyPatch, designation: object,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     capture = ClosingCapture()
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages, designation), {}))
     monkeypatch.setattr("digest.review.complete", complete)
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert complete.await_count == 1
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
     assert capture.attempts[0].status == "incomplete"
@@ -146,6 +149,7 @@ async def test_bad_optional_designation_preserves_all_main_selections(
 async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
@@ -166,7 +170,8 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
         return json.dumps(raw), {}
 
     monkeypatch.setattr("digest.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+        execution=execution)
     assert report is not None and count == 2
     main, decision = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert decision is not None and decision.status == "selected" and decision.provenance is not None
@@ -182,6 +187,7 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
     report_bytes = _canonical(asdict(report))
     _, _, recovered, reused = await _analyze_candidate_articles(
         articles, config, restored, restored.packets[0], report, str(tmp_path),
+        execution=execution,
     )
     assert count == 2 and reused == report
     assert _preparation_closing(recovered, report, articles, config, str(tmp_path)) == (main, decision)
@@ -194,6 +200,7 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
 async def test_optional_capture_failure_keeps_completed_main_without_reselection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
@@ -203,7 +210,8 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     monkeypatch.setattr("digest.review.complete", complete)
     if failure == "write":
         monkeypatch.setattr("digest.closing.save_closing", lambda *args: (_ for _ in ()).throw(OSError("disk")))
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+        execution=execution)
     assert report is not None
     for path in (tmp_path / "closing_decisions").glob("*.json"):
         if failure == "missing":
@@ -214,7 +222,8 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     assert main == cards and decision is not None and decision.status == "incomplete"
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
-    await _analyze_candidate_articles(articles, config, restored, restored.packets[0], report, str(tmp_path))
+    await _analyze_candidate_articles(articles, config, restored, restored.packets[0], report, str(tmp_path),
+        execution=execution)
     assert complete.await_count == 1
 
 
@@ -223,6 +232,7 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
 async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
     monkeypatch: pytest.MonkeyPatch, source_change: str,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
@@ -237,7 +247,7 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
     capture = ClosingCapture()
     monkeypatch.setattr("digest.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert eligible_ids(report.evidence, config.closing, config.sources) == []
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
     assert decision.status == "unavailable" and len(primary_cards(report, articles, "en", max_cards=2)) == 2
@@ -247,13 +257,14 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
 async def test_terminal_v2_selected_and_omitted_roundtrip_and_strict_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
     capture = ClosingCapture()
     monkeypatch.setattr("digest.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
     save_closing(decision, report, tmp_path)
     cards, _ = _preparation_closing(primary_cards(report, articles, "en"), report, articles, config, str(tmp_path))
@@ -321,11 +332,12 @@ closing:
 async def test_explicit_abstention_is_persisted_without_inventing_a_story(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     capture = ClosingCapture()
     monkeypatch.setattr("digest.review.complete", AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": 1, "evidence_id": None}), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
@@ -338,6 +350,7 @@ async def test_explicit_abstention_is_persisted_without_inventing_a_story(
 async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
@@ -345,7 +358,8 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
     begin_packet(progress, packet, tmp_path)
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+        execution=execution)
     assert report is not None
     main, selected = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert selected is not None and selected.status == "selected"
@@ -364,6 +378,7 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
 async def test_conflicting_optional_or_selected_identity_omits_closing_only(
     monkeypatch: pytest.MonkeyPatch, conflict: str,
 ) -> None:
+    execution = ModelExecution()
     config, articles = population()
     capture = ClosingCapture()
 
@@ -380,7 +395,7 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
         return text.replace(designation, designation[:-1] + ', "evidence_id": null}'), {}
 
     monkeypatch.setattr("digest.review.complete", complete)
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert report.reviews[0].status in {"ok", "partial"}
     assert len(primary_cards(report, articles, "en", max_cards=2)) == 2
     assert capture.attempts[0].status == "incomplete"
@@ -390,6 +405,7 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
 async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    execution = ModelExecution()
     from digest.delivery.edition import READY_FILE
     from digest.edition_runtime import finish_preparation, save_accepted_preparation
 
@@ -403,14 +419,15 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     begin_packet(progress, packet, ".cache")
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, ".cache")
+    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, ".cache",
+        execution=execution)
     assert report is not None
     main, decision = _preparation_closing(cards, report, articles, config, ".cache")
     assert main == cards and len(main) == 1
     assert decision == ClosingDecision("unavailable", "closing_would_empty_main_selection")
     snapshot = PreparationSnapshot(main, [], "Notice", report, 1, 1, ["Community"], decision)
     save_accepted_preparation(snapshot, cache_dir=".cache")
-    stats = await finish_preparation(snapshot, config)
+    stats = await finish_preparation(snapshot, config, execution=execution)
     assert stats.edition_status == "ready"
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert len(manifest["presentation_metadata"]["cards"]) == 1

@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from digest._sanitize import sanitize_article as _sanitize_article
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
 from digest.llm import LLMRole, complete
 from digest.radar.collector import Article
@@ -483,6 +484,7 @@ def build_trends_prompt(
 async def summarize_all(
     articles_by_category: dict[str, list[Article]],
     config: Config,
+    *, execution: ModelExecution,
 ) -> tuple[list[CategorySummary], str | None]:
     """Summarize all categories in parallel, then generate trends.
 
@@ -494,7 +496,7 @@ async def summarize_all(
     async def _summarize_category(category: str, articles: list[Article]) -> CategorySummary | None:
         messages = build_category_prompt(category, articles, config)
         try:
-            text, _ = await complete(LLMRole.SUMMARIZE, messages, config, category=category)
+            text, _ = await complete(LLMRole.SUMMARIZE, messages, config, category=category, execution=execution)
             return CategorySummary(
                 category=category,
                 summary_text=text,
@@ -519,7 +521,7 @@ async def summarize_all(
         summaries_dict = {s.category: s.summary_text for s in summaries}
         messages = build_trends_prompt(summaries_dict, config)
         try:
-            trends, _ = await complete(LLMRole.SUMMARIZE, messages, config)
+            trends, _ = await complete(LLMRole.SUMMARIZE, messages, config, execution=execution)
         except Exception as exc:
             logger.error("Failed to generate trends: %s", exc)
 
@@ -530,6 +532,7 @@ async def pick_top_articles(
     articles_by_category: dict[str, list[Article]],
     config: Config,
     max_articles: int = 7,
+    *, execution: ModelExecution,
 ) -> list[ArticleSummary]:
     """Ask LLM to pick and summarize top articles across all categories.
 
@@ -539,7 +542,7 @@ async def pick_top_articles(
     """
     messages = build_per_article_prompt(articles_by_category, config, max_articles)
     try:
-        text, _ = await complete(LLMRole.SUMMARIZE, messages, config)
+        text, _ = await complete(LLMRole.SUMMARIZE, messages, config, execution=execution)
         parsed = _parse_article_summaries(text, "all")
     except Exception as exc:
         logger.error("Failed to pick top articles: %s", exc)

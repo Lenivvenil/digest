@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.irritator.evidence_stage import (
     MAX_OUTPUT_TOKENS,
@@ -76,6 +77,7 @@ def _offline_client() -> httpx.AsyncClient:
 
 @pytest.mark.asyncio
 async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
     config.llm.max_concurrent_requests = 4
@@ -84,6 +86,9 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
     original_bundle, original_config = asdict(bundle), asdict(config)
+    caller_state = execution.request_state(config.llm)
+    caller_state.request_limit = 0
+    caller_state.unavailable_until[(config.review.secondary.provider, config.review.secondary.model)] = float("inf")
     original_narrative = _narrative(bundle)["narratives"][0]
     model = _mock_model(bundle)
     signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
@@ -92,7 +97,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[signal])),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "complete"
     assert result.ranked_signals[0].signal.url == signal.url
     assert result.ranked_signals[0].relation == "complicates"
@@ -110,6 +115,8 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         LLMRole.EXTRACT_NARRATIVES, LLMRole.GENERATE_QUERIES, LLMRole.RANK_SIGNALS,
     ]
     copied_configs = []
+    derived = model.await_args_list[0].kwargs["execution"]
+    assert derived is not execution
     for index, call in enumerate(model.await_args_list):
         payload = json.loads(call.args[1][1]["content"])
         if index == 0:
@@ -138,6 +145,10 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
         assert bounded is not config and bounded.llm is not config.llm
         assert bounded.llm.max_retries == 0
         assert bounded.llm.max_concurrent_requests == 1
+        assert call.kwargs["execution"] is derived
+        state = derived.request_state(bounded.llm)
+        assert state is not caller_state and state.semaphore._value == 1
+        assert state.request_limit is None and state.unavailable_until == {}
         assert bounded.llm.min_request_interval_seconds >= 65
         assert call.kwargs["max_output_tokens"] <= MAX_OUTPUT_TOKENS
         override = call.kwargs["provider_override"]
@@ -156,6 +167,7 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
     "extra_field", "unknown_category", "overlong_response", "bad_assumptions", "invalid_json",
 ])
 async def test_narrative_contract_rejects_malformed_ids_quotes_or_unbounded_output(mutation: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = _bundle(config)
     response = _narrative(bundle)
@@ -185,7 +197,7 @@ async def test_narrative_contract_rejects_malformed_ids_quotes_or_unbounded_outp
     model = AsyncMock(return_value=(text, {}))
     with patch("digest.irritator.evidence_stage.complete", model):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "error"
     assert not result.narratives
     assert next(d for d in result.diagnostics if d.stage == "narrative").status == "error"
@@ -195,11 +207,12 @@ async def test_narrative_contract_rejects_malformed_ids_quotes_or_unbounded_outp
 
 @pytest.mark.asyncio
 async def test_invalid_evidence_hash_is_rejected_before_any_model_or_search() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = replace(_bundle(config), bundle_id="forged-checkpoint")
     with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "error"
     assert result.diagnostics[0].error == "ValueError"
     model.assert_not_awaited()
@@ -207,6 +220,7 @@ async def test_invalid_evidence_hash_is_rejected_before_any_model_or_search() ->
 
 @pytest.mark.asyncio
 async def test_search_fanout_result_input_and_output_caps_are_enforced() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.queries_per_narrative = 20
     config.irritator.top_signals = 20
@@ -225,7 +239,7 @@ async def test_search_fanout_result_input_and_output_caps_are_enforced() -> None
         patch("digest.irritator.evidence_stage.search_lobsters", search),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "complete"
     assert model.await_count == 3
     assert search.await_count == 9
@@ -242,6 +256,7 @@ async def test_search_fanout_result_input_and_output_caps_are_enforced() -> None
 
 @pytest.mark.asyncio
 async def test_all_sources_failed_is_error_not_empty() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews", "arxiv", "lobsters"]
     bundle = _bundle(config)
@@ -254,7 +269,7 @@ async def test_all_sources_failed_is_error_not_empty() -> None:
         patch("digest.irritator.evidence_stage.search_lobsters", search),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "error"
     assert all(attempt.status == "error" for attempt in result.source_attempts)
     assert all(attempt.error == "ConnectError" for attempt in result.source_attempts)
@@ -265,6 +280,7 @@ async def test_all_sources_failed_is_error_not_empty() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("found_signal", [True, False])
 async def test_partial_source_failure_is_incomplete_even_with_zero_results(found_signal: bool) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews", "arxiv"]
     bundle = _bundle(config)
@@ -276,7 +292,7 @@ async def test_partial_source_failure_is_incomplete_even_with_zero_results(found
         patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(side_effect=RuntimeError("failure"))),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete"
     assert len(result.ranked_signals) == int(found_signal)
     assert model.await_count == (3 if found_signal else 2)
@@ -286,6 +302,7 @@ async def test_partial_source_failure_is_incomplete_even_with_zero_results(found
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed_stage", ["narrative", "queries", "ranking"])
 async def test_llm_stage_failure_is_never_empty_and_never_retried(failed_stage: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -301,7 +318,7 @@ async def test_llm_stage_failure_is_never_empty_and_never_retried(failed_stage: 
         ])),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status in {"error", "incomplete"}
     assert model.await_count == failed_index + 1
     assert next(d for d in result.diagnostics if d.stage == failed_stage).error == "RuntimeError"
@@ -312,6 +329,7 @@ async def test_llm_stage_failure_is_never_empty_and_never_retried(failed_stage: 
 @pytest.mark.parametrize("mutation", ["invented_url", "duplicate_url", "bad_quote", "float_score", "bool_score",
                                        "high_score", "bad_relation", "too_many", "extra_field", "empty_unexplained"])
 async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -346,7 +364,7 @@ async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
         ])),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete"
     assert not result.ranked_signals
     assert next(d for d in result.diagnostics if d.stage == "ranking").status == "error"
@@ -434,6 +452,7 @@ def test_non_counter_entries_preserve_identity_and_shape_checks(mutation: str) -
 
 @pytest.mark.asyncio
 async def test_all_non_counter_relations_are_honest_empty_with_omission_counts() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -453,7 +472,7 @@ async def test_all_non_counter_relations_are_honest_empty_with_omission_counts()
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=signals)),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "empty" and result.ranked_signals == []
     assert all(d.status not in {"error", "incomplete"} for d in result.diagnostics)
     ranking_stage = next(d for d in result.diagnostics if d.stage == "ranking")
@@ -465,6 +484,7 @@ async def test_all_non_counter_relations_are_honest_empty_with_omission_counts()
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["narrative", "queries", "search", "validation", "ranking"])
 async def test_true_empty_has_no_failure_diagnostics(stage: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     if stage == "validation":
@@ -489,7 +509,7 @@ async def test_true_empty_has_no_failure_diagnostics(stage: str) -> None:
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw)),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "empty"
     assert all(d.status not in {"error", "incomplete"} for d in result.diagnostics)
     assert next(d for d in result.diagnostics if d.stage == stage).status == "empty"
@@ -497,12 +517,13 @@ async def test_true_empty_has_no_failure_diagnostics(stage: str) -> None:
 
 @pytest.mark.asyncio
 async def test_no_safe_sources_is_error_and_does_not_query_other_adapters() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["reddit", "devto"]
     bundle = _bundle(config)
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)) as model:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "error"
     assert next(d for d in result.diagnostics if d.stage == "search").error == "NoConfiguredSafeSources"
     assert not result.source_attempts
@@ -511,6 +532,7 @@ async def test_no_safe_sources_is_error_and_does_not_query_other_adapters() -> N
 
 @pytest.mark.asyncio
 async def test_timeout_returns_diagnostic_and_does_not_mutate_evidence() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = _bundle(config)
     original = asdict(bundle)
@@ -521,7 +543,7 @@ async def test_timeout_returns_diagnostic_and_does_not_mutate_evidence() -> None
 
     with patch("digest.irritator.evidence_stage.complete", side_effect=slow) as model:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client, timeout_seconds=0.005)
+            result = await run_evidence_irritator(bundle, config, client, timeout_seconds=0.005, execution=execution)
     assert result.status == "error"
     assert next(d for d in result.diagnostics if d.stage == "narrative").error == "TimeoutError"
     assert model.await_count == 1
@@ -530,6 +552,7 @@ async def test_timeout_returns_diagnostic_and_does_not_mutate_evidence() -> None
 
 @pytest.mark.asyncio
 async def test_existing_search_adapters_and_validator_run_with_mock_http() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews", "arxiv", "lobsters"]
     config.irritator.check_liveness = True
@@ -548,7 +571,7 @@ async def test_existing_search_adapters_and_validator_run_with_mock_http() -> No
 
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)):
         async with httpx.AsyncClient(transport=httpx.MockTransport(adapter)) as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete"
     assert len(requests) == 2
     assert result.ranked_signals[0].signal.url == "https://external.example/caveat"
@@ -560,6 +583,7 @@ async def test_existing_search_adapters_and_validator_run_with_mock_http() -> No
 
 @pytest.mark.asyncio
 async def test_llm_provider_429_is_one_http_request_without_retry_or_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
     config.llm.providers = [ProviderConfig("gemini", "fallback-model", ["fallback"])]
@@ -578,7 +602,7 @@ async def test_llm_provider_429_is_one_http_request_without_retry_or_fallback(mo
     llm_client = real_client(transport=httpx.MockTransport(rejected))
     async with _offline_client() as search_client:
         with patch("digest.llm.httpx.AsyncClient", return_value=llm_client):
-            result = await run_evidence_irritator(bundle, config, search_client)
+            result = await run_evidence_irritator(bundle, config, search_client, execution=execution)
     assert result.status == "error"
     assert len(requests) == 1
 
@@ -591,6 +615,7 @@ async def test_llm_provider_429_is_one_http_request_without_retry_or_fallback(mo
               '<id>https://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>'),
 ])
 async def test_malformed_success_response_is_failure_not_empty(source: str, body: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = [source]
     bundle = _bundle(config)
@@ -601,7 +626,7 @@ async def test_malformed_success_response_is_failure_not_empty(source: str, body
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)) as model:
         async with httpx.AsyncClient(transport=httpx.MockTransport(invalid_response)) as client:
             original_hooks = list(client.event_hooks["response"])
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
             assert client.event_hooks["response"] == original_hooks
     assert result.status == "error"
     assert result.source_attempts[0].status == "error"
@@ -611,6 +636,7 @@ async def test_malformed_success_response_is_failure_not_empty(source: str, body
 
 @pytest.mark.asyncio
 async def test_search_redirect_is_not_followed_by_redirect_enabled_client() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -622,7 +648,7 @@ async def test_search_redirect_is_not_followed_by_redirect_enabled_client() -> N
 
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)):
         async with httpx.AsyncClient(transport=httpx.MockTransport(redirect), follow_redirects=True) as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "error"
     assert len(requests) == 1
     assert requests[0].url.host == "hn.algolia.com"
@@ -630,6 +656,7 @@ async def test_search_redirect_is_not_followed_by_redirect_enabled_client() -> N
 
 @pytest.mark.asyncio
 async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews", "arxiv"]
     bundle = _bundle(config)
@@ -643,7 +670,7 @@ async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
         patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[])),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     payload = json.loads(model.await_args_list[2].args[1][1]["content"])
     assert len(json.dumps(payload["signals"], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
     assert 0 < len(payload["signals"]) < 10
@@ -656,13 +683,14 @@ async def test_large_external_urls_respect_serialized_ranking_budget() -> None:
 async def test_quote_failure_preserves_bounded_private_evidence_but_no_raw_response(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = _bundle(config)
     narrative = _narrative(bundle)
     narrative["narratives"][0]["quotes"][bundle.items[0].evidence_id] = "Fabricated source quotation"
     with patch("digest.irritator.evidence_stage.complete", AsyncMock(return_value=(json.dumps(narrative), {}))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     diagnostic = next(item for item in result.diagnostics if item.stage == "narrative")
     assert diagnostic.error == "NarrativeQuoteMismatch"
     assert diagnostic.error_detail == "Narrative quote is not in original evidence."
@@ -682,12 +710,13 @@ async def test_quote_failure_preserves_bounded_private_evidence_but_no_raw_respo
         rejected["narratives"][0]["quotes"] = {identity: quote}
         with patch("digest.irritator.evidence_stage.complete", AsyncMock(return_value=(json.dumps(rejected), {}))):
             async with _offline_client() as client:
-                failed = await run_evidence_irritator(bundle, config, client)
+                failed = await run_evidence_irritator(bundle, config, client, execution=execution)
         assert all(item.rejected_quote is None for item in failed.diagnostics)
 
 
 @pytest.mark.asyncio
 async def test_search_deadline_marks_attempt_and_restores_client_hooks() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -699,7 +728,7 @@ async def test_search_deadline_marks_attempt_and_restores_client_hooks() -> None
     with patch("digest.irritator.evidence_stage.complete", _mock_model(bundle)):
         async with httpx.AsyncClient(transport=httpx.MockTransport(slow)) as client:
             original_hooks = list(client.event_hooks["response"])
-            result = await run_evidence_irritator(bundle, config, client, timeout_seconds=0.01)
+            result = await run_evidence_irritator(bundle, config, client, timeout_seconds=0.01, execution=execution)
             assert client.event_hooks["response"] == original_hooks
     assert result.status == "incomplete"
     diagnostic = next(item for item in result.diagnostics if item.stage == "search")
@@ -710,12 +739,13 @@ async def test_search_deadline_marks_attempt_and_restores_client_hooks() -> None
 
 @pytest.mark.asyncio
 async def test_more_than_three_generated_queries_is_rejected_without_search() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = _bundle(config)
     model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries(4)), {})])
     with patch("digest.irritator.evidence_stage.complete", model):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete"
     assert not result.source_attempts
     diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
@@ -819,24 +849,32 @@ def test_one_bad_citation_rejects_whole_narrative_after_an_allowed_repair() -> N
 
 
 @pytest.mark.asyncio
-async def test_opt_in_translation_observes_the_stage_runtime_pacing() -> None:
+@pytest.mark.parametrize("initialized", [False, True])
+async def test_opt_in_translation_observes_the_stage_runtime_pacing(initialized: bool) -> None:
+    execution = ModelExecution()
     from digest.config import TranslationConfig
     from digest.llm import _request_state
 
     config = fixture_config()
     config.translation = TranslationConfig(enabled=True)
-    shared = _request_state(config)
+    config.llm.max_concurrent_requests = 6
+    if initialized:
+        execution.request_state(config.llm)
+    caller_execution = execution
 
-    async def stages(bundle, bounded, client, result):
-        assert _request_state(bounded) is shared
+    async def stages(bundle, bounded, client, result, *, execution):
+        shared = caller_execution.request_state(config.llm)
+        assert execution is not caller_execution
+        assert _request_state(bounded, execution) is shared
+        assert shared.semaphore._value == 6 and bounded.llm.max_concurrent_requests == 1
         assert bounded.llm.min_request_interval_seconds == 65
         shared.next_request_at = 195.0
         result.status = "empty"
 
     with patch("digest.irritator.evidence_stage._run_stages", side_effect=stages):
         async with httpx.AsyncClient() as client:
-            result = await run_evidence_irritator(_bundle(config), config, client)
-    assert result.status == "empty" and _request_state(config).next_request_at == 195.0
+            result = await run_evidence_irritator(_bundle(config), config, client, execution=execution)
+    assert result.status == "empty" and _request_state(config, execution).next_request_at == 195.0
 
 
 def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics() -> None:
@@ -865,6 +903,7 @@ def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics()
 
 @pytest.mark.asyncio
 async def test_full_source_narrative_uses_late_literal_passages_instead_of_rss(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     rss_bundle = _bundle(config)
     source_evidence = _full_source_evidence(tmp_path, rss_bundle)
@@ -882,6 +921,7 @@ async def test_full_source_narrative_uses_late_literal_passages_instead_of_rss(t
         async with _offline_client() as client:
             result = await run_evidence_irritator(
                 rss_bundle, config, client, source_evidence=source_evidence, require_full_source=True,
+                execution=execution,
             )
     assert result.status == "empty"
     assert result.bundle_id == rss_bundle.bundle_id
@@ -929,10 +969,12 @@ def test_full_source_quotes_require_exact_text_from_the_identified_span(mutation
 
 @pytest.mark.asyncio
 async def test_required_full_source_without_provenance_stays_pending_without_model_or_search() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(_bundle(config), config, client, require_full_source=True)
+            result = await run_evidence_irritator(_bundle(config), config, client, require_full_source=True,
+                execution=execution)
     assert result.status == "incomplete"
     assert result.diagnostics[0].error == "FullSourceEvidencePending"
     assert result.diagnostics[1].status == "not_run"
@@ -942,12 +984,14 @@ async def test_required_full_source_without_provenance_stays_pending_without_mod
 
 @pytest.mark.asyncio
 async def test_invalid_full_source_hash_fails_before_model_and_never_falls_back_to_rss(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     rss_bundle = _bundle(config)
     evidence = replace(_full_source_evidence(tmp_path, rss_bundle), bundle_id="tampered")
     with patch("digest.irritator.evidence_stage.complete", AsyncMock()) as model:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss_bundle, config, client, source_evidence=evidence)
+            result = await run_evidence_irritator(rss_bundle, config, client, source_evidence=evidence,
+                execution=execution)
     assert result.status == "error"
     assert result.diagnostics[0].error_detail == "Full-source evidence hash mismatch."
     assert result.diagnostics[1].status == "not_run"
@@ -963,6 +1007,7 @@ async def test_invalid_full_source_hash_fails_before_model_and_never_falls_back_
     "or account abuse compared to human attackers",
 ])
 async def test_research_prose_is_incomplete_before_any_source_request(query: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     bundle = _bundle(config)
     model = AsyncMock(side_effect=[
@@ -972,7 +1017,7 @@ async def test_research_prose_is_incomplete_before_any_source_request(query: str
     with patch("digest.irritator.evidence_stage.complete", model), \
             patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search:
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete"
     assert model.await_count == 2
     search.assert_not_awaited()
@@ -1014,6 +1059,7 @@ def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission
 
 @pytest.mark.asyncio
 async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["arxiv"]
     bundle = _bundle(config)
@@ -1024,7 +1070,7 @@ async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() ->
         patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert model.await_count == 2
     assert result.status == "incomplete"
     ranking = next(item for item in result.diagnostics if item.stage == "ranking")
@@ -1034,6 +1080,7 @@ async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() ->
 
 @pytest.mark.asyncio
 async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     rss = _bundle(config)
@@ -1051,7 +1098,7 @@ async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Pa
               make_signal(url="https://external.example/caveat", title="Deployment limitations"),
           ]))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "complete" and model.await_count == 3
     assert result.narratives[0].claim == response["narratives"][0]["claim"]
     assert result.narratives[0].evidence_ids == [cited.evidence_id]
@@ -1099,6 +1146,7 @@ def test_qualification_context_does_not_cross_source_bindings(tmp_path: Path, di
 
 @pytest.mark.asyncio
 async def test_oversized_complete_context_stops_before_optional_queries(tmp_path: Path) -> None:
+    execution = ModelExecution()
     import hashlib
 
     from digest.review import MAX_EVIDENCE_JSON_CHARS
@@ -1121,7 +1169,7 @@ async def test_oversized_complete_context_stops_before_optional_queries(tmp_path
           patch("digest.source_admission.count_gpt_input", return_value=1000),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "incomplete" and model.await_count == 1
     search.assert_not_awaited()
     assert result.narratives and not result.queries and not result.ranked_signals
@@ -1133,6 +1181,7 @@ async def test_oversized_complete_context_stops_before_optional_queries(tmp_path
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hold", ["unsupported", "oversized", "budget"])
 async def test_full_source_stage_holds_before_unadmitted_generation(tmp_path: Path, hold: str) -> None:
+    execution = ModelExecution()
     from digest import llm
     from digest.config import ReviewModelConfig
 
@@ -1142,12 +1191,12 @@ async def test_full_source_stage_holds_before_unadmitted_generation(tmp_path: Pa
     if hold == "unsupported":
         config.review.secondary = ReviewModelConfig("groq", "unverified-model")
     if hold == "budget":
-        llm.set_request_limit(config, 0)
+        llm.set_request_limit(config, execution, 0)
     with (patch("digest.source_admission.count_gpt_input", return_value=100_000 if hold == "oversized" else 1000),
           patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate,
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "incomplete"
     generate.assert_not_awaited()
     search.assert_not_awaited()
@@ -1162,12 +1211,13 @@ async def test_full_source_stage_holds_before_unadmitted_generation(tmp_path: Pa
         assert diagnostic.admission.method == "estimated" and diagnostic.admission.exact_count is None
         assert diagnostic.admission.input_estimate is not None
     if hold == "budget":
-        assert llm.request_budget_remaining(config) == 0
+        assert llm.request_budget_remaining(config, execution) == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", ["provider", "model", "output_reserve", "request_sha256"])
 async def test_full_source_dispatch_requires_exact_admission_binding(tmp_path: Path, mutation: str) -> None:
+    execution = ModelExecution()
     from digest.source_admission import RequestAdmission, admit_request
 
     config = fixture_config()
@@ -1183,7 +1233,7 @@ async def test_full_source_dispatch_requires_exact_admission_binding(tmp_path: P
           patch("digest.irritator.evidence_stage.admit_request", side_effect=changed),
           patch("digest.irritator.evidence_stage.complete", AsyncMock()) as generate):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "incomplete"
     generate.assert_not_awaited()
     assert next(item for item in result.diagnostics if item.stage == "narrative").error == "technical_request_binding"
@@ -1191,6 +1241,7 @@ async def test_full_source_dispatch_requires_exact_admission_binding(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_legacy_rss_path_does_not_add_source_count_or_admission() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     rss = _bundle(config)
     model = AsyncMock(side_effect=[
@@ -1200,7 +1251,7 @@ async def test_legacy_rss_path_does_not_add_source_count_or_admission() -> None:
     with (patch("digest.irritator.evidence_stage.complete", model),
           patch("digest.irritator.evidence_stage.admit_request", side_effect=AssertionError("No source admission"))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client)
+            result = await run_evidence_irritator(rss, config, client, execution=execution)
     assert result.status == "empty" and model.await_count == 2
     assert all(item.admission is None for item in result.diagnostics)
 
@@ -1213,6 +1264,7 @@ async def test_legacy_rss_path_does_not_add_source_count_or_admission() -> None:
 async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
     tmp_path: Path, provider: str, configured: float, expected: float, attempts: int,
 ) -> None:
+    execution = ModelExecution()
     import time
 
     from digest import llm
@@ -1225,8 +1277,8 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
     )
     config.llm.min_request_interval_seconds = configured
     config.irritator.sources = ["hackernews"]
-    llm.set_request_limit(config, 10)
-    shared = llm._request_state(config)
+    llm.set_request_limit(config, execution, 10)
+    shared = llm._request_state(config, execution)
     rss = _bundle(config)
     source = _full_source_evidence(tmp_path, rss)
     narrative = _narrative(source)
@@ -1235,7 +1287,10 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
     deadlines: list[float] = []
 
     async def admission(messages: Any, bounded: Any, **kwargs: Any) -> RequestAdmission:
-        assert llm._request_state(bounded) is shared
+        assert kwargs["execution"] is not execution
+        assert llm._request_state(bounded, kwargs["execution"]) is shared
+        assert shared.semaphore._value == config.llm.max_concurrent_requests == 4
+        assert bounded.llm.max_concurrent_requests == 1
         assert bounded.llm.min_request_interval_seconds == expected
         deadlines.append(kwargs["deadline"])
         return await admit_request(messages, bounded, **kwargs)
@@ -1261,11 +1316,11 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
               make_signal(url="https://external.example/caveat", title="Deployment limitations"),
           ]))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "complete"
     assert len(deadlines) == 3 and len(set(deadlines)) == 1
     assert started + 180 <= deadlines[0] <= started + 181
-    assert llm.request_budget_remaining(config) == 10 - attempts
+    assert llm.request_budget_remaining(config, execution) == 10 - attempts
     assert [call.args[1] for call in pace.call_args_list] == [expected] * attempts
     assert config.llm.min_request_interval_seconds == configured
 
@@ -1273,6 +1328,7 @@ async def test_full_source_route_pacing_keeps_one_deadline_and_counter(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("full_source", [False, True], ids=["rss", "full-source"])
 async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path, full_source: bool) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews", "arxiv", "lobsters"]
     bundle = _bundle(config)
@@ -1293,7 +1349,7 @@ async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path
           patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[])) as arxiv,
           patch("digest.irritator.evidence_stage.search_lobsters", AsyncMock(return_value=[])) as lobsters):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client, source_evidence=source)
+            result = await run_evidence_irritator(bundle, config, client, source_evidence=source, execution=execution)
     assert result.status == "empty" and model.await_count == 2
     assert [item.query for item in result.queries] == queries and result.query_anchor is None
     assert [item.intent for item in result.queries] == [item["intent"] for item in response["queries"]]
@@ -1309,6 +1365,7 @@ async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", ["missing_intent", "extra_field", "invalid_entries"])
 async def test_invalid_query_schema_still_stops_before_search(mutation: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -1323,7 +1380,7 @@ async def test_invalid_query_schema_still_stops_before_search(mutation: str) -> 
     with (patch("digest.irritator.evidence_stage.complete", model),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "incomplete" and model.await_count == 2
     assert not result.queries and not result.source_attempts and result.query_anchor is None
     diagnostic = next(item for item in result.diagnostics if item.stage == "queries")
@@ -1333,6 +1390,7 @@ async def test_invalid_query_schema_still_stops_before_search(mutation: str) -> 
 
 @pytest.mark.asyncio
 async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -1343,7 +1401,7 @@ async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses(
     with (patch("digest.irritator.evidence_stage.complete", model),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "empty" and model.await_count == 2 and search.await_count == 3
     assert [item.query for item in result.queries] == queries
     anchor = result.query_anchor
@@ -1356,6 +1414,7 @@ async def test_source_anchor_preserves_three_queries_and_exploratory_hypotheses(
 
 @pytest.mark.asyncio
 async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -1364,7 +1423,7 @@ async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
     with (patch("digest.irritator.evidence_stage.complete", model),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[])) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "empty" and result.query_anchor is None and len(result.source_attempts) == 1
     assert model.await_count == 2
     assert next(item for item in result.diagnostics if item.stage == "queries").status == "complete"
@@ -1373,6 +1432,7 @@ async def test_uncited_evidence_cannot_supply_the_query_anchor() -> None:
 
 @pytest.mark.asyncio
 async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     rss = _bundle(config)
@@ -1387,7 +1447,7 @@ async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_p
           patch("digest.source_admission.count_gpt_input", return_value=1000),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[]))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "empty" and model.await_count == 2
     anchor = result.query_anchor
     assert anchor is not None and anchor.evidence_bundle_id == source.bundle_id != rss.bundle_id
@@ -1398,6 +1458,7 @@ async def test_query_anchor_binds_actual_full_source_qualification_context(tmp_p
 
 @pytest.mark.asyncio
 async def test_exact_cited_url_is_not_ranked_as_external_evidence() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -1413,7 +1474,7 @@ async def test_exact_cited_url_is_not_ranked_as_external_evidence() -> None:
     with (patch("digest.irritator.evidence_stage.complete", model),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "complete" and model.await_count == 3
     assert result.excluded_cited_source_urls == [cited_url]
     ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
@@ -1426,6 +1487,7 @@ async def test_exact_cited_url_is_not_ranked_as_external_evidence() -> None:
 
 @pytest.mark.asyncio
 async def test_verified_final_url_exclusion_preserves_counts_and_different_documents(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     rss = _bundle(config)
@@ -1446,7 +1508,7 @@ async def test_verified_final_url_exclusion_preserves_counts_and_different_docum
           patch("digest.source_admission.count_gpt_input", return_value=1000),
           patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=raw))):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client, source_evidence=source)
+            result = await run_evidence_irritator(rss, config, client, source_evidence=source, execution=execution)
     assert result.status == "complete" and model.await_count == 3
     assert result.excluded_cited_source_urls == sorted([cited.url, final_url])
     ranking_payload = json.loads(model.await_args_list[2].args[1][1]["content"])
@@ -1458,6 +1520,7 @@ async def test_verified_final_url_exclusion_preserves_counts_and_different_docum
 
 @pytest.mark.asyncio
 async def test_only_self_source_hits_skip_ranking_with_explicit_exclusion() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
@@ -1468,7 +1531,7 @@ async def test_only_self_source_hits_skip_ranking_with_explicit_exclusion() -> N
               make_signal(url=cited_url),
           ])) as search):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client)
+            result = await run_evidence_irritator(bundle, config, client, execution=execution)
     assert result.status == "empty" and model.await_count == 2 and search.await_count == 1
     assert result.excluded_cited_source_urls == [cited_url] and not result.ranked_signals
     assert next(item for item in result.diagnostics if item.stage == "ranking").status == "not_run"

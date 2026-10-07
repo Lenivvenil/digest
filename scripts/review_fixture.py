@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import (
     Config,
     FiltersConfig,
@@ -46,7 +47,9 @@ def fixture_articles() -> dict[str, list[Article]]:
     return grouped
 
 
-async def fixture_response(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> tuple[str, dict]:
+async def fixture_response(
+    role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any,
+) -> tuple[str, dict[str, Any]]:
     """The only adapter used in this demo: maps fixture URLs to evidence IDs."""
     data = json.loads((Path(__file__).parents[1] / "tests/fixtures/blind_review.json").read_text())
     task = json.loads(messages[1]["content"])
@@ -56,16 +59,16 @@ async def fixture_response(role: Any, messages: list[dict[str, str]], config: An
     return json.dumps({"selections": selections, "limitations": ["Synthetic fixture, not model quality evidence."]}), {}
 
 
-async def run_fixture() -> BlindReviewReport:
+async def run_fixture(*, execution: ModelExecution) -> BlindReviewReport:
     with patch("digest.review.complete", side_effect=fixture_response):
-        return await run_blind_review(fixture_articles(), fixture_config())
+        return await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = asyncio.run(run_fixture())
+    report = asyncio.run(run_fixture(execution=ModelExecution()))
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "review.json").write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2) + "\n")
     (args.output / "review.md").write_text("# OFFLINE SYNTHETIC FIXTURE\n" + render_review(report) + "\n")

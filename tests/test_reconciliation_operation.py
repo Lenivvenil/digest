@@ -15,6 +15,7 @@ import pytest
 
 from digest import llm, model_budget, source_admission
 from digest import reconciliation_operation as operation
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.reading_brief_state import BriefState, Source, checksum
 from digest.reading_brief_tokens import TokenProfileUnavailable
@@ -33,6 +34,7 @@ class Harness:
     prepared: operation.PreparedReconciliation
     checkpoint: operation.ExactIntentCheckpoint
     execution: model_budget.StageExecution
+    model_execution: ModelExecution
     calls: list[httpx.Request]
     intervals: list[float]
     raw: str
@@ -53,6 +55,7 @@ class Harness:
             self.state,
             self.config,
             self.root,
+            execution=self.model_execution,
             **arguments,
         )
 
@@ -108,7 +111,9 @@ def harness(
             "abstain": False,
         }
     )
-    result = Harness(tmp_path, source, state, value, settings, prepared, checkpoint, execution, [], [], raw)
+    result = Harness(
+        tmp_path, source, state, value, settings, prepared, checkpoint, execution, ModelExecution(), [], [], raw,
+    )
     monkeypatch.setattr(
         source_admission,
         "estimate_request",
@@ -124,7 +129,7 @@ def harness(
     monkeypatch.setattr(llm, "_pace_request", pace)
     # Exercise actual request reservations without real waiting. Separate tests
     # inspect route spacing and the operation's absolute deadline preflight.
-    monkeypatch.setattr(llm, "request_wait_seconds", lambda _config: 0.0)
+    monkeypatch.setattr(llm, "request_wait_seconds", lambda _config, _execution: 0.0)
     original_client = httpx.AsyncClient
 
     def client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
@@ -172,7 +177,7 @@ async def test_completed_exact_cache_and_shared_physical_charges(
     assert result.response.reading_angle == "The reported result applies to pilot clients."
     assert len(harness.calls) == 2 and harness.intervals == [20, 20]
     assert model_budget.inspect_budget(harness.execution.cycle_id).reserved_count == 2
-    assert llm.request_budget_remaining(harness.config) == 8
+    assert llm.request_budget_remaining(harness.config, harness.model_execution) == 8
     assert harness.config.llm.max_retries == 4 and harness.config.llm.min_request_interval_seconds == 20
     assert [attempt["status"] for attempt in harness.record()["attempts"]] == ["completed", "completed"]
     assert before == json.dumps(harness.state.__dict__, default=str, sort_keys=True)
@@ -210,9 +215,9 @@ async def test_no_active_shared_execution_cannot_grant_allowance(
 
 @pytest.mark.asyncio
 async def test_counts_need_generation_capacity_and_deadline(harness: Harness) -> None:
-    llm.set_request_limit(harness.config, 1)
+    llm.set_request_limit(harness.config, harness.model_execution, 1)
     assert (await harness.run()).status == "pending" and not harness.calls
-    llm.set_request_limit(harness.config, 10)
+    llm.set_request_limit(harness.config, harness.model_execution, 10)
     assert (await harness.run(deadline=time.monotonic() + 1)).error_class == "technical_deadline"
     assert not harness.calls and not harness.record()["attempts"]
 
@@ -270,7 +275,7 @@ async def test_exact_count_is_reused_after_a_pre_dispatch_deadline_hold(
 ) -> None:
     original = operation._generation_timeout
 
-    def expired(_config: Config, _deadline: float) -> float:
+    def expired(_config: Config, _deadline: float, *, execution: ModelExecution) -> float:
         raise TimeoutError("technical_deadline")
 
     monkeypatch.setattr(operation, "_generation_timeout", expired)
@@ -512,7 +517,7 @@ async def test_shared_pacing_wait_stays_inside_absolute_deadline(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(llm, "request_wait_seconds", lambda _config: 20.0 if harness.calls else 0.0)
+    monkeypatch.setattr(llm, "request_wait_seconds", lambda _config, _execution: 20.0 if harness.calls else 0.0)
     result = await harness.run(deadline=time.monotonic() + 40)
     assert result.error_class == "technical_deadline" and len(harness.calls) == 1
     assert harness.record()["attempts"][0]["kind"] == "count"
@@ -542,7 +547,7 @@ async def test_local_primary_can_resume_after_alternate_count_when_tokenizer_rec
     def unavailable(*_args: Any, **_kwargs: Any) -> dict[str, int | str]:
         raise TokenProfileUnavailable("fake tokenizer unavailable")
 
-    def deadline(_config: Config, _deadline: float) -> float:
+    def deadline(_config: Config, _deadline: float, *, execution: ModelExecution) -> float:
         raise TimeoutError("fake remaining time insufficient after count")
 
     monkeypatch.setattr(source_admission, "estimate_request", unavailable)

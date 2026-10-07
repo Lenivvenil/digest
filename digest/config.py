@@ -46,7 +46,6 @@ class LLMConfig:
     min_request_interval_seconds: float = 0.0
     max_retries: int = 0
     retry_max_wait_seconds: float = 60.0
-    _runtime: Any = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def provider(self) -> str:

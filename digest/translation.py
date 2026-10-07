@@ -22,8 +22,9 @@ from typing import TYPE_CHECKING, Literal
 
 from digest._serialization import extract_json as _extract_json
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig, TranslationConfig
-from digest.llm import LLMRole, _request_state, complete
+from digest.llm import LLMRole, complete
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
@@ -332,7 +333,8 @@ def _read_batch(
 
 
 async def translate_fields(
-    fields: dict[str, str], config: Config, cache_dir: Path, *, deadline: float | None = None,
+    fields: dict[str, str], config: Config, cache_dir: Path, *, execution: ModelExecution,
+    deadline: float | None = None,
     closing_summary: str | None = None, selection_binding: object = None,
 ) -> TranslationResult:
     settings = config.translation
@@ -348,7 +350,8 @@ async def translate_fields(
     deadline = own_deadline if deadline is None else min(deadline, own_deadline)
     route = ProviderConfig(settings.provider, settings.model)
     # Preserve shared pacing/cooldowns, but never use the caller's retry/fallback policy.
-    shared_state = _request_state(config)
+    shared_state = execution.request_state(config.llm)
+    translation_execution = execution.share_initialized(config.llm)
     translation_config = copy(config)
     translation_config.llm = copy(config.llm)
     translation_config.llm.max_retries = 0
@@ -416,6 +419,7 @@ async def translate_fields(
             try:
                 async with asyncio.timeout_at(deadline):
                     response, usage = await complete(LLMRole.SUMMARIZE, messages, translation_config,
+                                                     execution=translation_execution,
                                                      provider_override=route, temperature=0,
                                                      max_output_tokens=settings.max_output_tokens)
                 phase = "completion_incomplete"
@@ -464,15 +468,19 @@ def _ranked_view(ranked: list["RankedSignal"], result: TranslationResult) -> lis
 
 async def translate_publication_presentation(
     summary: str, cards: list["ArticleSummary"], ranked: list["RankedSignal"], config: Config, cache_dir: Path,
+    *, execution: ModelExecution,
 ) -> tuple[str, list["ArticleSummary"], list["RankedSignal"]]:
     """One presentation budget for all generated legacy publication prose."""
-    presented, output, signals, _ = await _translate_publication_presentation(summary, cards, ranked, config, cache_dir)
+    presented, output, signals, _ = await _translate_publication_presentation(
+        summary, cards, ranked, config, cache_dir, execution=execution,
+    )
     return presented, output, signals
 
 
 async def _translate_publication_presentation(
     summary: str, cards: list[ArticleSummary], ranked: list[RankedSignal], config: Config, cache_dir: Path,
-    *, deadline: float | None = None, closing_summary: str | None = None, selection_binding: object = None,
+    *, execution: ModelExecution, deadline: float | None = None, closing_summary: str | None = None,
+    selection_binding: object = None,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal], TranslationResult]:
     """Keep main fields intact; only a fitting closer changes its one batch's request binding."""
     from digest.radar.collector import article_hash
@@ -492,7 +500,7 @@ async def _translate_publication_presentation(
                      for item in cards],
                     [replace(item, reasoning=item.reasoning + "\n\n" + notice) for item in ranked], result)
         fields[identity] = card.summary
-    result = await translate_fields(fields, config, cache_dir, deadline=deadline,
+    result = await translate_fields(fields, config, cache_dir, execution=execution, deadline=deadline,
                                     closing_summary=closing_summary, selection_binding=selection_binding)
     if result.status == "disabled":
         return summary, cards, ranked, result
@@ -505,7 +513,7 @@ async def _translate_publication_presentation(
 
 async def translate_publication_with_closing(
     summary: str, cards: list[ArticleSummary], ranked: list[RankedSignal], closing_card: ArticleSummary,
-    config: Config, cache_dir: Path, *, selection_binding: object = None,
+    config: Config, cache_dir: Path, *, execution: ModelExecution, selection_binding: object = None,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal], ClosingPresentation]:
     """Fit optional prose into an existing main request and validate its response separately."""
     from digest.radar.collector import article_hash
@@ -515,7 +523,7 @@ async def translate_publication_with_closing(
     identity = article_hash(closing_card.title, closing_card.link)
     duplicate = any(article_hash(card.title, card.link) == identity for card in cards)
     text, presented, signals, main_result = await _translate_publication_presentation(
-        summary, cards, ranked, config, cache_dir, deadline=deadline,
+        summary, cards, ranked, config, cache_dir, execution=execution, deadline=deadline,
         closing_summary=None if duplicate else closing_card.summary, selection_binding=selection_binding,
     )
     if duplicate:
@@ -534,18 +542,22 @@ async def translate_publication_with_closing(
 
 async def translate_primary_presentation(
     summary: str, cards: list["ArticleSummary"], config: Config, cache_dir: Path,
+    *, execution: ModelExecution,
 ) -> tuple[str, list["ArticleSummary"]]:
-    presented, output, _ = await translate_publication_presentation(summary, cards, [], config, cache_dir)
+    presented, output, _ = await translate_publication_presentation(
+        summary, cards, [], config, cache_dir, execution=execution,
+    )
     return presented, output
 
 
 async def translate_supplement_presentation(
-    canonical: "EvidenceIrritatorResult", config: Config, cache_dir: Path, *, deadline: float,
+    canonical: "EvidenceIrritatorResult", config: Config, cache_dir: Path,
+    *, execution: ModelExecution, deadline: float,
 ) -> tuple["EvidenceIrritatorResult", TranslationResult]:
     """Translate copies of published prose only; evidence and canonical archive stay intact."""
     fields = _ranked_fields(list(canonical.ranked_signals))
     fields.update({f"narrative:{index}": item.claim for index, item in enumerate(canonical.narratives)})
-    result = await translate_fields(fields, config, cache_dir, deadline=deadline)
+    result = await translate_fields(fields, config, cache_dir, execution=execution, deadline=deadline)
     if result.status == "disabled":
         return canonical, result
     narratives = [replace(item, claim=result.fields[f"narrative:{index}"])

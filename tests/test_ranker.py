@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.ranker import (
     MAX_RANKING_JSON_CHARS,
@@ -229,12 +230,13 @@ class TestParseRankings:
 @pytest.mark.asyncio
 class TestRankSignals:
     async def test_omitted_candidate_cannot_be_ranked_and_indices_do_not_shift(self) -> None:
+        execution = ModelExecution()
         signals = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS), _make_signal()]
         raw = _valid_rankings(1, [8])
         raw[0]["index"] = 1
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config())
+            result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
         assert result[0].signal is signals[1]
         assert mock_complete.await_count == 1
         raw[0]["index"] = 0
@@ -242,85 +244,94 @@ class TestRankSignals:
             _parse_rankings(raw, signals, "claim", 5)
 
     async def test_no_model_call_when_every_candidate_exceeds_budget(self) -> None:
+        execution = ModelExecution()
         signals = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS)]
         mock_complete = AsyncMock()
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config())
+            result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
         assert result == []
         mock_complete.assert_not_awaited()
 
     async def test_success(self) -> None:
+        execution = ModelExecution()
         signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
         raw = _valid_rankings(2, [9, 8])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config())
+            result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
 
         assert len(result) == 2
         assert isinstance(result[0], RankedSignal)
         assert result[0].score == 9
 
     async def test_empty_signals(self) -> None:
-        result = await rank_signals(_make_narrative(), [], _make_config())
+        execution = ModelExecution()
+        result = await rank_signals(_make_narrative(), [], _make_config(), execution=execution)
         assert result == []
 
     async def test_respects_top_signals_limit(self) -> None:
+        execution = ModelExecution()
         signals = [_make_signal(f"https://{i}.com") for i in range(5)]
         raw = _valid_rankings(5, [10] * 5)
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(top_signals=2))
+            result = await rank_signals(_make_narrative(), signals, _make_config(top_signals=2), execution=execution)
 
         assert len(result) == 2
 
     async def test_filters_below_threshold(self) -> None:
+        execution = ModelExecution()
         signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
         raw = _valid_rankings(2, [9, 4])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5))
+            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5), execution=execution)
 
         assert len(result) == 1
 
     async def test_score_5_passes_default_threshold(self) -> None:
+        execution = ModelExecution()
         signals = [_make_signal("https://a.com")]
         raw = _valid_rankings(1, [5])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5))
+            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5), execution=execution)
 
         assert len(result) == 1
         assert result[0].score == 5
 
     async def test_all_non_counter_relations_return_empty_without_another_request(self) -> None:
+        execution = ModelExecution()
         signals = [_make_signal(f"https://example.com/{index}") for index in range(3)]
         raw = _valid_rankings(3, [10] * 3)
         for item, relation in zip(raw, ["supports", "context", "insufficient"], strict=True):
             item["relation"] = relation
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
         with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config())
+            result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
         assert result == []
         assert mock_complete.await_count == 1
 
     async def test_llm_failure_propagates(self) -> None:
+        execution = ModelExecution()
         mock_complete = AsyncMock(side_effect=RuntimeError("fail"))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
             with pytest.raises(RuntimeError):
-                await rank_signals(_make_narrative(), [_make_signal()], _make_config())
+                await rank_signals(_make_narrative(), [_make_signal()], _make_config(), execution=execution)
 
     async def test_uses_correct_role(self) -> None:
+        execution = ModelExecution()
         from digest.llm import LLMRole
 
         raw = _valid_rankings(1, [8])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
-            await rank_signals(_make_narrative(), [_make_signal()], _make_config())
+            await rank_signals(_make_narrative(), [_make_signal()], _make_config(), execution=execution)
 
         assert mock_complete.call_args[0][0] == LLMRole.RANK_SIGNALS

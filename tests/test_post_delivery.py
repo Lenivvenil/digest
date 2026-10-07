@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.irritator.evidence_stage import EvidenceIrritatorResult, Outcome
 from digest.post_delivery import _send_supplement, execute_post_delivery, prepare_post_delivery
 from digest.review import run_blind_review
@@ -40,8 +41,9 @@ def isolated_post_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> A
 
 
 async def _checkpoint(path: Path) -> dict[str, Any]:
+    execution = ModelExecution()
     with patch("digest.review.complete", side_effect=fixture_response):
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = asdict(report)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -139,6 +141,7 @@ async def test_prepare_rejects_changed_evidence_before_claiming_attempt(tmp_path
     "missing", "changed_bytes", "changed_bundle", "changed_checkpoint", "already_started", "symlink",
 ])
 async def test_execute_requires_matching_unused_marker_before_model_or_network_work(kind: str, tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     await _checkpoint(checkpoint)
     if kind != "missing":
@@ -164,7 +167,7 @@ async def test_execute_requires_matching_unused_marker_before_model_or_network_w
         patch("digest.post_delivery._send_supplement", AsyncMock()) as send,
     ):
         with pytest.raises(ValueError):
-            await execute_post_delivery(Path("config.yaml"), checkpoint)
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     run.assert_not_called()
     send.assert_not_called()
     assert checkpoint.read_bytes() == original
@@ -189,6 +192,7 @@ def _client_context() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_execute_marks_started_before_work_and_persists_result_before_supplement(tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     original = checkpoint.read_bytes()
@@ -196,7 +200,9 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
     result = _stage_result(payload["evidence"]["bundle_id"])
     client = _client_context()
 
-    async def run(bundle: Any, config: Any, actual_client: Any) -> EvidenceIrritatorResult:
+    async def run(
+        bundle: Any, config: Any, actual_client: Any, *, execution: ModelExecution,
+    ) -> EvidenceIrritatorResult:
         assert asdict(bundle) == payload["evidence"]
         assert actual_client is client
         assert config.llm.max_retries == 0
@@ -219,7 +225,7 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
         patch("digest.irritator.evidence_stage.run_evidence_irritator", side_effect=run) as stage,
         patch("digest.post_delivery._send_supplement", side_effect=send) as sender,
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 0
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 0
     stage.assert_awaited_once()
     sender.assert_awaited_once()
     record = json.loads(_marker(checkpoint).read_text())
@@ -232,13 +238,14 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
         patch("digest.post_delivery._send_supplement", AsyncMock()) as sender,
     ):
         with pytest.raises(ValueError):
-            await execute_post_delivery(Path("config.yaml"), checkpoint)
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     stage.assert_not_called()
     sender.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_unexpected_model_error_leaves_durable_incomplete_result(tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     original = checkpoint.read_bytes()
@@ -249,7 +256,7 @@ async def test_unexpected_model_error_leaves_durable_incomplete_result(tmp_path:
               AsyncMock(side_effect=RuntimeError("private provider response"))) as stage,
         patch("digest.post_delivery._send_supplement", AsyncMock()) as sender,
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
     stage.assert_awaited_once()
     sender.assert_not_called()
     result = json.loads(_result(checkpoint).read_text())
@@ -265,6 +272,7 @@ async def test_unexpected_model_error_leaves_durable_incomplete_result(tmp_path:
 
 @pytest.mark.asyncio
 async def test_send_error_preserves_result_and_records_unknown_without_retry(tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     original = checkpoint.read_bytes()
@@ -283,9 +291,9 @@ async def test_send_error_preserves_result_and_records_unknown_without_retry(tmp
         patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)) as stage,
         patch("digest.post_delivery._send_supplement", side_effect=failed_send) as sender,
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
         with pytest.raises(ValueError):
-            await execute_post_delivery(Path("config.yaml"), checkpoint)
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     stage.assert_awaited_once()
     sender.assert_awaited_once()
     assert _result(checkpoint).read_bytes() == saved_result[0]
@@ -304,6 +312,7 @@ async def test_send_error_preserves_result_and_records_unknown_without_retry(tmp
 async def test_stage_outcome_and_supplement_receipt_are_separate(
     status: Outcome, receipt: str, code: int, tmp_path: Path,
 ) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     original = checkpoint.read_bytes()
@@ -314,7 +323,7 @@ async def test_stage_outcome_and_supplement_receipt_are_separate(
         patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)),
         patch("digest.post_delivery._send_supplement", AsyncMock(return_value=receipt)) as sender,
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == code
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == code
     sender.assert_awaited_once()
     marker = json.loads(_marker(checkpoint).read_text())
     assert marker["stage_status"] == status
@@ -377,6 +386,7 @@ async def test_supplement_uses_existing_primary_telegram_target_once(monkeypatch
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["prepare", "execute"])
 async def test_checkpoint_change_during_validation_is_rejected(phase: str, tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     await _checkpoint(checkpoint)
     if phase == "execute":
@@ -397,7 +407,7 @@ async def test_checkpoint_change_during_validation_is_rejected(phase: str, tmp_p
             if phase == "prepare":
                 prepare_post_delivery(Path("config.yaml"), checkpoint)
             else:
-                await execute_post_delivery(Path("config.yaml"), checkpoint)
+                await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     stage.assert_not_called()
     sender.assert_not_called()
     assert not _result(checkpoint).exists()
@@ -457,6 +467,7 @@ async def test_telegram_timeout_is_never_retried_within_supplement_dispatch(
 async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
+    execution = ModelExecution()
     from tests.factories import make_ranked_signal
 
     checkpoint = tmp_path / "digests/day.review.json"
@@ -487,9 +498,9 @@ async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)) as stage,
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
         with pytest.raises(ValueError):
-            await execute_post_delivery(Path("config.yaml"), checkpoint)
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     assert client.post.await_count == 2
     stage.assert_awaited_once()
     assert "LATE CONDITION" in _markdown(checkpoint).read_text()
@@ -501,6 +512,7 @@ async def test_second_chunk_timeout_preserves_archive_and_blocks_replay(
 async def test_optional_presentation_archives_canonical_before_translation_and_keeps_dispatch_reserve(
     tmp_path: Path,
 ) -> None:
+    execution = ModelExecution()
     import time
     from dataclasses import replace
 
@@ -516,7 +528,7 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
     presented = replace(canonical, status="empty")
     started = time.monotonic()
 
-    async def translate(actual, actual_config, cache, *, deadline):
+    async def translate(actual, actual_config, cache, *, execution, deadline):
         assert actual is canonical
         assert json.loads(_result(checkpoint).read_text()) == asdict(canonical)
         assert actual_config.translation.timeout_seconds == 90
@@ -540,12 +552,13 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
         patch("digest.translation.translate_supplement_presentation", side_effect=translate),
         patch("digest.post_delivery._send_supplement", side_effect=send),
     ):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 0
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 0
     assert json.loads(_result(checkpoint).read_text()) == asdict(canonical)
     assert json.loads(_marker(checkpoint).read_text())["translation_status"] == "translated"
 
 @pytest.mark.asyncio
 async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     config = fixture_config()
@@ -558,7 +571,7 @@ async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tm
         patch("digest.post_delivery._send_supplement", AsyncMock()) as send,
     ):
         prepare_post_delivery(Path("config.yaml"), checkpoint)
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
     process.assert_awaited_once()
     send.assert_not_called()
     assert json.loads(_result(checkpoint).read_text())["status"] == "incomplete"
@@ -570,6 +583,7 @@ async def test_compact_mode_archives_actual_optional_outcome_without_telegram(tm
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", [False, True])
 async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path, invalid: bool) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     payload["full_source_required"] = True
@@ -580,7 +594,7 @@ async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path
     with (patch("httpx.AsyncClient", return_value=_client_context()),
           patch("digest.llm.complete", AsyncMock(side_effect=AssertionError("No RSS fallback"))) as model,
           patch("digest.post_delivery._send_supplement", AsyncMock(return_value="sent"))):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
     model.assert_not_called()
     result = json.loads(_result(checkpoint).read_text())
     assert result["status"] == "incomplete"
@@ -594,6 +608,7 @@ async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: Path) -> None:
+    execution = ModelExecution()
     from digest.irritator.evidence_stage import _ranking_audit
     from tests.factories import make_signal
 
@@ -616,9 +631,9 @@ async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: P
     with (patch("httpx.AsyncClient", return_value=client),
           patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock(return_value=result)) as stage,
           patch("digest.post_delivery._send_supplement", side_effect=send)):
-        assert await execute_post_delivery(Path("config.yaml"), checkpoint) == 2
+        assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution) == 2
         with pytest.raises(ValueError):
-            await execute_post_delivery(Path("config.yaml"), checkpoint)
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=execution)
     stage.assert_awaited_once()
 
 

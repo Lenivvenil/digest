@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import date
 from typing import TYPE_CHECKING
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application import legacy
 from digest.application.results import Preview, RunStats
 
@@ -40,17 +41,21 @@ async def _run(
         raise ValueError("Edition preparation cannot be combined with preview modes.")
     started_at = time.monotonic()
     config = load_config(config_path)
+    execution = ModelExecution()
     validate_reading_mode(config, prepare_only)
     _validate_closing_mode(config, prepare_only)
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
     _validate_compact_run(compact, dry_run, radar_only, issue_guard, prepare_only)
     if prepare_only:
         prepare = prepare_sources if config.reading_brief.enabled else prepare_edition
-        return await prepare(config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-                             publication_date=edition_date, started_at=started_at)
+        return await prepare(
+            config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
+            publication_date=edition_date, started_at=started_at, execution=execution,
+        )
     return await legacy.run_legacy(
         config, config_path, dry_run, radar_only, verbose, started_at=started_at,
         feedback_precollected=feedback_precollected, issue_guard=issue_guard, emit_preview=emit_preview,
+        execution=execution,
     )
 
 

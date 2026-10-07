@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from digest.adapters.models.execution import ModelExecution
     from digest.config import Config
     from digest.irritator.ranker import RankedSignal
     from digest.radar.summarizer import ArticleSummary, CategorySummary
@@ -68,10 +69,11 @@ def publication_intro(combined: str, report: BlindReviewReport | None, config: C
 
 async def primary_presentation(
     combined: str, cards: list[ArticleSummary], config: Config, cache: Path, dry_run: bool,
+    *, execution: ModelExecution,
 ) -> tuple[str, list[ArticleSummary]]:
     """Optional rendering only; source evidence and supplementary work stay canonical."""
     presented, translated_cards, _ = await publication_presentation(
-        combined, cards, [], config, cache, dry_run,
+        combined, cards, [], config, cache, dry_run, execution=execution,
     )
     return presented, translated_cards
 
@@ -79,6 +81,7 @@ async def primary_presentation(
 async def publication_presentation(
     combined: str, cards: list[ArticleSummary], ranked: list[RankedSignal],
     config: Config, cache: Path, dry_run: bool,
+    *, execution: ModelExecution,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal]]:
     if not getattr(getattr(config, "translation", None), "enabled", False):
         return combined, cards, ranked
@@ -88,5 +91,7 @@ async def publication_presentation(
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory(prefix="digest-translation-preview-") as temporary:
-            return await translate_publication_presentation(combined, cards, ranked, config, Path(temporary))
-    return await translate_publication_presentation(combined, cards, ranked, config, cache)
+            return await translate_publication_presentation(
+                combined, cards, ranked, config, Path(temporary), execution=execution,
+            )
+    return await translate_publication_presentation(combined, cards, ranked, config, cache, execution=execution)

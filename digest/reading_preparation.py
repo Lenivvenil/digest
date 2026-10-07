@@ -16,6 +16,7 @@ from typing import Literal
 from digest._serialization import canonical_json_bytes as _canonical
 from digest._serialization import restore_dataclass as _restore
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.candidate_review import (
     Candidate,
@@ -98,10 +99,10 @@ def validate_reading_mode(config: Config, prepare_only: bool) -> None:
         raise ValueError("Source reading requires candidate-bound --prepare-edition mode.")
 
 
-def setup_reading_budget(config: Config) -> None:
+def setup_reading_budget(config: Config, *, execution: ModelExecution) -> None:
     if getattr(getattr(config, "reading_brief", None), "enabled", False):
         config.llm.max_retries = 0
-        set_request_limit(config, min(config.reading_brief.max_requests_per_run, 10))
+        set_request_limit(config, execution, min(config.reading_brief.max_requests_per_run, 10))
 
 
 def _binding(packet: CandidatePacket, report: BlindReviewReport, identity: str) -> ReadingBinding:
@@ -261,7 +262,7 @@ def deferred_source_reports(progress: CandidateProgress, state_dir: Path, config
 
 async def prepare_selected_sources(
     progress: CandidateProgress | None, packet: CandidatePacket | None, report: BlindReviewReport | None,
-    config: Config, state_dir: Path, deadline: float, *, prepare_only: bool = True,
+    config: Config, state_dir: Path, deadline: float, *, execution: ModelExecution, prepare_only: bool = True,
 ) -> ReadingPreparationResult:
     if not prepare_only or progress is None or packet is None or report is None:
         raise ValueError("Source reading requires candidate-bound --prepare-edition mode.")
@@ -291,7 +292,7 @@ async def prepare_selected_sources(
             state, binding = _bound_state(
                 binding, Selection.from_article(candidate.article.article()), route, state_dir)
             if routes and state.status == "pending" and time.monotonic() < deadline:
-                await _advance(state, config, state_dir, deadline)
+                await _advance(state, config, state_dir, deadline, execution=execution)
             if state.status in {"ready", "abstained"}:
                 handoff = str(_freeze_handoff(binding, state, state_dir))
                 complete.append(handoff)
@@ -313,8 +314,8 @@ async def prepare_selected_sources(
     result = ReadingPreparationResult(len(selections), len(complete), len(pending_dates),
                                     min(pending_dates) if pending_dates else None,
                                     "semantic_reconciliation_pending" if complete else "technical_pending",
-                                    tuple(complete), request_budget_remaining(config),
-                                    _request_state(config).requests_attempted, time.monotonic() - started,
+                                    tuple(complete), request_budget_remaining(config, execution),
+                                    _request_state(config, execution).requests_attempted, time.monotonic() - started,
                                     "unknown", tuple(outcomes))
     atomic_json_write(_safe(state_dir / "reading_preparation.json"),
                       {"report_sha256": _hash(asdict(report)), "result": asdict(result)})

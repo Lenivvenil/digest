@@ -14,6 +14,7 @@ import httpx
 import pytest
 import respx
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.analysis import analyze_articles as _analyze_articles
 from digest.application.preparation import _analyze_candidate_articles
 from digest.candidate_review import (
@@ -102,7 +103,8 @@ async def test_eight_useful_five_confirmed_three_next_window(
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
     monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
           AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
+        lambda c, *args, **kwargs: (c, kwargs["execution"]))
     collection_calls = 0
     requests: list[list[str]] = []
 
@@ -189,6 +191,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     tmp_path: Path,
     partial: bool,
 ) -> None:
+    execution = ModelExecution()
     config, articles = _inputs(datetime.now(UTC))
     bundle = build_evidence_bundle(articles, config.review)
     payload = json.loads(_response([asdict(item) for item in bundle.items]))
@@ -196,7 +199,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
         payload["selections"][-1]["quote"] = "Not in the supplied evidence"
     raw = json.dumps(payload)
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        original = await run_evidence_review(bundle, config)
+        original = await run_evidence_review(bundle, config, execution=execution)
     assert complete.await_count == 2  # Only the existing independent primary and secondary slots.
     count = 7 if partial else 8
     assert all(len(review.selections) == count for review in original.reviews)
@@ -207,7 +210,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     restored_bundle, cached = load_review_checkpoint(path, config)
     assert _reusable_slots(restored_bundle, cached, config) == {"primary", "secondary"}
     with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("No new relevance request"))) as complete:
-        reused = await run_evidence_review(restored_bundle, config, cached)
+        reused = await run_evidence_review(restored_bundle, config, cached, execution=execution)
     complete.assert_not_called()
     assert path.read_bytes() == original_bytes
     for before, after in zip(original.reviews, reused.reviews, strict=True):
@@ -224,17 +227,19 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
 
 @pytest.mark.asyncio
 async def test_non_candidate_publication_also_caps_cards_after_full_relevance_review() -> None:
+    execution = ModelExecution()
     config, articles = _inputs(datetime.now(UTC))
     bundle = build_evidence_bundle(articles, config.review)
     raw = _response([asdict(item) for item in bundle.items])
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        _, _, cards, report = await _analyze_articles(articles, config)
+        _, _, cards, report = await _analyze_articles(articles, config, execution=execution)
     complete.assert_awaited_once()
     assert len(cards) == 5 and len(report.reviews[0].selections) == 8
 
 
 @pytest.mark.asyncio
 async def test_fallback_preserves_duplicate_bound_to_overflow_selected_identity(tmp_path: Path) -> None:
+    execution = ModelExecution()
     now = datetime.now(UTC)
     config, articles = _inputs(now)
     articles["Tech"].append(
@@ -257,7 +262,9 @@ async def test_fallback_preserves_duplicate_bound_to_overflow_selected_identity(
     with patch(
         "digest.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})])
     ) as complete:
-        _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+        _, _, cards, report = await _analyze_candidate_articles(
+            articles, config, progress, packet, None, str(tmp_path), execution=execution,
+        )
     assert complete.await_count == 2  # Existing primary/fallback budget, with no overflow repair call.
     assert report.reviews[0].status == "unavailable" and len(report.reviews[1].selections) == 8
     assert len(cards) == 5
@@ -288,6 +295,7 @@ def test_packet_and_response_bounds_still_reject_invalid_envelopes(failure: str)
 
 @pytest.mark.asyncio
 async def test_unicode_selections_reconcile_with_original_character_budget(tmp_path: Path) -> None:
+    execution = ModelExecution()
     now = datetime.now(UTC)
     config, articles = _inputs(now)
     for article in articles["Tech"]:
@@ -301,7 +309,9 @@ async def test_unicode_selections_reconcile_with_original_character_budget(tmp_p
     raw = json.dumps(payload, ensure_ascii=False)
     assert len(raw) < 32000 < len(json.dumps(payload))
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+        _, _, cards, report = await _analyze_candidate_articles(
+            articles, config, progress, packet, None, str(tmp_path), execution=execution,
+        )
     complete.assert_awaited_once()
     assert len(cards) == 5 and len(report.reviews[0].selections) == 8
     restored = load_candidate_progress(tmp_path)

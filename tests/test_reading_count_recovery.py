@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import _candidate_inputs
 from digest.config import ProviderConfig
 from digest.radar.collector import CollectionInventory, SourceCollectionOutcome, _capture_candidates, article_hash
@@ -25,14 +26,17 @@ from tests.test_reading_brief import fetched
 async def test_count_held_packet_releases_planning_only_without_a_configured_fallback(
     tmp_path: Path, fallback: bool, legacy: bool,
 ) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path,
+                                                             execution=model_execution)
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
           patch("digest.llm.complete", side_effect=generate) as complete,
           patch("digest.source_admission.count_gpt_input", return_value=1000)):
-        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                                                execution=model_execution)
         assert result.pending == 1 and count.call_count == 1 and complete.call_count == 0
         if legacy:
             state = load_state(tmp_path, identity)
@@ -65,7 +69,8 @@ async def test_count_held_packet_releases_planning_only_without_a_configured_fal
         assert fetch.call_count == count.call_count == 1 and complete.call_count == 0
         if fallback:
             resumed = await prepare_selected_sources(
-                progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+                progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                execution=model_execution)
             assert resumed.technical_complete == 1 and resumed.pending == 0
             assert fetch.call_count == count.call_count == complete.call_count == 1
             assert complete.call_args.kwargs["provider_override"].name == "groq"
@@ -81,13 +86,16 @@ async def test_count_held_packet_releases_planning_only_without_a_configured_fal
 async def test_count_deferral_requires_current_request_route_and_binding_proof(
     tmp_path: Path, evidence: str, held: bool,
 ) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path,
+                                                             execution=model_execution)
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)),
           patch("digest.llm.complete", side_effect=AssertionError("No generation after uncertain count"))):
-        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                                       execution=model_execution)
     state = load_state(tmp_path, identity)
     page = state.pages[0]
     if evidence == "reserved":
@@ -107,7 +115,9 @@ async def test_count_deferral_requires_current_request_route_and_binding_proof(
     elif evidence == "unsupported_routes":
         config.reading_brief = replace(config.reading_brief, model="unsupported")
     elif evidence == "changed_occurrence":
-        config, progress, packet, report = await saved_selection(tmp_path, description="Changed occurrence")
+        config, progress, packet, report = await saved_selection(
+            tmp_path, execution=model_execution, description="Changed occurrence",
+        )
     elif evidence == "mismatched_binding":
         report.reviews[0].response_sha256 = "0" * 64
     save_state(tmp_path, state)
@@ -120,12 +130,15 @@ async def test_count_deferral_requires_current_request_route_and_binding_proof(
 
 @pytest.mark.asyncio
 async def test_mixed_count_held_and_resumable_sources_keep_the_packet_eligible(tmp_path: Path) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path, all_selected=True)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path,
+                                                             execution=model_execution, all_selected=True)
     config.llm.providers = []
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=[TimeoutError(), RuntimeError("HTTP 503")])),
           patch("digest.llm.complete", side_effect=AssertionError("No admitted source"))):
-        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                                                execution=model_execution)
     assert result.pending == 2
     assert not deferred_source_reports(progress, tmp_path, config)
 
@@ -135,7 +148,9 @@ async def test_mixed_count_held_and_resumable_sources_keep_the_packet_eligible(t
 async def test_unavailable_local_fallback_releases_planning_and_restored_profile_resumes(
     tmp_path: Path, profile_error: str,
 ) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path,
+                                                             execution=model_execution)
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
@@ -143,7 +158,8 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
           patch("digest.llm.complete", side_effect=generate) as complete,
           patch("digest.source_admission.count_gpt_input",
                 side_effect=TokenProfileUnavailable(profile_error)) as local_count):
-        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                                               execution=model_execution)
         assert first.pending == 1
         retained = {path: path.read_bytes() for root in ("reading_briefs", "reading_bindings")
                     for path in (tmp_path / root).rglob("*.json")}
@@ -171,7 +187,8 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
                 progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
         assert recovered_packet == packet and recovered_report == report
         resumed = await prepare_selected_sources(
-            progress, recovered_packet, recovered_report, config, tmp_path, time.monotonic() + 1000)
+            progress, recovered_packet, recovered_report, config, tmp_path, time.monotonic() + 1000,
+            execution=model_execution)
         assert resumed.technical_complete == 1 and resumed.pending == 0
         assert fetch.call_count == count.call_count == complete.call_count == 1
         assert complete.call_args.kwargs["provider_override"].name == "groq"
@@ -182,13 +199,16 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
 async def test_local_profile_deferral_requires_count_hold_and_explicit_profile_failure(
     tmp_path: Path, local_admission: str,
 ) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path,
+                                                             execution=model_execution)
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)),
           patch("digest.llm.complete", side_effect=AssertionError("No admitted route"))):
-        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000,
+                                       execution=model_execution)
     config.llm.providers = [ProviderConfig("groq", "openai/gpt-oss-120b")]
     if local_admission == "unavailable_without_count_hold":
         state = load_state(tmp_path, identity)

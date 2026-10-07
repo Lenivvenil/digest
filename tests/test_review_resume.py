@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.review import run_blind_review
 from digest.review_resume import execute_resume, prepare_resume
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
@@ -38,8 +39,9 @@ def isolated_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 async def _checkpoint(
     path: Path, *, age: timedelta = timedelta(minutes=10), failed: tuple[str, ...] = ("secondary",),
 ) -> dict[str, Any]:
+    execution = ModelExecution()
     with patch("digest.review.complete", side_effect=fixture_response):
-        report = await run_blind_review(fixture_articles(), fixture_config())
+        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     for review in report.reviews:
         review.generated_at = review.attempted_at = (NOW - age).isoformat()
         if review.slot in failed:
@@ -111,6 +113,7 @@ async def test_prepare_skips_ineligible_reports(kind: str, tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp_path: Path) -> None:
+    execution = ModelExecution()
     path = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(path)
     before = path.read_bytes()
@@ -130,7 +133,7 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
         return await fixture_response(role, messages, config, **kwargs)
 
     with patch("digest.review.complete", side_effect=response):
-        assert await execute_resume(Path("config.yaml"), path) == 0
+        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 0
     assert calls == ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
     assert path.read_bytes() == before
     resumed = json.loads((path.parent / "day.review-resumed.json").read_text())
@@ -139,17 +142,18 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
     assert (path.parent / "day.review-resumed.md").exists()
     with patch("digest.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
-            await execute_resume(Path("config.yaml"), path)
+            await execute_resume(Path("config.yaml"), path, execution=execution)
     complete.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_both_main_failures_recover_with_two_calls_and_explicit_escalation_budget(tmp_path: Path) -> None:
+    execution = ModelExecution()
     path = tmp_path / "digests/day.review.json"
     await _checkpoint(path, failed=("primary", "secondary"))
     assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
     with patch("digest.review.complete", side_effect=fixture_response) as complete:
-        assert await execute_resume(Path("config.yaml"), path) == 2
+        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
     assert complete.call_count == 2
     resumed = json.loads((path.parent / "day.review-resumed.json").read_text())
     assert [review["slot"] for review in resumed["reviews"]] == ["primary", "secondary"]
@@ -160,6 +164,7 @@ async def test_both_main_failures_recover_with_two_calls_and_explicit_escalation
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["missing", "changed_bytes", "changed_bundle", "already_started"])
 async def test_execute_rejects_missing_or_mismatched_markers_before_model_calls(kind: str, tmp_path: Path) -> None:
+    execution = ModelExecution()
     path = tmp_path / "digests/day.review.json"
     await _checkpoint(path)
     if kind != "missing":
@@ -174,7 +179,7 @@ async def test_execute_rejects_missing_or_mismatched_markers_before_model_calls(
         _marker(path).write_text(json.dumps(marker))
     with patch("digest.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
-            await execute_resume(Path("config.yaml"), path)
+            await execute_resume(Path("config.yaml"), path, execution=execution)
     complete.assert_not_called()
     assert not (path.parent / "day.review-resumed.json").exists()
 
@@ -210,6 +215,7 @@ async def test_model_outside_approved_lineup_is_rejected_without_requests(tmp_pa
 
 @pytest.mark.asyncio
 async def test_resume_preserves_separate_source_provenance_without_promoting_rss_review(tmp_path: Path) -> None:
+    execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
     provenance = {"full_source_required": True, "full_source_error": "ValueError",
@@ -218,7 +224,7 @@ async def test_resume_preserves_separate_source_provenance_without_promoting_rss
     checkpoint.write_text(json.dumps(payload))
     assert prepare_resume(Path("fixture.yaml"), checkpoint.parent, NOW) == checkpoint
     with patch("digest.review.complete", side_effect=fixture_response):
-        await execute_resume(Path("fixture.yaml"), checkpoint)
+        await execute_resume(Path("fixture.yaml"), checkpoint, execution=execution)
     resumed = json.loads(checkpoint.with_name("day.review-resumed.json").read_text())
     assert {key: resumed[key] for key in provenance} == provenance
     assert resumed["evidence"] == json.loads(json.dumps(payload["evidence"]))

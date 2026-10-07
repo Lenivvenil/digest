@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from digest.adapters.models.execution import ModelExecution
+
 if TYPE_CHECKING:
     from digest.config import Config
     from digest.discovery import PendingSource
@@ -168,10 +170,12 @@ async def _generate_offers(
         single = replace(config, llm=replace(
             config.llm, providers=providers[:2], max_retries=0,
         ))
+        # Discovery replaces nested model settings, so it owns a fresh execution.
+        discovery_execution = ModelExecution()
         response, _ = await complete(LLMRole.SUMMARIZE, [
             {"role": "system", "content": "You suggest sources for owner approval; never activate them."},
             {"role": "user", "content": prompt},
-        ], single, max_output_tokens=2048)
+        ], single, max_output_tokens=2048, execution=discovery_execution)
         generation["outcome"] = "no_valid_proposals" if response.strip() else "empty"
     except Exception as exc:
         counts["generation_failed"] += 1

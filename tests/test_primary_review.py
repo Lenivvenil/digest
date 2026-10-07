@@ -10,8 +10,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.cli.reporting import publish_review_checkpoint as _publish_review_checkpoint
-from digest.config import ProviderConfig
+from digest.config import ProviderConfig, ReadingBriefConfig
 from digest.delivery import ArticleDeliveryResult
 from digest.main import RunStats, main
 from digest.review import primary_cards, render_review, run_evidence_review, run_primary_review
@@ -20,21 +21,37 @@ from scripts.review_fixture import fixture_articles, fixture_config, fixture_res
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("abstain", [False, True])
-async def test_valid_primary_stops_without_peer_or_third(abstain: bool) -> None:
+@pytest.mark.parametrize("reading_enabled", [False, True])
+async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_enabled: bool) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
+    config.reading_brief = ReadingBriefConfig(enabled=reading_enabled)
     original = deepcopy(config)
+    caller_state = execution.request_state(config.llm)
+    caller_state.request_limit = 0
+    route = (config.review.primary.provider, config.review.primary.model)
+    caller_state.unavailable_until[route] = float("inf")
 
     async def adapter(role: Any, messages: list[dict[str, str]], used: Any, **kwargs: Any) -> tuple:
         assert used is not config and used.llm is not config.llm
         assert used.llm.max_retries == 0
+        derived = kwargs["execution"]
+        assert derived is not execution
+        actual_state = derived.request_state(used.llm)
+        if reading_enabled:
+            assert actual_state is caller_state and actual_state.request_limit == 0
+            assert actual_state.unavailable_until[route] == float("inf")
+        else:
+            assert actual_state is not caller_state and actual_state.request_limit is None
+            assert actual_state.unavailable_until == {}
         assert kwargs["provider_override"].model == config.review.primary.model
         if abstain:
             return json.dumps({"selections": [], "limitations": ["Insufficient useful evidence"]}), {}
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.review.complete", side_effect=adapter) as complete:
-        report = await run_primary_review(fixture_articles(), config)
+        report = await run_primary_review(fixture_articles(), config, execution=execution)
     complete.assert_awaited_once()
     assert config == original
     assert report.status == "incomplete"
@@ -59,6 +76,7 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool) -> None:
 @pytest.mark.parametrize("failure", ["unavailable", "invalid"])
 @pytest.mark.parametrize("fallback", ["ok", "abstained", "unavailable", "invalid"])
 async def test_primary_failure_attempts_only_secondary_once(failure: str, fallback: str) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
     calls = []
@@ -77,7 +95,7 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.review.complete", side_effect=adapter):
-        report = await run_primary_review(fixture_articles(), config)
+        report = await run_primary_review(fixture_articles(), config, execution=execution)
     assert [model for model, _ in calls] == [config.review.primary.model, config.review.secondary.model]
     assert calls[0][1] == calls[1][1]
     assert [review.status for review in report.reviews] == [failure, fallback]
@@ -90,6 +108,7 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
 
 @pytest.mark.asyncio
 async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     prompts = []
 
@@ -98,8 +117,8 @@ async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.review.complete", side_effect=adapter):
-        first = await run_primary_review(fixture_articles(), config)
-        final = await run_evidence_review(first.evidence, config, first.reviews)
+        first = await run_primary_review(fixture_articles(), config, execution=execution)
+        final = await run_evidence_review(first.evidence, config, first.reviews, execution=execution)
     assert len(prompts) == 3
     assert all(prompt == prompts[0] for prompt in prompts)
     assert final.evidence == first.evidence and final.status == "complete"
@@ -111,6 +130,7 @@ async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None
 
 @pytest.mark.asyncio
 async def test_delivery_retries_disabled_in_real_completion_wrapper() -> None:
+    execution = ModelExecution()
     import httpx
 
     config = fixture_config()
@@ -121,7 +141,7 @@ async def test_delivery_retries_disabled_in_real_completion_wrapper() -> None:
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.llm._call_provider", AsyncMock(side_effect=httpx.ReadTimeout("offline"))) as provider,
     ):
-        report = await run_primary_review(fixture_articles(), config)
+        report = await run_primary_review(fixture_articles(), config, execution=execution)
     assert provider.await_count == 2
     assert [review.status for review in report.reviews] == ["unavailable", "unavailable"]
     assert config.llm.max_retries == 3
@@ -245,6 +265,7 @@ async def test_non_delivery_modes_never_publish_checkpoint(args: list[str]) -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("finish", [None, "MAX_TOKENS"])
 async def test_reading_primary_incomplete_completion_never_implies_editorial_rejection(finish: str | None) -> None:
+    execution = ModelExecution()
     from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.config import ReadingBriefConfig
 
@@ -257,7 +278,7 @@ async def test_reading_primary_incomplete_completion_never_implies_editorial_rej
 
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", side_effect=select):
-        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture)
+        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
     assert bool(report.reviews[0].selections) is (finish is None)
     if finish is not None:
         assert report.reviews[0].error == "provider reported unfinished response"

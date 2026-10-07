@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from digest._serialization import extract_json as _extract_json
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.sources import Signal
@@ -176,6 +177,7 @@ async def rank_signals(
     narrative: Narrative,
     signals: list[Signal],
     config: Config,
+    *, execution: ModelExecution,
 ) -> list[RankedSignal]:
     """Rank signals against a narrative via LLM.
 
@@ -193,7 +195,7 @@ async def rank_signals(
 
     messages = _build_prompt(narrative, signals, config.radar.language, signals_text=signals_text)
     text, _usage = await complete(
-        LLMRole.RANK_SIGNALS, messages, config, temperature=0.3
+        LLMRole.RANK_SIGNALS, messages, config, temperature=0.3, execution=execution,
     )
 
     raw = _extract_json(text)

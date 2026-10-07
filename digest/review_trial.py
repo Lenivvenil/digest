@@ -16,6 +16,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import load_config
 from digest.radar.collector import collect
 from digest.review import render_review, run_blind_review, run_evidence_review
@@ -28,7 +29,9 @@ _ALLOWED_MODELS = {
 }
 
 
-async def run_trial(config_path: Path, output_dir: Path, resume_path: Path | None = None) -> int:
+async def run_trial(
+    config_path: Path, output_dir: Path, resume_path: Path | None = None, *, execution: ModelExecution,
+) -> int:
     config_path, output_dir = config_path.resolve(), output_dir.resolve()
     if resume_path is not None:
         resume_path = resume_path.resolve()
@@ -68,12 +71,12 @@ async def run_trial(config_path: Path, output_dir: Path, resume_path: Path | Non
             os.chdir(isolated)
             if resume_path is not None:
                 bundle, cached_reviews = load_review_checkpoint(resume_path, config)
-                report = await run_evidence_review(bundle, config, cached_reviews)
+                report = await run_evidence_review(bundle, config, cached_reviews, execution=execution)
             else:
                 articles, _unpersisted_cache = await collect(config)
                 if not articles:
                     raise ValueError("No source evidence collected; no model calls made.")
-                report = await run_blind_review(articles, config)
+                report = await run_blind_review(articles, config, execution=execution)
     finally:
         os.chdir(previous_cwd)
 
@@ -107,7 +110,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", type=Path, help="Prior report JSON; reuse valid matching slots only")
     args = parser.parse_args()
-    return asyncio.run(run_trial(args.config, args.output, args.resume))
+    return asyncio.run(run_trial(args.config, args.output, args.resume, execution=ModelExecution()))
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from digest.irritator.sources import SearchDiagnostics, Signal, search_all_sourc
 from digest.irritator.validator import validate_signals, validate_signals_async
 
 if TYPE_CHECKING:
+    from digest.adapters.models.execution import ModelExecution
     from digest.config import Config
     from digest.radar.summarizer import CategorySummary
 
@@ -54,7 +55,7 @@ async def run_irritator(
     summaries: "list[CategorySummary]",
     config: "Config",
     client: httpx.AsyncClient,
-    *,
+    *, execution: ModelExecution,
     verbose: bool = False,
 ) -> tuple[list[Narrative], list[RankedSignal], IrritatorStatus]:
     """Run the five-stage Irritator pipeline.
@@ -88,7 +89,7 @@ async def run_irritator(
 
     # Stage 1: Narrative extraction
     try:
-        narratives = await extract_narratives(summaries, config)
+        narratives = await extract_narratives(summaries, config, execution=execution)
     except Exception as exc:
         logger.error("Irritator: narrative extraction failed (%s)", type(exc).__name__)
         return [], [], outcome(f"narrative extraction failed: {type(exc).__name__}", "error")
@@ -101,7 +102,9 @@ async def run_irritator(
 
     # Stage 2: Query generation
     try:
-        queries_by_narrative = await generate_queries(narratives, config, diagnostics=diagnostics.queries)
+        queries_by_narrative = await generate_queries(
+            narratives, config, diagnostics=diagnostics.queries, execution=execution,
+        )
         all_queries = [q for qs in queries_by_narrative.values() for q in qs]
     except Exception as exc:
         logger.error("Irritator: query generation failed (%s)", type(exc).__name__)
@@ -167,7 +170,7 @@ async def run_irritator(
         if not admitted_indices:
             continue
         try:
-            ranked = await rank_signals(narrative, signals, config)
+            ranked = await rank_signals(narrative, signals, config, execution=execution)
             all_ranked.extend(ranked)
             diagnostics.ranking_successful += 1
         except Exception as exc:

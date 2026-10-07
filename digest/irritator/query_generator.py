@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from digest._serialization import extract_json as _extract_json
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import QUERY_CONTRACT, lexical_atoms
@@ -119,6 +120,7 @@ def _parse_queries(raw: Any) -> list[SearchQuery]:
 async def _generate_for_narrative(
     narrative: Narrative,
     config: Config,
+    *, execution: ModelExecution,
 ) -> list[SearchQuery]:
     """Generate adversarial queries for a single narrative."""
     messages = _build_prompt(
@@ -127,7 +129,7 @@ async def _generate_for_narrative(
         config.irritator.queries_per_narrative,
     )
     text, _usage = await complete(
-        LLMRole.GENERATE_QUERIES, messages, config, temperature=0.5
+        LLMRole.GENERATE_QUERIES, messages, config, temperature=0.5, execution=execution,
     )
     raw = _extract_json(text)
     return _parse_queries(raw)
@@ -136,7 +138,7 @@ async def _generate_for_narrative(
 async def generate_queries(
     narratives: list[Narrative],
     config: Config,
-    *,
+    *, execution: ModelExecution,
     diagnostics: QueryDiagnostics | None = None,
 ) -> dict[str, list[SearchQuery]]:
     """Generate adversarial search queries for all narratives in parallel.
@@ -147,7 +149,7 @@ async def generate_queries(
     if not narratives:
         return {}
 
-    tasks = [_generate_for_narrative(n, config) for n in narratives]
+    tasks = [_generate_for_narrative(n, config, execution=execution) for n in narratives]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     queries_by_narrative: dict[str, list[SearchQuery]] = {}

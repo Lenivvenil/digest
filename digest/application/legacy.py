@@ -20,6 +20,7 @@ from digest.application import analysis, investigation, presentation, run_state
 from digest.application.results import DigestPreview, Preview, RadarPreview, RunStats
 
 if TYPE_CHECKING:
+    from digest.adapters.models.execution import ModelExecution
     from digest.config import Config
     from digest.delivery.issue_guard import IssueGuard
     from digest.domain.catalog.articles import Article
@@ -38,6 +39,7 @@ class LegacyCollection:
     """Approved collection portfolio, observed inputs and pre-delivery state."""
 
     config: Config
+    execution: ModelExecution
     compact: bool
     review_led_only: bool
     cache_dir: str
@@ -70,6 +72,7 @@ class LegacyPublication:
 
 async def _collect_legacy(
     config: Config, config_path: str, dry_run: bool, radar_only: bool, feedback_precollected: bool,
+    *, execution: ModelExecution,
 ) -> LegacyCollection:
     """Apply feedback and approved sources before observing the current portfolio."""
     from digest._util import cleanup_stale_tmp
@@ -92,8 +95,9 @@ async def _collect_legacy(
         config, cache_dir, dry_run, feedback_precollected,
     )
     run_state.require_attribution_store(compact and not dry_run and not radar_only, feedback_usable)
-    config = run_state.apply_pending_approvals(
+    config, execution = run_state.apply_pending_approvals(
         config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
+        execution=execution,
     )
     feeds_count = len(config.enabled_sources)
     saved_article_source_map = dict(feedback_store.article_source_map)
@@ -131,8 +135,8 @@ async def _collect_legacy(
     contributing_sources = sorted({a.source for articles in articles_by_category.values() for a in articles})
 
     return LegacyCollection(
-        config=config, compact=compact, review_led_only=review_led_only, cache_dir=cache_dir,
-        source_state=source_state, source_stats=source_stats, feedback_store=feedback_store,
+        config=config, execution=execution, compact=compact, review_led_only=review_led_only,
+        cache_dir=cache_dir, source_state=source_state, source_stats=source_stats, feedback_store=feedback_store,
         feedback_usable=feedback_usable, feedback_collected=feedback_collected,
         previous_article_sources=saved_article_source_map, effective_priorities=effective_priorities,
         feeds_count=feeds_count, articles_by_category=articles_by_category, collected_cache=cache,
@@ -141,7 +145,7 @@ async def _collect_legacy(
 
 
 async def run_legacy(
-    config: Config, config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *,
+    config: Config, config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, execution: ModelExecution,
     started_at: float, emit_preview: Callable[[Preview], None],
     feedback_precollected: bool = False, issue_guard: IssueGuard | None = None,
 ) -> RunStats:
@@ -150,8 +154,10 @@ async def run_legacy(
     from digest.feedback import save_feedback
     from digest.source_scorer import save_stats
 
-    collected = await _collect_legacy(config, config_path, dry_run, radar_only, feedback_precollected)
-    config, cache_dir = collected.config, collected.cache_dir
+    collected = await _collect_legacy(
+        config, config_path, dry_run, radar_only, feedback_precollected, execution=execution,
+    )
+    config, execution, cache_dir = collected.config, collected.execution, collected.cache_dir
     articles_by_category, fetch_metrics = collected.articles_by_category, collected.fetch_metrics
     source_stats, feedback_store = collected.source_stats, collected.feedback_store
     feeds_count, total_articles = collected.feeds_count, collected.total_articles
@@ -168,7 +174,9 @@ async def run_legacy(
                 save_feedback(feedback_store, cache_dir)
         return _empty_run_stats(feeds_count, feedback_collected)
 
-    summaries, trends, top_articles, review_report = await analysis.analyze_articles(articles_by_category, config)
+    summaries, trends, top_articles, review_report = await analysis.analyze_articles(
+        articles_by_category, config, execution=execution,
+    )
     if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         run_state.save_failed_run_stats(
@@ -185,7 +193,7 @@ async def run_legacy(
 
     if radar_only:
         combined, top_articles = await presentation.primary_presentation(
-            combined, top_articles, config, Path(cache_dir) / "translations", dry_run,
+            combined, top_articles, config, Path(cache_dir) / "translations", dry_run, execution=execution,
         )
         emit_preview(RadarPreview(
             combined, top_articles, bool(getattr(getattr(config, "translation", None), "enabled", False)),
@@ -204,10 +212,13 @@ async def run_legacy(
         all_ranked: list[RankedSignal] = []
         irritator_status = IrritatorStatus(presentation.deferred_review_status(config.radar.language), "deferred")
     else:
-        _, all_ranked, irritator_status = await investigation.run_irritator(summaries, config, verbose)
+        _, all_ranked, irritator_status = await investigation.run_irritator(
+            summaries, config, verbose, execution=execution,
+        )
 
     combined, top_articles, all_ranked = await presentation.publication_presentation(
         combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
+        execution=execution,
     )
 
     # Dry-run output

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, load_config
 from digest.domain.editorial.reviews import (
     EvidenceBundle,
@@ -172,7 +173,9 @@ def prepare_resume(config_path: Path, reports_dir: Path, now: datetime | None = 
     return None
 
 
-async def execute_resume(config_path: Path, checkpoint_path: Path) -> int:
+async def execute_resume(
+    config_path: Path, checkpoint_path: Path, *, execution: ModelExecution,
+) -> int:
     """Use at most two missing-slot attempts; never overwrite source evidence."""
     checkpoint = _safe_path(checkpoint_path)
     marker, output, markdown = _siblings(checkpoint)
@@ -195,7 +198,7 @@ async def execute_resume(config_path: Path, checkpoint_path: Path) -> int:
         config.review.tie_breaker = None
     record["execution_started_at"] = datetime.now(UTC).isoformat()
     atomic_json_write(marker, record)
-    report = await run_evidence_review(bundle, config, cached)
+    report = await run_evidence_review(bundle, config, cached, execution=execution)
     if limited_third and report.third_model_reason == "third_model_not_configured":
         report.third_model_reason = "resume_request_budget_exhausted"
         report.status = "incomplete"
@@ -228,7 +231,7 @@ def main() -> int:
     if args.command == "prepare":
         prepare_resume(args.config, args.reports, args.now)
         return 0
-    return asyncio.run(execute_resume(args.config, args.checkpoint))
+    return asyncio.run(execute_resume(args.config, args.checkpoint, execution=ModelExecution()))
 
 
 if __name__ == "__main__":

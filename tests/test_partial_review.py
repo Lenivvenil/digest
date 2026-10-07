@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.radar.collector import Article
 from digest.review import (
     BlindReviewReport,
@@ -38,23 +39,26 @@ def _valid_selection(bundle: EvidenceBundle) -> dict[str, str]:
 
 
 async def _slot(payload: Any) -> Any:
+    model_execution = ModelExecution()
     config = fixture_config()
     bundle = build_evidence_bundle(fixture_articles(), config.review)
     raw = json.dumps(payload)
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))):
         return await _review_slot("primary", config.review.primary, bundle,
-                                  build_review_messages(bundle, config.review, "en"), config)
+                                  build_review_messages(bundle, config.review, "en"), config, execution=model_execution)
 
 
 @pytest.mark.asyncio
 async def test_captured_response_retains_four_exact_source_selections_and_one_rejection() -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     bundle, old_reviews = load_review_checkpoint(CAPTURED, config)
     raw = old_reviews[1].rejected_output
     assert raw is not None
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         review = await _review_slot("secondary", config.review.secondary, bundle,
-                                    build_review_messages(bundle, config.review, "en"), config)
+                                    build_review_messages(bundle, config.review, "en"), config,
+                                        execution=model_execution)
     complete.assert_awaited_once()
     assert review.status == "partial"
     assert len(review.selections) == 4
@@ -154,6 +158,7 @@ async def test_all_invalid_is_invalid_and_preserves_all_reasons() -> None:
 
 
 async def _partial_primary() -> Any:
+    model_execution = ModelExecution()
     async def response(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> tuple:
         text, usage = await fixture_response(role, messages, config, **kwargs)
         raw = json.loads(text)
@@ -161,7 +166,7 @@ async def _partial_primary() -> Any:
         return json.dumps(raw), usage
 
     with patch("digest.review.complete", side_effect=response) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config())
+        report = await run_primary_review(fixture_articles(), fixture_config(), execution=model_execution)
     complete.assert_awaited_once()
     return report
 
@@ -176,6 +181,7 @@ async def test_partial_primary_delivers_without_secondary_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_partial_checkpoint_reuses_valid_entries_without_third_or_complete_claim(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     original = await _partial_primary()
     path = tmp_path / "partial.json"
     path.write_text(json.dumps(asdict(original)))
@@ -183,7 +189,7 @@ async def test_partial_checkpoint_reuses_valid_entries_without_third_or_complete
     bundle, cached = load_review_checkpoint(path, config)
     assert _reusable_slots(bundle, cached, config) == {"primary"}
     with patch("digest.review.complete", side_effect=fixture_response) as complete:
-        resumed = await run_evidence_review(bundle, config, cached)
+        resumed = await run_evidence_review(bundle, config, cached, execution=model_execution)
     complete.assert_awaited_once()
     assert complete.call_args.kwargs["provider_override"].model == config.review.secondary.model
     assert resumed.reviews[0].status == "partial" and resumed.reviews[0].reused_from_checkpoint
@@ -197,6 +203,7 @@ async def test_partial_checkpoint_reuses_valid_entries_without_third_or_complete
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tamper", ["quote", "missing_rejections", "unknown_rejected_id", "reason", "index"])
 async def test_partial_checkpoint_is_strictly_revalidated_before_any_request(tamper: str) -> None:
+    model_execution = ModelExecution()
     original = await _partial_primary()
     review = original.reviews[0]
     if tamper == "quote":
@@ -211,7 +218,7 @@ async def test_partial_checkpoint_is_strictly_revalidated_before_any_request(tam
         review.rejected_items[0] = replace(review.rejected_items[0], index=99)
     with patch("digest.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
-            await run_evidence_review(original.evidence, fixture_config(), original.reviews)
+            await run_evidence_review(original.evidence, fixture_config(), original.reviews, execution=model_execution)
         with pytest.raises(ValueError):
             _reusable_slots(original.evidence, original.reviews, fixture_config())
     complete.assert_not_called()
@@ -219,16 +226,17 @@ async def test_partial_checkpoint_is_strictly_revalidated_before_any_request(tam
 
 @pytest.mark.asyncio
 async def test_normalized_quotes_remain_exact_when_partial_checkpoint_reused(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     bundle, captured = load_review_checkpoint(CAPTURED, config)
     with patch("digest.review.complete", AsyncMock(return_value=(captured[1].rejected_output, {}))):
-        original = await run_evidence_review(bundle, config)
+        original = await run_evidence_review(bundle, config, execution=model_execution)
     assert original.reviews[0].status == "partial"
     path = tmp_path / "normalized.json"
     path.write_text(json.dumps(asdict(original)))
     bundle, cached = load_review_checkpoint(path, config)
     with patch("digest.review.complete", AsyncMock()) as complete:
-        resumed = await run_evidence_review(bundle, config, cached)
+        resumed = await run_evidence_review(bundle, config, cached, execution=model_execution)
     complete.assert_not_called()
     assert resumed.reviews[0].selections == original.reviews[0].selections
     assert resumed.status == "incomplete"
@@ -236,5 +244,5 @@ async def test_normalized_quotes_remain_exact_when_partial_checkpoint_reused(tmp
     cached[0].selections[0] = replace(first, quote=first.quote.replace("-", "\u2011"))
     with patch("digest.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError, match="quote is not in supplied evidence"):
-            await run_evidence_review(bundle, config, cached)
+            await run_evidence_review(bundle, config, cached, execution=model_execution)
     complete.assert_not_called()

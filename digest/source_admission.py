@@ -17,6 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from digest import llm
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.model_budget import ModelBudgetError
 from digest.reading_brief_state import Route
@@ -103,7 +104,7 @@ def request_sha256(route: Route, messages: list[dict[str, str]], temperature: fl
 
 async def admit_request(
     messages: list[dict[str, str]], config: Config, *, provider_override: ProviderConfig,
-    temperature: float, max_output_tokens: int, deadline: float,
+    temperature: float, max_output_tokens: int, deadline: float, execution: ModelExecution,
 ) -> RequestAdmission:
     """Admit one actual route, or return safe unverified/oversized evidence.
 
@@ -132,7 +133,7 @@ async def admit_request(
     if time.monotonic() >= deadline:
         return replace(admission, error_class="technical_deadline")
     try:
-        remaining = llm.request_budget_remaining(config)
+        remaining = llm.request_budget_remaining(config, execution)
         # Preserve generation capacity under the existing shared request ceiling;
         # Gemini also needs one slot for its exact count.
         required_requests = 2 if route.provider == "gemini" else 1
@@ -143,12 +144,12 @@ async def admit_request(
             count = int(record["input_estimate"])
             admission = replace(admission, input_estimate=count, evidence=record)
         else:
-            wait = llm.request_wait_seconds(config)
+            wait = llm.request_wait_seconds(config, execution)
             if time.monotonic() + wait + COUNT_SECONDS >= deadline:
                 return replace(admission, error_class="technical_deadline")
             async with asyncio.timeout(min(wait + COUNT_SECONDS, max(0, deadline - time.monotonic()))):
                 count = await llm.count_gemini_tokens(
-                    request_messages, config, provider_override=provider, temperature=temperature,
+                    request_messages, config, execution=execution, provider_override=provider, temperature=temperature,
                     max_output_tokens=max_output_tokens,
                 )
             if type(count) is not int or count <= 0:

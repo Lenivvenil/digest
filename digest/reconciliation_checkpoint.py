@@ -24,6 +24,7 @@ from digest import reconciliation_operation as operation
 from digest._serialization import restore_dataclass as _restore
 from digest._serialization import unique_object as _unique_object
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.candidate_review import CandidateProgress, load_candidate_progress
 from digest.config import Config, load_config
@@ -272,10 +273,11 @@ async def prepare_batch(
     deadline: float,
     *,
     state_dir: Path = Path(".cache"),
+    execution: ModelExecution,
 ) -> Path | None:
     rollback: dict[Path, bytes | None] = {}
     try:
-        return await _prepare_batch(progress, config, config_path, deadline, state_dir, rollback)
+        return await _prepare_batch(progress, config, config_path, deadline, state_dir, rollback, execution=execution)
     except BaseException:
         # Preparation cannot dispatch. Undo only this invocation's uncheckpointed
         # intents on a timeout/cancellation, preserving any prior exact record.
@@ -294,6 +296,8 @@ async def _prepare_batch(
     deadline: float,
     state_dir: Path,
     rollback: dict[Path, bytes | None],
+    *,
+    execution: ModelExecution,
 ) -> Path | None:
     if os.environ.get("DIGEST_RECONCILIATION_CHECKPOINT_REQUIRED") != "1" or not config.reading_brief.enabled:
         return None
@@ -301,7 +305,7 @@ async def _prepare_batch(
     if not handoffs or deadline - time.monotonic() < MINIMUM_WINDOW:
         return None
     snapshot = _active()
-    remaining = llm.request_budget_remaining(config)
+    remaining = llm.request_budget_remaining(config, execution)
     if remaining is None or remaining <= 0:
         return None
     baseline = await _fetch(deadline)
@@ -395,7 +399,7 @@ async def _prepare_batch(
             logger.warning("Reconciliation candidate held: %s", exc)
     if not items:
         return None
-    runtime = llm._request_state(config)
+    runtime = llm._request_state(config, execution)
     offset = time.time() - time.monotonic()
     batch = ReconciliationBatch(
         RECONCILIATION_CHECKPOINT_PROTOCOL,
@@ -425,11 +429,15 @@ async def prepare_current_batch(
     config: Config,
     config_path: str,
     started: float,
+    *,
+    execution: ModelExecution,
 ) -> None:
     if progress is None or not getattr(getattr(config, "reading_brief", None), "enabled", False):
         return
     try:
-        path = await prepare_batch(progress, config, config_path, reading_deadline(config, started))
+        path = await prepare_batch(
+            progress, config, config_path, reading_deadline(config, started), execution=execution,
+        )
         if path is not None and (output := os.environ.get("GITHUB_OUTPUT")):
             with Path(output).open("a") as stream:
                 stream.write(f"reconciliation_batch={_relative(path)}\n")
@@ -469,7 +477,9 @@ def _verify_local(batch: ReconciliationBatch) -> None:
             raise ValueError("technical_checkpoint_changed")
 
 
-async def checkpoint_and_execute(path: Path, config: Config) -> tuple[operation.OperationResult, ...]:
+async def checkpoint_and_execute(
+    path: Path, config: Config, *, execution: ModelExecution,
+) -> tuple[operation.OperationResult, ...]:
     batch = _load_batch(path)
     deadline = time.monotonic() + batch.deadline_unix - time.time()
     if managed := os.environ.get("PREPARATION_DEADLINE"):
@@ -507,8 +517,8 @@ async def checkpoint_and_execute(path: Path, config: Config) -> tuple[operation.
     eligible = set(eligible_handoffs(load_candidate_progress(), Path(".cache")))
     if any(item.handoff not in eligible for item in batch.items):
         raise ValueError("technical_checkpoint_ineligible")
-    runtime = llm._request_state(config)
-    llm.set_request_limit(config, runtime.requests_attempted + batch.remaining)
+    runtime = llm._request_state(config, execution)
+    llm.set_request_limit(config, execution, runtime.requests_attempted + batch.remaining)
     runtime.next_request_at = max(runtime.next_request_at, time.monotonic() + batch.not_before_unix - time.time())
     results = []
     for item in batch.items:
@@ -529,6 +539,7 @@ async def checkpoint_and_execute(path: Path, config: Config) -> tuple[operation.
                 Path(".cache"),
                 deadline=deadline,
                 checkpoint=assertion,
+                execution=execution,
             )
         )
     return tuple(results)
@@ -597,10 +608,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--finalize", action="store_true")
     args = parser.parse_args(argv)
     try:
+        config = load_config(args.config)
+        execution = ModelExecution()
         if args.finalize:
-            asyncio.run(finalize_batch(Path(args.batch), load_config(args.config)))
+            asyncio.run(finalize_batch(Path(args.batch), config))
             return 0
-        results = asyncio.run(checkpoint_and_execute(Path(args.batch), load_config(args.config)))
+        results = asyncio.run(checkpoint_and_execute(Path(args.batch), config, execution=execution))
         logger.info(
             "Reconciliation technical candidates: %d completed; %d held.",
             sum(result.status == "completed" for result in results),
