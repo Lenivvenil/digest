@@ -152,7 +152,7 @@ async def test_offers_unknown_rejection_and_empty_area_rotate_without_resends(
 
     monkeypatch.setattr("digest.llm.complete", generate)
     monkeypatch.setattr("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url))
-    monkeypatch.setattr("digest.discovery.send_source_approval_message", send)
+    monkeypatch.setattr("digest.adapters.telegram.discovery.send_source_approval_message", send)
     for index in range(12):
         monkeypatch.setenv("GITHUB_RUN_ID", f"run-{index}")
         await discover_sources("config.yaml", phase="prepare")
@@ -339,9 +339,9 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
 
     transport = AsyncMock(side_effect=send)
     monkeypatch.setattr("digest.adapters.storage.pending_sources.save_pending", persist_pending)
-    monkeypatch.setattr("digest.discovery.save_delivery", persist_delivery)
+    monkeypatch.setattr("digest.adapters.storage.discovery.save_delivery", persist_delivery)
     monkeypatch.setattr(reporting, "publish_discovery_prepared", report)
-    monkeypatch.setattr("digest.discovery.send_source_approval_message", transport)
+    monkeypatch.setattr("digest.adapters.telegram.discovery.send_source_approval_message", transport)
     if failure:
         with pytest.raises(OSError):
             await discover_sources("config.yaml", phase=phase)

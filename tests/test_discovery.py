@@ -49,7 +49,7 @@ def test_source_hash_different_urls() -> None:
 def test_source_hash_preserves_existing_ids_without_security_use(url: str, expected: str) -> None:
     import hashlib
 
-    with patch("digest.discovery.hashlib.md5", wraps=hashlib.md5) as md5:
+    with patch("digest.domain.catalog.proposals.hashlib.md5", wraps=hashlib.md5) as md5:
         assert source_hash(url) == expected
     md5.assert_called_once_with(url.encode(), usedforsecurity=False)
 
@@ -509,7 +509,7 @@ def test_add_source_backup_failure_raises_without_mutation(
     def fail_backup(src: Path, dest: Path) -> None:
         raise OSError("backup denied")
 
-    monkeypatch.setattr("digest.discovery.shutil.copy2", fail_backup)
+    monkeypatch.setattr("digest.adapters.storage.source_config.shutil.copy2", fail_backup)
     with pytest.raises(OSError, match="backup denied"):
         add_source_to_config(config_path, _fresh_proposal())
     assert Path(config_path).read_text(encoding="utf-8") == original
