@@ -229,7 +229,9 @@ def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: P
         reconcile_packet(progress, packet, report_for(packet, config), config, tmp_path)
         mark_prepared(progress, packet.evidence.bundle_id, tmp_path)
         progress = load_candidate_progress(tmp_path)
-    assert served == ["A", "A", "A", "B"]
+    # A's freshness turn exposes its newer head; B's older observation now
+    # precedes that head. Its opportunity no longer waits for A's old backlog.
+    assert served == ["B", "A", "A", "A"]
     assert all(candidate.first_observed_at == observed_at[identity]
                for identity, candidate in progress.candidates.items() if identity in observed_at)
 

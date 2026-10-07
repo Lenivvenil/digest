@@ -229,44 +229,101 @@ def merge_candidates(
     return progress
 
 
-def plan_packet(progress: CandidateProgress, config: Config, now: datetime | None = None) -> CandidatePacket | None:
-    """Fix membership before the evidence builder's URL ordering can reorder it.
+def _latest_occurrence_packet(candidate: Candidate, packets: list[CandidatePacket]) -> CandidatePacket | None:
+    """A retained plan for this exact source occurrence, never proof of dispatch."""
+    matches = [packet for packet in packets if candidate.article in packet.articles
+               and any(item.evidence_id == candidate.identity for item in packet.evidence.items)]
+    return max(matches, key=lambda packet: datetime.fromisoformat(packet.planned_at)) if matches else None
 
-    Unseen identities precede technical retries. A too-large item does not stop
-    later fitting candidates. Bounds constrain requests, never editorial status.
-    """
-    candidates: list[Candidate] = []
-    for status in ("not_presented", "technical_pending"):
-        groups: dict[tuple[str, str], list[Candidate]] = {}
-        for candidate in progress.candidates.values():
-            if candidate.eligible and candidate.status == status:
-                groups.setdefault((candidate.article.category, candidate.article.source), []).append(candidate)
-        for group in groups.values():
-            group.sort(key=lambda item: (datetime.fromisoformat(item.first_observed_at), item.identity))
-        # Take one head per source each round, oldest observation cohort first.
-        # Effective priority orders coeval heads; category names grant no turn.
-        while groups:
-            sources = sorted(groups, key=lambda key: (
-                datetime.fromisoformat(groups[key][0].first_observed_at),
-                -groups[key][0].priority, key[1], groups[key][0].identity,
-            ))
-            for key in sources:
-                candidates.append(groups[key].pop(0))
-                if not groups[key]:
-                    del groups[key]
-    selected: list[CandidateArticle] = []
+
+def _freshness(candidate: Candidate, instant: datetime) -> datetime | None:
+    published = candidate.article.published
+    if published is None:
+        return None
+    value = datetime.fromisoformat(published)
+    # A timestamp future at first observation is not evidence of publication
+    # freshness, even after the advertised date passes. It remains eligible.
+    return value if value <= min(instant, datetime.fromisoformat(candidate.first_observed_at)) else None
+
+
+def _source_turns(
+    candidates: list[Candidate], instant: datetime, retry_times: dict[str, datetime] | None = None,
+) -> list[Candidate]:
+    groups: dict[tuple[str, str], list[Candidate]] = {}
     for candidate in candidates:
-        if len(selected) >= config.review.max_evidence_articles:
+        groups.setdefault((candidate.article.category, candidate.article.source), []).append(candidate)
+    ordered = []
+    round_number = 0
+    while groups:
+        heads = {}
+        for key, group in groups.items():
+            pool = group
+            if retry_times is None and round_number % 2 == 0:
+                dated = [(stamp, item) for item in group if (stamp := _freshness(item, instant)) is not None]
+                if dated:
+                    newest = max(stamp for stamp, _ in dated)
+                    pool = [item for stamp, item in dated if stamp == newest]
+            heads[key] = min(pool, key=lambda item: (
+                (retry_times or {}).get(item.identity, datetime.fromisoformat(item.first_observed_at)),
+                datetime.fromisoformat(item.first_observed_at), item.identity,
+            ))
+        for key in sorted(heads, key=lambda key: (
+            (retry_times or {}).get(heads[key].identity, datetime.fromisoformat(heads[key].first_observed_at)),
+            datetime.fromisoformat(heads[key].first_observed_at), -heads[key].priority,
+            key[1], heads[key].identity,
+        )):
+            head = heads[key]
+            ordered.append(head)
+            groups[key].remove(head)
+            if not groups[key]:
+                del groups[key]
+        round_number += 1
+    return ordered
+
+
+def _admit_candidate(selected: list[CandidateArticle], candidate: Candidate, config: Config) -> bool:
+    articles: dict[str, list[Article]] = {}
+    for saved in [*selected, candidate.article]:
+        articles.setdefault(saved.category, []).append(saved.article())
+    if len(build_evidence_bundle(articles, config.review).items) == len(selected) + 1:
+        selected.append(candidate.article)
+        return True
+    if not build_evidence_bundle({candidate.article.category: [candidate.article.article()]}, config.review).items:
+        candidate.status = "technical_pending"
+    return False
+
+
+def plan_packet(progress: CandidateProgress, config: Config, now: datetime | None = None) -> CandidatePacket | None:
+    """Bound fresh/age source turns and technical continuation in one request.
+
+    A fitting unseen item gets the first opportunity. Retry reservations consume
+    only actual admitted evidence, then unused count/character capacity backfills.
+    With a one-item limit, unseen work retains preference. No extra request or
+    editorial decision is implied by a turn, a byte skip or a saved plan.
+    """
+    instant = _instant(now)
+    unseen = [item for item in progress.candidates.values() if item.eligible and item.status == "not_presented"]
+    retries = [item for item in progress.candidates.values() if item.eligible and item.status == "technical_pending"]
+    retry_times = {}
+    for item in retries:
+        packet = _latest_occurrence_packet(item, progress.packets)
+        retry_times[item.identity] = datetime.fromisoformat(packet.planned_at if packet else item.first_observed_at)
+    unseen = _source_turns(unseen, instant)
+    retries = _source_turns(retries, instant, retry_times)
+    limit = config.review.max_evidence_articles
+    reserved = min(config.review.max_technical_retry_articles, max(0, limit - bool(unseen)))
+    selected: list[CandidateArticle] = []
+    # Count and byte protection for the first fitting unseen opportunity. Skips
+    # stay pending; do not reserve fictitious capacity for an unadmitted item.
+    while unseen and not selected:
+        _admit_candidate(selected, unseen.pop(0), config)
+    used_retries = 0
+    while retries and used_retries < reserved and len(selected) < limit:
+        used_retries += _admit_candidate(selected, retries.pop(0), config)
+    for candidate in [*unseen, *retries]:
+        if len(selected) >= limit:
             break
-        provisional = CandidatePacket(build_evidence_bundle({}, config.review),
-                                      tuple([*selected, candidate.article]), {}, _instant(now).isoformat())
-        bundle = build_evidence_bundle(packet_articles(provisional), config.review)
-        # Every fixed member must survive the existing JSON budget.
-        if len(bundle.items) == len(selected) + 1:
-            selected.append(candidate.article)
-        elif not build_evidence_bundle({candidate.article.category: [candidate.article.article()]},
-                                       config.review).items:
-            candidate.status = "technical_pending"
+        _admit_candidate(selected, candidate, config)
     if not selected:
         return None
     packet = CandidatePacket(build_evidence_bundle({}, config.review), tuple(selected),
@@ -562,7 +619,14 @@ def _proof_packets(candidate: Candidate, packets: list[CandidatePacket]) -> list
             attempt.response_sha256 == candidate.decision_response_sha256
             and attempt.prompt_hash == candidate.decision_prompt_hash
             and candidate.disposition in attempt.dispositions for attempt in packet.disposition_attempts)]
-    return [max(reversed(matches), key=lambda packet: packet.planned_at)] if matches else []
+    proof = [max(reversed(matches), key=lambda packet: datetime.fromisoformat(packet.planned_at))] if matches else []
+    # Keep existing decision/history proof, plus the current occurrence's latest
+    # planning opportunity when rebinding makes them different. At most two.
+    if candidate.status == "technical_pending":
+        current = _latest_occurrence_packet(candidate, packets)
+        if current is not None and current not in proof:
+            proof.append(current)
+    return proof
 
 
 def _index_candidate(candidate: Candidate, progress: CandidateProgress, cache_dir: str | Path) -> None:
