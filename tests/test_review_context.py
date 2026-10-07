@@ -133,9 +133,11 @@ def test_prompt_preserves_fidelity_uncertainty_and_capacity_boundaries() -> None
     assert "do not infer that the full article" in system["content"]
     assert "Missing configured context is not negative evidence" in system["content"]
     assert "do not impose category quotas" in system["content"]
-    assert "Useful items omitted only for output capacity MUST be deferred" in system["content"]
+    assert ("Other useful items MUST have deferred dispositions with a concise response-capacity reason"
+            in system["content"])
     assert "max_selections" not in json.loads(task["content"])
-    assert "Select every useful supplied item in priority order" in system["content"]
+    assert "Consider every supplied item for relevance" in system["content"]
+    assert json.loads(task["content"])["max_detailed_selections"] == 5
     config.review.max_selections = 5
     assert _messages(config) == [system, task]
     # These are prompt assertions, deliberately not assertions of model judgment.

@@ -149,6 +149,7 @@ class ReviewConfig:
     max_evidence_articles: int = 20
     max_excerpt_chars: int = 500
     max_selections: int = 5  # Publication card cap; relevance is judged over the complete evidence packet.
+    max_detailed_selections: int = 5  # Response detail budget, independent of publication capacity.
     max_output_tokens: int = 4096
     disagreement_threshold: float = 0.5
     review_led_only: bool = False
@@ -736,9 +737,12 @@ def _load_review(data: dict[str, Any]) -> ReviewConfig:
     if len(set(slots)) != len(slots):
         raise ValueError("review slots must use distinct provider/model identities.")
     bounds = {"max_evidence_articles": (20, 1, 100), "max_excerpt_chars": (500, 50, 1000),
-              "max_selections": (5, 1, 10), "max_output_tokens": (4096, 128, 8192)}
+              "max_selections": (5, 1, 10), "max_detailed_selections": (5, 1, 10),
+              "max_output_tokens": (4096, 128, 8192)}
     values: dict[str, int] = {}
     for key, (default, low, high) in bounds.items():
+        if key == "max_detailed_selections" and isinstance(section.get(key), bool):
+            raise ValueError("review.max_detailed_selections must be an integer.")
         value = _safe_int(section.get(key, default), key, "review")
         if not low <= value <= high:
             raise ValueError(f"review.{key} must be between {low} and {high}.")

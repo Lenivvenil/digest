@@ -886,6 +886,7 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     config.sources = [SourceConfig("A", "https://x/rss", "c", True)]
     config.review.max_evidence_articles = 100
     config.review.max_selections = 10
+    config.review.max_detailed_selections = 10  # Nine valid entries plus one rejected quote test storage capacity.
     config.review.max_excerpt_chars = 50
     articles = {"c": [Article(f"T{i}", f"https://x/{i}", "D", "A", "c", None) for i in range(100)]}
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
