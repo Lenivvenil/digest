@@ -301,12 +301,18 @@ adapter availability and useful external evidence remain separate #77 acceptance
 
 ### Source and ranking outcomes
 
-Bounded query generation and ranking receive only the narrative claim, category,
-evidence IDs and validated literal quotes alongside cited RSS evidence. Generated
-assumptions and reasons to challenge remain in the original archived narrative but
-are excluded from these requests. Legacy query generation uses claim and category
-only; legacy ranking remains claim-only. This input boundary does not verify claim
-truth or semantic counter-evidence quality.
+Bounded query generation and ranking retain the narrative claim, category,
+evidence IDs and validated literal quotes alongside cited evidence. Query generation
+also receives the extracted assumptions and reason to investigate in a separate
+`exploratory_hypotheses` block, explicitly unverified model interpretation. These may
+guide investigation angles and `intent`, never become source claims or required
+search conclusions. Ranking still excludes that block and assesses only the attributed
+target against external evidence. The original archived narrative stays unchanged.
+Legacy query generation uses claim and category only; legacy ranking remains claim-only.
+This corrects the earlier exclusion of hypotheses from both bounded requests. Added
+query input consumes existing request capacity; exact-wire full-source admission may
+hold without dropping context. Calls, configured budgets and response schemas do not
+increase. Input separation proves neither claim truth, search recall nor relation fidelity.
 
 The local [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
 asks for useful grounded queries in both bounded RSS and full-source investigation,

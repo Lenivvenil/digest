@@ -119,9 +119,17 @@ async def test_original_bundle_and_config_preserved_with_strict_llm_budget() -> 
                 "claim": original_narrative["claim"], "category": original_narrative["category"],
                 "evidence_ids": original_narrative["evidence_ids"], "quotes": original_narrative["quotes"],
             }
-            for hypothesis in [*original_narrative["implicit_assumptions"],
-                               original_narrative["why_worth_challenging"]]:
-                assert hypothesis not in call.args[1][1]["content"]
+            if index == 1:
+                assert payload["exploratory_hypotheses"] == {
+                    "implicit_assumptions": original_narrative["implicit_assumptions"],
+                    "why_worth_challenging": original_narrative["why_worth_challenging"],
+                }
+                assert "unverified model interpretation" in call.args[1][0]["content"]
+            else:
+                assert "exploratory_hypotheses" not in payload
+                for hypothesis in [*original_narrative["implicit_assumptions"],
+                                   original_narrative["why_worth_challenging"]]:
+                    assert hypothesis not in call.args[1][1]["content"]
             assert payload["evidence"]["bundle_id"] == bundle.bundle_id
             assert payload["evidence"]["items"] == [asdict(bundle.items[0])]
             assert payload["evidence"]["limited_to_narrative_citations"] is True
@@ -1048,8 +1056,10 @@ async def test_known_late_qualification_reaches_queries_and_ranking(tmp_path: Pa
     assert result.narratives[0].claim == response["narratives"][0]["claim"]
     assert result.narratives[0].evidence_ids == [cited.evidence_id]
     assert result.narratives[0].quotes == {cited.evidence_id: cited.excerpt}
-    for call in model.await_args_list[1:]:
+    for index, call in enumerate(model.await_args_list[1:], start=1):
         payload = json.loads(call.args[1][1]["content"])
+        assert ("exploratory_hypotheses" in payload) is (index == 1)
+        assert "implicit_assumptions" not in payload["narrative"]
         assert payload["evidence"]["items"] == [json.loads(json.dumps(asdict(cited)))]
         assert payload["evidence"]["qualification_context"] == [json.loads(json.dumps(asdict(qualification)))]
         assert payload["evidence"]["limited_to_narrative_citations"] is False
@@ -1272,6 +1282,8 @@ async def test_queries_without_literal_source_anchor_reach_search(tmp_path: Path
         narrative["narratives"][0]["quotes"][source.items[0].evidence_id] = source.items[0].excerpt
     # Preserve the formerly blocked set; reaching mocked search makes no quality claim.
     queries = ["Benchmark reports cancelled", "Vendor benchmark controversy", "Model latency scandal"]
+    # A phrase occurring only in model hypotheses must never become source provenance.
+    narrative["narratives"][0]["implicit_assumptions"] = [queries[0]]
     response = {"queries": [{"query": query, "intent": "Test a possible opposing hypothesis."}
                             for query in queries], "limitations": []}
     model = AsyncMock(side_effect=[(json.dumps(narrative), {}), (json.dumps(response), {})])
