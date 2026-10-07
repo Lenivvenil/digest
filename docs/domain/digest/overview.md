@@ -68,10 +68,21 @@ imports. The [effect matrix](../../ARCHITECTURE.md#stage-5-first-telegram-delive
 and [ADR0017 continuation](../../decisions/0017-confirmed-delivery-application.md#telegram-presentation-and-transport-continuation)
 record the deliberately different receipt acceptance and failure policies.
 
-Prepared edition claim/receipt storage, per-chunk dispatch and recovery still share
-`delivery/edition.py`; separating those storage and application responsibilities remains
-open. This slice changes no file format, receipt, state, source identity or accepted
-editorial content and establishes no deployment or ordinary-run acceptance.
+The second delivery continuation gives unchanged prepared values and pure checks to
+`domain/delivery/edition.py`, exact codecs/checkpoint bytes/writes to
+`adapters/storage/edition.py`, ordered effects to `application/prepared_delivery.py`
+and strict one-attempt POST/receipt interpretation to `adapters/telegram/prepared.py`.
+`ArticleSummary` has a pure editorial owner with the identical summarizer re-export.
+The old edition imports remain compatible. Domain reference checks never read files;
+receipt checks receive the owner hash explicitly. Post-delivery marker/result/archive
+operations now have a concrete storage adapter while the scenario keeps their order.
+
+The [prepared ordering matrix](../../ARCHITECTURE.md#stage-5-prepared-delivery-values-persistence-and-application)
+records the durable ready/claim barriers, attempted-before-POST and confirmed-after-POST
+writes, held interruption behavior and compact archive-only path. A write failure after
+Telegram acceptance still escapes and prevents automatic replay. This local slice changes
+no file format, receipt, state, source identity or accepted editorial content and adds
+no crash-idempotence guarantee. It establishes no deployment or ordinary-run acceptance.
 
 ### Product intent comes before the latest implementation
 

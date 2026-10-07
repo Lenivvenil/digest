@@ -10,9 +10,9 @@ from digest.domain.catalog.articles import article_hash
 from digest.presentation.supplement import signal_text, split_supplement
 
 if TYPE_CHECKING:
+    from digest.domain.editorial.summaries import ArticleSummary
     from digest.irritator import IrritatorStatus
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
-    from digest.radar.summarizer import ArticleSummary
 
 # Static presentation labels follow canonical generation language, not translation targets.
 _LABELS = {

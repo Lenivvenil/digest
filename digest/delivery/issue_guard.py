@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from digest._util import atomic_json_write
+from digest.adapters.storage.issue_paths import safe_issue_path as _safe
 
 ISSUE_FILE = "compact_issue.json"
 _TERMINAL = {"confirmed", "not_sent", "failed_no_delivery"}
@@ -28,13 +29,6 @@ class _Record:
     state: str
     accepted_count: int | None = 0
     attempted_count: int | None = 0
-
-
-def _safe(path: Path) -> Path:
-    path = Path(os.path.abspath(path))
-    if any(item.is_symlink() for item in (path, *path.parents)):
-        raise ValueError("Compact issue paths must not contain symlinks.")
-    return path
 
 
 def _sha(data: bytes) -> str:

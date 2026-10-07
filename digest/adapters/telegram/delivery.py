@@ -28,9 +28,9 @@ from digest.presentation.telegram import (
 
 if TYPE_CHECKING:
     from digest.config import Config
+    from digest.domain.editorial.summaries import ArticleSummary
     from digest.irritator import IrritatorStatus
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
-    from digest.radar.summarizer import ArticleSummary
 
 logger = logging.getLogger(__name__)
 

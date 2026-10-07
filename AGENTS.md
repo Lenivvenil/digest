@@ -97,7 +97,8 @@ agent-only design.
 │   │       ├── arxiv.py, devto.py, hackernews.py, lobsters.py, reddit.py
 │   ├── presentation/        # Pure publication copy, escaping and chunk coverage
 │   ├── adapters/telegram/   # Concrete Telegram protocols
-│   └── delivery/            # Compatible distribution imports; prepared receipt/storage owner
+│   ├── adapters/storage/    # Exact persisted records, path guards and local writes
+│   └── delivery/            # Compatible distribution imports and legacy issue guard
 │       ├── telegram.py      # Compatible Telegram presentation/transport exports
 │       └── markdown.py      # Obsidian markdown file generation
 ├── tests/
