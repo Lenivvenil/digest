@@ -193,13 +193,16 @@ def build_review_messages(
         "different supplied ID with a validated selected disposition (no chains or cycles). Explain the actual "
         "redundancy; a shared topic or URL alone does not establish semantic duplication. Preserve materially contrary "
         "reports as eligible. not_selected means an explicit metadata selection judgment, never full-source reading "
-        "or quality verification. Select every useful supplied item in priority order. Publication capacity is "
-        "applied separately after this review. Useful items omitted only for output capacity MUST be deferred, "
+        "or quality verification. Consider every supplied item for relevance, then give detailed selections for "
+        "at most max_detailed_selections useful items in priority order. This is a response-detail budget, "
+        "not an editorial rejection rule. Publication capacity is applied separately after this review. "
+        "Other useful items MUST have deferred dispositions with a concise response-capacity reason, "
         "not not_selected. Missing/invalid entries remain unresolved. No additional fields."
     )
     task = {
         "schema_version": SCHEMA_VERSION,
         "language": language,
+        "max_detailed_selections": settings.max_detailed_selections,
         "configured_category_interests": _configured_category_interests(bundle, sources),
         "evidence": asdict(bundle),
     }
@@ -285,10 +288,11 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
 
 
 def _parse_live_review(
-    text: str, bundle: EvidenceBundle,
+    text: str, bundle: EvidenceBundle, *, max_detailed_selections: int | None = None,
 ) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
     """Salvage individual entries only after the complete envelope is valid."""
-    selections, limitations = _parse_review_envelope(text, len(bundle.items))
+    limit = len(bundle.items) if max_detailed_selections is None else min(len(bundle.items), max_detailed_selections)
+    selections, limitations = _parse_review_envelope(text, limit)
     known = {item.evidence_id for item in bundle.items}
     accepted: list[EvidenceSelection] = []
     rejected: list[RejectedSelection] = []
@@ -345,7 +349,7 @@ def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, b
         "invalid selection count", "invalid limitations", "abstention needs an explanation",
         "invalid selection schema", "selection fields must be strings", "unknown evidence id",
         "duplicated evidence id", "invalid selection text budget", "invalid confidence",
-        "quote is not in supplied evidence",
+        "quote is not in supplied evidence", "provider reported unfinished response",
     }
     reason = str(exc) if str(exc) in known_reasons else "invalid JSON or review contract"
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
@@ -393,8 +397,10 @@ async def _review_slot(
     result.usage = {k: v for k, v in usage.items() if k in {"prompt_tokens", "completion_tokens"}
                     and type(v) is int and v >= 0}
     try:
+        if finish_reason is not None and finish_reason not in {"stop", "STOP", "end_turn"}:
+            raise ValueError("provider reported unfinished response")
         result.selections, result.limitations, result.rejected_items = _parse_live_review(
-            text, bundle,
+            text, bundle, max_detailed_selections=config.review.max_detailed_selections,
         )
     except (ValueError, TypeError, KeyError) as exc:
         result.status = "invalid"

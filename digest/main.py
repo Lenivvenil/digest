@@ -982,19 +982,24 @@ def _save_prepared_fetch_stats(
 def _save_candidate_preparation(
     snapshot: PreparationSnapshot, packet: CandidatePacket | None,
     cache_dir: str, publication_date: date | None,
-) -> None:
+) -> bool:
+    """Return whether canonical preparation was accepted, including genuine abstention."""
     from digest.edition_runtime import save_accepted_preparation
     from digest.review import _delivery_review
 
+    if (not snapshot.top_articles and snapshot.review_report is not None
+            and _delivery_review(snapshot.review_report).status != "abstained"):
+        return False
     if not snapshot.top_articles and packet is not None and packet.disposition_attempts:
         report = snapshot.review_report
         if report is None:
-            return
+            return False
         delivery = _delivery_review(report)
         capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
         if capture is None or capture.status != "complete":
-            return  # Deferred or malformed metadata is not an accepted empty editorial decision.
+            return False  # Deferred or malformed metadata is not an accepted empty editorial decision.
     save_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+    return True
 
 
 def _handoff_candidate(
@@ -1185,13 +1190,13 @@ async def _run(
             review_report=review_report, source_count=len(articles_by_category),
             article_count=total_articles, contributing_sources=contributing_sources,
         )
-        _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
+        preparation_accepted = _save_candidate_preparation(snapshot, candidate_packet, cache_dir, edition_date)
         _handoff_candidate(candidate_progress, candidate_packet, review_report, cache_dir, edition_date)
         _save_prepared_fetch_stats(source_stats, fetch_metrics, articles_by_category,
                                    config, cache_dir, collection_failed)
         save_source_category_map(config.enabled_sources, cache_dir)
         stats = await finish_preparation(snapshot, config, feedback_collected, verbose=verbose,
-                                         publication_date=edition_date)
+                                         publication_date=edition_date, selection_complete=preparation_accepted)
         stats.feeds_fetched = len(fetch_metrics)
         stats.new_articles = collected_articles
         stats.duration_seconds = time.monotonic() - _t_run_start
@@ -1487,7 +1492,7 @@ async def main(argv: list[str] | None = None) -> int:
         if args.prepare_edition:
             from digest.edition_runtime import publish_outputs
             publish_outputs(edition_status=stats.edition_status or "no_ready", ready_sha256=stats.ready_sha256)
-            return 1 if stats.edition_status == "held" else 0
+            return 1 if stats.edition_status in {"held", "selection_incomplete"} else 0
 
         if stats.required_delivery_failed:
             logging.getLogger(__name__).error("Required Telegram article delivery did not complete.")

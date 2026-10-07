@@ -94,7 +94,11 @@ selection or factuality.
 Primary selection becomes canonical Telegram cards, labeled as model opinion.
 `max_selections` limits those publication cards in the review's order; it is not
 sent to the reviewer as a relevance quota. The full validated selection list stays
-in the report, bounded by the exact evidence packet and existing response budget.
+in the report. `max_detailed_selections` separately bounds detailed entries in a new
+response (default 5); useful overflow must be explicitly deferred and stays pending.
+The full evidence packet is still considered, and publication capacity is never an
+editorial rejection reason. Old validated reports retain their original selections.
+A provider-reported unfinished response is rejected, including syntactically closed JSON.
 Secondary/third opinions do not generate extra Telegram card floods. All reviews,
 quotes, confidence, provider/model identities, token usage, prompt hashes,
 completeness and escalation decisions appear in Markdown and a sibling
@@ -117,6 +121,7 @@ review:
   max_evidence_articles: 20
   max_excerpt_chars: 500
   max_selections: 5
+  max_detailed_selections: 5
   max_output_tokens: 4096
   disagreement_threshold: 0.5
 ```

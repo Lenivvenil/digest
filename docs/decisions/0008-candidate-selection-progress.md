@@ -156,11 +156,14 @@ only the delivery-used primary/fallback may change candidate state. Unknown, mis
 conflicting or malformed entries remain unresolved. Duplicate targets are one-hop
 validated selected IDs in the same request; no topic-only equivalence is inferred.
 The exact evidence packet bounds relevance selections; publication capacity is not
-part of the model request. The reviewer selects every useful supplied item in
-priority order, subject to the existing output allowance. Useful items omitted
-because that response allowance is exhausted must be deferred, never not-selected.
-Live parsing and saved-report validation use the same packet membership ceiling,
-including partial-result rejection indices. Quote, identity and provenance checks,
+part of the model request. The reviewer considers all supplied items for relevance and returns at most
+`review.max_detailed_selections` detailed selections (default 5, independently
+configurable from evidence and publication limits). Other useful items must receive
+concise `deferred` response-capacity dispositions, never `not_selected`. Live parsing
+enforces this detail limit; saved-report validation retains the original packet
+membership ceiling, including partial-result rejection indices. Explicit unfinished
+provider responses are rejected before parsing, even when their JSON is closed.
+Absent provider finish metadata remains compatible. Quote, identity and provenance checks,
 the 32,000-character response limit, configured output tokens and call count remain.
 
 `review.max_selections` caps publication cards locally, after the complete validated
@@ -200,3 +203,26 @@ Metadata completeness is per stable article identity using the exact chosen RSS
 occurrence. Retained alternate source memberships are not claimed reviewed; this
 does not introduce a pass over every historical RSS variant. New changed evidence
 reopens its active metadata decision, while prior bound judgments remain archived.
+
+### October 7 response-capacity and outcome correction
+
+A production response exhausted 4096 completion tokens during its fourteenth
+detailed selection, before limitations and dispositions. No partial JSON is
+accepted or reconstructed. Bounding detailed entries reduces output demand without
+changing the 20-item evidence default, five-card publication default, output token
+allowance or request count. It is not a guarantee that every configured packet
+fits every provider's token allowance. Deferred entries remain unresolved with
+their exact response provenance; valid detailed selections can still be published.
+An explicit response-capacity disposition is mechanically retained as pending.
+Whether a free-text non-selection reason improperly disguises capacity remains a
+semantic audit question; no keyword classifier or fidelity claim is introduced.
+
+Technical empty selection yields `selection_incomplete` and a nonzero preparation
+exit after candidate persistence. Complete editorial abstention and no eligible
+input remain ordinary no-ready outcomes. A paired runtime workflow proposal carries
+this status to its final outcome check while preserving persistence and independent
+sender recovery. Engine status alone cannot override a workflow's continue-on-error.
+
+PR #135's optional closing item is not deployed. Five detailed entries cannot
+guarantee five main cards plus one closing item: integration must explicitly review
+the shared detail budget and retest main preservation before closing activation.
