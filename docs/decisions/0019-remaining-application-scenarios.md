@@ -1,10 +1,13 @@
 # 0019. Give direct execution and discovery explicit application owners
 
 Status: implementation record for the scoped #147-A application migration.
-Merge and runtime rollout evidence are tracked in #147. The preceding #145
+PR #153 merged at `f6204418167ae9c9a82a6b82863c3c5f78173cf2`; runtime PR #76
+deployed it at `89baf5a625cbd582617c54651ada6556bfb21e77` on 2026-10-07.
+Remaining #147 work and editorial acceptance are separate. The preceding #145
 change was verified through [PR #151](https://github.com/Lenivvenil/digest/pull/151)
 and runtime [PR #74](https://github.com/Lenivvenil/digest-prod/pull/74).
-Provider runtime/configuration separation remains pending #147-B.
+Provider runtime/configuration separation is the #147-B follow-on recorded in
+[ADR0020](0020-explicit-model-execution.md).
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-a-remaining-application-scenarios),
 [ADR0007](0007-compact-issue-reservation.md),
@@ -63,8 +66,8 @@ for footer failures.
 state across the direct run. This slice makes its effect owner explicit, but does
 not complete feedback/catalog separation or reduce that existing state coupling.
 Discovery codecs and approval transport remain in `discovery.py`; Telegram still
-combines rendering and transport. Those debts and Config._runtime copy/sharing are
-separate work.
+combines rendering and transport. Those debts remain separate work; ADR0020 records
+the follow-on replacement of `LLMConfig._runtime` copy/sharing with explicit holders.
 
 ## Verification and rollback
 

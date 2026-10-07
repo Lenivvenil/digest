@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture, validate_disposition_attempt
 from digest.candidate_review import (
     CandidateProgress,
@@ -68,6 +69,7 @@ def _response(bundle: EvidenceBundle, detailed: int = 5) -> str:
 
 @pytest.mark.asyncio
 async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_selections(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     config, articles = population(20)
     assert config.review.max_detailed_selections == 5
     assert config.review.max_selections == 5
@@ -78,7 +80,8 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     raw = _response(packet.evidence)
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as complete:
-        report = await run_primary_review(packet_articles(packet), config, disposition_capture=capture)
+        report = await run_primary_review(packet_articles(packet), config,
+            execution=model_execution, disposition_capture=capture)
     complete.assert_awaited_once()
     task = json.loads(complete.call_args.args[1][1]["content"])
     assert task["max_detailed_selections"] == 5 and "max_selections" not in task
@@ -138,6 +141,7 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
 async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pending(
     tmp_path: Path, finish_reason: str, detailed: int, truncated: bool, error: str,
 ) -> None:
+    model_execution = ModelExecution()
     config, articles = population(20)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
@@ -150,7 +154,8 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
         assert len(json.loads(raw)["selections"]) == detailed
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))) as complete:
-        report = await run_primary_review(packet_articles(packet), config, disposition_capture=capture)
+        report = await run_primary_review(packet_articles(packet), config,
+            execution=model_execution, disposition_capture=capture)
     assert complete.await_count == 2  # Only the existing primary and fallback attempt.
     assert len(capture.attempts) == 2
     identities = {item.evidence_id for item in packet.evidence.items}
@@ -177,12 +182,13 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
 
 @pytest.mark.asyncio
 async def test_saved_eight_selection_review_remains_strictly_valid_at_new_default(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     config, articles = population(8)
     bundle = build_evidence_bundle(articles, config.review)
     raw = _response(bundle, 8)
     config.review.max_detailed_selections = 8
     with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        report = await run_primary_review(articles, config)
+        report = await run_primary_review(articles, config, execution=model_execution)
     complete.assert_awaited_once()
     assert len(report.reviews[0].selections) == 8
     path = tmp_path / "old-review.json"

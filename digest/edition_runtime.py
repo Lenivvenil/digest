@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from digest.application.results import RunStats
 
 if TYPE_CHECKING:
+    from digest.adapters.models.execution import ModelExecution
     from digest.domain.delivery.outcomes import IssueDeliveryResult
     from digest.preparation import PreparationSnapshot
 
@@ -50,7 +51,7 @@ def existing_preparation(
 
 
 async def finish_preparation(
-    snapshot: PreparationSnapshot, config: Any, feedback: int = 0, *, verbose: bool = False,
+    snapshot: PreparationSnapshot, config: Any, feedback: int = 0, *, execution: ModelExecution, verbose: bool = False,
     publication_date: date | None = None, selection_complete: bool = True,
 ) -> RunStats:
     """Resume only presentation; accepted canonical work is already saved."""
@@ -83,7 +84,7 @@ async def finish_preparation(
     if config.review.enabled and config.review.review_led_only:
         status = IrritatorStatus(deferred_review_status(config.radar.language), "deferred")
     else:
-        _, ranked, status = await run_irritator(snapshot.summaries, config, verbose)
+        _, ranked, status = await run_irritator(snapshot.summaries, config, verbose, execution=execution)
     closing = getattr(snapshot, "closing", None)
     closing_presentation: ClosingPresentation | None = None
     if closing is not None and closing.status == "selected":
@@ -91,11 +92,12 @@ async def finish_preparation(
             raise ValueError("Selected closing decision is missing its canonical card.")
         text, cards, ranked, closing_presentation = await translate_publication_with_closing(
             snapshot.combined, snapshot.top_articles, ranked, closing.card, config, Path(".cache/translations"),
-            selection_binding=asdict(closing),
+            selection_binding=asdict(closing), execution=execution,
         )
     else:
         text, cards, ranked = await publication_presentation(
             snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
+            execution=execution,
         )
         if closing is not None:
             closing_presentation = ClosingPresentation(closing.status, closing.reason)
@@ -252,7 +254,7 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
 
 
 async def resume_preparation(
-    config: Any, feedback: int, *, verbose: bool, publication_date: date | None = None,
+    config: Any, feedback: int, *, execution: ModelExecution, verbose: bool, publication_date: date | None = None,
 ) -> RunStats | None:
     from digest.preparation import load_preparation
 
@@ -261,7 +263,9 @@ async def resume_preparation(
         return existing
     snapshot = load_preparation(publication_date=publication_date)
     if snapshot is not None:
-        return await finish_preparation(snapshot, config, feedback, verbose=verbose, publication_date=publication_date)
+        return await finish_preparation(
+            snapshot, config, feedback, verbose=verbose, publication_date=publication_date, execution=execution,
+        )
     return None
 
 

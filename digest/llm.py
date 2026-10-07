@@ -13,12 +13,12 @@ import logging
 import math
 import os
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from digest._serialization import extract_json
+from digest.adapters.models.execution import ModelExecution, RequestState
 
 # Compatibility export; JSON parsing is owned by the pure serialization module.
 _extract_json = extract_json
@@ -352,41 +352,20 @@ def _resolve_routed_providers(
     return role_fallbacks
 
 
-@dataclass
-class _RequestState:
-    """Per-config, per-event-loop request limits shared by all pipeline stages."""
-
-    loop: asyncio.AbstractEventLoop
-    semaphore: asyncio.Semaphore
-    spacing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    next_request_at: float = 0.0
-    last_request_at: float | None = None
-    unavailable_until: dict[tuple[str, str], float] = field(default_factory=dict)
-    request_limit: int | None = None
-    requests_attempted: int = 0
+def _request_state(config: Any, execution: ModelExecution) -> RequestState:
+    return execution.request_state(config.llm)
 
 
-def _request_state(config: Any) -> _RequestState:
-    loop = asyncio.get_running_loop()
-    state = getattr(config.llm, "_runtime", None)
-    if not isinstance(state, _RequestState) or state.loop is not loop:
-        state = _RequestState(
-            loop, asyncio.Semaphore(getattr(config.llm, "max_concurrent_requests", 4)),
-        )
-        config.llm._runtime = state
-    return state
-
-
-def set_request_limit(config: Any, limit: int) -> None:
-    """Cap attempts for this config/event loop without resetting spent requests."""
+def set_request_limit(config: Any, execution: ModelExecution, limit: int) -> None:
+    """Cap attempts for this execution/event loop without resetting spent requests."""
     if type(limit) is not int or limit < 0:
         raise ValueError("LLM request limit must be a nonnegative integer")
-    _request_state(config).request_limit = limit
+    _request_state(config, execution).request_limit = limit
 
 
-def request_budget_remaining(config: Any) -> int | None:
+def request_budget_remaining(config: Any, execution: ModelExecution) -> int | None:
     """Return remaining attempts, or None for the default unlimited runtime."""
-    state = _request_state(config)
+    state = _request_state(config, execution)
     from digest.model_budget import ModelBudgetError, execution_from_env
 
     local = max(0, state.request_limit - state.requests_attempted) if state.request_limit is not None else None
@@ -398,16 +377,16 @@ def request_budget_remaining(config: Any) -> int | None:
         shared.remaining if shared is not None else local)
 
 
-def request_wait_seconds(config: Any) -> float:
+def request_wait_seconds(config: Any, execution: ModelExecution) -> float:
     """Return current pacing delay so a caller can respect its own deadline."""
-    state = _request_state(config)
+    state = _request_state(config, execution)
     interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
     _sync_cycle_pacing(state)
     return max(0.0, _pacing_deadline(state, interval) - time.monotonic())
 
 
 def _reserve_request(
-    state: _RequestState, provider: str = "unspecified", model: str = "unspecified", kind: str = "generate",
+    state: RequestState, provider: str = "unspecified", model: str = "unspecified", kind: str = "generate",
 ) -> None:
     """Reserve before dispatch; even missing credentials consume an attempt.
 
@@ -421,7 +400,7 @@ def _reserve_request(
     state.requests_attempted += 1
 
 
-def _sync_cycle_pacing(state: _RequestState) -> None:
+def _sync_cycle_pacing(state: RequestState) -> None:
     from digest.model_budget import execution_from_env
 
     shared = execution_from_env()
@@ -431,13 +410,13 @@ def _sync_cycle_pacing(state: _RequestState) -> None:
         state.last_request_at = max(state.last_request_at or previous, previous)
 
 
-def _pacing_deadline(state: _RequestState, interval: float) -> float:
+def _pacing_deadline(state: RequestState, interval: float) -> float:
     # A stricter stage interval applies to the preceding shared request too.
     current_floor = state.last_request_at + interval if state.last_request_at is not None else 0.0
     return max(state.next_request_at, current_floor)
 
 
-async def _pace_request(state: _RequestState, interval: float) -> None:
+async def _pace_request(state: RequestState, interval: float) -> None:
     async with state.spacing_lock:
         _sync_cycle_pacing(state)
         wait = _pacing_deadline(state, interval) - time.monotonic()
@@ -512,7 +491,7 @@ def _safe_provider_error(exc: Exception) -> str:
     return f"HTTP {exc.response.status_code} code={code}"
 
 
-def _provider_cooldown(state: _RequestState, provider: Any, exc: Exception) -> None:
+def _provider_cooldown(state: RequestState, provider: Any, exc: Exception) -> None:
     """Share server backoff / permanent failures across concurrent stage calls."""
     if not isinstance(exc, httpx.HTTPStatusError):
         return
@@ -553,6 +532,7 @@ async def count_gemini_tokens(
     messages: list[dict[str, str]],
     config: Any,
     *,
+    execution: ModelExecution,
     provider_override: Any,
     temperature: float = 0.1,
     max_output_tokens: int = 2048,
@@ -569,7 +549,7 @@ async def count_gemini_tokens(
     provider = provider_override
     body = gemini_request_body(messages, temperature, max_output_tokens)
     body["model"] = f"models/{provider.model}"
-    state = _request_state(config)
+    state = _request_state(config, execution)
     interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
     key = (provider.name, provider.model)
     async with state.semaphore, httpx.AsyncClient() as client:
@@ -605,6 +585,7 @@ async def complete(
     messages: list[dict[str, str]],
     config: Any,
     *,
+    execution: ModelExecution,
     temperature: float = 0.3,
     category: str | None = None,
     provider_override: Any | None = None,
@@ -634,7 +615,7 @@ async def complete(
             f"No providers configured for role '{role.value}'. "
             "Check llm.providers[].role in config.yaml."
         )
-    state = _request_state(config)
+    state = _request_state(config, execution)
     retries = getattr(config.llm, "max_retries", 0)
     interval = getattr(config.llm, "min_request_interval_seconds", 0.0)
     max_wait = getattr(config.llm, "retry_max_wait_seconds", 60.0)

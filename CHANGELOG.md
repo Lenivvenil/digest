@@ -2,6 +2,16 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Explicit model execution ownership (#147-B): `ModelExecution` owns lazy per-loop
+  concurrency, pacing, cooldowns and local request counts outside `LLMConfig`.
+  Internal model-consuming Python helpers now require an explicit execution argument;
+  budget/wait helpers take `(config, execution)` and limits take `(config, execution, limit)`.
+  Approval reloads return both settings and their owner. Public CLI/run entrypoints
+  remain compatible. Fresh versus initialized-sharing copies, independent loop resets,
+  durable reservations and absolute deadlines retain the policy recorded in
+  [ADR0020](docs/decisions/0020-explicit-model-execution.md). No persisted state migration
+  or provider/source policy change is introduced.
+
 - Disabled-by-default humane closing slice (#127): optional same-response
   designation, exact delivery-slot/source provenance, strict preparation v1/v2
   compatibility and isolated presentation before archive/freeze. Main capacity,

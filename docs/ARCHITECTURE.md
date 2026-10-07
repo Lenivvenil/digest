@@ -4,7 +4,8 @@
 > #145/#146 implementations on 2026-10-07. The #145 boundary is deployed through
 > engine PR #151 and runtime PR #74. The #146 boundary is deployed through
 > engine PR #152 and runtime PR #75.
-> #147-A adds execution/legacy/discovery ownership; #147-B remains pending.
+> #147-A is deployed through engine PR #153 and runtime PR #76.
+> #147-B adds explicit model execution holders; its release evidence is tracked in #147.
 > Release evidence and editorial acceptance remain separate.
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
@@ -30,8 +31,9 @@ under [#146](https://github.com/Lenivvenil/digest/issues/146) is recorded in
 issues track merge, checks and rollout evidence. These statuses do not establish
 editorial acceptance or completion of the remaining migration stages. The local
 #147-A scenario extraction is recorded in
-[ADR0019](decisions/0019-remaining-application-scenarios.md); provider runtime/configuration
-separation under #147-B is still pending.
+[ADR0019](decisions/0019-remaining-application-scenarios.md); the local provider
+runtime/configuration separation under #147-B is recorded in
+[ADR0020](decisions/0020-explicit-model-execution.md).
 
 The target is a modular monolith: one deployable Python engine, the existing private
 runtime, and no additional services or workflow framework. Organization follows who
@@ -253,9 +255,28 @@ The direct-application effect matrix in stage 3 is unchanged. CLI flag precedenc
 radar-only's feedback/approval effects, guard cleanup, discovery budgets and exit
 mapping remain compatible. Legacy status HTTP now uses the existing Telegram
 adapter, retaining notice/footer failure policies and localized text. Lower layers
-never import main/CLI, including function-local and type-only imports. Config._runtime
-copy/sharing, provider execution and broader storage codecs remain pending #147-B
-or later scoped work.
+never import main/CLI, including function-local and type-only imports. Stage 5-B
+below separates provider execution state; broader storage codecs remain later work.
+
+### Stage 5-B: explicit model execution
+
+The local #147-B implementation is recorded in
+[ADR0020](decisions/0020-explicit-model-execution.md). `adapters/models/execution.py`
+owns a concrete `ModelExecution` holder with lazy per-loop request state; configuration
+contains settings only. Applications create the owner once and explicitly pass it
+through model-consuming operations. Config-only replacements retain the same holder;
+LLM variants deliberately choose fresh or initialized-sharing holders according to
+ADR0020's complete copy matrix. Separate sharing holders independently rebind on loop
+changes, and semaphore capacity is sampled only at initialization.
+
+`llm.py` retains routes, wire protocols, pacing and reservation ordering. Count and
+generation share local semaphore/lock/cooldown/cap state. The durable cycle journal,
+environment binding and verified reconciliation checkpoint remain separate; the
+checkpoint explicitly restores spent-plus-remaining cap and the saved pacing floor.
+Construction does not inspect model allowance, preserving accepted/cached recovery.
+Required internal execution arguments are an approved Python helper API break;
+public CLI/run signatures, request counts, deadlines and persisted formats remain
+compatible. Broader adapter extraction and release acceptance remain separate.
 
 ### Target responsibility map
 
@@ -299,7 +320,7 @@ repeat safety and interrupted-application holds must remain observable.
 | 2. Candidate ownership — deployed, #144 | Pure values and validators sit below selection/storage; storage validates actual objects. Explicit verified retirement differs from persistence without retirement. Engine PR #150 and the one-line pin in runtime PR #73 implement this slice; scheduler ownership remains staged work. | Preserve hashes, envelope versions and verified-write-before-removal order. Exact merge/rollout evidence is tracked in #144; a compatible engine pin is the rollback boundary. |
 | 3. Confirmed-delivery application — implemented, #145 | One typed application operation delegates attribution, deduplication and accounting to their owners; both compact senders share pure coverage projection. ADR0017 and the effect matrix above record preserved scenario differences. | Preserve receipt history, unknown/unapplied holds, write order and failure policy. No automatic interrupted-write recovery; merge/check/rollout evidence is tracked in #145. |
 | 4. Review and source attribution — implemented, #146 | Shared pure exact-request reuse and explicit request validation; canonical source occurrence; general reviewed notices in presentation with immutable packet resolution in application. ADR0018 records ownership and remaining compatibility debt. | Preserve Python/wire contracts and distinct hash encodings, main holds, legacy warnings and optional omission. No source/full-text activation or schema migration; release evidence remains separate. |
-| 5. Adapters and remaining scenarios — local #147-A | Explicit execution/legacy/discovery applications and CLI reporting; ADR0019 records the boundaries. #147-B provider runtime/configuration separation and broader codecs remain pending. | Preserve guard/write order, public APIs, output barriers, request counts, deadlines and configured routes. No runtime state migration. |
+| 5. Adapters and remaining scenarios — local #147-A/B | Explicit execution/legacy/discovery applications and CLI reporting (ADR0019); explicit model-execution ownership outside configuration (ADR0020). Broader codecs remain pending. | Preserve guard/write order, public CLI/run APIs, output barriers, request counts, deadlines and configured routes. Internal model helpers require execution explicitly. No runtime state migration. |
 | 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
 
 Each stage needs a reviewable dependency change, existing behavioral regression
@@ -423,7 +444,8 @@ experiment, not external counter-evidence or a verified factual consensus.
 | `presentation/source_attribution.py` (#146) | Exact-feed reviewed literal notices and pure attributed card copies, independent of optional closing |
 | `closing.py` | Optional designation/provenance, sidecar persistence and omission rules; compatibility wrappers for moved occurrence/attribution contracts |
 | `adapters/storage/` (#144, #145) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence in `delivery_state.py`. No scheduling, retirement or accounting policy |
-| `config.py` | YAML loading, dataclasses and validation |
+| `config.py` | YAML settings loading, dataclasses and validation; no model execution state |
+| `adapters/models/execution.py` (#147-B) | Explicit lazy model-execution holders and per-loop request state; independent from the durable cycle budget |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
 | `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture
 from digest.candidate_review import CandidatePacket, CandidateProgress, merge_candidates, plan_packet
 from digest.candidate_storage import (
@@ -100,6 +101,7 @@ def test_exclusion_index_is_reversible_and_unresolved_cache_is_not_receipt(tmp_p
 
 @pytest.mark.asyncio
 async def test_terminal_index_requires_exact_capture_and_occurrence(tmp_path: Path) -> None:
+    model_execution = ModelExecution()
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
@@ -109,7 +111,8 @@ async def test_terminal_index_requires_exact_capture_and_occurrence(tmp_path: Pa
         {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable detail."}
         for item in packet.evidence.items]})
     with patch("digest.review.complete", return_value=(response, {})):
-        packet.report = await run_primary_review(articles, config, disposition_capture=capture)
+        packet.report = await run_primary_review(articles, config,
+            execution=model_execution, disposition_capture=capture)
     packet.disposition_attempts = tuple(capture.attempts)
     path = freeze_packet(packet, {}, tmp_path)
     attempt = capture.attempts[0]

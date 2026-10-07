@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.irritator.narrative_extractor import (
     Narrative,
     _build_prompt,
@@ -136,13 +137,13 @@ class TestParseNarratives:
 @pytest.mark.asyncio
 class TestExtractNarratives:
     async def test_success(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_narrative_dicts(2)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {"completion_tokens": 100}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             result = await extract_narratives(
-                [_make_summary("AI"), _make_summary("Banking")],
-                _make_config(),
+                [_make_summary("AI"), _make_summary("Banking")], _make_config(), execution=execution,
             )
 
         assert len(result) == 2
@@ -150,62 +151,68 @@ class TestExtractNarratives:
         mock_complete.assert_called_once()
 
     async def test_empty_summaries(self) -> None:
-        result = await extract_narratives([], _make_config())
+        execution = ModelExecution()
+        result = await extract_narratives([], _make_config(), execution=execution)
         assert result == []
 
     async def test_truncates_to_max_narratives(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_narrative_dicts(5)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             result = await extract_narratives(
-                [_make_summary()],
-                _make_config(max_narratives=2),
+                [_make_summary()], _make_config(max_narratives=2), execution=execution,
             )
 
         assert len(result) == 2
 
     async def test_invalid_json_raises(self) -> None:
+        execution = ModelExecution()
         mock_complete = AsyncMock(return_value=("not json at all", {}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             with pytest.raises(ValueError, match="No valid JSON"):
-                await extract_narratives([_make_summary()], _make_config())
+                await extract_narratives([_make_summary()], _make_config(), execution=execution)
 
     async def test_missing_field_raises(self) -> None:
+        execution = ModelExecution()
         bad = [{"claim": "x"}]
         mock_complete = AsyncMock(return_value=(json.dumps(bad), {}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             with pytest.raises(ValueError, match="missing field"):
-                await extract_narratives([_make_summary()], _make_config())
+                await extract_narratives([_make_summary()], _make_config(), execution=execution)
 
     async def test_llm_failure_propagates(self) -> None:
+        execution = ModelExecution()
         mock_complete = AsyncMock(side_effect=RuntimeError("All providers failed"))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             with pytest.raises(RuntimeError, match="All providers failed"):
-                await extract_narratives([_make_summary()], _make_config())
+                await extract_narratives([_make_summary()], _make_config(), execution=execution)
 
     async def test_uses_correct_role_and_temperature(self) -> None:
+        execution = ModelExecution()
         from digest.llm import LLMRole
 
         dicts = _valid_narrative_dicts(1)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
-            await extract_narratives([_make_summary()], _make_config())
+            await extract_narratives([_make_summary()], _make_config(), execution=execution)
 
         call_args = mock_complete.call_args
         assert call_args[0][0] == LLMRole.EXTRACT_NARRATIVES
         assert call_args[1]["temperature"] == 0.5
 
     async def test_json_in_markdown_fence(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_narrative_dicts(1)
         fenced = f"```json\n{json.dumps(dicts)}\n```"
         mock_complete = AsyncMock(return_value=(fenced, {}))
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
-            result = await extract_narratives([_make_summary()], _make_config())
+            result = await extract_narratives([_make_summary()], _make_config(), execution=execution)
 
         assert len(result) == 1

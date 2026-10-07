@@ -18,6 +18,7 @@ from digest.application import analysis, run_state
 from digest.application.results import RunStats
 
 if TYPE_CHECKING:
+    from digest.adapters.models.execution import ModelExecution
     from digest.candidate_review import CandidatePacket, CandidateProgress
     from digest.closing import ClosingDecision
     from digest.config import Config
@@ -38,6 +39,7 @@ class SelectedPreparation:
     """
 
     config: Config
+    execution: ModelExecution
     source_config: Config
     articles: dict[str, list[Article]]
     progress: CandidateProgress | None
@@ -138,6 +140,7 @@ async def _analyze_candidate_articles(
     articles: dict[str, list[Article]], config: Config, progress: CandidateProgress | None,
     packet: CandidatePacket | None,
     cached_report: BlindReviewReport | None, cache_dir: str,
+    *, execution: ModelExecution,
 ) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
     if cached_report is not None:
         from digest.review import primary_cards
@@ -147,7 +150,7 @@ async def _analyze_candidate_articles(
                               include_attribution=config.telegram.delivery_mode != "compact")
         return [], None, cards, cached_report
     if progress is None or packet is None:
-        return await analysis.analyze_articles(articles, config)
+        return await analysis.analyze_articles(articles, config, execution=execution)
     from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.candidate_review import reconcile_packet
     from digest.closing import ClosingCapture, decide_closing, save_closing
@@ -157,7 +160,7 @@ async def _analyze_candidate_articles(
 
     closing_capture = ClosingCapture() if getattr(getattr(config, "closing", None), "enabled", False) else None
     kwargs = {"closing_capture": closing_capture} if closing_capture is not None else {}
-    report = await run_primary_review(articles, config, disposition_capture=capture, **kwargs)
+    report = await run_primary_review(articles, config, disposition_capture=capture, **kwargs, execution=execution)
     reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
     if closing_capture is not None:
         try:
@@ -244,7 +247,7 @@ def _handoff_candidate(
 
 
 async def _collect_and_select(
-    config: Config, config_path: str, *, verbose: bool, feedback_precollected: bool,
+    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
     publication_date: date | None, started_at: float,
 ) -> SelectedPreparation | RunStats:
     """Recover accepted work first; otherwise acquire one bounded candidate selection."""
@@ -269,14 +272,15 @@ async def _collect_and_select(
         config, cache_dir, False, feedback_precollected,
     )
     run_state.require_attribution_store(config.telegram.delivery_mode == "compact", feedback_usable)
-    config = run_state.apply_pending_approvals(
-        config, config_path, cache_dir, feedback_store, enabled=feedback_usable,
+    config, execution = run_state.apply_pending_approvals(
+        config, config_path, cache_dir, feedback_store, enabled=feedback_usable, execution=execution,
     )
-    resumed = await resume_preparation(config, feedback_collected, verbose=verbose,
-                                       publication_date=publication_date)
+    resumed = await resume_preparation(
+        config, feedback_collected, verbose=verbose, publication_date=publication_date, execution=execution,
+    )
     if resumed is not None:
         return resumed
-    setup_reading_budget(config)
+    setup_reading_budget(config, execution=execution)
 
     feedback_scores = {}
     for source in config.enabled_sources:
@@ -318,7 +322,7 @@ async def _collect_and_select(
     if not articles:
         from digest.reconciliation_checkpoint import prepare_current_batch
 
-        await prepare_current_batch(progress, source_config, config_path, started_at)
+        await prepare_current_batch(progress, source_config, config_path, started_at, execution=execution)
         logging.getLogger(__name__).info("No eligible articles in this processing packet. Nothing to summarize.")
         run_state.record_source_stats(source_stats, fetch_metrics, articles, set())
         save_stats(source_stats, cache_dir, active_sources={source.name for source in config.enabled_sources})
@@ -329,7 +333,7 @@ async def _collect_and_select(
     deadline = reading_deadline(config, started_at) if config.reading_brief.enabled else None
     async with asyncio.timeout_at(deadline):
         summaries, trends, cards, report = await _analyze_candidate_articles(
-            articles, config, progress, packet, cached_report, cache_dir,
+            articles, config, progress, packet, cached_report, cache_dir, execution=execution,
         )
     if not summaries and not cards and report is None:
         logging.getLogger(__name__).error("All category summarizations failed.")
@@ -338,13 +342,14 @@ async def _collect_and_select(
         # CLI preparation requires compact mode, so legacy failure messages are not sent.
         return _empty_stats(len(config.enabled_sources), feedback_collected,
                             sum(len(items) for items in articles.values()))
-    return SelectedPreparation(config, source_config, articles, progress, packet, summaries, trends, cards, report,
+    return SelectedPreparation(config, execution, source_config, articles, progress, packet, summaries, trends, cards,
+                               report,
                                source_stats, fetch_metrics, collection_failed, collected_articles,
                                feedback_collected, started_at)
 
 
 async def prepare_edition(
-    config: Config, config_path: str, *, verbose: bool, feedback_precollected: bool,
+    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
     publication_date: date | None, started_at: float,
 ) -> RunStats:
     """Ordinary preparation: recover, select, accept, present and freeze; never send."""
@@ -355,11 +360,11 @@ async def prepare_edition(
 
     selected = await _collect_and_select(
         config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-        publication_date=publication_date, started_at=started_at,
+        publication_date=publication_date, started_at=started_at, execution=execution,
     )
     if isinstance(selected, RunStats):
         return selected
-    config = selected.config
+    config, execution = selected.config, selected.execution
     cards, closing = _preparation_closing(selected.cards, selected.report, selected.articles, config, ".cache")
     combined = combined_summary(selected.summaries, selected.trends,
                                 config.review.enabled and config.review.review_led_only, config.radar.language)
@@ -375,8 +380,10 @@ async def prepare_edition(
     _save_prepared_fetch_stats(selected.source_stats, selected.fetch_metrics, selected.articles,
                                config, ".cache", selected.collection_failed)
     save_source_category_map(config.enabled_sources, ".cache")
-    stats = await finish_preparation(snapshot, config, selected.feedback_collected, verbose=verbose,
-                                     publication_date=publication_date, selection_complete=accepted)
+    stats = await finish_preparation(
+        snapshot, config, selected.feedback_collected, verbose=verbose, publication_date=publication_date,
+        selection_complete=accepted, execution=execution,
+    )
     stats.feeds_fetched = len(selected.fetch_metrics)
     stats.new_articles = selected.collected_articles
     stats.duration_seconds = time.monotonic() - started_at
@@ -384,7 +391,7 @@ async def prepare_edition(
 
 
 async def prepare_sources(
-    config: Config, config_path: str, *, verbose: bool, feedback_precollected: bool,
+    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
     publication_date: date | None, started_at: float,
 ) -> RunStats:
     """Experimental source work ends in a technical handoff, not an edition."""
@@ -393,15 +400,16 @@ async def prepare_sources(
 
     selected = await _collect_and_select(
         config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-        publication_date=publication_date, started_at=started_at,
+        publication_date=publication_date, started_at=started_at, execution=execution,
     )
     if isinstance(selected, RunStats):
         return selected
+    execution = selected.execution
     result = await prepare_selected_sources(
         selected.progress, selected.packet, selected.report, selected.source_config, Path(".cache"),
-        reading_deadline(selected.config, started_at), prepare_only=True,
+        reading_deadline(selected.config, started_at), prepare_only=True, execution=execution,
     )
-    await prepare_current_batch(selected.progress, selected.source_config, config_path, started_at)
+    await prepare_current_batch(selected.progress, selected.source_config, config_path, started_at, execution=execution)
     _save_prepared_fetch_stats(selected.source_stats, selected.fetch_metrics, selected.articles,
                                selected.config, ".cache", selected.collection_failed)
     logging.getLogger(__name__).info("Source preparation: %d selected, %d technically complete, %d pending; %s",

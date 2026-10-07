@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.presentation import clean_summary as _clean_summary
 from digest.delivery import ArticleDeliveryResult
 from digest.feedback import FeedbackStore
@@ -708,6 +709,38 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         await run("config.yaml", False, False, False, feedback_precollected=True)
         poll.assert_not_called()
         assert load_feedback(".cache", strict=True).ratings == [vote]
+
+
+@pytest.mark.parametrize(("enabled", "decisions"), [(True, {}), (False, {}), (False, {"source": "approved"})])
+def test_no_approval_reload_retains_config_and_execution(enabled: bool, decisions: dict[str, str]) -> None:
+    from digest.application.run_state import apply_pending_approvals
+
+    config, execution = _mock_config(), ModelExecution()
+    store = FeedbackStore(source_decisions=decisions)
+    with (patch("digest.config.load_config", side_effect=AssertionError("No reload")),
+          patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization"))):
+        current_config, current_execution = apply_pending_approvals(
+            config, "config.yaml", ".cache", store, enabled=enabled, execution=execution,
+        )
+    assert current_config is config and current_execution is execution
+
+
+@pytest.mark.parametrize("persistence_failure", [False, True])
+def test_approval_reload_starts_fresh_lazy_execution_even_when_config_is_unchanged(persistence_failure: bool) -> None:
+    from digest.application.run_state import apply_pending_approvals
+
+    config, execution = _mock_config(), ModelExecution()
+    store = FeedbackStore(source_decisions={"source": "approved"})
+    failure = OSError("state write failed") if persistence_failure else None
+    with (patch("digest.application.run_state.process_pending_approvals", side_effect=failure),
+          patch("digest.config.load_config", return_value=config) as reload,
+          patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization"))):
+        current_config, current_execution = apply_pending_approvals(
+            config, "config.yaml", ".cache", store, enabled=True, execution=execution,
+        )
+    reload.assert_called_once_with("config.yaml")
+    assert current_config is config
+    assert isinstance(current_execution, ModelExecution) and current_execution is not execution
 
 
 def test_pending_source_approval_requires_current_identity_and_keeps_failed_decision(tmp_path: Path) -> None:

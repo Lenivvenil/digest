@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture
 from digest.config import ReviewModelConfig
 from digest.review import _groq_review_format, _review_usage, run_primary_review
@@ -57,6 +58,7 @@ def test_strict_wire_shape_disallows_per_selection_limitations_and_preserves_dis
 
 @pytest.mark.asyncio
 async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_survive(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     capture = CandidateDispositionCapture()
     raw = json.dumps(payload())
@@ -64,7 +66,7 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
              "completion_tokens_details": {"reasoning_tokens": 1800, "reasoning": "DO NOT RETAIN"}}
     completion = AsyncMock(side_effect=[RuntimeError("primary unavailable"), (raw, usage)])
     with patch("digest.review.complete", completion) as call:
-        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture)
+        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
     first, second = call.call_args_list
     assert "reasoning_effort" not in first.kwargs and "response_format" not in first.kwargs
     assert second.kwargs["reasoning_effort"] == "low"
@@ -85,9 +87,10 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
 
 @pytest.mark.asyncio
 async def test_other_groq_model_retains_ordinary_review_wire() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.review.primary = ReviewModelConfig("groq", "other-configured-model")
     with patch("digest.review.complete", AsyncMock(return_value=(json.dumps(payload()), {}))) as call:
-        await run_primary_review(fixture_articles(), config)
+        await run_primary_review(fixture_articles(), config, execution=execution)
     assert "reasoning_effort" not in call.call_args.kwargs
     assert "response_format" not in call.call_args.kwargs

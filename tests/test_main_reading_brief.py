@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import prepare_sources
 from digest.application.results import RunStats
 from digest.candidate_review import CandidateProgress, begin_packet, merge_candidates, plan_packet, reconcile_packet
@@ -21,7 +22,7 @@ from tests.test_reading_brief import fetched, response
 
 
 async def saved_selection(
-    tmp_path: Path, *, description: str | None = None, all_selected: bool = False,
+    tmp_path: Path, *, execution: ModelExecution, description: str | None = None, all_selected: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
     config, articles = population(2)
     if description is not None:
@@ -40,7 +41,7 @@ async def saved_selection(
                            "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
 
     with patch("digest.review.complete", side_effect=select):
-        report = await run_primary_review(articles, config)
+        report = await run_primary_review(articles, config, execution=execution)
     reconcile_packet(progress, packet, report, config, tmp_path)
     return config, progress, packet, report
 
@@ -51,7 +52,8 @@ async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_k
 
 @pytest.mark.asyncio
 async def test_saved_candidate_selection_becomes_technical_handoff_without_presentation(tmp_path: Path) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     with (patch("digest.reading_brief.fetch_article",
                 AsyncMock(return_value=fetched("Complete source mechanism."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
@@ -59,8 +61,12 @@ async def test_saved_candidate_selection_becomes_technical_handoff_without_prese
           patch("digest.review.complete", side_effect=AssertionError("No repeated RSS selection")),
           patch("digest.translation.translate_publication_presentation",
                 side_effect=AssertionError("No presentation"))):
-        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
-        second = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        first = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
+        second = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert first.technical_complete == second.technical_complete == 1
     assert first.status == "semantic_reconciliation_pending"
     assert fetch.call_count == count.call_count == model.call_count == 1
@@ -75,7 +81,8 @@ async def test_saved_candidate_selection_becomes_technical_handoff_without_prese
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["excluded", "occurrence", "proof", "newer_decision"])
 async def test_current_selection_policy_and_exact_lineage_gate_before_calls(tmp_path: Path, change: str) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     identity = report.reviews[0].selections[0].evidence_id
     candidate = progress.candidates[identity]
     if change == "excluded":
@@ -87,7 +94,9 @@ async def test_current_selection_policy_and_exact_lineage_gate_before_calls(tmp_
     else:
         report.reviews[0].response_sha256 = None
     with patch("digest.reading_preparation._advance", side_effect=AssertionError("No unbound request")):
-        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        result = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert result.technical_complete == 0 and result.outcomes[0].state == "held"
 
 
@@ -95,30 +104,34 @@ async def test_current_selection_policy_and_exact_lineage_gate_before_calls(tmp_
 async def test_accepted_preparation_resume_never_reenters_reading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, _, _, _ = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, _, _, _ = await saved_selection(tmp_path, execution=execution)
     monkeypatch.chdir(tmp_path)
     expected = RunStats(0, 0, 0, False, False, False, "", edition_status="ready")
     with (patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)) as resume,
           patch("digest.reading_preparation.prepare_selected_sources", side_effect=AssertionError("No source work"))):
-        assert await prepare_sources(config, "config.yaml", verbose=False, feedback_precollected=True,
-                                     publication_date=None, started_at=time.monotonic()) is expected
+        assert await prepare_sources(
+            config, "config.yaml", verbose=False, feedback_precollected=True, publication_date=None,
+            started_at=time.monotonic(), execution=execution,
+        ) is expected
     resume.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_reading_budget_keeps_existing_spend_and_dispatch_reserve(tmp_path: Path) -> None:
+    execution = ModelExecution()
     from digest import llm
 
-    config, _, _, _ = await saved_selection(tmp_path)
-    state = llm._request_state(config)
+    config, _, _, _ = await saved_selection(tmp_path, execution=execution)
+    state = llm._request_state(config, execution=execution)
     state.requests_attempted = 2
-    setup_reading_budget(config)
-    assert llm.request_budget_remaining(config) == 8
+    setup_reading_budget(config, execution=execution)
+    assert llm.request_budget_remaining(config, execution=execution) == 8
     config.translation = replace(config.translation, enabled=True, timeout_seconds=90)
     assert reading_deadline(config, 100) == 325
     state.requests_attempted += 1
-    setup_reading_budget(config)
-    assert llm.request_budget_remaining(config) == 7
+    setup_reading_budget(config, execution=execution)
+    assert llm.request_budget_remaining(config, execution=execution) == 7
 
 
 @pytest.mark.asyncio
@@ -166,34 +179,46 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
 
 @pytest.mark.asyncio
 async def test_changed_occurrence_cannot_bypass_prior_unknown_generation(tmp_path: Path) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     with (patch("digest.reading_brief.fetch_article",
                 AsyncMock(return_value=fetched("Complete public source."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=TimeoutError("fixture uncertainty")) as model):
-        initial = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        initial = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert initial.pending == 1 and model.call_count == fetch.call_count == 1
-    config, progress, packet, report = await saved_selection(tmp_path, description="Changed RSS description only")
+    config, progress, packet, report = await saved_selection(
+        tmp_path, description="Changed RSS description only", execution=execution,
+    )
     with (patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No new acquisition")),
           patch("digest.llm.complete", side_effect=AssertionError("No unknown replay"))):
-        held = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        held = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert held.pending == 1 and held.outcomes[0].state == "held"
 
 
 @pytest.mark.asyncio
 async def test_matching_legacy_completed_evidence_has_explicit_current_adoption(tmp_path: Path) -> None:
+    execution = ModelExecution()
     from digest.reading_brief_state import load_state
 
-    config, progress, packet, report = await saved_selection(tmp_path)
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate)):
-        first = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        first = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     identity = report.reviews[0].selections[0].evidence_id
     source_sha = load_state(tmp_path, identity).source_sha256
     (tmp_path / "reading_bindings" / f"{identity}.json").unlink()
     with patch("digest.reading_preparation._advance", side_effect=AssertionError("No completed-page replay")):
-        adopted = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        adopted = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert first.technical_complete == adopted.technical_complete == 1
     handoff = json.loads(Path(adopted.handoff_paths[0]).read_text())
     assert handoff["binding"]["evidence_origin"] == "legacy_selection_match_historical_feed_binding_unknown"
@@ -217,15 +242,20 @@ async def test_unsupported_source_invocation_fails_before_feedback_collection_or
 
 @pytest.mark.asyncio
 async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Path) -> None:
-    config, progress, packet, report = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate)):
-        await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     identity = report.reviews[0].selections[0].evidence_id
     (tmp_path / "reading_briefs" / f"{identity}.json").unlink()
     with patch("digest.reading_preparation._advance", side_effect=AssertionError("No lost-state replay")):
-        held = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        held = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert held.pending == 1 and held.outcomes[0].reason == "technical_missing_reading_state"
 
 
@@ -234,14 +264,17 @@ async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Pa
 async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidates(
     tmp_path: Path, state_kind: str,
 ) -> None:
+    execution = ModelExecution()
     from digest.candidate_review import pending_completed_report
     from digest.reading_preparation import deferred_source_reports
 
-    config, progress, packet, report = await saved_selection(tmp_path)
+    config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=TimeoutError if state_kind == "unknown" else generate)):
-        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        result = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     if state_kind == "missing_handoff":
         Path(result.handoff_paths[0]).unlink()
     before = json.dumps([item.report.__dict__ for item in progress.packets], default=str)
@@ -257,7 +290,8 @@ async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidate
 async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config, _, _, _ = await saved_selection(tmp_path)
+    execution = ModelExecution()
+    config, _, _, _ = await saved_selection(tmp_path, execution=execution)
     monkeypatch.setenv("PREPARATION_DEADLINE", "1100")
     with patch("digest.reading_preparation.time.time", return_value=1000), patch(
         "digest.reading_preparation.time.monotonic", return_value=500,
@@ -267,6 +301,7 @@ async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
 
 @pytest.mark.asyncio
 async def test_complete_empty_source_packet_retires_resolved_metadata_without_fake_preparation(tmp_path: Path) -> None:
+    execution = ModelExecution()
     from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.candidate_review import load_candidate_progress, save_candidate_progress
     from digest.candidate_storage import load_candidate
@@ -288,7 +323,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
 
     capture = CandidateDispositionCapture()
     with patch("digest.review.complete", side_effect=abstain):
-        report = await run_primary_review(articles, config, disposition_capture=capture)
+        report = await run_primary_review(articles, config, disposition_capture=capture, execution=execution)
     reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
     identities = set(progress.candidates)
     deferred = deferred_source_reports(progress, tmp_path, config)
@@ -305,10 +340,11 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
 
 @pytest.mark.asyncio
 async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_path: Path) -> None:
+    execution = ModelExecution()
     from digest.candidate_review import pending_completed_report
     from digest.reading_preparation import deferred_source_reports
 
-    config, progress, packet, report = await saved_selection(tmp_path, all_selected=True)
+    config, progress, packet, report = await saved_selection(tmp_path, all_selected=True, execution=execution)
     calls = 0
 
     async def partial(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
@@ -321,7 +357,9 @@ async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_pat
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=partial)):
-        result = await prepare_selected_sources(progress, packet, report, config, tmp_path, time.monotonic() + 1000)
+        result = await prepare_selected_sources(
+            progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
+        )
     assert result.technical_complete == result.pending == 1
     assert not deferred_source_reports(progress, tmp_path, config)
     assert pending_completed_report(progress) == report

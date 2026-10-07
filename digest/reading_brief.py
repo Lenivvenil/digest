@@ -20,6 +20,7 @@ from typing import Any, Literal
 import httpx
 
 from digest import llm
+from digest.adapters.models.execution import ModelExecution
 from digest.article_source import FETCH_SECONDS, fetch_article
 from digest.config import Config, ProviderConfig
 from digest.model_budget import ModelBudgetError
@@ -293,17 +294,19 @@ def ready_brief_evidence(state_dir: Path, identity: str) -> tuple[BriefState, So
     return state, source
 
 
-def _preflight(config: Config, deadline: float, seconds: float, *, model: bool = True) -> None:
-    wait = llm.request_wait_seconds(config) if model else 0.0
+def _preflight(
+    config: Config, deadline: float, seconds: float, *, execution: ModelExecution, model: bool = True,
+) -> None:
+    wait = llm.request_wait_seconds(config, execution) if model else 0.0
     if time.monotonic() + wait + seconds >= deadline:
         raise TimeoutError("technical_deadline")
-    if model and llm.request_budget_remaining(config) == 0:
+    if model and llm.request_budget_remaining(config, execution) == 0:
         raise RuntimeError("technical_request_budget")
 
 
-def _generation_timeout(config: Config, deadline: float) -> float:
-    _preflight(config, deadline, MIN_GENERATION_SECONDS + DEADLINE_MARGIN_SECONDS)
-    available = deadline - time.monotonic() - llm.request_wait_seconds(config) - DEADLINE_MARGIN_SECONDS
+def _generation_timeout(config: Config, deadline: float, *, execution: ModelExecution) -> float:
+    _preflight(config, deadline, MIN_GENERATION_SECONDS + DEADLINE_MARGIN_SECONDS, execution=execution)
+    available = deadline - time.monotonic() - llm.request_wait_seconds(config, execution) - DEADLINE_MARGIN_SECONDS
     if available < MIN_GENERATION_SECONDS:
         raise TimeoutError("technical_deadline")
     return min(GENERATION_SECONDS, available)
@@ -413,7 +416,9 @@ def _track_legacy_pages(state: BriefState, state_dir: Path) -> None:
     save_state(state_dir, state)
 
 
-async def _advance(state: BriefState, config: Config, state_dir: Path, deadline: float) -> None:
+async def _advance(
+    state: BriefState, config: Config, state_dir: Path, deadline: float, *, execution: ModelExecution,
+) -> None:
     phase = "state"
     try:
         state.attempts += 1
@@ -421,7 +426,7 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
         save_state(state_dir, state)
         if state.source_sha256 is None:
             phase = "fetch"
-            _preflight(config, deadline, FETCH_SECONDS, model=False)
+            _preflight(config, deadline, FETCH_SECONDS, execution=execution, model=False)
             async with asyncio.timeout(min(FETCH_SECONDS, deadline - time.monotonic())):
                 fetched = await fetch_article(state.selection.link)
             state.source_sha256, source = save_source(state_dir, state.selection, fetched)
@@ -436,9 +441,10 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
             save_state(state_dir, state)
             return
         _track_legacy_pages(state, state_dir)
-        # A shallow copy shares the initialized request runtime and pacing, but disables
-        # retries only for this stage without changing other stages' configuration.
-        llm.request_budget_remaining(config)
+        # Share the initialized request runtime and pacing explicitly; shallow copies
+        # disable retries only for this stage without changing other stages' configuration.
+        llm.request_budget_remaining(config, execution)
+        call_execution = execution.share_initialized(config.llm)
         call_config = copy.copy(config)
         call_config.llm = copy.copy(config.llm)
         call_config.llm.max_retries = 0
@@ -473,12 +479,15 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                             if candidate_index + 1 < len(candidates):
                                 continue
                             return
-                        _preflight(call_config, deadline, COUNT_SECONDS)
+                        _preflight(call_config, deadline, COUNT_SECONDS, execution=call_execution)
                         attempt = _reserve_attempt(state, page, route, "count", state_dir)
-                        async with asyncio.timeout(min(llm.request_wait_seconds(call_config) + COUNT_SECONDS,
-                                                       max(0, deadline - time.monotonic()))):
+                        async with asyncio.timeout(min(
+                            llm.request_wait_seconds(call_config, call_execution) + COUNT_SECONDS,
+                            max(0, deadline - time.monotonic()),
+                        )):
                             count = await llm.count_gemini_tokens(
-                                messages, call_config, provider_override=provider, temperature=TEMPERATURE,
+                                messages, call_config, execution=call_execution,
+                                provider_override=provider, temperature=TEMPERATURE,
                                 max_output_tokens=route.max_output_tokens,
                             )
                         attempt.status = "accepted"
@@ -508,11 +517,12 @@ async def _advance(state: BriefState, config: Config, state_dir: Path, deadline:
                         split = True
                         break
                     phase = "generate"
-                    request_timeout = _generation_timeout(call_config, deadline)
+                    request_timeout = _generation_timeout(call_config, deadline, execution=call_execution)
                     attempt = _reserve_attempt(state, page, route, "generate", state_dir)
                     async with asyncio.timeout(max(0, deadline - time.monotonic())):
                         text, usage = await llm.complete(
-                            llm.LLMRole.SUMMARIZE, messages, call_config, provider_override=provider,
+                            llm.LLMRole.SUMMARIZE, messages, call_config, execution=call_execution,
+                            provider_override=provider,
                             temperature=TEMPERATURE, max_output_tokens=route.max_output_tokens,
                             request_timeout_seconds=request_timeout,
                         )
@@ -616,7 +626,7 @@ def _render(state: BriefState, source: Source) -> tuple[ArticleSummary, str, str
 
 
 async def enrich_selected_cards(
-    selected: list[Article], config: Config, state_dir: Path, deadline: float,
+    selected: list[Article], config: Config, state_dir: Path, deadline: float, *, execution: ModelExecution,
 ) -> BriefRun:
     """Admit only upstream selections; resume older admitted work even without new RSS."""
     settings = config.reading_brief
@@ -658,7 +668,7 @@ async def enrich_selected_cards(
             state.error_class = "technical_profile_mismatch"
             save_state(state_dir, state)
         elif state.status == "pending":
-            await _advance(state, config, state_dir, deadline)
+            await _advance(state, config, state_dir, deadline, execution=execution)
         if state.status in {"ready", "abstained"}:
             try:
                 source = load_source(state_dir, state)

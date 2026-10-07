@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.irritator.query_generator import (
     SearchQuery,
     _build_prompt,
@@ -173,11 +174,12 @@ class TestParseQueries:
 @pytest.mark.asyncio
 class TestGenerateQueries:
     async def test_success(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_query_dicts(3)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([_make_narrative()], _make_config())
+            result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
         assert len(result) == 1
         claim = _make_narrative().claim
@@ -185,10 +187,12 @@ class TestGenerateQueries:
         assert len(result[claim]) == 3
 
     async def test_empty_narratives(self) -> None:
-        result = await generate_queries([], _make_config())
+        execution = ModelExecution()
+        result = await generate_queries([], _make_config(), execution=execution)
         assert result == {}
 
     async def test_multiple_narratives_parallel(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_query_dicts(2)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
@@ -196,7 +200,7 @@ class TestGenerateQueries:
         n2 = _make_narrative("Claim B")
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([n1, n2], _make_config())
+            result = await generate_queries([n1, n2], _make_config(), execution=execution)
 
         assert len(result) == 2
         assert "Claim A" in result
@@ -204,6 +208,7 @@ class TestGenerateQueries:
         assert mock_complete.call_count == 2
 
     async def test_partial_failure_continues(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_query_dicts(2)
         mock_complete = AsyncMock(
             side_effect=[
@@ -216,48 +221,52 @@ class TestGenerateQueries:
         n2 = _make_narrative("Bad claim")
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([n1, n2], _make_config())
+            result = await generate_queries([n1, n2], _make_config(), execution=execution)
 
         assert len(result) == 1
         assert "Good claim" in result
 
     async def test_uses_correct_role(self) -> None:
+        execution = ModelExecution()
         from digest.llm import LLMRole
 
         dicts = _valid_query_dicts(1)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            await generate_queries([_make_narrative()], _make_config())
+            await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
         assert mock_complete.call_args[0][0] == LLMRole.GENERATE_QUERIES
 
     async def test_all_fail_returns_empty(self) -> None:
+        execution = ModelExecution()
         mock_complete = AsyncMock(side_effect=RuntimeError("All failed"))
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([_make_narrative()], _make_config())
+            result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
         assert result == {}
 
     async def test_json_in_markdown_fence(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_query_dicts(2)
         fenced = f"```json\n{json.dumps(dicts)}\n```"
         mock_complete = AsyncMock(return_value=(fenced, {}))
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([_make_narrative()], _make_config())
+            result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
         assert len(list(result.values())[0]) == 2
 
     async def test_prompt_sent_to_llm_excludes_narrative_hypotheses(self) -> None:
+        execution = ModelExecution()
         dicts = _valid_query_dicts(1)
         mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
         narrative = _make_narrative()
         original_narrative = asdict(narrative)
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            await generate_queries([narrative], _make_config(language="en"))
+            await generate_queries([narrative], _make_config(language="en"), execution=execution)
 
         call_args = mock_complete.call_args
         messages = call_args[0][1]

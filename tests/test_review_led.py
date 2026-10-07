@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.analysis import analyze_articles as _analyze_articles
 from digest.config import ProviderConfig, ReviewConfig, _load_review, load_config
 from digest.delivery import ArticleDeliveryResult
@@ -55,6 +56,7 @@ def test_review_led_mode_does_not_change_evidence_or_review_prompt() -> None:
 
 @pytest.mark.asyncio
 async def test_review_led_analysis_never_calls_legacy_summary_or_picker() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.review.review_led_only = True
     with (
@@ -62,7 +64,7 @@ async def test_review_led_analysis_never_calls_legacy_summary_or_picker() -> Non
         patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No category prose"))) as summarize,
         patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No legacy picker"))) as picker,
     ):
-        summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config)
+        summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config, execution=execution)
     summarize.assert_not_called()
     picker.assert_not_called()
     assert summaries == [] and trends is None
@@ -72,14 +74,15 @@ async def test_review_led_analysis_never_calls_legacy_summary_or_picker() -> Non
 
 @pytest.mark.asyncio
 async def test_default_review_mode_preserves_legacy_category_analysis() -> None:
+    execution = ModelExecution()
     config = fixture_config()
-    original = await run_fixture()
+    original = await run_fixture(execution=execution)
     categories = [CategorySummary("AI", "Legacy category summary", 2)]
     with (
         patch("digest.review.run_blind_review", AsyncMock(return_value=original)),
         patch("digest.radar.summarize_all", AsyncMock(return_value=(categories, "Legacy trends"))) as summarize,
     ):
-        summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config)
+        summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config, execution=execution)
     summarize.assert_awaited_once()
     assert summaries == categories and trends == "Legacy trends"
     assert report is original and cards
@@ -87,6 +90,7 @@ async def test_default_review_mode_preserves_legacy_category_analysis() -> None:
 
 @pytest.mark.asyncio
 async def test_review_led_mode_is_ignored_when_review_is_disabled() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     config.review.enabled = False
     config.review.review_led_only = True
@@ -96,7 +100,7 @@ async def test_review_led_mode_is_ignored_when_review_is_disabled() -> None:
         patch("digest.radar.summarize_all", AsyncMock(return_value=(categories, None))) as summarize,
         patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])) as picker,
     ):
-        summaries, _, _, report = await _analyze_articles(fixture_articles(), config)
+        summaries, _, _, report = await _analyze_articles(fixture_articles(), config, execution=execution)
     summarize.assert_awaited_once()
     picker.assert_awaited_once()
     assert summaries == categories and report is None

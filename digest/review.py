@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from digest._sanitize import sanitize_article
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
 from digest.closing import ClosingCapture, capture_closing, eligible_ids
 from digest.config import ClosingConfig, Config, ProviderConfig, ReviewConfig, ReviewModelConfig, SourceConfig
@@ -236,6 +237,7 @@ async def _review_slot(
     messages: list[dict[str, str]], config: Config,
     disposition_capture: CandidateDispositionCapture | None = None,
     closing_capture: ClosingCapture | None = None,
+    *, execution: ModelExecution,
 ) -> ModelReview:
     prompt_hash = review_prompt_hash(messages)
     result = ModelReview(slot, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable",
@@ -258,7 +260,7 @@ async def _review_slot(
         options = {"reasoning_effort": "low", "response_format": _groq_review_format(allow_closing=closing_enabled)}
     try:
         text, usage = await complete(
-            LLMRole.REVIEW_EVIDENCE, messages, config, temperature=0.2,
+            LLMRole.REVIEW_EVIDENCE, messages, config, execution=execution, temperature=0.2,
             provider_override=ProviderConfig(model.provider, model.model, ["review_evidence"]),
             max_output_tokens=config.review.max_output_tokens, **options,
         )
@@ -293,15 +295,17 @@ async def _review_slot(
     return captured()
 
 
-async def run_blind_review(articles_by_category: dict[str, list[Article]], config: Config) -> BlindReviewReport:
+async def run_blind_review(
+    articles_by_category: dict[str, list[Article]], config: Config, *, execution: ModelExecution,
+) -> BlindReviewReport:
     settings = config.review
     bundle = build_evidence_bundle(articles_by_category, settings)
-    return await run_evidence_review(bundle, config)
+    return await run_evidence_review(bundle, config, execution=execution)
 
 
 async def run_primary_review(
     articles_by_category: dict[str, list[Article]], config: Config,
-    *, disposition_capture: CandidateDispositionCapture | None = None,
+    *, execution: ModelExecution, disposition_capture: CandidateDispositionCapture | None = None,
     closing_capture: ClosingCapture | None = None,
 ) -> BlindReviewReport:
     """Select delivery cards with one primary attempt and at most one fallback.
@@ -317,14 +321,14 @@ async def run_primary_review(
     messages = build_review_messages(bundle, settings, config.radar.language, sources=config.sources,
                                      closing=getattr(config, "closing", None))
     prompt_hash = review_prompt_hash(messages)
-    # Do not mutate the caller's retry policy or share its provider cooldowns.
+    # Delivery starts a fresh execution unless reading shares the existing request budget.
     delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
     if getattr(getattr(config, "reading_brief", None), "enabled", False):
-        from digest.llm import _request_state
-
-        delivery_config.llm._runtime = _request_state(config)
+        delivery_execution = execution.share_initialized(config.llm)
+    else:
+        delivery_execution = ModelExecution()
     primary = await _review_slot("primary", settings.primary, bundle, messages, delivery_config,
-                                 disposition_capture, closing_capture)
+                                 disposition_capture, closing_capture, execution=delivery_execution)
     secondary = ModelReview(
         "secondary", settings.secondary.provider, settings.secondary.model,
         bundle.bundle_id, prompt_hash, "unavailable", error="pending_independent_review",
@@ -332,6 +336,7 @@ async def run_primary_review(
     if primary.status in {"invalid", "unavailable"}:
         secondary = await _review_slot(
             "secondary", settings.secondary, bundle, messages, delivery_config, disposition_capture, closing_capture,
+            execution=delivery_execution,
         )
     return BlindReviewReport(
         SCHEMA_VERSION, bundle, [primary, secondary], "incomplete", None, [], "pending_independent_review",
@@ -340,6 +345,7 @@ async def run_primary_review(
 
 async def run_evidence_review(
     bundle: EvidenceBundle, config: Config, cached_reviews: list[ModelReview] | None = None,
+    *, execution: ModelExecution,
 ) -> BlindReviewReport:
     """Resume only independently validated successes for the identical evidence and prompt."""
     settings = config.review
@@ -362,13 +368,14 @@ async def run_evidence_review(
         if reused is not None:
             reusable[name] = reused
 
-    async def slot(name: str, model: ReviewModelConfig) -> ModelReview:
+    async def slot(name: str, model: ReviewModelConfig, *, execution: ModelExecution) -> ModelReview:
         if name in reusable:
             return reusable[name]
-        return await _review_slot(name, model, bundle, messages, config)
+        return await _review_slot(name, model, bundle, messages, config, execution=execution)
 
     reviews = list(await asyncio.gather(
-        slot("primary", settings.primary), slot("secondary", settings.secondary),
+        slot("primary", settings.primary, execution=execution),
+        slot("secondary", settings.secondary, execution=execution),
     ))
     valid = all(r.status in {"ok", "abstained"} for r in reviews)
     first, second = ({s.evidence_id for s in r.selections} for r in reviews)
@@ -381,7 +388,7 @@ async def run_evidence_review(
     if valid and overlap is not None and overlap < settings.disagreement_threshold:
         reason = "third_model_not_configured"
         if settings.tie_breaker:
-            reviews.append(await slot("third", settings.tie_breaker))
+            reviews.append(await slot("third", settings.tie_breaker, execution=execution))
             reason = "selection_overlap_below_threshold"
     return BlindReviewReport(
         SCHEMA_VERSION, bundle, reviews,

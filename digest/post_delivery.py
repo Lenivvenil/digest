@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, load_config
 from digest.delivery.supplement import signal_text, split_supplement
 from digest.review_checkpoint import load_review_checkpoint
@@ -173,7 +174,9 @@ async def _send_supplement(result: EvidenceIrritatorResult, config: Config, *, n
     return 'sent'
 
 
-async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int:
+async def execute_post_delivery(
+    config_path: Path, checkpoint_path: Path, *, execution: ModelExecution,
+) -> int:
     from digest.irritator.evidence_stage import MAX_SECONDS, run_evidence_irritator
 
     checkpoint = _safe_path(checkpoint_path)
@@ -210,9 +213,9 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
         async with httpx.AsyncClient() as client:
             if require_full_source or source_evidence is not None:
                 result = await run_evidence_irritator(bundle, config, client, source_evidence=source_evidence,
-                                                     require_full_source=require_full_source)
+                                                     require_full_source=require_full_source, execution=execution)
             else:
-                result = await run_evidence_irritator(bundle, config, client)
+                result = await run_evidence_irritator(bundle, config, client, execution=execution)
     except Exception as exc:
         # Unexpected implementation failures still leave an explicit durable outcome.
         payload = {'status': 'error', 'bundle_id': bundle.bundle_id, 'error': type(exc).__name__,
@@ -232,6 +235,7 @@ async def execute_post_delivery(config_path: Path, checkpoint_path: Path) -> int
         try:
             presented, translation = await translate_supplement_presentation(
                 result, config, checkpoint.parent / '.translations', deadline=processing_deadline,
+                execution=execution,
             )
         except Exception as exc:
             translation = TranslationResult({}, 'fallback', reasons=[type(exc).__name__])
@@ -272,7 +276,7 @@ def main() -> int:
     if args.command == 'prepare':
         prepare_post_delivery(args.config, args.checkpoint)
         return 0
-    return asyncio.run(execute_post_delivery(args.config, args.checkpoint))
+    return asyncio.run(execute_post_delivery(args.config, args.checkpoint, execution=ModelExecution()))
 
 
 if __name__ == '__main__':

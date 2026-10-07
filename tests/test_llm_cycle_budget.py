@@ -9,6 +9,7 @@ import pytest
 import respx
 
 from digest import llm, model_budget
+from digest.adapters.models.execution import ModelExecution
 from tests.test_llm import _make_config
 
 CYCLE = "456789"
@@ -35,6 +36,7 @@ def finish(execution: model_budget.StageExecution) -> None:
 async def test_count_fallback_and_new_process_config_share_remaining_slots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GEMINI_API_KEY", "fixture")
     monkeypatch.setenv("GROQ_API_KEY", "fixture")
@@ -48,16 +50,18 @@ async def test_count_fallback_and_new_process_config_share_remaining_slots(
     fallback = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(
         200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}})
     messages = [{"role": "user", "content": "Public fixture source"}]
-    assert await llm.count_gemini_tokens(messages, config, provider_override=config.llm.providers[0]) == 100
-    assert (await llm.complete(llm.LLMRole.SUMMARIZE, messages, config))[0] == "ok"
+    assert await llm.count_gemini_tokens(messages, config,
+        execution=model_execution, provider_override=config.llm.providers[0]) == 100
+    assert (await llm.complete(llm.LLMRole.SUMMARIZE, messages, config, execution=model_execution))[0] == "ok"
     assert count.call_count == primary.call_count == fallback.call_count == 1
-    assert llm.request_budget_remaining(config) == 1
+    assert llm.request_budget_remaining(config, model_execution) == 1
     finish(execution)
     stage(monkeypatch, "irritator")
+    fresh_execution = ModelExecution()
     fresh = _make_config([{"name": "groq", "model": "fixture", "role": ["summarize"]}])
-    await llm.complete(llm.LLMRole.SUMMARIZE, messages, fresh)
+    await llm.complete(llm.LLMRole.SUMMARIZE, messages, fresh, execution=fresh_execution)
     with pytest.raises(model_budget.ModelBudgetError, match="exhausted"):
-        await llm.complete(llm.LLMRole.SUMMARIZE, messages, fresh)
+        await llm.complete(llm.LLMRole.SUMMARIZE, messages, fresh, execution=fresh_execution)
     snapshot = model_budget.inspect_budget(CYCLE)
     assert snapshot.reserved_count == 4 and snapshot.remaining == 0
     assert [item.kind for item in snapshot.stages[0].attempts or ()] == ["count", "generate", "generate"]
@@ -68,24 +72,27 @@ async def test_count_fallback_and_new_process_config_share_remaining_slots(
 async def test_missing_usage_or_failed_write_stops_before_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     monkeypatch.chdir(tmp_path)
     execution = stage(monkeypatch, "prepare")
     config = _make_config([{"name": "groq", "model": "fixture", "role": ["summarize"]}])
     with (patch("digest.model_budget.atomic_json_write", side_effect=OSError("fixture failure")),
           patch("digest.llm._call_provider", side_effect=AssertionError("No HTTP"))):
         with pytest.raises(model_budget.ModelBudgetError):
-            await llm.complete(llm.LLMRole.SUMMARIZE, [{"role": "user", "content": "fixture"}], config)
+            await llm.complete(llm.LLMRole.SUMMARIZE, [{"role": "user", "content": "fixture"}], config,
+                execution=model_execution)
     assert model_budget.inspect_budget(CYCLE).reserved_count == 0
     execution.path.unlink()
     with patch("digest.llm._call_provider", side_effect=AssertionError("No HTTP")):
         with pytest.raises(model_budget.ModelBudgetError):
-            await llm.complete(llm.LLMRole.SUMMARIZE, [], config)
+            await llm.complete(llm.LLMRole.SUMMARIZE, [], config, execution=model_execution)
 
 
 @pytest.mark.asyncio
 async def test_new_process_pacing_reads_previous_stage_reservation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     monkeypatch.chdir(tmp_path)
     earlier = datetime.now(UTC) - timedelta(seconds=20)
     claim = model_budget.reserve_stage(CYCLE, "prepare", run_attempt=1, now=earlier)
@@ -97,13 +104,14 @@ async def test_new_process_pacing_reads_previous_stage_reservation(
     stage(monkeypatch, "irritator")
     config = _make_config([{"name": "groq", "model": "fixture"}])
     config.llm.min_request_interval_seconds = 65
-    assert 43 < llm.request_wait_seconds(config) <= 45
+    assert 43 < llm.request_wait_seconds(config, model_execution) <= 45
 
 
 @pytest.mark.asyncio
 async def test_budget_failure_does_not_block_accepted_presentation_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     from digest.application.preparation import prepare_edition
     from digest.application.results import RunStats
     from scripts.review_fixture import fixture_config
@@ -115,5 +123,6 @@ async def test_budget_failure_does_not_block_accepted_presentation_cache(
     from unittest.mock import AsyncMock
 
     with patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)):
-        assert await prepare_edition(config, "config.yaml", verbose=False, feedback_precollected=True,
+        assert await prepare_edition(config, "config.yaml",
+            execution=model_execution, verbose=False, feedback_precollected=True,
                                      publication_date=None, started_at=0) is expected

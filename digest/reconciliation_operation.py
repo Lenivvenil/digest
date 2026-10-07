@@ -27,6 +27,7 @@ import httpx
 
 from digest import llm, model_budget, source_admission
 from digest._util import atomic_json_write
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.reading_brief import _can_fallback, _generation_timeout, _routes
 from digest.reading_brief_state import BriefState, Route, Source, checksum, now
@@ -459,13 +460,15 @@ async def _admit(
     config: Config,
     messages: list[dict[str, str]],
     deadline: float,
+    *,
+    execution: ModelExecution,
 ) -> source_admission.RequestAdmission:
     request = record.prepared.requests[index]
     route = request.route
     admission = source_admission.RequestAdmission(
         route.provider, route.model, request.request_sha256, route.max_output_tokens, route.input_tokens
     )
-    remaining = llm.request_budget_remaining(config)
+    remaining = llm.request_budget_remaining(config, execution)
     previous = _previous(record, "count", index)
     required = 2 if route.provider == "gemini" and previous is None else 1
     if remaining is None or remaining < required:
@@ -480,7 +483,7 @@ async def _admit(
                 raise ValueError(previous.error_class or "technical_count_unknown")
             count = previous.exact_count
         else:
-            wait = llm.request_wait_seconds(config)
+            wait = llm.request_wait_seconds(config, execution)
             if time.monotonic() + wait + source_admission.COUNT_SECONDS >= deadline:
                 raise TimeoutError("technical_deadline")
             attempt = _reserve(path, record, "count", index)
@@ -491,6 +494,7 @@ async def _admit(
                     count = await llm.count_gemini_tokens(
                         messages,
                         config,
+                        execution=execution,
                         provider_override=ProviderConfig(route.provider, route.model),
                         temperature=TEMPERATURE,
                         max_output_tokens=route.max_output_tokens,
@@ -524,12 +528,14 @@ async def _generate(
     value: ReconciliationInput,
     source: Source,
     state: BriefState,
+    *,
+    execution: ModelExecution,
 ) -> ReconciliationResponse:
     request = record.prepared.requests[index]
     route = request.route
     if source_admission.request_sha256(route, messages, TEMPERATURE) != request.request_sha256:
         raise ValueError("technical_operation_binding")
-    timeout = _generation_timeout(config, deadline)
+    timeout = _generation_timeout(config, deadline, execution=execution)
     attempt = _reserve(path, record, "generate", index, admission)
     try:
         async with asyncio.timeout(max(0, deadline - time.monotonic())):
@@ -537,6 +543,7 @@ async def _generate(
                 llm.LLMRole.SUMMARIZE,
                 messages,
                 config,
+                execution=execution,
                 provider_override=ProviderConfig(route.provider, route.model),
                 temperature=TEMPERATURE,
                 max_output_tokens=route.max_output_tokens,
@@ -583,10 +590,13 @@ async def _advance(
     value: ReconciliationInput,
     source: Source,
     state: BriefState,
+    *,
+    execution: ModelExecution,
 ) -> OperationResult:
-    # Shallow copies retain the initialized shared request runtime, without changing
-    # retry or pacing policy for callers of other stages.
-    llm.request_budget_remaining(config)
+    # Share the initialized request runtime explicitly without changing retry or
+    # pacing policy for callers of other stages.
+    llm.request_budget_remaining(config, execution)
+    call_execution = execution.share_initialized(config.llm)
     call_config = copy.copy(config)
     call_config.llm = copy.copy(config.llm)
     call_config.llm.max_retries = 0
@@ -600,9 +610,10 @@ async def _advance(
             config.llm.min_request_interval_seconds,
         )
         try:
-            admission = await _admit(path, record, index, call_config, messages, deadline)
+            admission = await _admit(path, record, index, call_config, messages, deadline, execution=call_execution)
             response = await _generate(
-                path, record, index, call_config, messages, deadline, admission, value, source, state
+                path, record, index, call_config, messages, deadline, admission, value, source, state,
+                execution=call_execution,
             )
             return OperationResult("completed", response)
         except model_budget.ModelBudgetError:
@@ -645,6 +656,7 @@ async def execute_reconciliation_operation(
     *,
     deadline: float,
     checkpoint: ExactIntentCheckpoint | None,
+    execution: ModelExecution,
 ) -> OperationResult:
     """Execute a prepared operation locally, without runtime/publication wiring.
 
@@ -674,12 +686,12 @@ async def execute_reconciliation_operation(
                 or time.monotonic() >= deadline
             ):
                 return OperationResult("pending", error_class="technical_deadline")
-            execution = _execution(checkpoint, prepared)
-            if record.execution is not None and record.execution != execution:
+            binding = _execution(checkpoint, prepared)
+            if record.execution is not None and record.execution != binding:
                 return OperationResult("pending", error_class="technical_checkpoint_transition_required")
-            record.execution = execution
+            record.execution = binding
             _save(path, record)
-            return await _advance(path, record, config, deadline, value, source, state)
+            return await _advance(path, record, config, deadline, value, source, state, execution=execution)
     except model_budget.ModelBudgetError:
         return OperationResult("pending", error_class="technical_request_budget")
     except (OSError, ValueError, TypeError, KeyError) as exc:

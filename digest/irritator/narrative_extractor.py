@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from digest._serialization import extract_json as _extract_json
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config
 from digest.llm import LLMRole, complete
 from digest.radar.summarizer import CategorySummary
@@ -130,6 +131,7 @@ def _parse_narratives(raw: Any, max_narratives: int) -> list[Narrative]:
 async def extract_narratives(
     summaries: list[CategorySummary],
     config: Config,
+    *, execution: ModelExecution,
 ) -> list[Narrative]:
     """Extract dominant narratives from category summaries via LLM.
 
@@ -144,7 +146,7 @@ async def extract_narratives(
     messages = _build_prompt(summaries, config.radar.language, max_narratives)
 
     text, _usage = await complete(
-        LLMRole.EXTRACT_NARRATIVES, messages, config, temperature=0.5
+        LLMRole.EXTRACT_NARRATIVES, messages, config, temperature=0.5, execution=execution,
     )
 
     raw = _extract_json(text)

@@ -15,6 +15,7 @@ import pytest
 import respx
 
 from digest import llm, source_admission
+from digest.adapters.models.execution import ModelExecution
 from digest.config import ProviderConfig
 from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable
 from digest.source_admission import admit_request, estimate_record, route_profile, wire_request
@@ -54,13 +55,15 @@ def test_profiles_preserve_source_limits_and_output_reserve() -> None:
 async def test_exact_admission_binds_wire_model_output_and_consumes_shared_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
-    llm.set_request_limit(config, 2)
+    llm.set_request_limit(config, model_execution, 2)
     generate = AsyncMock(side_effect=AssertionError("Admission cannot generate"))
     monkeypatch.setattr(llm, "complete", generate)
     count_route = respx.post(COUNT_URL).respond(200, json={"totalTokens": 47})
-    admitted = await admit_request(MESSAGES, config, provider_override=GEMINI,
+    admitted = await admit_request(MESSAGES, config,
+                                   execution=model_execution, provider_override=GEMINI,
                                    temperature=0.23, max_output_tokens=3456, deadline=time.monotonic() + 30)
     assert admitted.admitted and admitted.status == "admitted" and admitted.method == "exact"
     assert admitted.provider == GEMINI.name and admitted.model == GEMINI.model
@@ -75,7 +78,7 @@ async def test_exact_admission_binds_wire_model_output_and_consumes_shared_count
     body_bytes = httpx.Request("POST", "https://request.invalid", json=counted).content
     header = json.dumps([GEMINI.name, GEMINI.model], separators=(",", ":")).encode()
     assert admitted.request_sha256 == hashlib.sha256(header + b"\n" + body_bytes).hexdigest()
-    assert llm.request_budget_remaining(config) == 1
+    assert llm.request_budget_remaining(config, model_execution) == 1
     assert count_route.call_count == 1
     generate.assert_not_called()
 
@@ -84,6 +87,7 @@ async def test_exact_admission_binds_wire_model_output_and_consumes_shared_count
 async def test_binding_changes_with_actual_model_temperature_output_and_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     count = AsyncMock(return_value=47)
     monkeypatch.setattr(llm, "count_gemini_tokens", count)
     monkeypatch.setitem(source_admission.INPUT_LIMITS, ("gemini", "fixture-alternate-model"), 1_048_576)
@@ -96,7 +100,8 @@ async def test_binding_changes_with_actual_model_temperature_output_and_source(
         (GEMINI, 0.1, 2049, MESSAGES),
         (GEMINI, 0.1, 2048, [*MESSAGES, {"role": "user", "content": "Another qualification"}]),
     ]:
-        results.append(await admit_request(messages, config, provider_override=provider,
+        results.append(await admit_request(messages, config,
+                                           execution=model_execution, provider_override=provider,
                                            temperature=temperature, max_output_tokens=output,
                                            deadline=time.monotonic() + 30))
     assert all(result.admitted for result in results)
@@ -111,12 +116,14 @@ async def test_binding_changes_with_actual_model_temperature_output_and_source(
 async def test_local_estimate_reserves_output_and_retains_nonexact_evidence(
     monkeypatch: pytest.MonkeyPatch, local_count: int, status: str,
 ) -> None:
+    model_execution = ModelExecution()
     monkeypatch.setattr(source_admission, "count_gpt_input", lambda messages: local_count)
     count = AsyncMock(side_effect=AssertionError("Local counting cannot call a provider"))
     generate = AsyncMock(side_effect=AssertionError("Admission cannot generate"))
     monkeypatch.setattr(llm, "count_gemini_tokens", count)
     monkeypatch.setattr(llm, "complete", generate)
-    admission = await admit_request(MESSAGES, fixture_config(), provider_override=GROQ,
+    admission = await admit_request(MESSAGES, fixture_config(),
+                                    execution=model_execution, provider_override=GROQ,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert admission.status == status
     assert admission.method == "estimated" and admission.exact_count is None
@@ -137,6 +144,7 @@ async def test_local_estimate_reserves_output_and_retains_nonexact_evidence(
 async def test_unsupported_or_missing_tokenizer_fails_closed_without_remote_calls(
     monkeypatch: pytest.MonkeyPatch, provider: ProviderConfig, error: str,
 ) -> None:
+    model_execution = ModelExecution()
     def missing(messages: list[dict[str, str]]) -> int:
         raise TokenProfileUnavailable("fixture missing asset")
 
@@ -145,7 +153,8 @@ async def test_unsupported_or_missing_tokenizer_fails_closed_without_remote_call
     generate = AsyncMock(side_effect=AssertionError("No generation allowed"))
     monkeypatch.setattr(llm, "count_gemini_tokens", count)
     monkeypatch.setattr(llm, "complete", generate)
-    admission = await admit_request(MESSAGES, fixture_config(), provider_override=provider,
+    admission = await admit_request(MESSAGES, fixture_config(),
+                                    execution=model_execution, provider_override=provider,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert not admission.admitted and admission.status == "unverified"
     assert admission.error_class == error
@@ -162,13 +171,15 @@ async def test_unsupported_or_missing_tokenizer_fails_closed_without_remote_call
 async def test_count_failure_unknown_or_overlimit_never_retries_falls_back_or_generates(
     response: httpx.Response, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     config.llm.max_retries = 3
     config.llm.providers = [GEMINI, GROQ]
     generate = AsyncMock(side_effect=AssertionError("No generation allowed"))
     monkeypatch.setattr(llm, "complete", generate)
     route = respx.post(COUNT_URL).mock(return_value=response)
-    admission = await admit_request(MESSAGES, config, provider_override=GEMINI,
+    admission = await admit_request(MESSAGES, config,
+                                    execution=model_execution, provider_override=GEMINI,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert not admission.admitted and admission.method == "exact"
     assert admission.request_sha256 and admission.output_reserve == 2048
@@ -188,45 +199,52 @@ async def test_count_failure_unknown_or_overlimit_never_retries_falls_back_or_ge
 async def test_no_count_without_budget_for_count_and_generation(
     monkeypatch: pytest.MonkeyPatch, remaining: int,
 ) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
-    llm.set_request_limit(config, remaining)
+    llm.set_request_limit(config, model_execution, remaining)
     count = AsyncMock(side_effect=AssertionError("No count allowed"))
     monkeypatch.setattr(llm, "count_gemini_tokens", count)
-    admission = await admit_request(MESSAGES, config, provider_override=GEMINI,
+    admission = await admit_request(MESSAGES, config,
+                                    execution=model_execution, provider_override=GEMINI,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert admission.error_class == "technical_request_budget" and not admission.admitted
-    assert llm.request_budget_remaining(config) == remaining
+    assert llm.request_budget_remaining(config, model_execution) == remaining
     count.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_spent_groq_request_budget_holds_before_tokenizer_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
-    llm.set_request_limit(config, 1)
+    llm.set_request_limit(config, model_execution, 1)
     monkeypatch.setattr(llm, "_call_provider", AsyncMock(return_value=("Already spent", {})))
-    await llm.complete(llm.LLMRole.REVIEW_EVIDENCE, MESSAGES, config, provider_override=GROQ)
+    await llm.complete(llm.LLMRole.REVIEW_EVIDENCE, MESSAGES, config,
+                       execution=model_execution, provider_override=GROQ)
 
     def unexpected_tokenizer(messages: list[dict[str, str]]) -> int:
         raise AssertionError("An exhausted request allowance must hold before tokenizer work")
 
     monkeypatch.setattr(source_admission, "count_gpt_input", unexpected_tokenizer)
-    admission = await admit_request(MESSAGES, config, provider_override=GROQ,
+    admission = await admit_request(MESSAGES, config,
+                                    execution=model_execution, provider_override=GROQ,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert admission.status == "unverified" and not admission.admitted
     assert admission.error_class == "technical_request_budget"
     assert admission.input_estimate is None and admission.exact_count is None
-    assert llm.request_budget_remaining(config) == 0
+    assert llm.request_budget_remaining(config, model_execution) == 0
 
 
 @pytest.mark.asyncio
 async def test_deadline_accounts_for_existing_shared_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     config.llm.min_request_interval_seconds = 65
-    config.llm._runtime = llm._request_state(config)
-    config.llm._runtime.last_request_at = time.monotonic()
+    runtime = llm._request_state(config, model_execution)
+    runtime.last_request_at = time.monotonic()
     count = AsyncMock(side_effect=AssertionError("No count allowed"))
     monkeypatch.setattr(llm, "count_gemini_tokens", count)
-    admission = await admit_request(MESSAGES, config, provider_override=GEMINI,
+    admission = await admit_request(MESSAGES, config,
+                                    execution=model_execution, provider_override=GEMINI,
                                     temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30)
     assert admission.error_class == "technical_deadline" and admission.exact_count is None
     count.assert_not_called()
@@ -234,17 +252,20 @@ async def test_deadline_accounts_for_existing_shared_pacing(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_count_deadline_cancels_wait_and_preserves_outer_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_execution = ModelExecution()
     async def stalled(*args: Any, **kwargs: Any) -> int:
         await asyncio.Future()
         raise AssertionError("Unreachable")
 
     monkeypatch.setattr(llm, "count_gemini_tokens", stalled)
     monkeypatch.setattr(source_admission, "COUNT_SECONDS", 0.01)
-    result = await admit_request(MESSAGES, fixture_config(), provider_override=GEMINI,
+    result = await admit_request(MESSAGES, fixture_config(),
+                                 execution=model_execution, provider_override=GEMINI,
                                  temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 0.02)
     assert result.error_class == "technical_deadline" and result.exact_count is None
     monkeypatch.setattr(source_admission, "COUNT_SECONDS", 10)
-    task = asyncio.create_task(admit_request(MESSAGES, fixture_config(), provider_override=GEMINI,
+    task = asyncio.create_task(admit_request(MESSAGES, fixture_config(),
+                                             execution=model_execution, provider_override=GEMINI,
                                             temperature=0.1, max_output_tokens=2048, deadline=time.monotonic() + 30))
     await asyncio.sleep(0)
     task.cancel()

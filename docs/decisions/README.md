@@ -97,4 +97,9 @@ source activation and editorial acceptance remain separate.
 [0019](0019-remaining-application-scenarios.md) records the #147-A execution,
 legacy and discovery application boundary with explicit CLI output adapters.
 Public entrypoints, guard finalization and the discovery persistence/output/send
-barrier remain compatible; provider runtime ownership remains a later #147 slice.
+barrier remain compatible.
+
+[0020](0020-explicit-model-execution.md) records #147-B separation of provider
+settings from explicit lazy model-execution holders, preserved copy/reset and budget
+policy, and the deliberate internal helper signature migration. Release evidence
+and editorial acceptance remain separately tracked.

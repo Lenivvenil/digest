@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from digest.adapters.models.execution import ModelExecution
+
 if TYPE_CHECKING:
     from digest.config import Config
     from digest.feedback import FeedbackStore
@@ -69,19 +71,20 @@ def process_pending_approvals(
 
 
 def apply_pending_approvals(
-    config: Config, config_path: str, cache_dir: str, feedback_store: FeedbackStore, *, enabled: bool,
-) -> Config:
+    config: Config, config_path: str, cache_dir: str, feedback_store: FeedbackStore, *,
+    execution: ModelExecution, enabled: bool,
+) -> tuple[Config, ModelExecution]:
     """Apply durable decisions before collection, then use the current runtime config."""
     from digest.config import load_config
 
     if not enabled or not feedback_store.source_decisions:
-        return config
+        return config, execution
     try:
         process_pending_approvals(config_path, cache_dir, feedback_store)
     except Exception as exc:
         logging.getLogger(__name__).warning("Source decision persistence incomplete (%s)", type(exc).__name__)
     # A state-write failure can follow a successful idempotent config addition.
-    return load_config(config_path)
+    return load_config(config_path), ModelExecution()
 
 
 def record_source_stats(

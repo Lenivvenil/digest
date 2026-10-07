@@ -47,7 +47,8 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
     monkeypatch.setattr('digest.config.load_config', lambda _: config)
     monkeypatch.setattr('digest.application.run_state.collect_run_feedback',
           AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr('digest.application.run_state.apply_pending_approvals', lambda c, *args, **kwargs: c)
+    monkeypatch.setattr('digest.application.run_state.apply_pending_approvals',
+        lambda c, *args, **kwargs: (c, kwargs["execution"]))
     calls: list[set[str]] = []
     collection_calls = 0
 
@@ -169,7 +170,8 @@ async def test_preparation_reports_technical_empty_without_failing_editorial_abs
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
     monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
           AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
+        lambda c, *args, **kwargs: (c, kwargs["execution"]))
 
     async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
         inventory = kwargs["inventory"]

@@ -18,6 +18,7 @@ import yaml
 
 from digest import llm, model_budget
 from digest import reconciliation_checkpoint as checkpoint
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_review import CandidateProgress
 from digest.config import Config, ProviderConfig
 from digest.reading_preparation import prepare_selected_sources, setup_reading_budget
@@ -37,10 +38,13 @@ class Runtime:
     config: Config
     progress: CandidateProgress
     execution: model_budget.StageExecution
+    model_execution: ModelExecution
     calls: list[httpx.Request]
 
     async def prepare(self, seconds: float = 1000) -> Path | None:
-        return await checkpoint.prepare_batch(self.progress, self.config, "config.yaml", time.monotonic() + seconds)
+        return await checkpoint.prepare_batch(
+            self.progress, self.config, "config.yaml", time.monotonic() + seconds, execution=self.model_execution
+        )
 
     def persist(self) -> None:
         git(self.root, "add", ".cache")
@@ -75,7 +79,10 @@ async def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
     monkeypatch.chdir(root)
     monkeypatch.setenv("GEMINI_API_KEY", "fake-test-key")
     monkeypatch.setenv("DIGEST_RECONCILIATION_CHECKPOINT_REQUIRED", "1")
-    config, progress, packet, report = await saved_selection(Path(".cache"), all_selected=True)
+    model_execution = ModelExecution()
+    config, progress, packet, report = await saved_selection(
+        Path(".cache"), all_selected=True, execution=model_execution
+    )
     config.reading_brief = replace(config.reading_brief, max_requests_per_run=6)
     config.radar.language = "en"
     config.review.review_led_only = True
@@ -88,7 +95,7 @@ async def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
     git(root, "push", "origin", "HEAD:main")
     execution = model_budget.begin_stage(claim.cycle_id, "prepare", claim.claim_sha, run_attempt=1)
     bind(monkeypatch, execution)
-    setup_reading_budget(config)
+    setup_reading_budget(config, execution=model_execution)
     with (
         patch(
             "digest.reading_brief.fetch_article",
@@ -98,12 +105,12 @@ async def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
         patch("digest.llm.complete", side_effect=generate),
     ):
         result = await prepare_selected_sources(
-            progress, packet, report, config, Path(".cache"), time.monotonic() + 1000
+            progress, packet, report, config, Path(".cache"), time.monotonic() + 1000, execution=model_execution
         )
     assert result.technical_complete == 2
     # Charge the preceding RSS/source work through the real shared reservation point.
     for _ in range(2):
-        llm._reserve_request(llm._request_state(config), "gemini", "gemini-3.8-flash", "generate")
+        llm._reserve_request(llm._request_state(config, model_execution), "gemini", "gemini-3.8-flash", "generate")
     calls: list[httpx.Request] = []
 
     def transport(request: httpx.Request) -> httpx.Response:
@@ -133,13 +140,12 @@ async def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
         "AsyncClient",
         lambda *args, **kwargs: original(*args, **kwargs, transport=httpx.MockTransport(transport), trust_env=False),
     )
-    return Runtime(root, remote, config, progress, execution, calls)
+    return Runtime(root, remote, config, progress, execution, model_execution, calls)
 
 
 def fresh(config: Config) -> Config:
     result = copy.copy(config)
     result.llm = copy.copy(config.llm)
-    result.llm._runtime = None
     return result
 
 
@@ -149,7 +155,10 @@ async def test_batched_checkpoint_execute_finalize_persist_and_cache(runtime: Ru
     path = await runtime.prepare()
     assert path is not None
     initial = git(runtime.root, "rev-list", "--count", "main")
-    results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config) if new_process else runtime.config)
+    model_execution = ModelExecution() if new_process else runtime.model_execution
+    results = await checkpoint.checkpoint_and_execute(
+        path, fresh(runtime.config) if new_process else runtime.config, execution=model_execution
+    )
     assert [result.status for result in results] == ["completed", "completed"]
     assert len(runtime.calls) == 4
     assert int(git(runtime.root, "rev-list", "--count", "main")) == int(initial) + 1
@@ -166,7 +175,7 @@ async def test_batched_checkpoint_execute_finalize_persist_and_cache(runtime: Ru
     for item in checkpoint._load_batch(path).items:
         value, source, state = checkpoint._input(item.handoff, Path(".cache"))
         result = await operation.execute_reconciliation_operation(
-            value, source, state, runtime.config, Path(".cache"), checkpoint=None, deadline=0
+            value, source, state, runtime.config, Path(".cache"), checkpoint=None, deadline=0, execution=model_execution
         )
         assert result.cached and result.status == "completed"
     assert len(runtime.calls) == 4
@@ -224,7 +233,7 @@ async def test_changed_checkpoint_holds_before_http(
         if change == "remote":
             git(runtime.root, "push", "origin", "HEAD:main")
     with pytest.raises((ValueError, OSError)):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert not runtime.calls
 
 
@@ -240,9 +249,11 @@ async def test_fresh_checkout_cannot_execute_or_finalize(runtime: Runtime, monke
     clone = runtime.root.parent / "clone"
     git(runtime.root, "clone", "-b", "main", str(runtime.remote), str(clone))
     monkeypatch.chdir(clone)
-    for action in (checkpoint.checkpoint_and_execute, checkpoint.finalize_batch):
-        with pytest.raises((ValueError, OSError)):
-            await action(path, fresh(runtime.config))
+    model_execution = ModelExecution()
+    with pytest.raises((ValueError, OSError)):
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=model_execution)
+    with pytest.raises((ValueError, OSError)):
+        await checkpoint.finalize_batch(path, fresh(runtime.config))
     assert model_budget.inspect_budget(runtime.execution.cycle_id).active_stage == "prepare"
     from digest import reconciliation_operation as operation
 
@@ -259,6 +270,7 @@ async def test_fresh_checkout_cannot_execute_or_finalize(runtime: Runtime, monke
             Path(".cache"),
             deadline=time.monotonic() + 1000,
             checkpoint=proof,
+            execution=model_execution,
         )
         assert result.error_class == "technical_request_budget"
     with pytest.raises(model_budget.ModelBudgetError):
@@ -279,7 +291,7 @@ async def test_failed_push_holds_and_proved_unstarted_can_rebind(
     hook.write_text("#!/bin/sh\nexit 1\n")
     hook.chmod(0o755)
     with pytest.raises(ValueError, match="checkpoint_git"):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert not runtime.calls
     await checkpoint.finalize_batch(path, runtime.config)
     hook.unlink()
@@ -289,29 +301,33 @@ async def test_failed_push_holds_and_proved_unstarted_can_rebind(
     execution = model_budget.begin_stage(claim.cycle_id, "prepare", claim.claim_sha, run_attempt=1)
     bind(monkeypatch, execution)
     later = fresh(runtime.config)
-    setup_reading_budget(later)
-    new_path = await checkpoint.prepare_batch(runtime.progress, later, "config.yaml", time.monotonic() + 1000)
+    later_model_execution = ModelExecution()
+    setup_reading_budget(later, execution=later_model_execution)
+    new_path = await checkpoint.prepare_batch(
+        runtime.progress, later, "config.yaml", time.monotonic() + 1000, execution=later_model_execution
+    )
     assert new_path is not None
     assert len(list(Path(".cache/article_reconciliation/revisions").glob("*.json"))) == 2
-    results = await checkpoint.checkpoint_and_execute(new_path, fresh(later))
+    results = await checkpoint.checkpoint_and_execute(new_path, fresh(later), execution=ModelExecution())
     assert all(result.status == "completed" for result in results)
     assert len(runtime.calls) == 4
 
 
 @pytest.mark.asyncio
 async def test_small_cap_and_pacing_survive_fresh_runtime(runtime: Runtime, monkeypatch: pytest.MonkeyPatch) -> None:
-    llm.set_request_limit(runtime.config, 3)
-    llm._request_state(runtime.config).next_request_at = time.monotonic() + 65
+    llm.set_request_limit(runtime.config, runtime.model_execution, 3)
+    llm._request_state(runtime.config, runtime.model_execution).next_request_at = time.monotonic() + 65
     path = await runtime.prepare()
     assert path is not None
     batch = checkpoint._load_batch(path)
     assert batch.remaining == 1 and batch.not_before_unix > time.time() + 60
     restored = fresh(runtime.config)
+    restored_execution = ModelExecution()
     # One Gemini slot cannot buy count+generate; this must hold without HTTP.
-    results = await checkpoint.checkpoint_and_execute(path, restored)
+    results = await checkpoint.checkpoint_and_execute(path, restored, execution=restored_execution)
     assert all(result.status == "pending" for result in results)
-    assert not runtime.calls and llm.request_budget_remaining(restored) == 1
-    assert llm.request_wait_seconds(restored) > 60
+    assert not runtime.calls and llm.request_budget_remaining(restored, restored_execution) == 1
+    assert llm.request_wait_seconds(restored, restored_execution) > 60
 
 
 @pytest.mark.asyncio
@@ -367,7 +383,7 @@ async def test_partial_batch_rebinds_only_proved_unstarted_peer(
         return await original(*args, **kwargs)
 
     with patch.object(operation, "execute_reconciliation_operation", elapsed):
-        results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert [result.status for result in results] == ["completed", "pending"]
     assert len(runtime.calls) == 2
     await checkpoint.finalize_batch(path, runtime.config)
@@ -379,13 +395,17 @@ async def test_partial_batch_rebinds_only_proved_unstarted_peer(
     execution = model_budget.begin_stage(claim.cycle_id, "prepare", claim.claim_sha, run_attempt=1)
     bind(monkeypatch, execution)
     later = fresh(runtime.config)
-    setup_reading_budget(later)
-    next_batch = await checkpoint.prepare_batch(runtime.progress, later, "config.yaml", time.monotonic() + 1000)
+    later_model_execution = ModelExecution()
+    setup_reading_budget(later, execution=later_model_execution)
+    next_batch = await checkpoint.prepare_batch(
+        runtime.progress, later, "config.yaml", time.monotonic() + 1000, execution=later_model_execution
+    )
     assert next_batch is not None and len(checkpoint._load_batch(next_batch).items) == 1
     assert checkpoint._load_batch(next_batch).items[0].identity == next(iter(outcome["unstarted"]))
     old_spent = model_budget.inspect_budget("123456789").reserved_count
     assert old_spent == 4  # Two preceding source reservations plus A's count/generation.
-    assert (await checkpoint.checkpoint_and_execute(next_batch, fresh(later)))[0].status == "completed"
+    results = await checkpoint.checkpoint_and_execute(next_batch, fresh(later), execution=ModelExecution())
+    assert results[0].status == "completed"
     assert len(runtime.calls) == 4
     assert model_budget.inspect_budget("123456789").reserved_count == old_spent
     assert model_budget.inspect_budget("123456790").reserved_count == 2  # Only B's count/generation.
@@ -403,6 +423,7 @@ import asyncio, json, sys
 from pathlib import Path
 import httpx
 from digest.config import load_config
+from digest.adapters.models.execution import ModelExecution
 from digest import reconciliation_checkpoint as checkpoint
 from digest import model_budget
 calls = []
@@ -418,7 +439,10 @@ def transport(request):
     return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]})
 original = httpx.AsyncClient
 httpx.AsyncClient = lambda *a, **kw: original(*a, **kw, transport=httpx.MockTransport(transport), trust_env=False)
-results = asyncio.run(checkpoint.checkpoint_and_execute(Path(sys.argv[1]), load_config("config.yaml")))
+execution = ModelExecution()
+results = asyncio.run(checkpoint.checkpoint_and_execute(
+    Path(sys.argv[1]), load_config("config.yaml"), execution=execution
+))
 assert all(result.status == "completed" for result in results), results
 assert len(calls) == 4, calls
 assert model_budget.inspect_budget("123456789").reserved_count == 6
@@ -467,7 +491,7 @@ async def test_remote_change_after_push_holds_even_when_checkpoint_reachable(
 
     monkeypatch.setattr(checkpoint, "_git", git_with_race)
     with pytest.raises(ValueError, match="remote_changed"):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert not runtime.calls
 
 
@@ -488,7 +512,7 @@ async def test_push_succeeded_but_result_unknown_never_dispatches(
 
     monkeypatch.setattr(checkpoint, "_git", unknown)
     with pytest.raises(TimeoutError, match="result lost"):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert not runtime.calls
     await checkpoint.finalize_batch(path, runtime.config)
     assert model_budget.inspect_budget(runtime.execution.cycle_id).active_stage is None
@@ -572,7 +596,7 @@ async def test_main_preparation_emits_executable_batch_in_both_reading_branches(
         )
     )
     assert batch_path.is_file() and not stats.telegram_sent
-    results = await checkpoint.checkpoint_and_execute(batch_path, fresh(runtime.config))
+    results = await checkpoint.checkpoint_and_execute(batch_path, fresh(runtime.config), execution=ModelExecution())
     assert len(results) == 2 and all(result.status == "completed" for result in results)
     assert len(runtime.calls) == 4
 
@@ -582,10 +606,10 @@ async def test_quota_stopped_peer_with_no_adapter_intent_can_rebind(
     runtime: Runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    llm.set_request_limit(runtime.config, 4)
+    llm.set_request_limit(runtime.config, runtime.model_execution, 4)
     path = await runtime.prepare()
     assert path is not None
-    results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+    results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert [result.status for result in results] == ["completed", "pending"]
     assert results[1].error_class == "technical_request_budget" and len(runtime.calls) == 2
     await checkpoint.finalize_batch(path, runtime.config)
@@ -597,10 +621,14 @@ async def test_quota_stopped_peer_with_no_adapter_intent_can_rebind(
     execution = model_budget.begin_stage(claim.cycle_id, "prepare", claim.claim_sha, run_attempt=1)
     bind(monkeypatch, execution)
     later = fresh(runtime.config)
-    setup_reading_budget(later)
-    new_path = await checkpoint.prepare_batch(runtime.progress, later, "config.yaml", time.monotonic() + 1000)
+    later_model_execution = ModelExecution()
+    setup_reading_budget(later, execution=later_model_execution)
+    new_path = await checkpoint.prepare_batch(
+        runtime.progress, later, "config.yaml", time.monotonic() + 1000, execution=later_model_execution
+    )
     assert new_path is not None and len(checkpoint._load_batch(new_path).items) == 1
-    assert (await checkpoint.checkpoint_and_execute(new_path, fresh(later)))[0].status == "completed"
+    results = await checkpoint.checkpoint_and_execute(new_path, fresh(later), execution=ModelExecution())
+    assert results[0].status == "completed"
 
 
 @pytest.mark.asyncio
@@ -626,7 +654,7 @@ async def test_original_workspace_repairs_outcome_write_after_finalization(
     outcome = checkpoint._json(Path(".cache/reconciliation_outcomes/123456789.json"))
     assert len(outcome["unstarted"]) == 2
     with pytest.raises(model_budget.ModelBudgetError):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert not runtime.calls
 
 
@@ -676,7 +704,7 @@ async def test_accidentally_staged_active_budget_holds_before_publication(runtim
     before = git(runtime.root, "rev-parse", "origin/main")
     git(runtime.root, "add", str(runtime.execution.path))
     with pytest.raises(ValueError, match="dirty_index"):
-        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
+        await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
     assert git(runtime.root, "rev-parse", "origin/main") == before
     assert not runtime.calls
 
@@ -705,9 +733,8 @@ async def test_historical_collection_audit_does_not_expand_checkpoint_dependenci
     assert path is not None
     references = checkpoint._load_batch(path).files
     assert not any(item.path.endswith("0" * 64 + ".json") for item in references)
-    assert all(
-        result.status == "completed" for result in await checkpoint.checkpoint_and_execute(path, fresh(runtime.config))
-    )
+    results = await checkpoint.checkpoint_and_execute(path, fresh(runtime.config), execution=ModelExecution())
+    assert all(result.status == "completed" for result in results)
 
 
 @pytest.mark.asyncio

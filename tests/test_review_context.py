@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, SourceConfig
 from digest.radar.collector import Article
 from digest.review import (
@@ -145,6 +146,7 @@ def test_prompt_preserves_fidelity_uncertainty_and_capacity_boundaries() -> None
 
 @pytest.mark.asyncio
 async def test_primary_and_resume_share_context_without_extra_attempts() -> None:
+    execution = ModelExecution()
     config = fixture_config()
     _sources(config)
     config.review.tie_breaker = None
@@ -153,11 +155,11 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),
         patch("digest.review.complete", side_effect=fixture_response) as complete,
     ):
-        primary = await run_primary_review(fixture_articles(), config)
+        primary = await run_primary_review(fixture_articles(), config, execution=execution)
         assert complete.call_count == 1
         assert complete.call_args.args[1] == expected
         assert _reusable_slots(primary.evidence, primary.reviews, config) == {"primary"}
-        resumed = await run_evidence_review(primary.evidence, config, primary.reviews)
+        resumed = await run_evidence_review(primary.evidence, config, primary.reviews, execution=execution)
         assert complete.call_count == 2  # Exactly the existing missing secondary slot.
         assert all(call.args[1] == expected for call in complete.call_args_list)
         assert all(
@@ -179,11 +181,12 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
 
 @pytest.mark.asyncio
 async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume(tmp_path: Path) -> None:
+    execution = ModelExecution()
     config = fixture_config()
     _sources(config)
     config.review.tie_breaker = None
     with patch("digest.review.complete", side_effect=fixture_response):
-        original = await run_primary_review(fixture_articles(), config)
+        original = await run_primary_review(fixture_articles(), config, execution=execution)
     old = deepcopy(original)
     for review in old.reviews:
         review.prompt_hash = hashlib.sha256(b"older archived selection prompt").hexdigest()
@@ -198,7 +201,7 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),
         patch("digest.review.complete", side_effect=fixture_response) as complete,
     ):
-        resumed = await run_evidence_review(bundle, config, cached)
+        resumed = await run_evidence_review(bundle, config, cached, execution=execution)
     assert complete.call_count == 2  # Existing configured slots, no repair call.
     assert all(not review.reused_from_checkpoint for review in resumed.reviews)
     assert all(review.prompt_hash != old.reviews[0].prompt_hash for review in resumed.reviews)

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
 from digest.candidate_review import (
     CandidateProgress,
@@ -46,6 +47,7 @@ def six_articles() -> tuple[Config, dict[str, list[Article]]]:
 async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_main(
     monkeypatch: pytest.MonkeyPatch, enabled: bool,
 ) -> None:
+    model_execution = ModelExecution()
     config, articles = population()
     config.review.primary = ReviewModelConfig("groq", "openai/gpt-oss-120b")
     config.closing = replace(config.closing, enabled=enabled)
@@ -53,7 +55,7 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": True, "evidence_id": None} if enabled else "missing"), {}))
     monkeypatch.setattr("digest.review.complete", complete)
-    report = await run_primary_review(articles, config, closing_capture=capture)
+    report = await run_primary_review(articles, config, execution=model_execution, closing_capture=capture)
     complete.assert_awaited_once()
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
     assert capture.attempts[0].status == "incomplete"
@@ -85,13 +87,14 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
 async def test_live_review_keeps_detail_bound_with_either_closing_flag(
     monkeypatch: pytest.MonkeyPatch, enabled: bool,
 ) -> None:
+    model_execution = ModelExecution()
     config, articles = six_articles()
     config.closing = replace(config.closing, enabled=enabled)
     assert config.review.max_detailed_selections == 5
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, "first" if enabled else "missing"), {}))
     monkeypatch.setattr("digest.review.complete", complete)
-    report = await run_primary_review(articles, config)
+    report = await run_primary_review(articles, config, execution=model_execution)
     assert complete.await_count == 2
     assert all(review.status == "invalid" and review.error == "invalid selection count"
                and not review.selections for review in report.reviews)
@@ -128,6 +131,7 @@ async def test_enabled_closing_rejects_insufficient_capacity_before_external_cal
 async def test_explicit_six_details_yield_five_main_and_same_response_closing_in_one_v3_translation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    model_execution = ModelExecution()
     config, articles = six_articles()
     config.review.max_selections = 5
     config.review.max_detailed_selections = 6
@@ -139,7 +143,8 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     begin_packet(progress, packet, tmp_path)
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.review.complete", completion)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path))
+    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+        execution=model_execution)
     assert report is not None and len(report.reviews[0].selections) == 6
     main_cards, closing = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert len(main_cards) == 5
@@ -161,9 +166,11 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     monkeypatch.setattr("digest.translation.complete", translation)
     cache = tmp_path / "translations"
     first = await translate_publication_with_closing(
-        "Overview.", main_cards, [], closing.card, config, cache, selection_binding=asdict(closing))
+        "Overview.", main_cards, [], closing.card, config, cache,
+            execution=model_execution, selection_binding=asdict(closing))
     replay = await translate_publication_with_closing(
-        "Overview.", main_cards, [], closing.card, config, cache, selection_binding=asdict(closing))
+        "Overview.", main_cards, [], closing.card, config, cache,
+            execution=model_execution, selection_binding=asdict(closing))
     translation.assert_awaited_once()
     assert first[:3] == replay[:3] and first[3].card == replay[3].card
     assert all(card.summary.startswith("Перевод: ") for card in first[1])
@@ -194,7 +201,8 @@ async def test_enabled_closing_preserves_technical_empty_status_and_complete_abs
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
     monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
           AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
+                        lambda c, *args, execution, **kwargs: (c, execution))
 
     async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
         inventory = kwargs["inventory"]

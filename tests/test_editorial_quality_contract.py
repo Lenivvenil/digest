@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
 from digest.candidate_review import (
     CandidateProgress,
@@ -53,11 +54,12 @@ def test_invalid_operator_context_is_rejected(value: object) -> None:
 
 @pytest.mark.asyncio
 async def test_reader_context_binds_identical_primary_and_fallback_prompt() -> None:
+    model_execution = ModelExecution()
     config = fixture_config()
     config.review.editorial_context = "Banking and fintech are primary professional interests."
     good = (json.dumps({"selections": [], "limitations": ["Synthetic fixture"]}), {})
     with patch("digest.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), good])) as call:
-        report = await run_primary_review(fixture_articles(), config)
+        report = await run_primary_review(fixture_articles(), config, execution=model_execution)
     first, second = call.call_args_list
     assert first.args[1] == second.args[1]
     expected = hashlib.sha256(json.dumps(first.args[1], sort_keys=True).encode()).hexdigest()
