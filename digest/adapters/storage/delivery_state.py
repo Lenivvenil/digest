@@ -7,14 +7,19 @@ their order; partially persisted outcomes require inspection, not replay.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from digest._util import atomic_json_write
+from digest.adapters.storage.sources import (
+    SOURCE_STATE_FILE,
+    STATS_FILE,
+    encode_source_state,
+    encode_source_stats,
+)
 
 if TYPE_CHECKING:
-    from digest.source_scorer import SourceStateStore, SourceStats
+    from digest.domain.catalog.sources import SourceStateStore, SourceStats
 
 
 def load_delivery_cache(path: Path) -> dict[str, str]:
@@ -36,9 +41,9 @@ def save_delivery_cache(cache: dict[str, str], cache_dir: str) -> None:
 
 def save_delivery_source_stats(stats: dict[str, SourceStats], cache_dir: str) -> None:
     """Write prepared delivery accounting strictly, without source pruning."""
-    atomic_json_write(Path(cache_dir) / "source_stats.json", {name: asdict(value) for name, value in stats.items()})
+    atomic_json_write(Path(cache_dir) / STATS_FILE, encode_source_stats(stats))
 
 
 def save_delivery_source_state(state: SourceStateStore, cache_dir: str) -> None:
     """Write prepared adaptive decisions strictly, retaining their schema."""
-    atomic_json_write(Path(cache_dir) / "source_state.json", asdict(state))
+    atomic_json_write(Path(cache_dir) / SOURCE_STATE_FILE, encode_source_state(state))

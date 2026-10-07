@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
+
+import pytest
 
 from digest.config import AdaptiveConfig, SourceConfig
 from digest.source_scorer import (
@@ -859,3 +861,62 @@ def test_feedback_only_priorities_preserve_unrated_sources_and_bound_candidate_a
     assert after["C"] == before["C"] and sources[0].priority == 3
     assert calculate_feedback_priorities([_make_source("low", 1)], {"low": 0}, config) == {"low": 1}
     assert calculate_feedback_priorities([_make_source("high", 5)], {"high": 1}, config) == {"high": 5}
+
+
+def test_source_scoring_samples_only_valid_recency_and_each_eligible_trial(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.application import source_scoring
+    from digest.domain.catalog import source_rules
+
+    observations = iter([
+        datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
+        datetime(2026, 10, 14, tzinfo=timezone.utc),
+    ])
+    sampled = []
+
+    class ObservedClock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            observed = next(observations)
+            sampled.append(observed)
+            return observed
+
+    monkeypatch.setattr(source_scoring, "datetime", ObservedClock)
+    # Missing, new and malformed recency never sampled the legacy clock.
+    assert calculate_score(SourceStats("new", last_seen="2026-10-04")) == 0.5
+    assert calculate_score(SourceStats("missing", total_fetches=1)) == 0.0
+    assert calculate_score(SourceStats("malformed", total_fetches=1, last_seen="bad")) == 0.0
+    assert sampled == []
+    first, second, fresh = [_make_trial_source(name) for name in ("First", "Second", "Fresh")]
+    state = SourceStateStore()
+    state.set_trial_started("First", "2026-09-01")
+    state.set_trial_started("Second", "2026-09-01")
+    stats = {name: SourceStats(name, total_fetches=1, successful_fetches=1,
+                              avg_description_length=100, last_seen="2026-10-04")
+             for name in ("First", "Second", "Fresh")}
+    assert evaluate_trial_sources([first, fresh, second], stats, "2026-10-07", state) == (["First"], [], ["Fresh"])
+    assert len(sampled) == 2
+    factors = source_rules.source_score_factors(stats["First"])
+    assert source_rules.score_from_factors(factors, now=sampled[0]) == 0.7
+    assert source_rules.score_from_factors(factors, now=sampled[1]) == 0.5
+
+
+def test_fetch_accounting_uses_each_explicit_observation_across_midnight(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.application import source_scoring
+
+    observations = iter([
+        datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
+        datetime(2026, 10, 8, tzinfo=timezone.utc),
+    ])
+
+    class ObservedClock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return next(observations)
+
+    monkeypatch.setattr(source_scoring, "datetime", ObservedClock)
+    stats = {}
+    update_stats(stats, "Feed", True, 4, 1, 100)
+    update_stats(stats, "Feed", True, 2, 1, 200)
+    assert [item.date for item in stats["Feed"].history] == ["2026-10-07", "2026-10-08"]
+    assert stats["Feed"].avg_description_length == 130
+    assert stats["Feed"].last_seen == "2026-10-08"

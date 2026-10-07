@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--discover",
         action="store_true",
-        help="Use LLM to suggest new RSS sources for underrepresented categories, then exit",
+        help="Use LLM to suggest RSS sources by rotating configured exploration areas, then exit",
     )
     parser.add_argument("--discovery-phase", choices=("all", "prepare", "send"), default="all",
                         help="Discovery preparation and externally persisted send phases (default: local-only all)")

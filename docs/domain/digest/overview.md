@@ -2,6 +2,14 @@
 
 _Discovered: 2026-04-26. Historical model updated: 2026-04-28. Decision reconciliation: 2026-10-01, issue #55._
 
+Current implementation contracts, reconciled 2026-10-07: use the existing
+[architecture invariant map](../../ARCHITECTURE.md#entities-contracts-and-enforcement)
+and its [feedback](../../ARCHITECTURE.md#feedback-loop),
+[discovery](../../ARCHITECTURE.md#trial-source-lifecycle-and-discovery) and
+[security](../../ARCHITECTURE.md#security) sections. This page preserves dated
+requirements, proposals and the April model; later amendments are labelled below.
+Their presence does not make every historical statement a current contract.
+
 ## Decision and evidence register — 2026-10-01
 
 This is the existing canonical Digest domain page. The 2026-10-01 register below
@@ -17,6 +25,26 @@ complete each requirement or record an explicit, justified disposition. English/
 translation and source-contract repairs are deployed; ordinary-run acceptance remains
 open in #94/#77. The real message-vote path is verified through persistence and computed
 priority influence; ordinary collector acceptance remains open in #48.
+
+### Source ownership reconciliation — local implementation, 2026-10-07
+
+The source-catalog continuation of [ADR0021](../../decisions/0021-catalog-feedback-boundaries.md)
+now places unchanged source/adaptive declarations and statistics/lifecycle records in
+`domain/catalog/sources.py`. `domain/catalog/source_rules.py` owns quality, trending,
+priority and trial/accounting policy; application composition supplies the existing
+per-source clock observations. `config.py` remains the YAML loader with compatible
+class aliases. Source JSON codecs live in `adapters/storage/sources.py`; legacy saves
+still prune caller statistics after directory creation and catch only write failures,
+while prepared delivery uses the same encoders with strict, non-pruning writers.
+`source_scorer.py` is now a compatibility facade. No source setting or runtime schema
+changes; this local implementation is not merge/deployment or editorial acceptance.
+
+The earlier hotspot references to runtime `apply_trial_decisions()` editing YAML
+are historical: trial outcomes live in `SourceStateStore` under ADR0003. Approved
+source additions still edit YAML through discovery. Discovery's generation,
+rotation/cooldowns, history, delivery metadata and YAML responsibilities remain
+unextracted and are a separate next slice. Broader historical policy/owner tables
+below still need reconciliation; they must not be treated as current code ownership.
 
 ### Product intent comes before the latest implementation
 
@@ -329,9 +357,11 @@ boundary explicitly; do not silently delete the boundary or infer a retention po
 4. Record owner/editorial review and remaining gaps before automatic-card rollout.
    Keep useful delivery, semantic quality and independent-review success separate.
 
-### Proposed #121 preparation integration
+<a id="proposed-121-preparation-integration"></a>
 
-[ADR0008](../../decisions/0008-candidate-selection-progress.md) proposes identity-level
+### Accepted #121 preparation integration — status reconciled 2026-10-07
+
+[ADR0008](../../decisions/0008-candidate-selection-progress.md) records accepted identity-level
 capture before source allocation and one existing bounded review packet per fresh
 preparation window. Its persisted accounting distinguishes source exclusions,
 unpresented work, technical failures and same-response metadata dispositions.
@@ -339,15 +369,19 @@ Legacy nonselection still lacks a per-item reason; missing or invalid new dispos
 remain unresolved. Hash-verified references reduce resolved active-state duplication
 without defining archive retention or certifying the model's semantic judgments. Later packets can reach the actual prepared-edition path
 without blocking selected cards on whole-cohort completion. Existing accepted/ready
-work retains precedence. This proposed mechanism adds neither a retention policy nor
-a claim of complete-source quality or sustainable capacity; those remain explicit
-acceptance work. The owner requirements above are unchanged.
+work retains precedence. Owner approval on 2026-10-04 covered the bounded preparation
+and evidence-storage decision, PR #125 and its engine-pin rollout. This mechanism
+adds neither a retention policy nor a claim of complete-source quality or sustainable
+capacity. Natural-run, disposition-quality and throughput acceptance remain open
+under #121. The owner requirements above are unchanged.
 
 ## Historical domain snapshot — April 2026
 
 The following material records the earlier interview/code-derived model. It remains
-for traceability, not as an override of the reconciliation above. Its lifecycle,
-provider behavior and delivery order must not be treated as current verified facts.
+for traceability, not as an override of the reconciliation above. It also contains
+later amendments to discovery and feedback; their labels distinguish them from the
+April model. Historical lifecycle, provider behavior and delivery order must not be
+treated as current verified facts.
 
 
 ---
@@ -478,12 +512,14 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 **PendingSource**
 - Invariants: `source_hash` is unique in the pending list; `url` has passed SSRF validation (`_dns_pinning.validate_url`) before entering pending.
-- Discovery targets a separate configured exploration-area list. Its requested area,
-  fair-pass attempts, confirmed/possible offers and validation cooldown live in
-  `discovery_delivery.json`, never in the five-field proposal identity. The proposed
-  contract is [ADR-0013](../../decisions/0013-discovery-exploration-state.md).
-  A requested area does not establish actual novelty; the first slice of #132 leaves
-  daily scheduling and protection of professional signals after approval open.
+
+**Discovery amendment — accepted 2026-10-06:** Discovery targets a separate configured
+exploration-area list. Its requested area, fair-pass attempts, confirmed/possible
+offers and validation cooldown live in `discovery_delivery.json`, never in the
+five-field proposal identity. The accepted first-slice contract is
+[ADR-0013](../../decisions/0013-discovery-exploration-state.md). A requested area does
+not establish actual novelty; #132 leaves daily scheduling, protection of professional
+signals after approval and ordinary recommendation quality open.
 
 ---
 
@@ -517,6 +553,10 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 
 ### UC-1: Daily pipeline run
 
+**Feedback amendment, labelled 2026-10-07:** alternative 7a below retains collected
+votes on delivery failure. The remaining sequence is the historical direct pipeline;
+use the current architecture map for prepared-edition ordering.
+
 **Actor:** GitHub Actions (Scheduler)
 **Preconditions:** `config.yaml` exists and is valid; an LLM API key is available; `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set.
 **Main scenario:**
@@ -544,6 +584,11 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 <a id="uc-2-пользователь-голосует-за-статью"></a>
 
 ### UC-2: User votes on an article
+
+**Feedback amendment, labelled 2026-10-07:** steps 5–7 below describe later durability
+work. The callback interaction remains historical/best effort; the accepted
+[2026-10-02 message-voting decision](../../decisions/0006-batch-message-voting.md)
+and current architecture feedback contract describe the ordinary vote path.
 
 **Actor:** User (through a Telegram inline button)
 **Preconditions:** An article card has been delivered with `fb:a:g:{hash}` / `fb:a:b:{hash}` buttons; `article_source_map` contains `hash → source_name`.
@@ -587,6 +632,10 @@ The Digest BC coordinates the full lifecycle of one operator's daily information
 <a id="uc-4-оператор-одобряетотклоняет-новый-источник"></a>
 
 ### UC-4: Operator approves/rejects a new source
+
+**Source-approval amendment, status reconciled 2026-10-07:** this later message-based
+flow is retained within the April snapshot; its current boundary is documented in
+[architecture](../../ARCHITECTURE.md#trial-source-lifecycle-and-discovery).
 
 **Actor:** User (private owner Telegram message)
 **Preconditions:** The discovery phase (`--discover`) has found a new source, saved PendingSource in `.cache/pending_sources.json`, and sent approval links or command instructions.
@@ -734,6 +783,12 @@ Generated on demand by the `/bubble` command. Not persisted: computed from `.cac
 ---
 
 ## NFR
+
+**Scope correction — 2026-10-07:** the historical all-HTTP SSRF row below overstates
+the implemented boundary. Feed/article acquisition uses URL validation and DNS pinning;
+fixed-endpoint search clients and optional signal liveness checks are separate. See
+the current [security contract](../../ARCHITECTURE.md#security). The table is retained
+as historical evidence, not a claim of universal protection.
 
 Mechanically verifiable constraints only:
 

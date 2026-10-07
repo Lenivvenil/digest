@@ -35,9 +35,10 @@ coarse pre-publication reservation, followed by the ready-edition amendment and 
 guarantee is implied; the dated record preserves its separate acceptance boundaries.
 
 
-[0008](0008-candidate-selection-progress.md) proposes candidate accounting and
-continuation within ordinary bounded preparation under #121. It is not a deployment
-or editorial-quality approval.
+[0008](0008-candidate-selection-progress.md) records accepted candidate accounting,
+bounded preparation and evidence storage under #121. Owner approval on 2026-10-04
+covered PR #125 and its engine-pin rollout; natural-run, disposition-quality and
+throughput acceptance remain separate and open.
 
 [0009](0009-selected-source-admission.md) proposes candidate-bound source admission
 and technical handoff under #122; it does not approve semantic publication or runtime activation.

@@ -361,7 +361,7 @@ something outside the current information bubble. A failed search is not evidenc
 no counter-signal exists. Supported adapter contracts and their current failures are
 tracked in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
-`python -m digest --discover` separately proposes feeds for underrepresented categories,
+`python -m digest --discover` separately proposes feeds by rotating configured exploration areas,
 checks their URLs, saves candidates and requests operator approval through Telegram.
 Discovery targets a configurable list that includes professional source refresh and
 broader disciplines, independent of the active professional source portfolio:
@@ -569,9 +569,9 @@ current-work safety limit fails explicitly rather than deleting evidence. Exact 
 objects are stored once, and each immutable report contains only its own packet and
 current collection accounting. Per-identity history stays outside current-work admission;
 unresolved work and reversible policy exclusions remain recoverable. Total archive
-storage still grows with new evidence. See proposed
-[ADR0008](docs/decisions/0008-candidate-selection-progress.md) and #121 for remaining
-semantic, ordinary-runtime and throughput acceptance.
+storage still grows with new evidence. The bounded preparation and evidence-storage
+decision is accepted in [ADR0008](docs/decisions/0008-candidate-selection-progress.md);
+#121 retains separate semantic, ordinary-runtime and throughput acceptance.
 
 A valid primary abstention retains #120's accepted empty snapshot for its publication
 day. New candidate responses with only deferred/missing/invalid dispositions do not

@@ -11,9 +11,9 @@ from digest.adapters.models.execution import ModelExecution
 
 if TYPE_CHECKING:
     from digest.config import Config
+    from digest.domain.catalog.sources import SourceStats
     from digest.domain.feedback.values import FeedbackStore
     from digest.radar.collector import Article, SourceFetchMetrics
-    from digest.source_scorer import SourceStats
 
 
 def process_pending_approvals(
@@ -86,8 +86,8 @@ def record_source_stats(
     delivered_hashes: set[str],
 ) -> None:
     """Combine fetch observations with confirmed output, including failed feeds."""
+    from digest.application.source_scoring import update_stats
     from digest.radar.collector import article_hash
-    from digest.source_scorer import update_stats
 
     included: dict[str, int] = {}
     for articles in articles_by_category.values():
@@ -110,7 +110,7 @@ def save_failed_run_stats(
     dry_run: bool,
 ) -> None:
     """Retain fetch health on failed runs without consuming article/feedback state."""
-    from digest.source_scorer import save_stats
+    from digest.adapters.storage.sources import save_stats
 
     if not dry_run:
         record_source_stats(source_stats, fetch_metrics, {}, set())

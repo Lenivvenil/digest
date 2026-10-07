@@ -16,8 +16,8 @@ from digest.presentation.source_attribution import attribute_source_card, suppor
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from digest.config import SourceConfig
     from digest.domain.catalog.occurrences import SourceOccurrence
+    from digest.domain.catalog.sources import SourceConfig
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.radar.summarizer import ArticleSummary
 

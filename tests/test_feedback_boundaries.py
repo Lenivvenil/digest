@@ -35,12 +35,14 @@ def _imports(path: Path) -> list[tuple[int, str]]:
 
 
 @pytest.mark.parametrize("relative", [
-    "domain/catalog/proposals.py", "domain/feedback/values.py", "domain/feedback/rules.py",
+    "domain/catalog/proposals.py", "domain/catalog/sources.py", "domain/catalog/source_rules.py",
+    "domain/feedback/values.py", "domain/feedback/rules.py",
 ])
 def test_feedback_policy_imports_no_effect_owner(relative: str) -> None:
     forbidden = (
         "digest.adapters", "digest.application", "digest.cli", "digest.main", "digest.discovery",
-        "digest.feedback", "digest.llm", "httpx", "os", "pathlib", "socket", "subprocess", "time",
+        "digest.feedback", "digest.config", "digest.source_scorer", "digest.llm",
+        "httpx", "os", "pathlib", "socket", "subprocess", "time",
     )
     violations = [f"{line}: {target}" for line, target in _imports(ROOT / relative)
                   if any(target == root or target.startswith(root + ".") for root in forbidden)]

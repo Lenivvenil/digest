@@ -22,11 +22,11 @@ if TYPE_CHECKING:
     from digest.candidate_review import CandidatePacket, CandidateProgress
     from digest.closing import ClosingDecision
     from digest.config import Config
+    from digest.domain.catalog.sources import SourceStats
     from digest.preparation import PreparationSnapshot
     from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
     from digest.review import BlindReviewReport
-    from digest.source_scorer import SourceStats
 
 
 @dataclass
@@ -178,7 +178,7 @@ def _save_prepared_fetch_stats(
     articles: dict[str, list[Article]],
     config: Config, cache_dir: str, already_failed: bool,
 ) -> None:
-    from digest.source_scorer import save_stats
+    from digest.adapters.storage.sources import save_stats
 
     if not already_failed:
         run_state.record_source_stats(source_stats, fetch_metrics, articles, set())
@@ -253,17 +253,13 @@ async def _collect_and_select(
     """Recover accepted work first; otherwise acquire one bounded candidate selection."""
     from digest._util import cleanup_stale_tmp
     from digest.adapters.storage.feedback import save_feedback
+    from digest.adapters.storage.sources import load_source_state, load_stats, save_stats
+    from digest.application.source_scoring import calculate_effective_priorities
+    from digest.domain.catalog.source_rules import calculate_feedback_priorities
     from digest.domain.feedback.rules import get_source_feedback_score
     from digest.edition_runtime import resume_preparation
     from digest.radar import AllFeedsFailedError, collect
     from digest.reading_preparation import reading_deadline, setup_reading_budget
-    from digest.source_scorer import (
-        calculate_effective_priorities,
-        calculate_feedback_priorities,
-        load_source_state,
-        load_stats,
-        save_stats,
-    )
 
     cache_dir = ".cache"
     source_state = load_source_state(cache_dir)
@@ -354,10 +350,10 @@ async def prepare_edition(
     publication_date: date | None, started_at: float,
 ) -> RunStats:
     """Ordinary preparation: recover, select, accept, present and freeze; never send."""
+    from digest.adapters.storage.sources import save_source_category_map
     from digest.application.presentation import combined_summary, publication_intro
     from digest.edition_runtime import finish_preparation
     from digest.preparation import PreparationSnapshot
-    from digest.source_scorer import save_source_category_map
 
     selected = await _collect_and_select(
         config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,

@@ -37,8 +37,9 @@ Runs on GitHub Actions (free tier). No VPS. No paid services required (though Cl
 
 This is the **engine repo** — source code, tests, CI only. Production runtime lives in `Lenivvenil/digest-prod` (private).
 
-- `config.yaml`, `.cache/`, `digests/` are **not** in this repo — they live in `digest-prod`.
-- Entry point: `python -m digest` (installed via `pip install "digest @ git+https://github.com/Lenivvenil/digest@main"`).
+- Production `config.yaml`, `.cache/` and `digests/` belong in the private runtime repo, `digest-prod`.
+- Entry point: `python -m digest`. Install the runtime from a reviewed immutable engine commit:
+  `pip install "digest @ git+https://github.com/Lenivvenil/digest@<reviewed-commit-sha>"`.
 
 ## Working agreement
 
@@ -81,7 +82,7 @@ agent-only design.
 │   ├── config.py            # config loading and validation
 │   ├── llm.py               # LLM provider abstraction (Groq, Gemini, DeepSeek)
 │   ├── filters.py           # blocklist keyword filtering
-│   ├── _dns_pinning.py      # DNS pinning and SSRF protection for outbound HTTP
+│   ├── _dns_pinning.py      # URL validation and DNS pinning for feed/article acquisition
 │   ├── _sanitize.py         # HTML/text sanitization for feed content
 │   ├── _util.py             # atomic_json_write and other shared utilities
 │   ├── radar/               # Phase 1: Collection & Summarization
@@ -136,7 +137,7 @@ agent-only design.
 - No heavy frameworks (no Flask, no Django, no FastAPI)
 - All HTTP calls via `httpx` (async)
 - Config is YAML only (no TOML, no JSON for config)
-- The digest markdown files and cache are committed back to the repo by GitHub Actions
+- GitHub Actions commits production digest Markdown files and cache to the private runtime repo (`digest-prod`)
 - Must work offline for testing (all external calls mockable)
 
 ## Pre-commit Checklist
@@ -145,4 +146,9 @@ Always run `ruff check digest/ tests/` before committing. Fix all errors before 
 
 ## Digest Format: Three Perspectives
 
-A key feature of the digest is the "three perspectives" format for significant news items. For the 1-2 most important topics in each category, the LLM must produce three viewpoints: Optimist (🟢), Skeptic (🔴), and Realist (⚖️). These should represent genuinely different reasoning chains, not just tonal variation. This applies in "analytical" and "detailed" summary styles, but not in "brief" mode. Minor news items get a regular 2-3 sentence comment without perspectives.
+The category-summary path can request three perspectives with `radar.perspectives: true`
+(default: `false`). In `analytical` and `detailed` styles, the prompts request Optimist
+(🟢), Skeptic (🔴), and Realist (⚖️) viewpoints for significant topics. These should
+represent different reasoning chains, not just tonal variation. Brief mode omits
+perspectives; minor items use ordinary comments. The review-led-only path skips
+category summaries and does not use this format.

@@ -536,8 +536,8 @@ async def test_delivery_commits_only_confirmed_articles(
             "digest.delivery.send_counter_signals": AsyncMock(),
             "digest.application.run_state.process_pending_approvals": MagicMock(),
             "digest.adapters.storage.feedback.load_feedback": MagicMock(return_value=feedback),
-            "digest.source_scorer.load_stats": MagicMock(return_value=source_stats),
-            "digest.source_scorer.save_stats": MagicMock(),
+            "digest.adapters.storage.sources.load_stats": MagicMock(return_value=source_stats),
+            "digest.adapters.storage.sources.save_stats": MagicMock(),
         }
         for target, replacement in replacements.items():
             stack.enter_context(patch(target, replacement))
@@ -631,8 +631,8 @@ async def test_failed_runs_record_fetch_health_without_consuming_articles(
         patch("digest.radar.collect", AsyncMock(side_effect=collect_stub)),
         patch("digest.radar.summarize_all", AsyncMock(return_value=([], ""))),
         patch("digest.radar.save_dedup_cache", save_cache),
-        patch("digest.source_scorer.load_stats", return_value=source_stats),
-        patch("digest.source_scorer.save_stats", save_stats),
+        patch("digest.adapters.storage.sources.load_stats", return_value=source_stats),
+        patch("digest.adapters.storage.sources.save_stats", save_stats),
         patch("digest.application.legacy._notify_summaries_failed", AsyncMock()),
     ):
         if feed_failure:
