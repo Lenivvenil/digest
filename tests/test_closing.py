@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -29,7 +30,6 @@ from digest.closing import (
     save_closing,
 )
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig, load_config
-from digest.main import _analyze_candidate_articles, _preparation_closing
 from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
 from digest.radar.collector import Article
 from digest.review import build_evidence_bundle, build_review_messages, primary_cards, run_primary_review

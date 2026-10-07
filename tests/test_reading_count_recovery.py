@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from digest.application.preparation import _candidate_inputs
 from digest.config import ProviderConfig
-from digest.main import _candidate_inputs
 from digest.radar.collector import CollectionInventory, SourceCollectionOutcome, _capture_candidates, article_hash
 from digest.reading_brief_state import load_state, save_state
 from digest.reading_brief_tokens import TokenProfileUnavailable

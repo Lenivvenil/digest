@@ -97,7 +97,7 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     config, snapshot = setup
     save_preparation(snapshot)
     presentation = AsyncMock(side_effect=RuntimeError("presentation failed"))
-    monkeypatch.setattr("digest.main._publication_presentation", presentation)
+    monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
     with pytest.raises(RuntimeError):
         await resume_preparation(config, 0, verbose=False)
     assert asdict(load_preparation()) == asdict(snapshot)
@@ -115,7 +115,8 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     config.review.enabled = False
     config.radar.language = "ru"
     config.sources = [SourceConfig("NHS England", NHS_FEED, "Health", True)]
-    monkeypatch.setattr("digest.main._publication_presentation", AsyncMock(side_effect=AssertionError("rerender")))
+    monkeypatch.setattr("digest.application.presentation.publication_presentation",
+          AsyncMock(side_effect=AssertionError("rerender")))
     assert (await resume_preparation(config, 0, verbose=False)).ready_sha256 == stats.ready_sha256
     assert await delivery_phase("claim", "config.yaml", stats.ready_sha256, None) == 0
     import hashlib
@@ -216,9 +217,9 @@ async def test_main_prepare_resume_does_not_refetch_or_reanalyze(
     collection = AsyncMock(return_value=(articles, {}))
     analysis = AsyncMock(return_value=([], None, cards, None))
     monkeypatch.setattr("digest.radar.collect", collection)
-    monkeypatch.setattr("digest.main._analyze_articles", analysis)
+    monkeypatch.setattr("digest.application.analysis.analyze_articles", analysis)
     presentation = AsyncMock(side_effect=RuntimeError("late presentation failure"))
-    monkeypatch.setattr("digest.main._publication_presentation", presentation)
+    monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
     with pytest.raises(RuntimeError):
         await run("config.yaml", False, False, False, feedback_precollected=True, prepare_only=True)
     assert load_preparation() is not None

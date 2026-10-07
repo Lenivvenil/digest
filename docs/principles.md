@@ -59,7 +59,7 @@ Owner clarification, 2026-10-04: Claude review is optional.
 - [ ] Documentation is updated: README (for public changes), the relevant runbook, and CHANGELOG (through release-please)
 - [ ] CI is green for all required jobs
 - [ ] Conventional Commits are used; the governance-hook check has passed
-- [ ] The PR body references the issue (`Closes #NNN`) and the ADR (`Implements docs/decisions/NNNN-*.md`), if applicable
+- [ ] The PR body references the implementing issue and applicable ADR. Use `Closes #NNN` only when all issue acceptance is met; partial changes reference the issue without auto-closing unfinished work.
 
 This checklist is copied into `pull_request_template.md` and checked on every PR.
 

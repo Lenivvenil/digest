@@ -14,6 +14,8 @@ import httpx
 import pytest
 import respx
 
+from digest.application.analysis import analyze_articles as _analyze_articles
+from digest.application.preparation import _analyze_candidate_articles
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -26,7 +28,7 @@ from digest.config import Config, SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE
 from digest.edition_runtime import delivery_phase
 from digest.feedback import FeedbackStore, save_feedback
-from digest.main import _analyze_articles, _analyze_candidate_articles, _run
+from digest.main import _run
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates, article_hash
 from digest.review import (
     _parse_live_review,
@@ -98,8 +100,9 @@ async def test_eight_useful_five_confirmed_three_next_window(
     config.obsidian.output_dir = "digests"
     save_feedback(FeedbackStore(), ".cache", strict=True)
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
-    monkeypatch.setattr("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.main._apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
+          AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
     collection_calls = 0
     requests: list[list[str]] = []
 

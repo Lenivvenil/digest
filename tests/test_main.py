@@ -9,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from digest.application.presentation import clean_summary as _clean_summary
 from digest.delivery import ArticleDeliveryResult
 from digest.feedback import FeedbackStore
 from digest.irritator import IrritatorStatus
-from digest.main import RunStats, _clean_summary, check_config, main, run
+from digest.main import RunStats, check_config, main, run
 from digest.radar.collector import SourceFetchMetrics, article_hash
 from digest.radar.summarizer import ArticleSummary
 
@@ -370,7 +371,7 @@ class TestRunDryRun:
             patch("digest.radar.summarize_all", AsyncMock(return_value=([summary], ""))),
             patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
             patch("digest.radar.save_dedup_cache", MagicMock()),
-            patch("digest.main._run_irritator", AsyncMock(return_value=([], [], mock_status))),
+            patch("digest.application.investigation.run_irritator", AsyncMock(return_value=([], [], mock_status))),
         ):
             await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
 
@@ -524,11 +525,12 @@ async def test_delivery_commits_only_confirmed_articles(
             "digest.radar.summarize_all": AsyncMock(return_value=([_CategorySummary()], "")),
             "digest.radar.pick_top_articles": AsyncMock(return_value=top_articles),
             "digest.radar.save_dedup_cache": save_cache,
-            "digest.main._run_irritator": AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty"))),
+            "digest.application.investigation.run_irritator": AsyncMock(return_value=([],
+                  [], IrritatorStatus("empty", "empty"))),
             "digest.delivery.write_digest": MagicMock(return_value=Path("digest.md") if markdown else None),
             "digest.delivery.send_article_cards": AsyncMock(side_effect=send_stub),
             "digest.delivery.send_counter_signals": AsyncMock(),
-            "digest.main._process_pending_approvals": MagicMock(),
+            "digest.application.run_state.process_pending_approvals": MagicMock(),
             "digest.feedback.load_feedback": MagicMock(return_value=feedback),
             "digest.source_scorer.load_stats": MagicMock(return_value=source_stats),
             "digest.source_scorer.save_stats": MagicMock(),
@@ -571,9 +573,10 @@ async def test_failed_category_remains_retryable_in_markdown(
         patch("digest.radar.summarize_all", AsyncMock(return_value=([_CategorySummary()], ""))),
         patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
         patch("digest.radar.save_dedup_cache", save_cache),
-        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.application.investigation.run_irritator",
+              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
         patch("digest.delivery.write_digest", return_value=Path("digest.md")),
-        patch("digest.main._process_pending_approvals"),
+        patch("digest.application.run_state.process_pending_approvals"),
     ):
         await run("config.yaml", False, False, False)
     save_cache.assert_called_once_with({good_hash: "new"})
@@ -679,12 +682,14 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         patch("digest.config.load_config", return_value=cfg),
         patch("digest.feedback.collect_feedback", side_effect=collect_vote) as poll,
         patch("digest.radar.collect", AsyncMock(return_value=({"tech": [article]}, {}))) as collect,
-        patch("digest.main._analyze_articles", AsyncMock(return_value=([_CategorySummary()], None, [card], None))),
-        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.application.analysis.analyze_articles",
+              AsyncMock(return_value=([_CategorySummary()], None, [card], None))),
+        patch("digest.application.investigation.run_irritator",
+              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
         patch("digest.delivery.write_digest", return_value=None),
         patch("digest.delivery.send_article_cards", AsyncMock(return_value=ArticleDeliveryResult(1, 0, 1))),
         patch("digest.delivery.send_counter_signals", AsyncMock()),
-        patch("digest.main._process_pending_approvals") as approvals,
+        patch("digest.application.run_state.process_pending_approvals") as approvals,
     ):
         result = await run("config.yaml", False, False, False)
         assert not result.telegram_sent and not result.markdown_saved
@@ -703,8 +708,8 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
 def test_pending_source_approval_requires_current_identity_and_keeps_failed_decision(tmp_path: Path) -> None:
     from datetime import datetime, timedelta, timezone
 
+    from digest.application.run_state import process_pending_approvals as _process_pending_approvals
     from digest.discovery import PendingSource, proposal_binding
-    from digest.main import _process_pending_approvals
 
     now = datetime.now(timezone.utc)
     fresh = PendingSource("Fresh", "https://example.com/fresh", "Tech", now.isoformat())
@@ -781,9 +786,9 @@ async def test_discovery_persists_unique_proposals_before_sending_instructions(
 def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path) -> None:
     from datetime import datetime, timezone
 
+    from digest.application.run_state import process_pending_approvals as _process_pending_approvals
     from digest.discovery import PendingSource, load_pending, proposal_binding, save_pending
     from digest.feedback import load_feedback, save_feedback
-    from digest.main import _process_pending_approvals
 
     proposal = PendingSource("Rejected", "https://example.com/no", "Tech", datetime.now(timezone.utc).isoformat())
     save_pending([proposal], str(tmp_path), strict=True)
@@ -813,8 +818,8 @@ def test_pending_decision_cannot_authorize_a_different_proposal(case: str, tmp_p
     from copy import deepcopy
     from datetime import datetime, timedelta, timezone
 
+    from digest.application.run_state import process_pending_approvals as _process_pending_approvals
     from digest.discovery import PendingSource, proposal_binding
-    from digest.main import _process_pending_approvals
 
     now = datetime.now(timezone.utc)
     proposal = PendingSource("Original", "https://example.com/feed", "Tech", now.isoformat())
@@ -852,9 +857,9 @@ def test_source_application_io_failure_preserves_durable_decision(failure: str, 
 
     import yaml
 
+    from digest.application.run_state import process_pending_approvals as _process_pending_approvals
     from digest.discovery import PendingSource, load_pending, proposal_binding, save_pending
     from digest.feedback import load_feedback, save_feedback
-    from digest.main import _process_pending_approvals
 
     proposal = PendingSource("New", "https://example.com/new", "Tech", datetime.now(timezone.utc).isoformat())
     config_path = tmp_path / "config.yaml"
@@ -926,7 +931,8 @@ async def test_source_application_precedes_collection_and_survives_unsuccessful_
     with ExitStack() as stack:
         stack.enter_context(patch("digest.config.load_config", side_effect=[initial, reloaded]))
         stack.enter_context(patch("digest.radar.collect", side_effect=collect))
-        stack.enter_context(patch("digest.main._analyze_articles", AsyncMock(return_value=([], None, [], None))))
+        stack.enter_context(patch("digest.application.analysis.analyze_articles",
+              AsyncMock(return_value=([], None, [], None))))
         if failure == "pending_write":
             stack.enter_context(patch("digest.discovery.atomic_json_write", side_effect=OSError("disk full")))
         if failure == "feeds":
@@ -990,8 +996,10 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
         patch("digest.radar.collect", AsyncMock(return_value=(
             {} if case == "no_content" else {"tech": articles}, cache,
         ))),
-        patch("digest.main._analyze_articles", AsyncMock(return_value=([_CategorySummary()], None, cards, None))),
-        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch("digest.application.analysis.analyze_articles",
+              AsyncMock(return_value=([_CategorySummary()], None, cards, None))),
+        patch("digest.application.investigation.run_irritator",
+              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
         patch("digest.delivery.write_digest", return_value=Path("digest.md")),
         patch("digest.delivery.telegram.send_compact_issue", AsyncMock(side_effect=sender)) as send,
         patch("digest.delivery.send_article_cards", AsyncMock()) as old_send,
@@ -1162,3 +1170,13 @@ async def test_discovery_generation_preserves_bounded_configured_fallback(
     counts = load_delivery(".cache")["prepare_counts"]
     assert counts["generation_failed"] == int(failures == 2)
     assert counts["suggested"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("dry_run", "radar_only"), [(True, False), (False, True), (True, True)])
+async def test_programmatic_preparation_rejects_preview_before_preparation_effects(
+    dry_run: bool, radar_only: bool,
+) -> None:
+    with patch("digest.config.load_config", side_effect=AssertionError("No configuration or state work")):
+        with pytest.raises(ValueError, match="cannot be combined with preview"):
+            await run("config.yaml", dry_run, radar_only, False, prepare_only=True)

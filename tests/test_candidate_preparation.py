@@ -45,8 +45,9 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
                         'Source', 'Tech', now) for i in range(47)]
     save_feedback(FeedbackStore(), '.cache', strict=True)
     monkeypatch.setattr('digest.config.load_config', lambda _: config)
-    monkeypatch.setattr('digest.main._collect_run_feedback', AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr('digest.main._apply_pending_approvals', lambda c, *args, **kwargs: c)
+    monkeypatch.setattr('digest.application.run_state.collect_run_feedback',
+          AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr('digest.application.run_state.apply_pending_approvals', lambda c, *args, **kwargs: c)
     calls: list[set[str]] = []
     collection_calls = 0
 
@@ -166,8 +167,9 @@ async def test_preparation_reports_technical_empty_without_failing_editorial_abs
     observed = ([] if outcome == "no_candidates" else
                 [Article("Evidence", "https://example.com/item", "Literal evidence", "Source", "Tech", now)])
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
-    monkeypatch.setattr("digest.main._collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.main._apply_pending_approvals", lambda c, *args, **kwargs: c)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
+          AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: c)
 
     async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
         inventory = kwargs["inventory"]

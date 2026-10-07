@@ -161,7 +161,7 @@ async def test_completion_order_does_not_change_slot_attribution() -> None:
 
 @pytest.mark.asyncio
 async def test_selection_survives_category_prose_failure() -> None:
-    from digest.main import _analyze_articles
+    from digest.application.analysis import analyze_articles as _analyze_articles
 
     report = await run_fixture()
     with (
@@ -223,9 +223,10 @@ async def test_empty_selection_review_diagnostics_survive_pipeline(
         patch("httpx.AsyncClient", side_effect=AssertionError("HTTP forbidden")),
         patch("digest.config.load_config", return_value=config),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-        patch("digest.main._analyze_articles", AsyncMock(return_value=([], None, [], report))),
-        patch("digest.main._run_irritator", AsyncMock(return_value=([], [], IrritatorStatus("none", "empty")))),
-        patch("digest.main._process_pending_approvals"),
+        patch("digest.application.analysis.analyze_articles", AsyncMock(return_value=([], None, [], report))),
+        patch("digest.application.investigation.run_irritator",
+              AsyncMock(return_value=([], [], IrritatorStatus("none", "empty")))),
+        patch("digest.application.run_state.process_pending_approvals"),
     ):
         result = await run("fixture.yaml", False, False, False)
     assert result.markdown_saved

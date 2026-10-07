@@ -4,6 +4,115 @@
 > Other sections retain their stated implementation scope; this is not a complete project audit.
 > [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
 
+## Structural migration: current stage and target
+
+Tracked by [#143](https://github.com/Lenivvenil/digest/issues/143) under the
+[#126 migration umbrella](https://github.com/Lenivvenil/digest/issues/126), with the
+[stage-1 ownership decision](decisions/0015-application-workflow-ownership.md).
+
+The target is a modular monolith: one deployable Python engine, the existing private
+runtime, and no additional services or workflow framework. Organization follows who
+owns a decision and its state, not the external tool used to execute it.
+
+### Stage 1: application ownership
+
+The first migration introduces `digest/application/`:
+
+- `preparation.py`: ordinary edition preparation and the separately terminated
+  experimental source-preparation scenario. Recovery precedes new selection.
+- `analysis.py`: canonical RSS analysis shared by prepared and legacy applications.
+- `presentation.py`: shared presentation orchestration and optional translation;
+  rendering and transport adapters remain in their existing modules for now.
+- `investigation.py`: existing synchronous external-investigation invocation, kept
+  separate from presentation rather than making a view operation own search.
+- `run_state.py`: feedback collection, approved source changes and fetch accounting.
+- `results.py`: the existing `RunStats` result, moved without changing its fields.
+
+`main.py` resolves prepared versus legacy execution before either workflow runs.
+`edition_runtime.py` consumes application presentation/results and no longer imports
+`main`. The ordinary preparation coordinator has no preview, direct-send or source-
+reconciliation branch. Legacy preview/dispatch and discovery are still in `main`;
+this stage does not claim the entire entrypoint has become thin. The programmatic
+`run()` entry now rejects preparation combined with dry-run/radar-only before
+configuration/preparation effects, matching the existing CLI restriction. Its existing
+finally block still finalizes an explicitly supplied legacy issue guard. Previously those unsupported Python
+combinations could partially execute; silently treating a preview as a mutating
+preparation is not retained as compatibility. `SelectedPreparation`
+is a transitional in-memory application handoff, not a new domain entity or wire
+schema. Its optional candidate fields preserve existing non-review modes; separating
+those ownership constraints belongs to stage 2. Shared candidate acquisition still
+invokes disabled reading-budget/checkpoint hooks for compatibility, so experimental
+source work is not yet completely isolated from the ordinary acquisition stage.
+
+```mermaid
+flowchart LR
+    CLI[main: command dispatch] --> PREP[application.preparation]
+    CLI --> LEGACY[existing legacy path]
+    PREP --> ANALYSIS[application.analysis]
+    PREP --> STATE[application.run_state]
+    PREP --> EDITION[edition_runtime]
+    EDITION --> VIEW[application.presentation]
+    EDITION --> RESULT[application.results]
+    LEGACY --> ANALYSIS
+    LEGACY --> STATE
+    LEGACY --> VIEW
+    LEGACY --> INVESTIGATE[application.investigation]
+    EDITION -->|Non-review legacy mode only| INVESTIGATE
+```
+
+No lower module imports `main`; the executable `__main__` remains its caller.
+Existing candidate, checkpoint and delivery internals retain known ownership debt.
+In particular, this is not a redesign of their serialized records or retry policies.
+
+### Target responsibility map
+
+```text
+digest/
+  cli/                     command parsing and outcome reporting
+  application/             explicit preparation, send, feedback, investigation and discovery scenarios
+  domain/
+    catalog/               sources, proposals, observations and trial lifecycle
+    editorial/             candidates, evidence packets, review attempts and selection decisions
+    editions/              accepted canonical preparation, presentation and frozen editions
+    delivery/              claims, chunk receipts and transport outcomes
+    feedback/              votes and source-approval provenance
+    investigation/         attributed targets, hypotheses, external evidence and relations
+  adapters/
+    feeds/                 RSS and supported external-search protocols
+    models/                configured provider wire protocols and request controls
+    telegram/              Telegram transport
+    storage/               versioned JSON codecs and retained-object persistence
+  presentation/            Markdown and Telegram rendering
+```
+
+This is the destination, not a claim that these packages already exist. Domain code
+owns invariants and transitions; it imports neither CLI/application orchestration,
+HTTP clients nor filesystem persistence. Applications coordinate domain operations
+and adapters. Adapters consume domain values and enforce external protocols. Small
+interfaces are introduced only at actual boundaries; no generic repository hierarchy
+or dependency-injection framework is required.
+
+Delivery owns send claims and receipts, not source metrics or editorial decisions.
+An application operation applies confirmed outcomes to each owning domain explicitly.
+Multiple JSON writes are not an atomic transaction: current write order, idempotence
+and interrupted-application recovery must remain observable.
+
+### Incremental migration and rollback
+
+| Stage | Concrete change and acceptance | Compatibility and rollback |
+| --- | --- | --- |
+| 1. Prepared application | One ordinary recovery → collection/selection → accepted snapshot → presentation/freeze path; no lower-to-`main` imports. Preserve legacy CLI behavior and existing lifecycle tests. | No wire/schema/provider changes. Revert the engine pin; retain all runtime state. |
+| 2. Candidate ownership | Move existing entities and pure occurrence/packet/decision validators below both selection and storage. Storage must not construct fake aggregates just to validate an object. Make retirement explicit. | Preserve hashes, envelope versions and verified-write-before-removal order. Verify historical objects and bounded continuation before deployment. |
+| 3. Confirmed-delivery application | One explicit operation updates attribution, deduplication and accounting through their owners; remove duplicated prepared/direct update algorithms. | Preserve partial-send receipts, unknown-send holds and per-file recovery. Never rewrite receipt history for migration. |
+| 4. Review and source attribution | One review-reuse rule; general source credits independent of optional closing; explicit canonical occurrence ownership. | Preserve report/sidecar formats, exact source binding, fallback and optional omission semantics. |
+| 5. Adapters and remaining scenarios | Move CLI discovery/legacy workflows to explicit applications; separate provider runtime state from configuration; locate codecs with storage adapters. | Migrate one boundary at a time, preserving request counts, deadlines and existing configured routes. |
+| 6. Consolidation | Reconcile domain docs, package exports and behavior-oriented tests with actual ownership; remove compatibility code only when its callers are migrated. | Keep historical rationale and evidence. Deletion is not a substitute for an explicit compatibility decision. |
+
+Each stage needs a reviewable dependency change, existing behavioral regression
+checks, exact-head CI and runtime-state preservation. Green checks alone do not prove
+clarity or editorial quality. Useful content, humane closing supply, faithful
+translation and meaningful external counter-evidence retain their separate acceptance.
+
 ## Overview
 
 Digest is a personal information-intake product, not simply an article formatter.
@@ -81,7 +190,7 @@ failure isolation merely because they use the same presentation functions.
 | Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
 | `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. [`review.py`](../digest/review.py), [`candidate_dispositions.py`](../digest/candidate_dispositions.py) enforce shape, identity and dispositions. |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
-| Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`main.py`](../digest/main.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
+| Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
 | Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. Source-bound credits travel with cards; optional closing omission cannot silently discard required main cards. [`finish_preparation`](../digest/edition_runtime.py), [`closing.py`](../digest/closing.py) validate before freeze. |
 | Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`delivery/edition.py`](../digest/delivery/edition.py) enforces identity and state, while the runtime persists them remotely. |
 | Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
@@ -107,7 +216,8 @@ experiment, not external counter-evidence or a verified factual consensus.
 
 | Module | Responsibility |
 | --- | --- |
-| `main.py` | Main CLI, collection/analysis/delivery orchestration and exit semantics |
+| `main.py` | CLI dispatch/reporting plus legacy/discovery scenarios awaiting later migration |
+| `application/` | Prepared use cases, shared canonical analysis/presentation, run-state operations and execution results |
 | `config.py` | YAML loading, dataclasses and validation |
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
