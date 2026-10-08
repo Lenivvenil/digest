@@ -12,12 +12,11 @@ import hashlib
 import json
 import os
 import tempfile
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 from digest.adapters.models.execution import ModelExecution
-from digest.adapters.storage.review_checkpoints import load_review_checkpoint
+from digest.adapters.storage.review_checkpoints import load_review_checkpoint, save_trial_review_archive
 from digest.application.review import run_blind_review, run_evidence_review
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS as _ALLOWED_MODELS
 from digest.config import load_config
@@ -77,7 +76,7 @@ async def run_trial(
         os.chdir(previous_cwd)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "review.json").write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2) + "\n")
+    save_trial_review_archive(output_dir / "review.json", report)
     (output_dir / "review.md").write_text("# Controlled blind-review trial\n" + render_review(report) + "\n")
     metadata = {
         "created_at": datetime.now(UTC).isoformat(),
