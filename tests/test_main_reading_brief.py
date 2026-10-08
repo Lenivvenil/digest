@@ -11,11 +11,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet, reconcile_packet
 from digest.application.preparation import prepare_sources
-from digest.candidate_review import CandidateProgress, begin_packet, merge_candidates, plan_packet, reconcile_packet
+from digest.application.review import run_primary_review
 from digest.config import ReadingBriefConfig
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.reading_preparation import prepare_selected_sources, reading_deadline, setup_reading_budget
-from digest.review import run_primary_review
 from tests.test_candidate_review import NOW, population
 from tests.test_reading_brief import fetched, response
 
@@ -267,7 +268,7 @@ async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidate
     tmp_path: Path, state_kind: str,
 ) -> None:
     execution = ModelExecution()
-    from digest.candidate_review import pending_completed_report
+    from digest.domain.editorial.candidate_policy import pending_completed_report
     from digest.reading_preparation import deferred_source_reports
 
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
@@ -304,8 +305,9 @@ async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
 @pytest.mark.asyncio
 async def test_complete_empty_source_packet_retires_resolved_metadata_without_fake_preparation(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.candidate_review import load_candidate_progress, save_candidate_progress
-    from digest.candidate_storage import load_candidate
+    from digest.adapters.storage.candidate_objects import load_candidate
+    from digest.adapters.storage.candidate_progress import load_candidate_progress
+    from digest.application.candidate_lifecycle import checkpoint_candidates
     from digest.reading_preparation import deferred_source_reports
 
     config, articles = population(2)
@@ -328,7 +330,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
     identities = set(progress.candidates)
     deferred = deferred_source_reports(progress, tmp_path, config)
     assert deferred
-    save_candidate_progress(progress, tmp_path, skipped_empty_reports=deferred)
+    checkpoint_candidates(progress, tmp_path, skipped_empty_reports=deferred)
     restored = load_candidate_progress(tmp_path)
     assert not restored.candidates and not restored.packets and not packet.handed_to_preparation
     assert all(load_candidate(identity, tmp_path).status == "not_selected" for identity in identities)
@@ -341,7 +343,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
 @pytest.mark.asyncio
 async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.candidate_review import pending_completed_report
+    from digest.domain.editorial.candidate_policy import pending_completed_report
     from digest.reading_preparation import deferred_source_reports
 
     config, progress, packet, report = await saved_selection(tmp_path, all_selected=True, execution=execution)

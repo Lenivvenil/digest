@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from digest.application.review_request import build_evidence_bundle
+from digest.domain.editorial.reviews import BlindReviewReport, EvidenceSelection, ModelReview
 from digest.preparation import (
     PreparationSnapshot,
     clear_preparation,
@@ -19,7 +21,6 @@ from digest.preparation import (
     save_preparation,
 )
 from digest.radar.summarizer import ArticleSummary, CategorySummary
-from digest.review import BlindReviewReport, EvidenceSelection, ModelReview, build_evidence_bundle
 from scripts.review_fixture import fixture_articles, fixture_config
 
 NOW = datetime(2026, 10, 4, 12, tzinfo=UTC)

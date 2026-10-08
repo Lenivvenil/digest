@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Retired the root RSS import bridges `digest.review`, `digest.candidate_dispositions`,
+  `digest.candidate_storage` and `digest.candidate_review` (#194). Python consumers
+  must import their canonical domain/application/storage/presentation owners; no
+  replacement shim is supplied. The old `save_candidate_progress(retire=...)`
+  dispatcher becomes explicit `checkpoint_candidates` or `persist_candidates`.
+  [ADR0016's migration map](docs/decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08)
+  lists destinations and retired private aliases. Canonical types, persisted formats,
+  CLI/run/config and the supported feedback/discovery/source-scoring interfaces remain.
+
 - Search adapters now own response validation and bounded buffering (#190).
   The bounded Irritator no longer installs or removes response hooks on a caller's
   HTTP client. Direct/legacy Hacker News requests now reject bodies over 512,000

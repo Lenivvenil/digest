@@ -9,19 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from digest.candidate_review import (
-    CandidatePacket,
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    packet_articles,
-    plan_packet,
-    save_candidate_progress,
-)
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_lifecycle import checkpoint_candidates
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
+from digest.application.review_request import build_evidence_bundle
 from digest.config import Config, ReviewConfig, SourceConfig, load_config
+from digest.domain.editorial.candidate_policy import packet_articles
+from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
+from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS
 from digest.radar.collector import Article, article_hash
-from digest.review import MAX_EVIDENCE_JSON_CHARS, build_evidence_bundle
 from tests.test_candidate_review import NOW, population
 from tests.test_config import MINIMAL_CONFIG
 
@@ -116,7 +112,7 @@ def test_all_undated_candidates_keep_observation_order_across_reload(tmp_path: P
     for index, article in enumerate(articles["tech"]):
         article.pub_date = None
         merge_candidates(progress, {"tech": [article]}, config, {}, now=NOW + timedelta(minutes=index))
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     packet = _packet(load_candidate_progress(tmp_path), config, 1)
     assert [item.title for item in packet.articles] == [f"Item {index}" for index in range(4)]
     assert all(item.published is None for item in packet.articles)
@@ -174,17 +170,17 @@ def test_retry_rotation_survives_save_load_and_indexed_retirement(tmp_path: Path
         assert len(retried) == 1
         served.extend(retried)
         begin_packet(progress, packet, tmp_path)
-        save_candidate_progress(progress, tmp_path)
+        checkpoint_candidates(progress, tmp_path)
         if hours == 3:
             config.sources[0].enabled = False
             merge_candidates(progress, {}, config, {}, now=NOW + timedelta(hours=hours))
-            save_candidate_progress(progress, tmp_path)
+            checkpoint_candidates(progress, tmp_path)
             progress = load_candidate_progress(tmp_path)
             assert progress.candidates == {} and progress.packets == []
             config.sources[0].enabled = True
             merge_candidates(progress, {}, config, {}, now=NOW + timedelta(hours=hours), cache_dir=tmp_path)
             assert original_ids <= progress.candidates.keys()
-            save_candidate_progress(progress, tmp_path)
+            checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     assert len(served) == len(set(served)) == 6
     assert set(served) == original_ids
@@ -214,7 +210,7 @@ def test_changed_occurrence_does_not_borrow_an_unrelated_attempt_timestamp(tmp_p
     begin_packet(progress, latest_original, tmp_path)
     config.sources[0].enabled = False
     merge_candidates(progress, {}, config, {}, now=NOW + timedelta(hours=3))
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     packet = _packet(restored, config, 3)
     assert packet.articles[0].source == "B"
@@ -251,7 +247,7 @@ def test_rebound_occurrence_keeps_exact_and_newer_audit_proofs_after_retirement(
     config.sources[1].enabled = False
     config.sources[2].enabled = False
     merge_candidates(progress, {}, config, {}, now=NOW + timedelta(hours=3))
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     identity = article_hash(original.title, original.link)
     assert article_hash(keeper.title, keeper.link) not in restored.candidates

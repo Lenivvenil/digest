@@ -12,8 +12,8 @@ import pytest
 
 from digest import llm
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.models.review import groq_review_response_format
 from digest.config import LLMConfig, ProviderConfig
-from digest.review import _groq_review_format
 
 MESSAGES = [
     {"role": "system", "content": "Return evidence review JSON."},
@@ -51,7 +51,7 @@ async def test_review_controls_reach_actual_http_request_without_changing_cap_or
     execution = ModelExecution()
     provider = ProviderConfig("groq", "openai/gpt-oss-120b", ["review_evidence"])
     config = _config(provider)
-    response_format = _groq_review_format()
+    response_format = groq_review_response_format()
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

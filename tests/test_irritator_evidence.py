@@ -13,7 +13,9 @@ import httpx
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review_request import build_evidence_bundle
 from digest.config import Config, ProviderConfig
+from digest.domain.editorial.reviews import EvidenceBundle
 from digest.irritator.evidence_stage import (
     MAX_OUTPUT_TOKENS,
     MAX_RANKING_CANDIDATES,
@@ -28,7 +30,6 @@ from digest.irritator.evidence_stage import (
 )
 from digest.irritator.ranker import RANK_RELATION_CONTRACT
 from digest.llm import LLMRole
-from digest.review import EvidenceBundle, build_evidence_bundle
 from digest.review_checkpoint import FullSourceEvidence
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article, make_signal
@@ -1107,7 +1108,7 @@ async def test_oversized_complete_context_stops_before_optional_queries(tmp_path
     execution = ModelExecution()
     import hashlib
 
-    from digest.review import MAX_EVIDENCE_JSON_CHARS
+    from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS
     from digest.review_checkpoint import _identity_hash
 
     config = fixture_config()

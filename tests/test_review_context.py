@@ -12,16 +12,12 @@ from unittest.mock import patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_evidence_review, run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import Config, SourceConfig
 from digest.domain.editorial.attempts import restore_review
+from digest.presentation.review import primary_cards
 from digest.radar.collector import Article
-from digest.review import (
-    build_evidence_bundle,
-    build_review_messages,
-    primary_cards,
-    run_evidence_review,
-    run_primary_review,
-)
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_resume import _reusable_slots
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response

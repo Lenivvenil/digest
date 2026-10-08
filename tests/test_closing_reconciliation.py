@@ -13,22 +13,20 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.models.review import groq_review_response_format
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
 from digest.application.preparation import CandidateWork, _preparation_closing, _review_candidates
-from digest.candidate_review import (
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    plan_packet,
-)
+from digest.application.review import run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import Config, ReviewModelConfig, load_config
 from digest.delivery.edition import READY_FILE
 from digest.domain.editorial.attempts import restore_review
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.feedback import FeedbackStore
 from digest.main import _run, main
 from digest.preparation import load_preparation
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates, article_hash
-from digest.review import _groq_review_format, build_evidence_bundle, build_review_messages, run_primary_review
 from digest.translation import translate_publication_with_closing
 from tests.test_closing import NOW, population, response
 from tests.test_config import MINIMAL_CONFIG, _write_config
@@ -64,7 +62,7 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     assert request.kwargs["reasoning_effort"] == "low"
     assert request.kwargs["max_output_tokens"] == 4096
     fmt = request.kwargs["response_format"]
-    assert fmt == _groq_review_format(allow_closing=enabled)
+    assert fmt == groq_review_response_format(allow_closing=enabled)
     schema = copy.deepcopy(fmt["json_schema"]["schema"])
     if enabled:
         assert schema["properties"].pop("closing") == {
@@ -78,9 +76,9 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
         bundle = build_evidence_bundle(articles, config.review)
         assert request.args[1] == build_review_messages(bundle, config.review, "en", sources=config.sources)
         assert "closing" not in json.dumps(request.args[1])
-        assert fmt == _groq_review_format()
-    assert schema == _groq_review_format()["json_schema"]["schema"]
-    assert "closing" not in _groq_review_format()["json_schema"]["schema"]["properties"]
+        assert fmt == groq_review_response_format()
+    assert schema == groq_review_response_format()["json_schema"]["schema"]
+    assert "closing" not in groq_review_response_format()["json_schema"]["schema"]["properties"]
 
 
 @pytest.mark.asyncio

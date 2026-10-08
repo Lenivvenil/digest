@@ -11,11 +11,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_evidence_review, run_primary_review
 from digest.cli.reporting import publish_review_checkpoint as _publish_review_checkpoint
 from digest.config import ProviderConfig, ReadingBriefConfig
 from digest.delivery import ArticleDeliveryResult
 from digest.main import RunStats, main
-from digest.review import primary_cards, render_review, run_evidence_review, run_primary_review
+from digest.presentation.review import primary_cards, render_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 
 

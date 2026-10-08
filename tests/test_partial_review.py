@@ -13,20 +13,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import _review_slot, run_evidence_review, run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.domain.editorial.attempts import restore_review
+from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, canonical_evidence_quote
+from digest.presentation.review import primary_cards
 from digest.radar.collector import Article
-from digest.review import (
-    BlindReviewReport,
-    EvidenceBundle,
-    _parse_review,
-    _review_slot,
-    build_evidence_bundle,
-    build_review_messages,
-    canonical_evidence_quote,
-    primary_cards,
-    run_evidence_review,
-    run_primary_review,
-)
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_resume import _reusable_slots
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
@@ -122,8 +114,6 @@ async def test_unknown_duplicates_and_invalid_items_are_rejected_individually() 
     ]
     assert [item.index for item in review.rejected_items] == [1, 2, 3]
     assert [item.evidence_id for item in review.rejected_items] == [valid["evidence_id"], None, None]
-    with pytest.raises(ValueError, match="duplicated"):
-        _parse_review(json.dumps({"selections": [valid, valid], "limitations": []}), bundle)
 
 
 @pytest.mark.asyncio

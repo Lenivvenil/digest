@@ -12,10 +12,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_blind_review
+from digest.application.review_request import build_evidence_bundle
 from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
 from digest.domain.editorial.attempts import restore_review
-from digest.review import _parse_review, build_evidence_bundle, primary_cards, run_blind_review
+from digest.domain.editorial.reviews import _parse_review
+from digest.presentation.review import primary_cards
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
 
 
@@ -122,7 +125,7 @@ def test_invalid_entry_rejects_whole_review(kind: str) -> None:
         item["url"] = "https://invented.example"
     else:
         data["selections"] *= 6
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="duplicated" if kind == "duplicate" else None):
         _parse_review(json.dumps(data), bundle)
 
 
@@ -249,7 +252,7 @@ async def test_empty_selection_review_diagnostics_survive_pipeline(
 def test_oversized_or_non_web_evidence_is_omitted_once_for_every_model() -> None:
     from dataclasses import replace
 
-    from digest.review import MAX_EVIDENCE_JSON_CHARS
+    from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS
 
     articles = fixture_articles()
     source = articles["AI"][0]
@@ -329,7 +332,7 @@ async def test_invalid_review_preserves_reason_and_rejected_model_text() -> None
 
 
 def test_rejected_response_diagnostics_are_bounded_and_redacted() -> None:
-    from digest.review import _rejected_output_diagnostics
+    from digest.domain.editorial.reviews import _rejected_output_diagnostics
 
     text = "\x00sk-abcdefghijklmnopqrstuv Bearer abcdefghijklmnopqrstuv " + "x" * 33000
     reason, rejected, truncated = _rejected_output_diagnostics(text, ValueError("unexpected provider body"))
@@ -341,7 +344,7 @@ def test_rejected_response_diagnostics_are_bounded_and_redacted() -> None:
 
 def test_review_status_pending_is_not_unavailable_in_russian():
     from digest.application.legacy import _review_status_line
-    from digest.review import BlindReviewReport, ModelReview
+    from digest.domain.editorial.reviews import BlindReviewReport, ModelReview
 
     bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
     review = ModelReview("secondary", "groq", "openai/gpt-oss-120b", bundle.bundle_id, "hash", "unavailable",

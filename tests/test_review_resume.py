@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.review import run_blind_review
+from digest.application.review import run_blind_review
 from digest.review_resume import execute_resume, prepare_resume
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 

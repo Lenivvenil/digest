@@ -15,31 +15,23 @@ import pytest
 import respx
 
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.storage.candidate_progress import load_candidate_progress
 from digest.application.analysis import analyze_articles as _analyze_articles
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
 from digest.application.preparation import CandidateWork, _review_candidates
-from digest.candidate_review import (
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    pending_completed_report,
-    plan_packet,
-)
+from digest.application.review import run_evidence_review
+from digest.application.review_request import build_evidence_bundle
 from digest.config import Config, SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE
 from digest.domain.editorial.attempts import restore_review
+from digest.domain.editorial.candidate_policy import pending_completed_report
+from digest.domain.editorial.candidates import CandidateProgress
+from digest.domain.editorial.reviews import _parse_live_review, _parse_review, validated_cached_selections
 from digest.edition_runtime import delivery_phase
 from digest.feedback import FeedbackStore, save_feedback
 from digest.main import _run
+from digest.presentation.review import primary_cards
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates, article_hash
-from digest.review import (
-    _parse_live_review,
-    _parse_review,
-    _validated_cached_selections,
-    build_evidence_bundle,
-    primary_cards,
-    run_evidence_review,
-)
 from digest.review_checkpoint import load_review_checkpoint
 from digest.review_resume import _reusable_slots
 from scripts.review_fixture import fixture_config
@@ -225,7 +217,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
         assert cached[0].rejected_items[0].index == 7
         cached[0].rejected_items[0] = replace(cached[0].rejected_items[0], index=8)
         with pytest.raises(ValueError, match="partial-review provenance"):
-            _validated_cached_selections(cached[0], bundle)
+            validated_cached_selections(cached[0], bundle)
 
 
 @pytest.mark.asyncio

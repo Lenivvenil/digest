@@ -11,29 +11,22 @@ from typing import Literal
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_review import (
-    CandidatePacket,
-    CandidateProgress,
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_lifecycle import checkpoint_candidates
+from digest.application.candidate_review import (
     begin_packet,
-    load_candidate_progress,
     mark_prepared,
     merge_candidates,
-    packet_articles,
-    pending_completed_report,
     plan_packet,
     reconcile_packet,
-    save_candidate_progress,
 )
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import Config, SourceConfig
 from digest.domain.editorial.attempts import restore_review
+from digest.domain.editorial.candidate_policy import packet_articles, pending_completed_report
+from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
+from digest.domain.editorial.reviews import BlindReviewReport, EvidenceSelection, ModelReview
 from digest.radar.collector import Article
-from digest.review import (
-    BlindReviewReport,
-    EvidenceSelection,
-    ModelReview,
-    build_evidence_bundle,
-    build_review_messages,
-)
 from scripts.review_fixture import fixture_config
 
 NOW = datetime(2026, 10, 4, 12, tzinfo=UTC)
@@ -113,7 +106,7 @@ def test_saved_absent_items_keep_dates_and_current_boundaries(tmp_path: Path) ->
     config, articles = population(4)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     original = {identity: item.article.published for identity, item in progress.candidates.items()}
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     merge_candidates(restored, {}, config, {}, now=NOW + timedelta(hours=25))
     assert all(not candidate.eligible for candidate in restored.candidates.values())
@@ -188,7 +181,7 @@ def test_older_source_head_precedes_fresh_higher_priority_after_resume(tmp_path:
     config.sources.append(SourceConfig("B", "https://b.example/feed", "z-science", True, priority=1))
     older = Article("Older science", "https://b.example/1", "Evidence", "B", "z-science", NOW)
     progress = merge_candidates(CandidateProgress(), {"z-science": [older]}, config, {}, now=NOW)
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     later = NOW + timedelta(hours=1)
     merge_candidates(restored, {**articles, "z-science": [older]}, config, {}, {"A": 5}, later)
@@ -240,7 +233,7 @@ def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: P
 
 
 def test_partial_keeps_rejected_identity_technical_and_fallback_matches_delivery(tmp_path: Path) -> None:
-    from digest.review import RejectedSelection
+    from digest.domain.editorial.reviews import RejectedSelection
 
     config, articles = population(3)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -285,9 +278,9 @@ def test_full_collection_audit_and_original_timestamps_survive(tmp_path: Path) -
                              source_names=("A", "B")),
     ])
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW, inventory=inventory)
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     audit = json.loads(load_candidate_progress(tmp_path).latest_collection_json)
-    from digest.candidate_storage import read_article
+    from digest.adapters.storage.candidate_objects import read_article
 
     source = read_article(audit["observations"][0]["article_reference"]["occurrence_sha256"], tmp_path)
     assert source.published == NOW.isoformat()
@@ -298,16 +291,16 @@ def test_full_collection_audit_and_original_timestamps_survive(tmp_path: Path) -
 def test_capacity_failure_preserves_previous_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
-    path = save_candidate_progress(progress, tmp_path)
+    path = checkpoint_candidates(progress, tmp_path)
     original = path.read_bytes()
     monkeypatch.setattr("digest.adapters.storage.candidate_progress.MAX_BYTES", 5)
     with pytest.raises(ValueError, match="no manifest was truncated"):
-        save_candidate_progress(progress, tmp_path)
+        checkpoint_candidates(progress, tmp_path)
     assert path.read_bytes() == original
 
 
 def test_private_archive_exact_match_summary_and_legacy_compatibility(tmp_path: Path) -> None:
-    from digest.candidate_review import archive_candidate_accounting
+    from digest.adapters.storage.candidate_progress import archive_candidate_accounting
 
     config, articles = population(21)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -369,14 +362,14 @@ def test_disabled_original_source_preserves_packet_and_uses_eligible_duplicate(t
     assert first.evidence.items[0].source == "A"
     begin_packet(progress, second, tmp_path)
     restored = load_candidate_progress(tmp_path)
-    from digest.candidate_storage import packet_key, read_packet
+    from digest.adapters.storage.candidate_objects import packet_key, read_packet
 
     assert read_packet(packet_key(first), tmp_path).articles[0].source == "A"
     assert len(restored.packets) == 1 and restored.packets[0].articles[0].source == "B"
 
 
 def test_legacy_report_ignores_corrupt_unrelated_mutable_progress(tmp_path: Path) -> None:
-    from digest.candidate_review import CANDIDATE_FILE, archive_candidate_accounting
+    from digest.adapters.storage.candidate_progress import CANDIDATE_FILE, archive_candidate_accounting
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -388,7 +381,7 @@ def test_legacy_report_ignores_corrupt_unrelated_mutable_progress(tmp_path: Path
 
 
 def test_frozen_report_accounting_is_independent_of_mutable_work(tmp_path: Path) -> None:
-    from digest.candidate_review import CANDIDATE_FILE, archive_candidate_accounting
+    from digest.adapters.storage.candidate_progress import CANDIDATE_FILE, archive_candidate_accounting
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -468,7 +461,7 @@ def test_empty_partial_is_not_reused_as_accepted_work(tmp_path: Path) -> None:
 
 
 def test_parser_population_fits_candidate_bound_without_duplicate_metadata(tmp_path: Path) -> None:
-    from digest.candidate_review import MAX_BYTES, progress_size
+    from digest.adapters.storage.candidate_progress import MAX_BYTES, progress_size
     from digest.radar.collector import CandidateObservation, CollectionInventory, SourceCollectionOutcome, article_hash
 
     config = fixture_config()
@@ -487,7 +480,7 @@ def test_parser_population_fits_candidate_bound_without_duplicate_metadata(tmp_p
                                 inventory=inventory)
     assert len(progress.candidates) == source_count * 200
     assert all(not candidate.occurrences for candidate in progress.candidates.values())
-    path = save_candidate_progress(progress, tmp_path)
+    path = checkpoint_candidates(progress, tmp_path)
     assert path.stat().st_size == progress_size(progress) < MAX_BYTES
     restored = load_candidate_progress(tmp_path)
     audit = json.loads(restored.latest_collection_json)
@@ -525,7 +518,7 @@ def test_observed_cache_fact_outlives_pruning_without_inventing_delivery_on_hand
                      delivery_history={identity: NOW.isoformat()})
     assert candidate.eligible  # Ordinary cache eligibility has already expired.
     assert candidate.delivery_cache_observed_at == NOW.isoformat()
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     merge_candidates(restored, {}, config, {}, now=NOW + timedelta(days=9), delivery_history={})
     assert restored.candidates[identity].eligible
@@ -538,7 +531,8 @@ def test_report_persistence_boundaries_recover_without_false_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_boundary: str,
 ) -> None:
     import digest.adapters.storage.candidate_progress as progress_storage
-    import digest.candidate_review as candidate_review
+    from digest.adapters.storage.candidate_progress import archive_candidate_accounting
+    from digest.application.candidate_lifecycle import ensure_report_accounting
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -549,7 +543,7 @@ def test_report_persistence_boundaries_recover_without_false_completion(
     original_write = progress_storage.atomic_json_write
 
     def fail_one_write(path: Path, data: object) -> None:
-        is_progress = path.name == candidate_review.CANDIDATE_FILE
+        is_progress = path.name == progress_storage.CANDIDATE_FILE
         if ((failed_boundary == "progress" and is_progress)
                 or (failed_boundary == "frozen" and path.parent.name == "candidate_reports")):
             raise OSError("synthetic interrupted persistence")
@@ -569,14 +563,14 @@ def test_report_persistence_boundaries_recover_without_false_completion(
         assert pending_completed_report(restored) == report
         monkeypatch.setattr(progress_storage, "atomic_json_write", original_write)
         monkeypatch.setattr("digest.adapters.storage.candidate_objects.atomic_json_write", original_write)
-        frozen = candidate_review.ensure_report_accounting(restored, report, tmp_path)
+        frozen = ensure_report_accounting(restored, report, tmp_path)
         assert frozen.exists()
-        assert candidate_review.ensure_report_accounting(restored, report, tmp_path) == frozen
-        assert candidate_review.archive_candidate_accounting(report, tmp_path / "review.json", tmp_path) is not None
+        assert ensure_report_accounting(restored, report, tmp_path) == frozen
+        assert archive_candidate_accounting(report, tmp_path / "review.json", tmp_path) is not None
 
 
 def test_frozen_accounting_rejects_outer_schema_even_with_valid_hash(tmp_path: Path) -> None:
-    from digest.candidate_review import archive_candidate_accounting
+    from digest.adapters.storage.candidate_progress import archive_candidate_accounting
     from digest.preparation import _canonical
 
     config, articles = population(1)
@@ -615,11 +609,11 @@ def compactable_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, str]
 def test_indexed_exclusion_rehydrates_exact_sources_after_policy_change(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from digest.candidate_storage import load_candidate
+    from digest.adapters.storage.candidate_objects import load_candidate
 
     progress, config, identity = compactable_fixture(tmp_path)
     original = replace(progress.candidates[identity])
-    path = save_candidate_progress(progress, tmp_path)
+    path = checkpoint_candidates(progress, tmp_path)
     assert identity not in json.loads(path.read_text())["candidate_accounting"]["candidates"]
     assert identity not in load_candidate_progress(tmp_path).candidates
     assert load_candidate(identity, tmp_path) == original
@@ -636,7 +630,7 @@ def test_indexed_exclusion_rehydrates_exact_sources_after_policy_change(tmp_path
 def test_excluded_selected_unknown_and_technical_work_retains_original_status_and_proof(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from digest.candidate_storage import load_candidate, load_candidate_packets
+    from digest.adapters.storage.candidate_objects import load_candidate, load_candidate_packets
 
     config, articles = population(4)
     config.review.max_evidence_articles = 3
@@ -668,7 +662,7 @@ def test_active_schema_requires_exact_integer(tmp_path: Path) -> None:
 
     config, articles = population(1)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
-    path = save_candidate_progress(progress, tmp_path)
+    path = checkpoint_candidates(progress, tmp_path)
     record = json.loads(path.read_text())
     record["candidate_accounting"]["schema_version"] = 1.0
     record["sha256"] = hashlib.sha256(_canonical(record["candidate_accounting"])).hexdigest()
@@ -681,10 +675,9 @@ def test_interrupted_retirement_keeps_previous_active_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import digest.adapters.storage.candidate_progress as progress_storage
-    import digest.candidate_review as candidate_review
 
     progress, _, _ = compactable_fixture(tmp_path)
-    path = tmp_path / candidate_review.CANDIDATE_FILE
+    path = tmp_path / progress_storage.CANDIDATE_FILE
     original = path.read_bytes()
     archives = {archive.name: archive.read_bytes() for archive in (tmp_path / "candidate_reports").glob("*.json")}
 
@@ -693,7 +686,7 @@ def test_interrupted_retirement_keeps_previous_active_checkpoint(
 
     monkeypatch.setattr(progress_storage, "atomic_json_write", interrupted_write)
     with pytest.raises(OSError, match="interrupted compaction"):
-        save_candidate_progress(progress, tmp_path)
+        checkpoint_candidates(progress, tmp_path)
     assert path.read_bytes() == original
     retained = {archive.name: archive.read_bytes() for archive in (tmp_path / "candidate_reports").glob("*.json")}
     assert retained == archives
@@ -701,7 +694,7 @@ def test_interrupted_retirement_keeps_previous_active_checkpoint(
 
 
 def resolved_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, BlindReviewReport]:
-    from digest.candidate_dispositions import capture_review_dispositions
+    from digest.domain.editorial.dispositions import capture_review_dispositions
 
     config, articles = population(3)
     for article in articles["tech"]:
@@ -726,8 +719,8 @@ def resolved_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, BlindRe
 def test_consumed_resolved_packet_retires_active_work_and_preserves_indexed_decisions(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from digest.candidate_review import progress_size
-    from digest.candidate_storage import load_candidate, load_candidate_packets
+    from digest.adapters.storage.candidate_objects import load_candidate, load_candidate_packets
+    from digest.adapters.storage.candidate_progress import progress_size
 
     progress, config, report = resolved_fixture(tmp_path)
     expected = {identity: replace(candidate) for identity, candidate in progress.candidates.items()}
@@ -748,7 +741,7 @@ def test_consumed_resolved_packet_retires_active_work_and_preserves_indexed_deci
 
 
 def test_changed_excerpt_reopens_indexed_identity_and_preserves_original_decision(tmp_path: Path) -> None:
-    from digest.candidate_storage import load_candidate, load_candidate_packets
+    from digest.adapters.storage.candidate_objects import load_candidate, load_candidate_packets
 
     progress, config, report = resolved_fixture(tmp_path)
     candidate = next(iter(progress.candidates.values()))
@@ -772,14 +765,14 @@ def test_changed_excerpt_reopens_indexed_identity_and_preserves_original_decisio
     assert saved is not None and saved.disposition == decision
     proof = load_candidate_packets(identity, tmp_path)[0]
     assert original in proof.articles and decision in proof.disposition_attempts[0].dispositions
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     assert load_candidate_progress(tmp_path).candidates[identity].article.description == changed.description
 
 
 def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(tmp_path: Path) -> None:
     from dataclasses import asdict
 
-    from digest.candidate_dispositions import capture_review_dispositions
+    from digest.domain.editorial.dispositions import capture_review_dispositions
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -802,7 +795,7 @@ def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(t
     assert retained.evidence_id in wire["candidates"]
     assert "packet_ref" in wire["packets"][0]
     restored = load_candidate_progress(tmp_path)
-    from digest.candidate_storage import load_candidate, load_candidate_packets
+    from digest.adapters.storage.candidate_objects import load_candidate, load_candidate_packets
 
     assert load_candidate(duplicate.evidence_id, tmp_path).status == "duplicate"
     assert load_candidate_packets(duplicate.evidence_id, tmp_path)[0].report == report
@@ -812,7 +805,7 @@ def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(t
 
 @pytest.mark.parametrize("selected", [True, False])
 def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, selected: bool) -> None:
-    from digest.candidate_dispositions import capture_review_dispositions
+    from digest.domain.editorial.dispositions import capture_review_dispositions
 
     config, articles = population(1)
     config.sources.append(SourceConfig("B", "https://b.example/feed", "tech", True))
@@ -838,7 +831,7 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
     assert progress.candidates[identity].article.source == "B"
     assert progress.candidates[identity].disposition is None
     assert progress.candidates[identity].decision_occurrence_sha256 is None
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     assert restored.packets[0].disposition_attempts == original_capture
     assert restored.packets[0].articles[0].source == "A"
@@ -846,7 +839,7 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
 
 @pytest.mark.parametrize("kind", ["deferred", "missing", "complete", "legacy"])
 def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferral(tmp_path: Path, kind: str) -> None:
-    from digest.candidate_dispositions import capture_review_dispositions
+    from digest.domain.editorial.dispositions import capture_review_dispositions
     from digest.edition_runtime import IncompleteSelection, accept_preparation
     from digest.preparation import AcceptedPreparation, PreparationSnapshot, load_preparation
 
@@ -914,8 +907,9 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
-    from digest.candidate_review import RESPONSE_STORAGE_RESERVE, progress_size
-    from digest.review import run_primary_review
+    from digest.adapters.storage.candidate_progress import progress_size
+    from digest.application.candidate_review import RESPONSE_STORAGE_RESERVE
+    from digest.application.review import run_primary_review
 
     config = fixture_config()
     config.sources = [SourceConfig("A", "https://x/rss", "c", True)]
@@ -950,7 +944,7 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
 
 
 def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_path: Path) -> None:
-    from digest.candidate_dispositions import capture_review_dispositions
+    from digest.domain.editorial.dispositions import capture_review_dispositions
 
     config, articles = population(1)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -972,7 +966,7 @@ def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_pa
                                         for attempt in packet.disposition_attempts)
     candidate = next(iter(progress.candidates.values()))
     candidate.decision_prompt_hash = old_hash
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     restored = load_candidate_progress(tmp_path)
     merge_candidates(restored, {}, config, {}, now=NOW + timedelta(hours=1))
     candidate = next(iter(restored.candidates.values()))

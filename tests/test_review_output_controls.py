@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.models.review import groq_review_response_format
+from digest.application.review import _review_usage, run_primary_review
 from digest.config import ReviewModelConfig
-from digest.review import _groq_review_format, _review_usage, run_primary_review
 from digest.review_checkpoint import load_review_checkpoint
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.test_candidate_dispositions import payload
@@ -34,7 +35,7 @@ def test_numeric_usage_is_allowlisted_and_zero_is_distinct_from_absence() -> Non
 
 
 def test_strict_wire_shape_disallows_per_selection_limitations_and_preserves_dispositions() -> None:
-    fmt = _groq_review_format()
+    fmt = groq_review_response_format()
     assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
     schema = fmt["json_schema"]["schema"]
     assert set(schema["required"]) == {"selections", "limitations", "dispositions"}
@@ -69,7 +70,7 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
     first, second = call.call_args_list
     assert "reasoning_effort" not in first.kwargs and "response_format" not in first.kwargs
     assert second.kwargs["reasoning_effort"] == "low"
-    assert second.kwargs["response_format"] == _groq_review_format()
+    assert second.kwargs["response_format"] == groq_review_response_format()
     assert second.kwargs["max_output_tokens"] == 4096
     assert first.args[1] == second.args[1]  # Same evidence/prompt for primary and fallback.
     assert "limitations belongs only at the top level" in first.args[1][0]["content"]

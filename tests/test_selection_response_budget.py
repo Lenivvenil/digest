@@ -11,26 +11,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import validate_disposition_attempt
-from digest.candidate_review import (
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    packet_articles,
-    pending_completed_report,
-    plan_packet,
-    reconcile_packet,
-)
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet, reconcile_packet
+from digest.application.review import run_primary_review
+from digest.application.review_request import build_evidence_bundle
 from digest.config import _load_review
-from digest.review import (
-    EvidenceBundle,
-    _parse_live_review,
-    _validated_cached_selections,
-    build_evidence_bundle,
-    primary_cards,
-    run_primary_review,
-)
+from digest.domain.editorial.candidate_policy import packet_articles, pending_completed_report
+from digest.domain.editorial.candidates import CandidateProgress
+from digest.domain.editorial.dispositions import validate_disposition_attempt
+from digest.domain.editorial.reviews import EvidenceBundle, _parse_live_review, validated_cached_selections
+from digest.presentation.review import primary_cards
 from digest.review_checkpoint import load_review_checkpoint
 from tests.test_candidate_review import NOW, population
 
@@ -200,11 +190,11 @@ async def test_saved_eight_selection_review_remains_strictly_valid_at_new_defaul
     original = path.read_bytes()
     config.review.max_detailed_selections = 5
     restored_bundle, cached = load_review_checkpoint(path, config)
-    selections, limitations = _validated_cached_selections(cached[0], restored_bundle)
+    selections, limitations = validated_cached_selections(cached[0], restored_bundle)
     assert selections == report.reviews[0].selections and limitations == report.reviews[0].limitations
     assert len(selections) == 8 and path.read_bytes() == original
     with pytest.raises(ValueError, match="invalid selection count"):
         _parse_live_review(raw, restored_bundle, max_detailed_selections=config.review.max_detailed_selections)
     cached[0].selections[-1] = replace(cached[0].selections[-1], quote="Not in this synthetic evidence")
     with pytest.raises(ValueError, match="quote is not in supplied evidence"):
-        _validated_cached_selections(cached[0], restored_bundle)
+        validated_cached_selections(cached[0], restored_bundle)

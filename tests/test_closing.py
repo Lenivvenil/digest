@@ -12,15 +12,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
 from digest.application.preparation import CandidateWork, _preparation_closing, _review_candidates
-from digest.candidate_review import (
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    pending_completed_report,
-    plan_packet,
-)
+from digest.application.review import run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.closing import (
     ClosingDecision,
     attribute_closing_card,
@@ -31,9 +27,11 @@ from digest.closing import (
 )
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig, load_config
 from digest.domain.editorial.attempts import restore_review
+from digest.domain.editorial.candidate_policy import pending_completed_report
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
+from digest.presentation.review import primary_cards
 from digest.radar.collector import Article
-from digest.review import build_evidence_bundle, build_review_messages, primary_cards, run_primary_review
 from scripts.review_fixture import fixture_config
 from tests.test_config import MINIMAL_CONFIG, _write_config
 
