@@ -4,6 +4,9 @@ A personal news-reading engine for a technology architect: collect RSS/Atom sour
 select developments worth reading, and explain why the original source may matter.
 Read a compact edition in Telegram and keep a Markdown archive for Obsidian.
 
+The current reading focus is banking, fintech and architecture, with useful
+discoveries from other fields.
+
 This is the **engine repository**. A separate runtime owns its source portfolio,
 configuration, credentials, schedule and saved state. It can run on GitHub Actions
 without a VPS or continuously running service. Installing the engine does not create
