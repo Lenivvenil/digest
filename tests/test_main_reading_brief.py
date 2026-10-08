@@ -158,7 +158,7 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
                                            "quote": item["title"], "confidence": "high"}],
                            "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
 
-    with (patch("digest.candidate_review._instant", return_value=NOW),
+    with (patch("digest.application.candidate_review._instant", return_value=NOW),
           patch("digest.config.load_config", return_value=config),
           patch("digest.radar.collect", side_effect=collect),
           patch("digest.application.review.complete", side_effect=select) as selection,

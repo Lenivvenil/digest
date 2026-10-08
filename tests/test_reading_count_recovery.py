@@ -53,7 +53,7 @@ async def test_count_held_packet_releases_planning_only_without_a_configured_fal
         _capture_candidates(inventory, config.enabled_sources, [articles["tech"]], {}, NOW, [], {})
         new_identity = article_hash(articles["tech"][2].title, articles["tech"][2].link)
         for _ in range(2):
-            with patch("digest.candidate_review._instant", return_value=NOW):
+            with patch("digest.application.candidate_review._instant", return_value=NOW):
                 next_packet, next_report, _ = _candidate_inputs(
                     progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
             assert next_packet is not None
@@ -170,7 +170,7 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
         new_identity = article_hash(articles["tech"][2].title, articles["tech"][2].link)
         for _ in range(2):
             assert deferred_source_reports(progress, tmp_path, config)
-            with patch("digest.candidate_review._instant", return_value=NOW):
+            with patch("digest.application.candidate_review._instant", return_value=NOW):
                 next_packet, next_report, _ = _candidate_inputs(
                     progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
             assert next_packet is not None and next_report is None
@@ -182,7 +182,7 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
         local_count.side_effect = None
         local_count.return_value = 1000
         assert not deferred_source_reports(progress, tmp_path, config)
-        with patch("digest.candidate_review._instant", return_value=NOW):
+        with patch("digest.application.candidate_review._instant", return_value=NOW):
             recovered_packet, recovered_report, _ = _candidate_inputs(
                 progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
         assert recovered_packet == packet and recovered_report == report

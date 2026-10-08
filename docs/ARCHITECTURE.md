@@ -100,7 +100,7 @@ and [review runbook](BLIND_REVIEW.md) for commands and runtime persistence steps
 
 | Entity / transition | Invariant and implementation boundary |
 | --- | --- |
-| Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
+| Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/application/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
 | Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
 | `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`application/review.py`](../digest/application/review.py) owns primary/fallback and independent execution, with shared request construction in [`application/review_request.py`](../digest/application/review_request.py). |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
@@ -143,7 +143,7 @@ imports usable; their locations do not identify the current owner.
 | `main.py` | Public Python compatibility wrappers and CLI command dispatch |
 | `cli/` (#147-A) | Argument parsing, explicit diagnostics, preview/result reporting and managed-runtime outputs |
 | `application/` | Prepared/direct/discovery scenarios, execution validation/cleanup, shared analysis/presentation, confirmed-outcome application, run-state operations and typed results/previews |
-| `domain/catalog/`, `domain/editorial/` (#144, #146, #147) | Source declarations, quality/trial rules, proposals and exploration; article identity and source occurrences; evidence, review, disposition and candidate contracts. Application scheduling and model execution remain separate |
+| `domain/catalog/`, `domain/editorial/` (#144, #146, #147) | Source declarations, quality/trial rules, proposals and exploration; article identity and source occurrences; evidence, review, disposition and candidate contracts and scheduling rules. Application coordination and model execution remain separate |
 | `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
 | `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |
 | `application/delivery.py` (#145) | Explicit prepared/direct policies, confirmed attribution/deduplication/accounting coordination and ordered persistence |
@@ -162,8 +162,11 @@ imports usable; their locations do not identify the current owner.
 | `application/review_request.py`, `application/review.py` (#165) | Shared exact configured request construction; primary/fallback and independent review execution, respectively |
 | `presentation/review.py`, `adapters/models/review.py` (#165) | Review notices, publication cards and Markdown; concrete Groq structured-output wire shape, respectively |
 | `review.py`, `candidate_dispositions.py` | Compatible exports for the RSS review owners |
-| `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
-| `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
+| `domain/editorial/candidate_policy.py` (#165) | Pure occurrence/eligibility, freshness/source-turn/retry admission, report reconciliation and recovery rules with explicit sources, limits and time |
+| `application/candidate_review.py` (#165) | Configured packet/prompt assembly, history restoration and source writes; ordered begin/reconcile/handoff through `candidate_lifecycle` |
+| `candidate_review.py` | Compatible candidate values and operations; legacy save dispatch retains its retirement semantics |
+| `adapters/storage/review_checkpoints.py` (#165) | Bounded RSS checkpoint decoding and configured evidence validation |
+| `review_checkpoint.py`, `review_resume.py` | Compatible RSS codec exports and transitional optional full-source extension; bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
 | `domain/investigation/` | Signal/query values, ordered URL/blocklist rules and evidence-coverage vocabulary; no HTTP or orchestration |
@@ -191,10 +194,11 @@ imports usable; their locations do not identify the current owner.
   registration and its existing package/decorator relationship.
 - `presentation/telegram.py` retains type-only references to investigation result
   and status types. Their current location is transitional contract ownership.
-- `candidate_review.py` still combines scheduling with occurrence/reconciliation
-  policy. `SelectedPreparation` and `LegacyOutcomePolicy` remain transitional
-  handoffs. RSS checkpoint codecs remain in `review_checkpoint.py`; translation,
-  closing sidecars and experimental source reconciliation retain mixed responsibilities.
+- Candidate application collection accounting retains `CollectionInventory` and
+  its eager radar package dependency. `SelectedPreparation` and `LegacyOutcomePolicy`
+  remain transitional handoffs. `review_checkpoint.py` retains optional full-source
+  values, assembly, validation and extension loading; translation, closing sidecars
+  and experimental source reconciliation retain mixed responsibilities.
 - `llm.py` remains the concrete provider/request owner, `model_budget.py` owns its
   distinct durable reservation journal, and `discovery_feed.py` keeps cohesive
   URL/DNS/feed validation. Flat placement alone is not an architectural defect.
@@ -678,10 +682,10 @@ file writes are not an atomic transaction or a remote-persistence guarantee.
 
 `candidate_storage.py` remains a compatibility facade, and the old candidate save
 API still dispatches to the same retirement or persistence behavior. Existing
-collector/review/disposition imports retain the moved value identities. Scheduling,
-eligibility reconciliation and prompt orchestration still involve
-`candidate_review.py`, `review.py` and collector/configuration code. This slice does
-not claim a pure scheduler, a completed catalog domain or full legacy isolation.
+collector/review/disposition imports retain the moved value identities. The #144
+slice left scheduling, eligibility reconciliation and prompt orchestration mixed;
+the later local #165 slice below separates those owners. Collection accounting,
+optional source work and legacy isolation retain their explicitly staged boundaries.
 
 ### Stage 3: confirmed-delivery application
 
@@ -1053,12 +1057,30 @@ owner. No reverse facade imports or forwarding execution hooks preserve old priv
 monkeypatch seams. Evidence/prompt encodings, provider routes, budgets, callback order,
 partial/fallback behavior, typography quotes and publication text are unchanged.
 
-This is partial #165 progress: candidate scheduling/reconciliation policy and RSS
-checkpoint storage still need extraction. Candidate collection types retain the
-eager radar package dependency. Translation, optional full-source work, closing
-sidecar storage and trial/resume marker persistence are outside this slice. No
-runtime state, wire format or deployment changes; local verification is separate
-from release and editorial acceptance. Rollback retains existing evidence/state.
+`domain/editorial/candidate_policy.py` owns deterministic occurrence registration,
+current eligibility, freshness/source-turn/retry admission and report reconciliation
+from explicit source values, limits and instants. It imports no configuration,
+application, model or storage owner. `application/candidate_review.py` retains
+configured request assembly and the original clock samples, restores relevant
+retained history, persists each observed source before registration, and coordinates
+the existing lifecycle operations. Beginning a packet still indexes prior decisions
+before clearing them, checkpoints before its capacity check, and reconciliation
+still persists without retirement before freezing report accounting. Preparation
+handoff checkpoints with the existing verified retirement order. No additional
+queue, scheduling policy or persistence transaction is introduced.
+
+`adapters/storage/review_checkpoints.py` owns only the unchanged bounded RSS decoder
+and configured evidence-validation adapter. Root `review_checkpoint.py` preserves
+those callable exports and keeps optional full-source values, assembly, validation
+and extension loading explicitly transitional. Full-source assembly is not storage
+codec work. Root candidate exports retain signatures, type/value identities and the
+legacy save operation; production callers use their actual owners.
+
+This remains local #165 progress. Candidate collection accounting retains the eager
+radar package dependency. Translation, optional full-source work, closing sidecar
+storage and trial/resume marker persistence are outside this slice. No runtime
+state, wire format or deployment changes; local verification is separate from
+release and editorial acceptance. Rollback retains existing evidence/state.
 
 ### Target responsibility map
 

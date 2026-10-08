@@ -25,9 +25,10 @@ from digest._serialization import restore_dataclass as _restore
 from digest._serialization import unique_object as _unique_object
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
+from digest.adapters.storage.candidate_progress import load_candidate_progress
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
-from digest.candidate_review import CandidateProgress, load_candidate_progress
 from digest.config import Config, load_config
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.reading_brief_state import BriefState, Source, checksum, load_source, load_state, state_root
 from digest.reading_preparation import (
     ReadingBinding,

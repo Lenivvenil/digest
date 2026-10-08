@@ -85,7 +85,7 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
     monkeypatch.setattr('digest.radar.collect', collect)
     monkeypatch.setattr('digest.application.review.complete', model)
     if precall_capacity:
-        monkeypatch.setattr('digest.candidate_review.MAX_BYTES', 200000)
+        monkeypatch.setattr('digest.application.candidate_review.MAX_BYTES', 200000)
         with pytest.raises(ValueError, match='capacity before model'):
             await _run('config.yaml', False, False, False, prepare_only=True)
         assert not calls and not Path('.cache', READY_FILE).exists()

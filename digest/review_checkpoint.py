@@ -1,4 +1,8 @@
-"""Read bounded report checkpoints without trusting cached model output or evidence."""
+"""Compatible RSS checkpoint exports and transitional optional full-source extension.
+
+Full-source values, validation, assembly and extension loading stay together here;
+the RSS-only codec is owned by adapters.storage.review_checkpoints.
+"""
 
 from __future__ import annotations
 
@@ -11,18 +15,20 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from digest.adapters.storage.review_checkpoints import load_review_checkpoint as load_review_checkpoint
+from digest.adapters.storage.review_checkpoints import validate_evidence_bundle as validate_evidence_bundle
 from digest.config import Config
+from digest.domain.catalog.articles import article_hash
 from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS as MAX_EVIDENCE_JSON_CHARS
 from digest.domain.editorial.reviews import (
     SCHEMA_VERSION,
     EvidenceBundle,
-    EvidenceItem,
-    EvidenceSelection,
-    ModelReview,
-    RejectedSelection,
-    validate_request_evidence_bundle,
 )
-from digest.radar.collector import article_hash
+from digest.domain.editorial.reviews import EvidenceItem as EvidenceItem
+from digest.domain.editorial.reviews import EvidenceSelection as EvidenceSelection
+from digest.domain.editorial.reviews import ModelReview as ModelReview
+from digest.domain.editorial.reviews import RejectedSelection as RejectedSelection
+from digest.domain.editorial.reviews import validate_request_evidence_bundle as validate_request_evidence_bundle
 
 MAX_FULL_SOURCE_BYTES = 128000
 FULL_SOURCE_KIND = "selected_full_source_passages"
@@ -200,39 +206,3 @@ def load_full_source_evidence(path: Path, rss_bundle: EvidenceBundle, config: Co
     if "full_source_evidence" not in raw:
         return None
     return _parse_full_source_evidence(raw["full_source_evidence"], rss_bundle)
-
-
-def validate_evidence_bundle(bundle: EvidenceBundle, config: Config) -> None:
-    """Compatibility adapter for callers supplying configured request limits."""
-    validate_request_evidence_bundle(bundle, max_evidence_articles=config.review.max_evidence_articles,
-                                     max_excerpt_chars=config.review.max_excerpt_chars)
-
-
-def load_review_checkpoint(path: Path, config: Config) -> tuple[EvidenceBundle, list[ModelReview]]:
-    """Accept version-one reports, including legacy reports without timestamps."""
-    if path.stat().st_size > 256000:
-        raise ValueError("Checkpoint exceeds 256000-byte budget.")
-    try:
-        raw = json.loads(path.read_text())
-        if type(raw["schema_version"]) is not int or raw["schema_version"] != SCHEMA_VERSION:
-            raise ValueError("Unsupported checkpoint schema version.")
-        evidence = dict(raw["evidence"])
-        evidence["items"] = tuple(EvidenceItem(**item) for item in evidence["items"])
-        bundle = EvidenceBundle(**evidence)
-        validate_evidence_bundle(bundle, config)
-        if not isinstance(raw["reviews"], list) or len(raw["reviews"]) > 3:
-            raise ValueError("Invalid checkpoint review count.")
-        reviews = []
-        for value in raw["reviews"]:
-            item = dict(value)
-            item["selections"] = [EvidenceSelection(**selection) for selection in item.get("selections", [])]
-            item["rejected_items"] = [RejectedSelection(**rejected) for rejected in item.get("rejected_items", [])]
-            review = ModelReview(**item)
-            if review.slot not in {"primary", "secondary", "third"}:
-                raise ValueError("Invalid checkpoint review slot.")
-            reviews.append(review)
-        if len({review.slot for review in reviews}) != len(reviews):
-            raise ValueError("Checkpoint contains duplicate review slots.")
-        return bundle, reviews
-    except (TypeError, KeyError, AttributeError) as exc:
-        raise ValueError("Invalid checkpoint schema.") from exc
