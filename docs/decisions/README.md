@@ -14,8 +14,8 @@ These historical records retain their original language and decision context. Cu
 English explanations are in the [architecture guide](../ARCHITECTURE.md) and canonical
 [domain overview](../domain/digest/overview.md).
 
-ADR0004 is proposed/implemented in [draft PR #93](https://github.com/Lenivvenil/digest/pull/93),
-which is not merged into main. Its existence in a draft is not a release approval.
+ADR0004 was proposed/implemented in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93).
+It is not part of main; the proposal's existence is not a release approval.
 
 Choose the next unused sequence number after checking open PRs. If the local claude-mini
 skill package is installed, its `next_adr_number.sh` helper can assist; that private tool
@@ -110,6 +110,9 @@ rules, storage codecs, Telegram protocol and explicit collect/persist/ack owners
 Exact proposal revalidation, persisted bytes, write order and failure behavior remain
 compatible. Its deployed continuations give source quality/trial rules and exploration
 policy explicit domain owners, codecs/Telegram transport explicit adapters, and source
-scoring/discovery explicit application owners. Local delivery and investigation
-continuations are recorded in ADR0017/ADR0019; source activation and editorial
+scoring/discovery explicit application owners. Telegram presentation/transport is deployed
+through engine PR #158/runtime PR #81.
+Prepared delivery is deployed through engine PR #159/runtime PR #82; investigation
+validation and shared contracts are prepared in draft PR #160 and are not yet deployed. These continuations are recorded in ADR0017/ADR0019; source activation and
+editorial
 acceptance remain separate from these ownership releases.

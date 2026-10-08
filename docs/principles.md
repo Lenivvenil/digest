@@ -71,6 +71,13 @@ Owner clarification, 2026-10-04: Claude review is optional.
 - [ ] Conventional Commits are used; where the local governance-hook is installed, its check has passed
 - [ ] The PR body references the implementing issue and applicable ADR. Use `Closes #NNN` only when all issue acceptance is met; partial changes reference the issue without auto-closing unfinished work.
 
+Coverage disposition, observed 2026-10-07: [pytest configuration](../pyproject.toml)
+currently enforces **70%**, while this checklist specifies **80% by default**. The
+repository does not yet record an approved project-specific disposition for that
+difference. Resolve it explicitly under [#148](https://github.com/Lenivvenil/digest/issues/148);
+a passing configured gate does not itself waive the default or complete this checklist.
+Neither threshold is changed by this documentation reconciliation.
+
 Use this checklist during PR review. No tracked `pull_request_template.md` copies it,
 and CI does not verify the whole checklist. Record the applicable review and
 verification evidence in the PR.

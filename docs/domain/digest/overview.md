@@ -10,23 +10,44 @@ and its [feedback](../../ARCHITECTURE.md#feedback-loop),
 requirements, proposals and the April model; later amendments are labelled below.
 Their presence does not make every historical statement a current contract.
 
-## Decision and evidence register — 2026-10-01
+## Current domain model
 
-This is the existing canonical Digest domain page. The 2026-10-01 register below
-preserves the earlier decision history; current status was reconciled on 2026-10-02.
-The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
-limits. The operating allocation is a reviewed proposal; the daily schedule is
-deployed. Compact rendering is implemented and enabled in the runtime with a required
-durable publication boundary; observed-output acceptance remains open. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
-single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
-is under active scope reassessment for the simple daily edition; its factual release
-gate remains unmet. The latest owner direction permits no parked/deferred tasks:
-complete each requirement or record an explicit, justified disposition. English/configurable
-translation and source-contract repairs are deployed; ordinary-run acceptance remains
-open in #94/#77. The real message-vote path is verified through persistence and computed
-priority influence; ordinary collector acceptance remains open in #48.
+Digest owns one operator's daily reading cycle: observe sources, select useful
+material, prepare a canonical edition, deliver it and use feedback to inform later
+selection. Irritator supplies external counter-evidence; Telegram and Markdown are
+delivery channels, while the separate runtime owns scheduling and durable state.
 
-### Source ownership reconciliation — local implementation, 2026-10-07
+| Concept | Contract that matters |
+| --- | --- |
+| Source and occurrence | Source configuration, lifecycle state and observations are distinct. A candidate retains the exact source occurrence used as evidence. |
+| Candidate and review decision | Bounded admission is a chance to review, not a rejection of everything outside the packet. Technical failures and unresolved work remain visible. |
+| Accepted preparation | Canonical selected cards or a genuine abstention can be recovered before new work. Acceptance does not mean publication payloads are ready. |
+| Ready edition, claim and receipt | Freeze payloads and evidence first, persist the exact ready/claim hashes, then send. Confirmed coverage and applied operational state are separate facts. |
+| Feedback and source approval | Save accepted feedback before acknowledging it. Revalidate each approval against its exact saved proposal; discovery does not activate sources on its own. |
+
+Prepared publication and legacy direct delivery have different effect and failure
+orders. Multiple state writes are not a transaction; unknown sends and confirmed but
+unapplied receipts hold publication. The [architecture contract map](../../ARCHITECTURE.md#entities-contracts-and-enforcement)
+identifies each enforcement owner, and the [runbook](../../BLIND_REVIEW.md) supplies
+operator procedures.
+
+Current product acceptance remains separate from these deterministic contracts.
+[#55](https://github.com/Lenivvenil/digest/issues/55) owns useful, faithful daily output;
+[#77](https://github.com/Lenivvenil/digest/issues/77) owns meaningful counter-evidence.
+Finite translation/recovery acceptance is recorded under #94. Full-source reading
+remains an optional disabled experiment, not a mandatory #55 closure gate.
+
+Read the [owner requirements](#current-owner-requirements-and-acceptance-traces),
+[operating envelope](#operating-envelope-and-daily-edition-decision--2026-10-02) and
+[preparation acceptance](#accepted-121-preparation-integration--status-reconciled-2026-10-07)
+for their exact scope. The [decision register](#decision-and-evidence-register--2026-10-01)
+and [April snapshot](#historical-domain-snapshot--april-2026) preserve dated evidence.
+
+## Current ownership and release scope
+
+<a id="source-ownership-reconciliation--local-implementation-2026-10-07"></a>
+
+### Source ownership reconciliation — 2026-10-07
 
 The source-catalog continuation of [ADR0021](../../decisions/0021-catalog-feedback-boundaries.md)
 now places unchanged source/adaptive declarations and statistics/lifecycle records in
@@ -37,25 +58,28 @@ class aliases. Source JSON codecs live in `adapters/storage/sources.py`; legacy 
 still prune caller statistics after directory creation and catch only write failures,
 while prepared delivery uses the same encoders with strict, non-pruning writers.
 `source_scorer.py` is now a compatibility facade. No source setting or runtime schema
-changes; this local implementation is not merge/deployment or editorial acceptance.
+changes. Source catalog ownership is deployed through engine PR #156/runtime PR #79;
+this structural release does not establish editorial acceptance.
 
 The earlier hotspot references to runtime `apply_trial_decisions()` editing YAML
 are historical: trial outcomes live in `SourceStateStore` under ADR0003. Approved
 source additions still edit YAML, now through `adapters/storage/source_config.py`.
-The local discovery continuation separates pure exploration/pruning/retry/reservation
+The deployed discovery continuation separates pure exploration/pruning/retry/reservation
 rules into `domain/catalog/exploration.py`, metadata into `adapters/storage/discovery.py`
 and approval transport into `adapters/telegram/discovery.py`. `application/discovery.py`
 owns ordered effects and each original decision-time observation; `discovery.py` keeps
 compatible exports. Feed validation remains cohesive in `discovery_feed.py`. Existing
 identities, schema-1 fields, trial addition defaults, budgets, unknown-send holds and
-partial-write behavior are unchanged. This remains local structural work. Broader
-historical policy/owner tables
-below still need reconciliation; they must not be treated as current code ownership.
+partial-write behavior are unchanged. Engine PR #157/runtime PR #80 deployed this
+boundary. The historical policy/owner tables below retain their original context;
+use the current architecture map for code ownership.
 
-### Telegram delivery ownership reconciliation — local implementation, 2026-10-07
+<a id="telegram-delivery-ownership-reconciliation--local-implementation-2026-10-07"></a>
 
-The first delivery continuation under #147 places Telegram card/compact/supplement
-copy, escaping, keyboards and coverage ranges in `presentation/telegram.py`; shared
+### Telegram delivery ownership reconciliation — 2026-10-07
+
+The first delivery continuation under #147, deployed through engine PR #158/runtime
+PR #81, places Telegram card/compact/supplement copy, escaping, keyboards and coverage ranges in `presentation/telegram.py`; shared
 lossless signal text/splitting is in `presentation/supplement.py`. These imports load
 no HTTP, environment or storage owner. `edition_runtime` attribution preflight and
 prepared-edition freeze consume the same pure renderer.
@@ -68,7 +92,8 @@ imports. The [effect matrix](../../ARCHITECTURE.md#stage-5-first-telegram-delive
 and [ADR0017 continuation](../../decisions/0017-confirmed-delivery-application.md#telegram-presentation-and-transport-continuation)
 record the deliberately different receipt acceptance and failure policies.
 
-The second delivery continuation gives unchanged prepared values and pure checks to
+The second delivery continuation is deployed through engine PR #159/runtime PR #82.
+It gives unchanged prepared values and pure checks to
 `domain/delivery/edition.py`, exact codecs/checkpoint bytes/writes to
 `adapters/storage/edition.py`, ordered effects to `application/prepared_delivery.py`
 and strict one-attempt POST/receipt interpretation to `adapters/telegram/prepared.py`.
@@ -80,9 +105,31 @@ operations now have a concrete storage adapter while the scenario keeps their or
 The [prepared ordering matrix](../../ARCHITECTURE.md#stage-5-prepared-delivery-values-persistence-and-application)
 records the durable ready/claim barriers, attempted-before-POST and confirmed-after-POST
 writes, held interruption behavior and compact archive-only path. A write failure after
-Telegram acceptance still escapes and prevents automatic replay. This local slice changes
+Telegram acceptance still escapes and prevents automatic replay. This deployed slice changes
 no file format, receipt, state, source identity or accepted editorial content and adds
-no crash-idempotence guarantee. It establishes no deployment or ordinary-run acceptance.
+no crash-idempotence guarantee. Its structural rollout does not establish ordinary-run
+or editorial acceptance.
+
+## Appendix: requirements and decision history
+
+## Decision and evidence register — 2026-10-01
+
+This dated register preserves the 2026-10-01 decision history and its 2026-10-02
+reconciliation. The current model and release scope above govern present-day reading;
+later labelled acceptance updates below supersede earlier status observations.
+The owner now prioritizes a simple daily digest within GitHub Actions and free-provider
+limits. The operating allocation is a reviewed proposal; the daily schedule is
+deployed. Compact rendering is implemented and enabled in the runtime with a required
+durable publication boundary; observed-output acceptance remains open. [#91](https://github.com/Lenivvenil/digest/issues/91) remains the
+single work-order/acceptance tracker. [#55](https://github.com/Lenivvenil/digest/issues/55)
+is under active scope reassessment for the simple daily edition; its factual release
+gate remains unmet. The latest owner direction permits no parked/deferred tasks:
+complete each requirement or record an explicit, justified disposition. English/configurable
+translation and source-contract repairs are deployed; ordinary-run acceptance remains
+open in #77; the later finite #94 acceptance is recorded in
+[ADR0005](../../decisions/0005-optional-presentation-translation.md). The real message-vote
+path is verified through persistence and computed
+priority influence; ordinary collector acceptance remains open in #48.
 
 ### Product intent comes before the latest implementation
 

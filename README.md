@@ -52,93 +52,11 @@ article was understood. Read the [Digest domain overview](docs/domain/digest/ove
 [Irritator domain overview](docs/domain/irritator/overview.md) and
 [current architecture](docs/ARCHITECTURE.md) for contracts and known gaps.
 
-## Project status
-
-The package version is **2.0.0**. Product rehabilitation is tracked in
-[#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
-suite does not establish editorial quality. Full-source quality work in
-[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
-daily output and sustainable delivery. Mandatory complete-source processing was an
-assistant-proposed mechanism, not an established owner requirement or closure gate.
-[#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
-optional post translation, now implemented with explicit compatibility and recovery.
-The current priority is one compact daily edition within the documented
-[operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
-Compact delivery is implemented and deployed: a production edition confirmed five
-articles in one Telegram chunk, with its archive and delivery state persisted.
-Translation and recovery acceptance covers the observed cases described below;
-editorial quality remains open in #55.
-
-Full-source reading briefs are off by default. The `reading_brief` setting requires
-English canonical text, review-led selection, and an explicitly configured model
-route. Gemini 3.8 Flash uses an exact count; Groq GPT-OSS 120B supports a pinned
-local tokenizer estimate with explicit framing headroom and output reserve. Unknown
-profiles (including Qwen without a verified current framing profile) remain technical
-pending. An unavailable route may use at most one other supported route already in
-`llm.providers`, within the same deadline, pacing and request cap, without retries.
-See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
-Advertised context and the local request allowance do not establish free-account quota.
-The draft integration runs only through `--prepare-edition`; unsupported preview/direct
-publish modes stop before source/model work. It uses exact saved candidate selections and current occurrence
-eligibility before source work. Completed pages become a technical evidence handoff
-for #55; they do not publish concatenated draft prose or create an accepted edition.
-Unknown generation outcomes hold across later invocations and route changes. Known
-count uncertainty remains distinct from generation uncertainty. See proposed
-[ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
-reuse and the proposed shared per-cycle request allocation. The finite factual-quality,
-reconciliation and throughput gates remain open; reading stays off.
-
-This is the **engine repository**. Your separate runtime repository holds configuration,
-secrets references, schedules, `.cache/` and generated `digests/`; see
-[ADR-0002](docs/decisions/0002-engine-instance-split.md). Cloning this repository does
-not install a daily schedule or configure a Telegram destination.
-
-## LLM providers and fallback
-
-`digest/llm.py` implements provider adapters, role-based routing, bounded retries and
-fallback. The supported provider names are Anthropic, Gemini, Groq, Mistral and
-DeepSeek. Configure only services and models you intend to use; fallback does not
-establish that a service is free or has sufficient quota. If every eligible route
-fails, the run reports failure or incomplete work rather than guaranteed delivery.
-
-The category-analysis mode runs category work concurrently within configured limits,
-then produces cross-category trends. `review.enabled` adds independent selection from
-a shared RSS evidence packet. `review.review_led_only` prioritizes those selected
-cards and defers supplementary work. See the [review runbook](docs/BLIND_REVIEW.md)
-for its excerpt limits, incomplete outcomes and separate post-delivery stage.
-
-### Category routing
-
-Unrouted categories use the configured role/provider chain. A route can nominate a
-provider and model for specific categories; missing credentials are handled by the
-existing fallback rules. The model IDs below are placeholders, not recommendations:
-
-```yaml
-llm:
-  providers:
-    - name: gemini
-      model: YOUR_GEMINI_MODEL_ID
-      role: [summarize, rank_signals, fallback]
-    - name: groq
-      model: YOUR_GROQ_MODEL_ID
-      role: [fallback]
-  routing:
-    - categories: [AI Engineering]
-      provider: gemini
-      model: YOUR_GEMINI_MODEL_ID
-```
-
-### Choosing models
-
-Check the provider's current model availability, account entitlement, rate limits and
-billing before a live run. Context capacity, tokens per minute, requests per day and
-price are different constraints. A large context window does not imply a matching
-free throughput budget. Do not assume a provider is better for banking or architecture
-without representative output evidence. Never add a paid fallback to a free-only
-runtime inadvertently.
-
 ## Quick start
+
+This is the engine repository. A separate runtime owns configuration, credentials,
+schedules and saved state. Start with the credential-free check below; use the
+[documentation map](docs/README.md) for operator, contributor and architecture routes.
 
 ### 1. Install the engine
 
@@ -204,6 +122,11 @@ Markdown archive alone must not count as successful delivery. Enable `obsidian` 
 save Markdown files in the configured output directory and sync that runtime archive
 to Obsidian. API acceptance confirms transport acceptance, not that a person read it.
 
+The example selects `telegram.delivery_mode: compact`. Enabling Telegram alone does
+not make a plain `python -m digest` invocation publishable: compact delivery requires
+the [managed preparation, persistence, claim and send sequence](#compact-daily-presentation).
+Keep those runtime persistence steps when enabling delivery.
+
 ### 5. Add a runtime workflow
 
 The public engine's CI checks source code. The operator's runtime owns its schedule,
@@ -229,6 +152,99 @@ python -m digest [OPTIONS]
 | `--check` | Validate configuration, check environment variables and probe feed URLs |
 | `--feedback-precollected` | Let a managed runtime own feedback ingestion; never poll again inside this digest process |
 | `--discover` | Request source suggestions, validate them, persist candidates and send approval cards when configured |
+
+Prepared-edition and managed discovery flags have persistence requirements. See
+[compact publication](#compact-daily-presentation) and the
+[discovery contract](docs/ARCHITECTURE.md#trial-source-lifecycle-and-discovery), and
+use `python -m digest --help` for the complete option list.
+
+## Project status
+
+The package version is **2.0.0**. Product rehabilitation is tracked in
+[#91](https://github.com/Lenivvenil/digest/issues/91); a successful API response or test
+suite does not establish editorial quality. Full-source quality work in
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is **not part of main**.
+[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
+daily output and sustainable delivery. Mandatory complete-source processing was an
+assistant-proposed mechanism, not an established owner requirement or closure gate.
+[#94](https://github.com/Lenivvenil/digest/issues/94) covers English productization and
+optional post translation, now implemented with explicit compatibility and recovery.
+The current priority is one compact daily edition within the documented
+[operating envelope](docs/domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02).
+Compact delivery is implemented and deployed: a production edition confirmed five
+articles in one Telegram chunk, with its archive and delivery state persisted.
+Translation and recovery acceptance covers the observed cases described below;
+editorial quality remains open in #55.
+
+This is the **engine repository**. Your separate runtime repository holds configuration,
+secrets references, schedules, `.cache/` and generated `digests/`; see
+[ADR-0002](docs/decisions/0002-engine-instance-split.md). Cloning this repository does
+not install a daily schedule or configure a Telegram destination.
+
+## LLM providers and fallback
+
+`digest/llm.py` implements provider adapters, role-based routing, bounded retries and
+fallback. The supported provider names are Anthropic, Gemini, Groq, Mistral and
+DeepSeek. Configure only services and models you intend to use; fallback does not
+establish that a service is free or has sufficient quota. If every eligible route
+fails, the run reports failure or incomplete work rather than guaranteed delivery.
+
+The category-analysis mode runs category work concurrently within configured limits,
+then produces cross-category trends. `review.enabled` adds independent selection from
+a shared RSS evidence packet. `review.review_led_only` prioritizes those selected
+cards and defers supplementary work. See the [review runbook](docs/BLIND_REVIEW.md)
+for its excerpt limits, incomplete outcomes and separate post-delivery stage.
+
+### Category routing
+
+Unrouted categories use the configured role/provider chain. A route can nominate a
+provider and model for specific categories; missing credentials are handled by the
+existing fallback rules. The model IDs below are placeholders, not recommendations:
+
+```yaml
+llm:
+  providers:
+    - name: gemini
+      model: YOUR_GEMINI_MODEL_ID
+      role: [summarize, rank_signals, fallback]
+    - name: groq
+      model: YOUR_GROQ_MODEL_ID
+      role: [fallback]
+  routing:
+    - categories: [AI Engineering]
+      provider: gemini
+      model: YOUR_GEMINI_MODEL_ID
+```
+
+### Choosing models
+
+Check the provider's current model availability, account entitlement, rate limits and
+billing before a live run. Context capacity, tokens per minute, requests per day and
+price are different constraints. A large context window does not imply a matching
+free throughput budget. Do not assume a provider is better for banking or architecture
+without representative output evidence. Never add a paid fallback to a free-only
+runtime inadvertently.
+
+## Experimental source reading
+
+Full-source reading briefs are off by default. The `reading_brief` setting requires
+English canonical text, review-led selection, and an explicitly configured model
+route. Gemini 3.8 Flash uses an exact count; Groq GPT-OSS 120B supports a pinned
+local tokenizer estimate with explicit framing headroom and output reserve. Unknown
+profiles (including Qwen without a verified current framing profile) remain technical
+pending. An unavailable route may use at most one other supported route already in
+`llm.providers`, within the same deadline, pacing and request cap, without retries.
+See [offline tokenizer preparation and accounting](docs/reading-brief-accounting.md).
+Advertised context and the local request allowance do not establish free-account quota.
+The draft integration runs only through `--prepare-edition`; unsupported preview/direct
+publish modes stop before source/model work. It uses exact saved candidate selections and current occurrence
+eligibility before source work. Completed pages become a technical evidence handoff
+for #55; they do not publish concatenated draft prose or create an accepted edition.
+Unknown generation outcomes hold across later invocations and route changes. Known
+count uncertainty remains distinct from generation uncertainty. See proposed
+[ADR0009](docs/decisions/0009-selected-source-admission.md) for lineage, legacy evidence
+reuse and the proposed shared per-cycle request allocation. The finite factual-quality,
+reconciliation and throughput gates remain open; reading stays off.
 
 ## Sources and categories
 
@@ -594,6 +610,9 @@ make check
 Optional local pre-commit hooks are configured in `.pre-commit-config.yaml`; install
 only if you want them in your checkout. Follow [project principles](docs/principles.md),
 [domain documentation](docs/domain/digest/overview.md) and the [ADR index](docs/decisions/README.md).
+The configured pytest coverage gate is **70%**. Principles state **80% by default**;
+the project-specific policy disposition remains pending under #148. This documentation
+records the difference without changing either threshold or waiving the checklist.
 Unit tests use mocked external calls. Real-source usefulness and operational delivery
 remain separate acceptance checks. Historical plans and diagnostics preserve their
 original context; see [documentation status](docs/README.md).
