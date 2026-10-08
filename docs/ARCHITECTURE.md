@@ -35,13 +35,13 @@ sequenceDiagram
     participant R as Runtime
     participant P as Preparation
     participant D as Publication
-    R->>P: Feedback and approvals;<br/>then recover or prepare
+    R->>P: Feedback and approvals<br/>then recover or prepare
     P-->>R: Frozen ready edition
     R->>R: Persist and verify ready remotely<br/>with referenced evidence
     R->>D: Create claim for ready hash
     D-->>R: Claim file
-    R->>R: Persist claim remotely;<br/>verify ready and claim hashes
-    R->>D: Send; record receipts;<br/>apply known coverage
+    R->>R: Persist claim remotely<br/>verify ready and claim hashes
+    R->>D: Send and record receipts<br/>then apply known coverage
     D-->>R: Outcome for persistence
 ```
 
