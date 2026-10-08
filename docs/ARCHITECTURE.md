@@ -98,12 +98,21 @@ the eligible subset.
 | `recover_preparation` | `ExistingEdition`, `AcceptedPreparation` or `FreshPreparation.REQUIRED` | Return an existing edition outcome, resume locally verified accepted content, or collect fresh work. `held` remains the inspector’s conservative summary, not a detailed receipt diagnosis. |
 | Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Candidate work carries required progress, packet and report values; category and empty outcomes do not masquerade as that record. |
 | `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | One policy decides whether ordinary work is acceptable, saves it and verifies the exact restored snapshot before handoff. |
+| `assemble_publication` | `PublicationAssembly` | Resolve required provenance, present main content and decide whether the optional closer can accompany it. Final card order and existing metadata derive from this result. |
 | `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |
 
 `RunStats` is the terminal public/reporting projection, not the internal work model.
 These values add no persisted state machine or new schema. Category preparation keeps
 its existing save-without-candidate-readback/clock behavior, and compatibility
 wrappers still expose their prior interfaces.
+
+Publication assembly keeps the canonical snapshot separate from presented main
+cards and the optional closing disposition. Required main-card credit failures
+hold preparation; optional credit or layout failures omit the closer with its
+existing reason. The archive and frozen edition consume the same derived card
+sequence. The coordinator then writes the archive, hashes its references, freezes
+readiness and clears accepted preparation, in that order. Assembly itself does
+not persist a new checkpoint or change translation's request/cache contract.
 
 These are ordinary-path contracts. Category preparation and experimental source work
 retain their own terminal behavior; they must not be inferred from a generic success
@@ -116,7 +125,7 @@ boolean. The code entrypoints below identify the implemented owners.
 | Observation → candidate | Preserve exact source occurrences and distinguish eligibility, review progress and delivery evidence. | [candidate values](../digest/domain/editorial/candidates.py), [candidate policy](../digest/domain/editorial/candidate_policy.py) |
 | Candidate → packet → review | Admission is bounded; persist the planned packet before review. Shared request bytes bind planning, execution and resume. | [candidate application](../digest/application/candidate_review.py), [request builder](../digest/application/review_request.py), [review application](../digest/application/review.py) |
 | Review → accepted preparation | Selected cards or a qualifying primary abstention are canonical work; incomplete output is not an accepted empty edition. | [preparation application](../digest/application/preparation.py), [checkpoint codec and accepted reference](../digest/preparation.py) |
-| Canonical work → presentation | Translation changes generated prose while retaining source identity/evidence. Required main-card provenance failure holds accepted work; unsafe optional closing insertion is omitted. | [attribution](../digest/application/source_attribution.py), [presentation](../digest/application/presentation.py), [accepted presentation](../digest/edition_runtime.py) |
+| Canonical work → presentation | Translation changes generated prose while retaining source identity/evidence. Required main-card provenance failure holds accepted work; unsafe optional closing insertion is omitted. | [publication assembly](../digest/application/publication.py), [attribution](../digest/application/source_attribution.py), [accepted presentation](../digest/edition_runtime.py) |
 | Presentation → frozen edition | Bind payloads, article coverage, recipient, publication window and archive references together. | [edition domain](../digest/domain/delivery/edition.py), [prepared application](../digest/application/prepared_delivery.py) |
 | Ready → claim → transport | Require the exact remote ready/claim hashes. Persist attempted count before each POST and each known confirmation afterward. | [prepared application](../digest/application/prepared_delivery.py), [storage](../digest/adapters/storage/edition.py), [Telegram adapter](../digest/adapters/telegram/prepared.py) |
 | Receipts → applied outcome | Apply only known complete article coverage; mark receipts applied after the ordered operational writes succeed. | [coverage projection](../digest/domain/delivery/outcomes.py), [outcome application](../digest/application/delivery.py) |
@@ -320,6 +329,7 @@ and applies identical final cards to archive and frozen payloads.
 | Select an execution scenario | `application/execution.py` |
 | Prepare ordinary canonical work | `application/preparation.py:prepare_edition` |
 | Inspect/recover accepted or ready work; present/freeze | `edition_runtime.py:recover_preparation`, `accept_preparation`, `present_preparation`; `preparation.py:load_accepted_preparation` |
+| Assemble presented main cards and optional closing disposition | `application/publication.py:assemble_publication`, `PublicationAssembly` |
 | Candidate rules, packet construction and ordered persistence | `domain/editorial/candidate_policy.py`, `application/candidate_review.py`, `application/candidate_lifecycle.py` |
 | Configured request, review routes and display copy | `application/review_request.py`, `application/review.py`, `presentation/review.py` |
 | Freeze/claim/send/inspect an edition | `application/prepared_delivery.py`; CLI phases enter through `edition_runtime.delivery_phase` |
