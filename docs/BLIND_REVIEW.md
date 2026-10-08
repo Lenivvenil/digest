@@ -238,6 +238,15 @@ an entire feed cohort in one run. Missing/invalid dispositions and capacity-only
 omissions remain unfinished. Policy exclusions, duplicates and editorial not-selection
 retain distinct evidence.
 
+With optional closing enabled, an otherwise absent approved source can receive
+one fitting review opportunity. Spare capacity is used first; a full packet may
+defer only its final ordinary backfill item while preserving the first unseen
+opportunity and reserved technical retries. The deferred item stays pending.
+Count and character limits do not increase, and no fit means no substitution.
+An already admitted approved occurrence leaves the packet unchanged. This can
+postpone a professional item and does not promise a suitable positive story;
+see [the bounded admission decision](decisions/0014-optional-humane-closing-item.md#bounded-closing-source-opportunity).
+
 Keep `.cache/candidate_progress.json` with its immutable source/report objects and
 indexed decisions. The archive's `.candidates.json` file is a bounded as-of account
 of one report, not a continuously rewritten inventory of every historical body.
