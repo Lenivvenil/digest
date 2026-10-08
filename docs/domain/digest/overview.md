@@ -51,7 +51,7 @@ sending an already prepared edition.
 | Claim | A unique claim bound to the exact ready-file hash and owner. | The managed workflow has reserved this frozen edition for its sending attempt. |
 | Chunk receipt | A confirmed chunk index, positive Telegram message ID and owner binding, inside a receipt record tied to the ready and claim hashes. | Known transport acceptance. Missing confirmation can mean uncertainty, not proof that nothing was sent. |
 | Applied outcome | The receipt record's applied flag, set after attribution, statistics and deduplication effects succeed. | The caller finished applying known coverage. It does not turn partial or unknown transport into a complete edition. |
-| Feedback or source decision | An owner-authorized article vote, or approval/rejection bound to an exact saved source proposal. | Input to future source choices. A repeated vote does not create multiple independent opinions, and discovery alone does not activate a source. |
+| Feedback or source decision | An owner-authorized article vote, or approval/rejection bound to an exact saved source proposal. | Input to future source choices. Repeated votes on one exact token use only the latest opinion. Legacy short/full token ambiguity remains explicit in [ADR0024](../../decisions/0024-full-article-vote-identity.md#feedback-history-and-limits); discovery alone does not activate a source. |
 
 The implementation names and persisted records are mapped in
 [Architecture](../../ARCHITECTURE.md#entities-contracts-and-enforcement).

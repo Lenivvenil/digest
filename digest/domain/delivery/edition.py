@@ -12,6 +12,7 @@ from digest.domain.delivery.outcomes import ArticleCoverage, IssueDeliveryResult
 from digest.domain.editorial.summaries import ArticleSummary
 
 SCHEMA_VERSION = 1
+READY_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,8 @@ def validate_manifest(
     fresh: bool = True,
 ) -> None:
     try:
+        if type(data.get("schema")) is not int or data["schema"] not in (1, READY_SCHEMA_VERSION):
+            raise ValueError
         if data["content_sha256"] != content_sha256 or data["owner_sha256"] != owner_sha256:
             raise ValueError
         start, end = parse_instant(data["window_start"]), parse_instant(data["window_end"])
@@ -223,12 +226,23 @@ def validate_checkpoint_reference(reference: Any, digest: Any) -> None:
         raise ValueError("Invalid prepared edition checkpoint reference.")
 
 
+def validate_dispatch_identity(data: Edition) -> None:
+    """Keep known-ambiguous legacy buttons out of a new dispatch, not history."""
+    if data.schema == 1:
+        prefixes = [article.full_hash[:8] for article in data.articles]
+        if len(prefixes) != len(set(prefixes)):
+            raise ValueError("Legacy edition has ambiguous article vote identities; publishing blocked.")
+
+
 def project_result(data: Edition, receipts: Receipts) -> IssueDeliveryResult:
+    if data.schema not in (1, READY_SCHEMA_VERSION):
+        raise ValueError("Unsupported prepared edition schema.")
     return project_issue_coverage(
         (
             ArticleCoverage(article.full_hash, article.source, tuple(article.covering_chunks))
             for article in data.articles
         ),
+        vote_protocol="legacy8" if data.schema == 1 else "full32",
         outcome=(
             "sent"
             if receipts.state == "confirmed"

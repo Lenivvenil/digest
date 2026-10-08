@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Preserve full article identity in new vote links and confirmed attribution
+  (#199). Ready editions now use schema 2; readers retain schema 1, and claims and
+  receipts stay schema 1. Existing short votes/history remain readable without
+  guessed migration. Known-colliding unstarted legacy editions are held before
+  dispatch. Once full-token links are published, both sender and poller require a
+  compatible-reader engine; an arbitrary older pin is not a safe rollback.
+
 - Give the existing protected unseen-candidate opportunity to the oldest fitting
   identity before technical retries and fresh backfill. This changes future
   admission order within existing limits; it adds no model calls or packet slots

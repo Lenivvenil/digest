@@ -21,6 +21,7 @@ from digest.adapters.storage.edition import CLAIM_FILE, READY_FILE, RECEIPTS_FIL
 from digest.adapters.storage.issue_paths import safe_issue_path
 from digest.adapters.telegram.prepared import send_prepared_chunk
 from digest.domain.delivery.edition import (
+    READY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ChunkReceipt,
     Claim,
@@ -29,6 +30,7 @@ from digest.domain.delivery.edition import (
     Receipts,
     parse_instant,
     project_result,
+    validate_dispatch_identity,
     validate_owner,
 )
 from digest.domain.delivery.outcomes import IssueDeliveryResult
@@ -115,7 +117,7 @@ def prepare_edition(
             payload["reply_markup"] = chunk.reply_markup
         payloads.append(payload)
     data = Edition(
-        schema=SCHEMA_VERSION,
+        schema=READY_SCHEMA_VERSION,
         edition_id=uuid.uuid4().hex,
         owner_sha256=owner_sha,
         bot_username=getattr(config.telegram, "bot_username", ""),
@@ -156,6 +158,7 @@ def claim_edition(
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
     if storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Edition receipts already exist; automatic replay is blocked.")
+    validate_dispatch_identity(data)
     path = cache / CLAIM_FILE
     claim = Claim(SCHEMA_VERSION, digest, owner_sha, uuid.uuid4().hex, instant.isoformat())
     return path, storage.write_record(path, asdict(claim), exclusive=True)
@@ -186,6 +189,7 @@ async def send_prepared_edition(
             return project_result(data, existing)
         raise ValueError("Edition dispatch is held; automatic replay is blocked.")
     storage.validate_manifest_record(asdict(data), owner, instant)
+    validate_dispatch_identity(data)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
     _legacy_guard(cache, instant)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
