@@ -3,6 +3,7 @@
 Retirement is an explicit application operation; these functions never select
 which candidates are complete or ineligible.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -24,6 +25,7 @@ from digest.domain.editorial.reviews import BlindReviewReport
 CANDIDATE_FILE = "candidate_progress.json"
 MAX_BYTES = 32_000_000
 
+
 def _digest(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
@@ -31,8 +33,11 @@ def _digest(value: object) -> str:
 def _active_candidate_body(candidate: Candidate) -> dict[str, Any]:
     raw = asdict(candidate)
     del raw["article"], raw["occurrences"]
-    return {"candidate": raw, "article_ref": _digest(asdict(candidate.article)),
-            "occurrence_refs": [_digest(asdict(article)) for article in candidate.occurrences]}
+    return {
+        "candidate": raw,
+        "article_ref": _digest(asdict(candidate.article)),
+        "occurrence_refs": [_digest(asdict(article)) for article in candidate.occurrences],
+    }
 
 
 def _active_packet_body(packet: CandidatePacket, cache_dir: str | Path | None) -> dict[str, Any]:
@@ -52,11 +57,16 @@ def _active_packet_body(packet: CandidatePacket, cache_dir: str | Path | None) -
 
 def _working_set(progress: CandidateProgress, cache_dir: str | Path | None) -> dict[str, Any]:
     _validate(progress)
-    return {"kind": "candidate_working_set", "schema_version": 1,
-            "candidates": {identity: _active_candidate_body(candidate)
-                           for identity, candidate in progress.candidates.items()},
-            "packets": [_active_packet_body(packet, cache_dir) for packet in progress.packets],
-            "latest_collection_json": progress.latest_collection_json, "policy_sha256": progress.policy_sha256}
+    return {
+        "kind": "candidate_working_set",
+        "schema_version": 1,
+        "candidates": {
+            identity: _active_candidate_body(candidate) for identity, candidate in progress.candidates.items()
+        },
+        "packets": [_active_packet_body(packet, cache_dir) for packet in progress.packets],
+        "latest_collection_json": progress.latest_collection_json,
+        "policy_sha256": progress.policy_sha256,
+    }
 
 
 def _working_record(progress: CandidateProgress, cache_dir: str | Path | None) -> dict[str, Any]:
@@ -77,14 +87,23 @@ def _materialize_collection(value: str, cache_dir: str | Path) -> str:
     for observation in raw.get("observations", []):
         article = observation.pop("article", None)
         if article is not None:
-            saved = CandidateArticle(article["title"], article["link"], article["description"], article["source"],
-                                     article["category"], article["pub_date"],
-                                     observation.get("source_url") or sources[article["source"]])
-            observation["article_reference"] = {"identity": observation["identity"],
-                                                "occurrence_sha256": put_article(saved, cache_dir)}
+            saved = CandidateArticle(
+                article["title"],
+                article["link"],
+                article["description"],
+                article["source"],
+                article["category"],
+                article["pub_date"],
+                observation.get("source_url") or sources[article["source"]],
+            )
+            observation["article_reference"] = {
+                "identity": observation["identity"],
+                "occurrence_sha256": put_article(saved, cache_dir),
+            }
         reference = observation["article_reference"]
-        if (reference["identity"] != observation["identity"]
-                or not re.fullmatch(r"[0-9a-f]{64}", reference["occurrence_sha256"])):
+        if reference["identity"] != observation["identity"] or not re.fullmatch(
+            r"[0-9a-f]{64}", reference["occurrence_sha256"]
+        ):
             raise ValueError("Collection accounting source identity mismatch.")
     return json.dumps(raw, ensure_ascii=False, sort_keys=True)
 
@@ -97,8 +116,7 @@ def _restore_active_packet(raw: Any, cache_dir: str | Path) -> CandidatePacket:
     if set(raw) == {"packet_ref", "handed_to_preparation"}:
         if type(raw["handed_to_preparation"]) is not bool:
             raise ValueError("Invalid candidate preparation handoff flag.")
-        return replace(read_packet(raw["packet_ref"], cache_dir),
-                       handed_to_preparation=raw["handed_to_preparation"])
+        return replace(read_packet(raw["packet_ref"], cache_dir), handed_to_preparation=raw["handed_to_preparation"])
     if set(raw) != {"packet"} or not isinstance(raw["packet"], dict):
         raise ValueError("Invalid active candidate packet fields.")
     body = dict(raw["packet"])
@@ -119,16 +137,24 @@ def load_candidate_progress(cache_dir: str | Path = ".cache") -> CandidateProgre
     if path.stat().st_size > MAX_BYTES:
         raise ValueError(f"Candidate progress exceeds {MAX_BYTES}-byte budget.")
     record = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-    if (not isinstance(record, dict) or set(record) != {"candidate_accounting", "sha256"}
-            or record["sha256"] != _digest(record["candidate_accounting"])):
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"candidate_accounting", "sha256"}
+        or record["sha256"] != _digest(record["candidate_accounting"])
+    ):
         raise ValueError("Candidate progress hash or envelope mismatch.")
     body = record["candidate_accounting"]
-    if (not isinstance(body, dict) or set(body) != {"kind", "schema_version", "candidates", "packets",
-                                                  "latest_collection_json", "policy_sha256"}
-            or body["kind"] != "candidate_working_set" or type(body["schema_version"]) is not int
-            or body["schema_version"] != 1 or not isinstance(body["candidates"], dict)
-            or not isinstance(body["packets"], list) or not isinstance(body["latest_collection_json"], str)
-            or not isinstance(body["policy_sha256"], str)):
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"kind", "schema_version", "candidates", "packets", "latest_collection_json", "policy_sha256"}
+        or body["kind"] != "candidate_working_set"
+        or type(body["schema_version"]) is not int
+        or body["schema_version"] != 1
+        or not isinstance(body["candidates"], dict)
+        or not isinstance(body["packets"], list)
+        or not isinstance(body["latest_collection_json"], str)
+        or not isinstance(body["policy_sha256"], str)
+    ):
         raise ValueError("Unsupported candidate prototype checkpoint; regenerate draft candidate accounting.")
     policy_sha = body["policy_sha256"]
     if policy_sha and (len(policy_sha) != 64 or any(char not in "0123456789abcdef" for char in policy_sha)):
@@ -136,7 +162,9 @@ def load_candidate_progress(cache_dir: str | Path = ".cache") -> CandidateProgre
     progress = CandidateProgress(
         candidates={identity: decode_active_candidate(raw, cache_dir) for identity, raw in body["candidates"].items()},
         packets=[_restore_active_packet(raw, cache_dir) for raw in body["packets"]],
-        latest_collection_json=body["latest_collection_json"], policy_sha256=policy_sha)
+        latest_collection_json=body["latest_collection_json"],
+        policy_sha256=policy_sha,
+    )
     _validate(progress)
     return progress
 
@@ -146,7 +174,8 @@ def _report_accounting_path(report: BlindReviewReport, cache_dir: str | Path) ->
 
 
 def candidate_accounting_sources(
-    report: BlindReviewReport, cache_dir: str | Path = ".cache",
+    report: BlindReviewReport,
+    cache_dir: str | Path = ".cache",
 ) -> list[Path]:
     """Verify and enumerate exact source objects for accepted checkpoint hash refs."""
     from digest.adapters.storage.candidate_objects import read_report_record
@@ -155,18 +184,21 @@ def candidate_accounting_sources(
         return []
     record = read_report_record(_digest(asdict(report)), cache_dir)
     collection = json.loads(record["packet"]["collection_json"])
-    keys = [*record["packet"]["article_refs"], *(item["article_reference"]["occurrence_sha256"]
-             for item in collection.get("observations", []))]
+    keys = [
+        *record["packet"]["article_refs"],
+        *(item["article_reference"]["occurrence_sha256"] for item in collection.get("observations", [])),
+    ]
     from digest.adapters.storage.candidate_objects import read_article
 
     for key in keys:
         read_article(key, cache_dir)
-    return [_safe(Path(cache_dir) / "candidate_sources" / f"{sha}.json")
-            for sha in dict.fromkeys(keys)]
+    return [_safe(Path(cache_dir) / "candidate_sources" / f"{sha}.json") for sha in dict.fromkeys(keys)]
 
 
 def archive_candidate_accounting(
-    report: BlindReviewReport, archive: Path, cache_dir: str | Path = ".cache",
+    report: BlindReviewReport,
+    archive: Path,
+    cache_dir: str | Path = ".cache",
 ) -> Path | None:
     """Copy exact immutable packet accounting; legacy accepted reports need none."""
     from digest.adapters.storage.candidate_objects import read_report_record

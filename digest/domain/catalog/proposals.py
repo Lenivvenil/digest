@@ -28,7 +28,10 @@ class PendingSource:
 
 
 def resolve_pending_proposal(
-    pending: list[PendingSource], hash8: str, *, now: datetime,
+    pending: list[PendingSource],
+    hash8: str,
+    *,
+    now: datetime,
 ) -> PendingSource | None:
     """Resolve exactly one unexpired proposal whose hash matches its URL."""
     if not isinstance(hash8, str) or not re.fullmatch(r"[0-9a-f]{8}", hash8):

@@ -28,7 +28,11 @@ from digest.domain.feedback.values import POLL_COUNT_KEYS, FeedbackStore
 
 
 async def collect_feedback(
-    bot_token: str, store: FeedbackStore, *, cache_dir: str = ".cache", acknowledge: bool = True,
+    bot_token: str,
+    store: FeedbackStore,
+    *,
+    cache_dir: str = ".cache",
+    acknowledge: bool = True,
 ) -> FeedbackStore:
     """Poll once, persist the candidate batch, then optionally acknowledge its UI."""
     owner = owner_chat_id()
@@ -71,14 +75,14 @@ async def collect_feedback(
 
 def _command_reply(command: str, store: FeedbackStore, cache_dir: str) -> str:
     if command == "/status":
-        return (
-            f"Last digest: {store.last_digest_time or 'unknown'}\n"
-            f"Sources: {len(store.last_digest_sources)}"
-        )
+        return f"Last digest: {store.last_digest_time or 'unknown'}\nSources: {len(store.last_digest_sources)}"
     from digest.adapters.storage.sources import load_source_category_map, load_source_state, load_stats
     from digest.application.source_scoring import compute_bubble_report
+
     return compute_bubble_report(
-        store, load_stats(cache_dir), load_source_state(cache_dir),
+        store,
+        load_stats(cache_dir),
+        load_source_state(cache_dir),
         category_map=load_source_category_map(cache_dir) or None,
     )[:TELEGRAM_TEXT_LIMIT]
 

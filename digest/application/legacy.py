@@ -5,6 +5,7 @@ still carries mutable feedback/scoring state for the existing legacy outcome
 policy; separating those stores is later work, not a new persisted run context.
 Markdown consumption, cards transport, and compact confirmation remain distinct.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -71,8 +72,13 @@ class LegacyPublication:
 
 
 async def _collect_legacy(
-    config: Config, config_path: str, dry_run: bool, radar_only: bool, feedback_precollected: bool,
-    *, execution: ModelExecution,
+    config: Config,
+    config_path: str,
+    dry_run: bool,
+    radar_only: bool,
+    feedback_precollected: bool,
+    *,
+    execution: ModelExecution,
 ) -> LegacyCollection:
     """Apply feedback and approved sources before observing the current portfolio."""
     from digest._util import cleanup_stale_tmp
@@ -89,11 +95,18 @@ async def _collect_legacy(
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
     feedback_store, feedback_usable, feedback_collected = await run_state.collect_run_feedback(
-        config, cache_dir, dry_run, feedback_precollected,
+        config,
+        cache_dir,
+        dry_run,
+        feedback_precollected,
     )
     run_state.require_attribution_store(compact and not dry_run and not radar_only, feedback_usable)
     config, execution = run_state.apply_pending_approvals(
-        config, config_path, cache_dir, feedback_store, enabled=feedback_usable and not dry_run,
+        config,
+        config_path,
+        cache_dir,
+        feedback_store,
+        enabled=feedback_usable and not dry_run,
         execution=execution,
     )
     feeds_count = len(config.enabled_sources)
@@ -105,11 +118,16 @@ async def _collect_legacy(
             feedback_scores[source.name] = score
     if config.adaptive.enabled:
         effective_priorities = calculate_effective_priorities(
-            config.effective_sources(source_state), source_stats, feedback_scores, config.adaptive,
+            config.effective_sources(source_state),
+            source_stats,
+            feedback_scores,
+            config.adaptive,
         )
     else:
         effective_priorities = calculate_feedback_priorities(
-            config.effective_sources(source_state), feedback_scores, config.adaptive,
+            config.effective_sources(source_state),
+            feedback_scores,
+            config.adaptive,
         )
 
     run_config = dataclasses.replace(
@@ -119,12 +137,17 @@ async def _collect_legacy(
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
     try:
         articles_by_category, cache = await collect(
-            run_config, effective_priorities=effective_priorities, fetch_metrics=fetch_metrics,
+            run_config,
+            effective_priorities=effective_priorities,
+            fetch_metrics=fetch_metrics,
         )
     except AllFeedsFailedError:
         run_state.save_failed_run_stats(
-            source_stats, fetch_metrics, cache_dir,
-            {s.name for s in config.enabled_sources}, dry_run=dry_run,
+            source_stats,
+            fetch_metrics,
+            cache_dir,
+            {s.name for s in config.enabled_sources},
+            dry_run=dry_run,
         )
         raise
 
@@ -132,19 +155,39 @@ async def _collect_legacy(
     contributing_sources = sorted({a.source for articles in articles_by_category.values() for a in articles})
 
     return LegacyCollection(
-        config=config, execution=execution, compact=compact, review_led_only=review_led_only,
-        cache_dir=cache_dir, source_state=source_state, source_stats=source_stats, feedback_store=feedback_store,
-        feedback_usable=feedback_usable, feedback_collected=feedback_collected,
-        previous_article_sources=saved_article_source_map, effective_priorities=effective_priorities,
-        feeds_count=feeds_count, articles_by_category=articles_by_category, collected_cache=cache,
-        fetch_metrics=fetch_metrics, total_articles=total_articles, contributing_sources=contributing_sources,
+        config=config,
+        execution=execution,
+        compact=compact,
+        review_led_only=review_led_only,
+        cache_dir=cache_dir,
+        source_state=source_state,
+        source_stats=source_stats,
+        feedback_store=feedback_store,
+        feedback_usable=feedback_usable,
+        feedback_collected=feedback_collected,
+        previous_article_sources=saved_article_source_map,
+        effective_priorities=effective_priorities,
+        feeds_count=feeds_count,
+        articles_by_category=articles_by_category,
+        collected_cache=cache,
+        fetch_metrics=fetch_metrics,
+        total_articles=total_articles,
+        contributing_sources=contributing_sources,
     )
 
 
 async def run_legacy(
-    config: Config, config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, execution: ModelExecution,
-    started_at: float, emit_preview: Callable[[Preview], None],
-    feedback_precollected: bool = False, issue_guard: IssueGuard | None = None,
+    config: Config,
+    config_path: str,
+    dry_run: bool,
+    radar_only: bool,
+    verbose: bool,
+    *,
+    execution: ModelExecution,
+    started_at: float,
+    emit_preview: Callable[[Preview], None],
+    feedback_precollected: bool = False,
+    issue_guard: IssueGuard | None = None,
 ) -> RunStats:
     """Choose preview or publication after collection and canonical analysis."""
     from digest.adapters.storage.feedback import save_feedback
@@ -152,7 +195,12 @@ async def run_legacy(
     from digest.application.delivery import save_delivery_cache
 
     collected = await _collect_legacy(
-        config, config_path, dry_run, radar_only, feedback_precollected, execution=execution,
+        config,
+        config_path,
+        dry_run,
+        radar_only,
+        feedback_precollected,
+        execution=execution,
     )
     config, execution, cache_dir = collected.config, collected.execution, collected.cache_dir
     articles_by_category, fetch_metrics = collected.articles_by_category, collected.fetch_metrics
@@ -172,16 +220,22 @@ async def run_legacy(
         return _empty_run_stats(feeds_count, feedback_collected)
 
     summaries, trends, top_articles, review_report = await analysis.analyze_articles(
-        articles_by_category, config, execution=execution,
+        articles_by_category,
+        config,
+        execution=execution,
     )
     if _analysis_missing(summaries, top_articles, review_report):
         logger.error("All category summarizations failed.")
         run_state.save_failed_run_stats(
-            source_stats, fetch_metrics, cache_dir,
-            {s.name for s in config.enabled_sources}, dry_run=dry_run,
+            source_stats,
+            fetch_metrics,
+            cache_dir,
+            {s.name for s in config.enabled_sources},
+            dry_run=dry_run,
         )
         await _notify_summaries_failed(
-            dry_run=dry_run, telegram_enabled=config.telegram.enabled and not compact,
+            dry_run=dry_run,
+            telegram_enabled=config.telegram.enabled and not compact,
         )
         return _empty_run_stats(feeds_count, feedback_collected, total_articles)
 
@@ -190,15 +244,28 @@ async def run_legacy(
 
     if radar_only:
         combined, top_articles = await presentation.primary_presentation(
-            combined, top_articles, config, Path(cache_dir) / "translations", dry_run, execution=execution,
+            combined,
+            top_articles,
+            config,
+            Path(cache_dir) / "translations",
+            dry_run,
+            execution=execution,
         )
-        emit_preview(RadarPreview(
-            combined, top_articles, bool(getattr(getattr(config, "translation", None), "enabled", False)),
-        ))
+        emit_preview(
+            RadarPreview(
+                combined,
+                top_articles,
+                bool(getattr(getattr(config, "translation", None), "enabled", False)),
+            )
+        )
         return RunStats(
-            feeds_fetched=feeds_count, new_articles=total_articles,
-            digest_length=len(combined), telegram_sent=False,
-            telegram_partial=False, markdown_saved=False, markdown_path="",
+            feeds_fetched=feeds_count,
+            new_articles=total_articles,
+            digest_length=len(combined),
+            telegram_sent=False,
+            telegram_partial=False,
+            markdown_saved=False,
+            markdown_path="",
             feedback_collected=feedback_collected,
         )
 
@@ -210,11 +277,19 @@ async def run_legacy(
         irritator_status = IrritatorStatus(presentation.deferred_review_status(config.radar.language), "deferred")
     else:
         _, all_ranked, irritator_status = await investigation.run_irritator(
-            summaries, config, verbose, execution=execution,
+            summaries,
+            config,
+            verbose,
+            execution=execution,
         )
 
     combined, top_articles, all_ranked = await presentation.publication_presentation(
-        combined, top_articles, all_ranked, config, Path(cache_dir) / "translations", dry_run,
+        combined,
+        top_articles,
+        all_ranked,
+        config,
+        Path(cache_dir) / "translations",
+        dry_run,
         execution=execution,
     )
 
@@ -222,22 +297,32 @@ async def run_legacy(
     if dry_run:
         emit_preview(DigestPreview(combined, top_articles, all_ranked, irritator_status, review_report))
         return RunStats(
-            feeds_fetched=feeds_count, new_articles=total_articles,
-            digest_length=len(combined), telegram_sent=False,
-            telegram_partial=False, markdown_saved=False, markdown_path="",
+            feeds_fetched=feeds_count,
+            new_articles=total_articles,
+            digest_length=len(combined),
+            telegram_sent=False,
+            telegram_partial=False,
+            markdown_saved=False,
+            markdown_path="",
             feedback_collected=feedback_collected,
         )
 
     publication = LegacyPublication(
-        combined, top_articles, all_ranked, irritator_status, review_report,
+        combined,
+        top_articles,
+        all_ranked,
+        irritator_status,
+        review_report,
         {summary.category for summary in summaries},
     )
     return await _publish_legacy(collected, publication, issue_guard, started_at)
 
 
 async def _publish_legacy(
-    collected: LegacyCollection, publication: LegacyPublication,
-    issue_guard: IssueGuard | None, started_at: float,
+    collected: LegacyCollection,
+    publication: LegacyPublication,
+    issue_guard: IssueGuard | None,
+    started_at: float,
 ) -> RunStats:
     """Archive first, send with scenario policy, apply known coverage, then finish."""
     from digest.application.delivery import LegacyOutcomePolicy, apply_confirmed_outcome
@@ -252,12 +337,14 @@ async def _publish_legacy(
     irritator_status, review_report = publication.irritator_status, publication.review_report
     logger = logging.getLogger(__name__)
     md_path = write_digest(
-        combined, config,
+        combined,
+        config,
         top_articles=top_articles or None,
         ranked_signals=all_ranked or None,
         review_report=review_report,
         irritator_status=irritator_status,
-        sources_count=len(articles_by_category), articles_count=total_articles,
+        sources_count=len(articles_by_category),
+        articles_count=total_articles,
     )
     markdown_saved = md_path is not None
     markdown_path = str(md_path) if md_path else ""
@@ -272,62 +359,82 @@ async def _publish_legacy(
             if compact:
                 assert issue_guard is not None
                 issue_delivery = await send_compact_issue(
-                    top_articles, config, notice=combined, before_send=issue_guard.mark_sending,
+                    top_articles,
+                    config,
+                    notice=combined,
+                    before_send=issue_guard.mark_sending,
                 )
                 card_delivery = issue_delivery
                 telegram_sent = issue_delivery.complete
                 telegram_partial = bool(issue_delivery.confirmed_chunks) and not issue_delivery.complete
             else:
                 card_delivery = await send_article_cards(
-                    articles_by_category, config, top_articles=top_articles,
+                    articles_by_category,
+                    config,
+                    top_articles=top_articles,
                 )
                 telegram_sent = card_delivery.sent > 0 and card_delivery.failed == 0
                 telegram_partial = card_delivery.sent > 0 and card_delivery.failed > 0
             delivered_at = datetime.now(tz=timezone.utc)
             if not compact:
                 nano_status = _build_nano_status(
-                    feeds_count, total_articles,
+                    feeds_count,
+                    total_articles,
                     sum(m.fetch_ok for m in collected.fetch_metrics.values()),
                     sum(not m.fetch_ok for m in collected.fetch_metrics.values()),
-                    collected.source_stats, config, collected.effective_priorities,
+                    collected.source_stats,
+                    config,
+                    collected.effective_priorities,
                 )
                 await _legacy_delivery_extras(
-                    top_articles, all_ranked, irritator_status, review_report, config,
-                    collected.review_led_only, nano_status,
+                    top_articles,
+                    all_ranked,
+                    irritator_status,
+                    review_report,
+                    config,
+                    collected.review_led_only,
+                    nano_status,
                 )
 
         except Exception as exc:
             logger.warning("Telegram delivery failed (non-critical): %s", exc)
 
     telegram_required = getattr(config.telegram, "required", False)
-    applied = apply_confirmed_outcome(LegacyOutcomePolicy(
-        outcome=card_delivery,
-        config=config,
-        cache_dir=cache_dir,
-        compact=compact,
-        telegram_complete=telegram_sent,
-        markdown_saved=markdown_saved,
-        delivered_at=delivered_at,
-        contributing_sources=collected.contributing_sources,
-        feedback=collected.feedback_store,
-        feedback_usable=collected.feedback_usable,
-        previous_article_sources=collected.previous_article_sources,
-        collected_cache=collected.collected_cache,
-        articles_by_category=articles_by_category,
-        summarized_categories=publication.summarized_categories,
-        top_articles=top_articles,
-        fetch_metrics=collected.fetch_metrics,
-        source_stats=collected.source_stats,
-        source_state=collected.source_state,
-    ))
+    applied = apply_confirmed_outcome(
+        LegacyOutcomePolicy(
+            outcome=card_delivery,
+            config=config,
+            cache_dir=cache_dir,
+            compact=compact,
+            telegram_complete=telegram_sent,
+            markdown_saved=markdown_saved,
+            delivered_at=delivered_at,
+            contributing_sources=collected.contributing_sources,
+            feedback=collected.feedback_store,
+            feedback_usable=collected.feedback_usable,
+            previous_article_sources=collected.previous_article_sources,
+            collected_cache=collected.collected_cache,
+            articles_by_category=articles_by_category,
+            summarized_categories=publication.summarized_categories,
+            top_articles=top_articles,
+            fetch_metrics=collected.fetch_metrics,
+            source_stats=collected.source_stats,
+            source_state=collected.source_state,
+        )
+    )
     _finish_compact(issue_guard, issue_delivery)
 
     return RunStats(
-        feeds_fetched=feeds_count, new_articles=total_articles,
-        digest_length=len(combined), telegram_sent=telegram_sent,
-        telegram_partial=telegram_partial, markdown_saved=markdown_saved,
-        markdown_path=markdown_path, sources_promoted=applied.sources_promoted,
-        sources_demoted=applied.sources_demoted, feedback_collected=collected.feedback_collected,
+        feeds_fetched=feeds_count,
+        new_articles=total_articles,
+        digest_length=len(combined),
+        telegram_sent=telegram_sent,
+        telegram_partial=telegram_partial,
+        markdown_saved=markdown_saved,
+        markdown_path=markdown_path,
+        sources_promoted=applied.sources_promoted,
+        sources_demoted=applied.sources_demoted,
+        feedback_collected=collected.feedback_collected,
         duration_seconds=time.monotonic() - started_at,
         required_delivery_failed=telegram_required and not telegram_sent,
         review_status=review_report.status if review_report is not None else "not_requested",
@@ -359,10 +466,7 @@ def _build_nano_status(
             seen.add(route.provider)
     models_str = ", ".join(provider_names) if provider_names else config.llm.model
 
-    line1 = (
-        f"\U0001f4ca {feeds_count} src | {total_articles} art | "
-        f"{ok_count} ok / {err_count} err | {models_str}"
-    )
+    line1 = f"\U0001f4ca {feeds_count} src | {total_articles} art | {ok_count} ok / {err_count} err | {models_str}"
 
     promoted_count = 0
     demoted_count = 0
@@ -378,10 +482,7 @@ def _build_nano_status(
     scores = [calculate_score(s) for s in source_stats.values() if s.total_fetches > 0]
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
-    line2 = (
-        f"\U0001f4c8 {promoted_count} \u2191 | {demoted_count} \u2193 | "
-        f"avg score: {avg_score:.2f}"
-    )
+    line2 = f"\U0001f4c8 {promoted_count} \u2191 | {demoted_count} \u2193 | avg score: {avg_score:.2f}"
     return f"{line1}\n{line2}"
 
 
@@ -394,8 +495,7 @@ async def _notify_skipped_cards(top_articles: list[Any]) -> None:
     if top_articles:
         return
     await _send_status_message(
-        "⚠️ Radar: LLM picker returned no top articles "
-        "— cards skipped; summary saved to markdown."
+        "⚠️ Radar: LLM picker returned no top articles — cards skipped; summary saved to markdown."
     )
 
 
@@ -408,8 +508,7 @@ async def _notify_summaries_failed(*, dry_run: bool, telegram_enabled: bool) -> 
     if dry_run or not telegram_enabled:
         return
     await _send_status_message(
-        "❌ Radar: all LLM providers for role=summarize failed "
-        "— digest not assembled (see workflow logs)."
+        "❌ Radar: all LLM providers for role=summarize failed — digest not assembled (see workflow logs)."
     )
 
 
@@ -417,25 +516,49 @@ def _review_status_line(report: BlindReviewReport | None, language: str = "en") 
     if report is None:
         return ""
     russian = language == "ru"
-    statuses = ({"ok": "ответ принят", "partial": "часть карточек принята", "abstained": "нет выбора",
-                 "invalid": "ответ не прошёл проверку", "unavailable": "ответ не получен"} if russian else
-                {"ok": "accepted", "partial": "partially accepted", "abstained": "no selection",
-                 "invalid": "response failed validation", "unavailable": "no response"})
+    statuses = (
+        {
+            "ok": "ответ принят",
+            "partial": "часть карточек принята",
+            "abstained": "нет выбора",
+            "invalid": "ответ не прошёл проверку",
+            "unavailable": "ответ не получен",
+        }
+        if russian
+        else {
+            "ok": "accepted",
+            "partial": "partially accepted",
+            "abstained": "no selection",
+            "invalid": "response failed validation",
+            "unavailable": "no response",
+        }
+    )
     details = []
     for review in report.reviews:
         pending = review.error == "pending_independent_review"
-        state = (("ожидает отдельного этапа" if russian else "waiting for separate stage")
-                 if pending else statuses[review.status])
+        state = (
+            ("ожидает отдельного этапа" if russian else "waiting for separate stage")
+            if pending
+            else statuses[review.status]
+        )
         details.append(f"{review.model}: {state}")
     complete = report.status == "complete"
-    heading = (("Сравнение моделей завершено" if complete else "Сравнение моделей ещё не завершено") if russian else
-               ("Model comparison complete" if complete else "Model comparison incomplete"))
+    heading = (
+        ("Сравнение моделей завершено" if complete else "Сравнение моделей ещё не завершено")
+        if russian
+        else ("Model comparison complete" if complete else "Model comparison incomplete")
+    )
     return "\n" + heading + ". " + "; ".join(details)
 
 
 async def _legacy_delivery_extras(
-    cards: list[ArticleSummary], ranked: list[Any], irritator_status: IrritatorStatus,
-    review_report: BlindReviewReport | None, config: Any, review_led_only: bool, nano_status: str,
+    cards: list[ArticleSummary],
+    ranked: list[Any],
+    irritator_status: IrritatorStatus,
+    review_report: BlindReviewReport | None,
+    config: Any,
+    review_led_only: bool,
+    nano_status: str,
 ) -> None:
     from digest.delivery import send_counter_signals
     from digest.delivery.telegram import send_status_message
@@ -451,8 +574,15 @@ async def _legacy_delivery_extras(
 
 def _finish_compact(guard: IssueGuard | None, result: IssueDeliveryResult | None) -> None:
     if guard is not None and result is not None and guard.state == "sending":
-        outcome = ("confirmed" if result.complete else "unknown" if result.outcome == "unknown" else
-                   "partial" if result.confirmed_chunks else "failed_no_delivery")
+        outcome = (
+            "confirmed"
+            if result.complete
+            else "unknown"
+            if result.outcome == "unknown"
+            else "partial"
+            if result.confirmed_chunks
+            else "failed_no_delivery"
+        )
         guard.finish(outcome, accepted_count=result.confirmed_chunks, attempted_count=result.attempted_chunks)
 
 

@@ -25,15 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def main_attribution_occurrences(
-    report: BlindReviewReport | None, cards: Sequence[ArticleSummary], sources: Sequence[SourceConfig],
-    *, closing_snapshot: bool, cache_dir: str | Path = ".cache",
+    report: BlindReviewReport | None,
+    cards: Sequence[ArticleSummary],
+    sources: Sequence[SourceConfig],
+    *,
+    closing_snapshot: bool,
+    cache_dir: str | Path = ".cache",
 ) -> dict[str, SourceOccurrence]:
     """Resolve main credits before calls; legacy recovery remains explicit."""
     from digest.adapters.storage.candidate_objects import read_packet
     from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 
-    required = closing_snapshot or any(source.enabled and supports_source_attribution(source.url)
-                                      for source in sources)
+    required = closing_snapshot or any(source.enabled and supports_source_attribution(source.url) for source in sources)
     try:
         report_sha = hashlib.sha256(canonical_json_bytes(asdict(report))).hexdigest() if report is not None else None
         path = _safe(Path(cache_dir) / "candidate_reports" / f"{report_sha}.json") if report_sha else None
@@ -66,6 +69,8 @@ def main_attribution_occurrences(
     except (OSError, ValueError) as exc:
         if required:
             raise
-        logger.warning("Legacy attribution audit unavailable; retaining accepted presentation without "
-                       "inferring source credit: %s", exc)
+        logger.warning(
+            "Legacy attribution audit unavailable; retaining accepted presentation without inferring source credit: %s",
+            exc,
+        )
         return {}

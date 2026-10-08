@@ -1,4 +1,5 @@
 """Bounded Telegram approval-card transport, independent of persistent state."""
+
 from __future__ import annotations
 
 import logging
@@ -14,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 async def send_source_approval_message(
-    source: PendingSource, bot_token: str, chat_id: str, bot_username: str = "",
+    source: PendingSource,
+    bot_token: str,
+    chat_id: str,
+    bot_username: str = "",
 ) -> ProposalDelivery:
     """Send source decision links, or commands when no valid bot username is set."""
     username_valid = isinstance(bot_username, str) and re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username)
@@ -40,10 +44,12 @@ async def send_source_approval_message(
     }
     if username_valid:
         payload["reply_markup"] = {
-            "inline_keyboard": [[
-                {"text": "Add", "url": f"https://t.me/{bot_username}?start=source_ok_{source.source_hash}"},
-                {"text": "Reject", "url": f"https://t.me/{bot_username}?start=source_no_{source.source_hash}"},
-            ]],
+            "inline_keyboard": [
+                [
+                    {"text": "Add", "url": f"https://t.me/{bot_username}?start=source_ok_{source.source_hash}"},
+                    {"text": "Reject", "url": f"https://t.me/{bot_username}?start=source_no_{source.source_hash}"},
+                ]
+            ],
         }
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:

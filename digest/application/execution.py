@@ -1,4 +1,5 @@
 """Validate and select a digest application, with a distinct outer guard lifetime."""
+
 from __future__ import annotations
 
 import time
@@ -16,7 +17,11 @@ if TYPE_CHECKING:
 
 
 def _validate_compact_run(
-    compact: bool, dry_run: bool, radar_only: bool, guard: IssueGuard | None, prepare_only: bool,
+    compact: bool,
+    dry_run: bool,
+    radar_only: bool,
+    guard: IssueGuard | None,
+    prepare_only: bool,
 ) -> None:
     if compact and not dry_run and not radar_only and guard is None and not prepare_only:
         raise ValueError("Compact publication requires an externally persisted issue reservation.")
@@ -28,8 +33,15 @@ def _validate_closing_mode(config: Config, prepare_only: bool) -> None:
 
 
 async def _run(
-    config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
+    config_path: str,
+    dry_run: bool,
+    radar_only: bool,
+    verbose: bool,
+    *,
+    feedback_precollected: bool = False,
+    issue_guard: IssueGuard | None = None,
+    prepare_only: bool = False,
+    edition_date: date | None = None,
     emit_preview: Callable[[Preview], None],
 ) -> RunStats:
     """Resolve the application once; each workflow owns its execution sequence."""
@@ -49,26 +61,53 @@ async def _run(
     if prepare_only:
         prepare = prepare_sources if config.reading_brief.enabled else prepare_edition
         return await prepare(
-            config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-            publication_date=edition_date, started_at=started_at, execution=execution,
+            config,
+            config_path,
+            verbose=verbose,
+            feedback_precollected=feedback_precollected,
+            publication_date=edition_date,
+            started_at=started_at,
+            execution=execution,
         )
     return await legacy.run_legacy(
-        config, config_path, dry_run, radar_only, verbose, started_at=started_at,
-        feedback_precollected=feedback_precollected, issue_guard=issue_guard, emit_preview=emit_preview,
+        config,
+        config_path,
+        dry_run,
+        radar_only,
+        verbose,
+        started_at=started_at,
+        feedback_precollected=feedback_precollected,
+        issue_guard=issue_guard,
+        emit_preview=emit_preview,
         execution=execution,
     )
 
 
 async def run(
-    config_path: str, dry_run: bool, radar_only: bool, verbose: bool, *, feedback_precollected: bool = False,
-    issue_guard: IssueGuard | None = None, prepare_only: bool = False, edition_date: date | None = None,
+    config_path: str,
+    dry_run: bool,
+    radar_only: bool,
+    verbose: bool,
+    *,
+    feedback_precollected: bool = False,
+    issue_guard: IssueGuard | None = None,
+    prepare_only: bool = False,
+    edition_date: date | None = None,
     emit_preview: Callable[[Preview], None],
 ) -> RunStats:
     """Finalize coarse issue state even when analysis or delivery exits early."""
     try:
-        return await _run(config_path, dry_run, radar_only, verbose,
-                          feedback_precollected=feedback_precollected, issue_guard=issue_guard,
-                          prepare_only=prepare_only, edition_date=edition_date, emit_preview=emit_preview)
+        return await _run(
+            config_path,
+            dry_run,
+            radar_only,
+            verbose,
+            feedback_precollected=feedback_precollected,
+            issue_guard=issue_guard,
+            prepare_only=prepare_only,
+            edition_date=edition_date,
+            emit_preview=emit_preview,
+        )
     finally:
         if issue_guard is not None:
             if issue_guard.state == "reserved":

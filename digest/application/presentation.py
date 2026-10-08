@@ -50,7 +50,10 @@ def deferred_review_status(language: str) -> str:
 
 
 def combined_summary(
-    summaries: list[CategorySummary], trends: str | None, review_led_only: bool, language: str,
+    summaries: list[CategorySummary],
+    trends: str | None,
+    review_led_only: bool,
+    language: str,
 ) -> str:
     if review_led_only:
         return deferred_review_status(language)
@@ -68,20 +71,36 @@ def publication_intro(combined: str, report: BlindReviewReport | None, config: C
 
 
 async def primary_presentation(
-    combined: str, cards: list[ArticleSummary], config: Config, cache: Path, dry_run: bool,
-    *, execution: ModelExecution,
+    combined: str,
+    cards: list[ArticleSummary],
+    config: Config,
+    cache: Path,
+    dry_run: bool,
+    *,
+    execution: ModelExecution,
 ) -> tuple[str, list[ArticleSummary]]:
     """Optional rendering only; source evidence and supplementary work stay canonical."""
     presented, translated_cards, _ = await publication_presentation(
-        combined, cards, [], config, cache, dry_run, execution=execution,
+        combined,
+        cards,
+        [],
+        config,
+        cache,
+        dry_run,
+        execution=execution,
     )
     return presented, translated_cards
 
 
 async def publication_presentation(
-    combined: str, cards: list[ArticleSummary], ranked: list[RankedSignal],
-    config: Config, cache: Path, dry_run: bool,
-    *, execution: ModelExecution,
+    combined: str,
+    cards: list[ArticleSummary],
+    ranked: list[RankedSignal],
+    config: Config,
+    cache: Path,
+    dry_run: bool,
+    *,
+    execution: ModelExecution,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal]]:
     if not getattr(getattr(config, "translation", None), "enabled", False):
         return combined, cards, ranked
@@ -92,6 +111,11 @@ async def publication_presentation(
 
         with TemporaryDirectory(prefix="digest-translation-preview-") as temporary:
             return await translate_publication_presentation(
-                combined, cards, ranked, config, Path(temporary), execution=execution,
+                combined,
+                cards,
+                ranked,
+                config,
+                Path(temporary),
+                execution=execution,
             )
     return await translate_publication_presentation(combined, cards, ranked, config, cache, execution=execution)

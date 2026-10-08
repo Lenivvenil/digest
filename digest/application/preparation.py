@@ -3,6 +3,7 @@
 Recovery precedes new collection. Ordinary editions and experimental source work
 share candidate acquisition, then have distinct terminal application operations.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,7 +66,8 @@ def _empty_stats(feeds: int, feedback: int, articles: int = 0) -> RunStats:
 
 
 def _candidate_setup(
-    review_led_only: bool, cache_dir: str,
+    review_led_only: bool,
+    cache_dir: str,
 ) -> tuple[CandidateProgress | None, CollectionInventory | None, dict[str, str]]:
     if not review_led_only:
         return None, None, {}
@@ -73,14 +75,22 @@ def _candidate_setup(
     from digest.edition_runtime import _strict_cache
     from digest.radar.collector import CollectionInventory
 
-    return (load_candidate_progress(cache_dir), CollectionInventory(),
-            _strict_cache(Path(cache_dir) / "seen_articles.json"))
+    return (
+        load_candidate_progress(cache_dir),
+        CollectionInventory(),
+        _strict_cache(Path(cache_dir) / "seen_articles.json"),
+    )
 
 
 def _candidate_inputs(
-    progress: CandidateProgress | None, inventory: CollectionInventory | None,
-    run_config: Config, config: Config, delivered: dict[str, str],
-    priorities: dict[str, int], cache_dir: str, collection_failed: bool,
+    progress: CandidateProgress | None,
+    inventory: CollectionInventory | None,
+    run_config: Config,
+    config: Config,
+    delivered: dict[str, str],
+    priorities: dict[str, int],
+    cache_dir: str,
+    collection_failed: bool,
     allocated: dict[str, list[Article]],
 ) -> tuple[CandidatePacket | None, BlindReviewReport | None, dict[str, list[Article]]]:
     if progress is None:
@@ -101,15 +111,29 @@ def _candidate_inputs(
 
     if inventory is None:
         raise ValueError("Candidate preparation requires collection accounting.")
-    merge_candidates(progress, inventory.eligible_articles(), run_config, _prune_cache(delivered), priorities,
-                     inventory=inventory, delivery_history=delivered, cache_dir=cache_dir)
+    merge_candidates(
+        progress,
+        inventory.eligible_articles(),
+        run_config,
+        _prune_cache(delivered),
+        priorities,
+        inventory=inventory,
+        delivery_history=delivered,
+        cache_dir=cache_dir,
+    )
     from digest.reading_preparation import deferred_source_reports
 
-    deferred = (deferred_source_reports(progress, Path(cache_dir), config)
-                if getattr(getattr(config, "reading_brief", None), "enabled", False) else set())
+    deferred = (
+        deferred_source_reports(progress, Path(cache_dir), config)
+        if getattr(getattr(config, "reading_brief", None), "enabled", False)
+        else set()
+    )
     report = pending_completed_report(progress, skip_reports=deferred)
-    packet = (next(item for item in reversed(progress.packets) if item.report == report)
-              if report is not None else plan_packet(progress, config))
+    packet = (
+        next(item for item in reversed(progress.packets) if item.report == report)
+        if report is not None
+        else plan_packet(progress, config)
+    )
     if packet is not None and report is None:
         begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
     else:
@@ -119,7 +143,8 @@ def _candidate_inputs(
     logging.getLogger(__name__).info(
         "Candidate accounting: %d registered, %d eligible, %d never planned, %d technical pending, "
         "%d unselected without editorial reason, %d metadata not-selected, %d duplicates; next packet %d items",
-        len(progress.candidates), sum(item.eligible for item in progress.candidates.values()),
+        len(progress.candidates),
+        sum(item.eligible for item in progress.candidates.values()),
         sum(item.status == "not_presented" for item in progress.candidates.values()),
         sum(item.status == "technical_pending" for item in progress.candidates.values()),
         sum(item.status == "not_selected_without_editorial_reason" for item in progress.candidates.values()),
@@ -128,8 +153,9 @@ def _candidate_inputs(
         len(packet.evidence.items) if packet is not None else 0,
     )
     stored_bytes = progress_size(progress, cache_dir)
-    logging.getLogger(__name__).info("Candidate storage: %d bytes used; %d bytes remaining",
-                                    stored_bytes, MAX_BYTES - stored_bytes)
+    logging.getLogger(__name__).info(
+        "Candidate storage: %d bytes used; %d bytes remaining", stored_bytes, MAX_BYTES - stored_bytes
+    )
     articles = packet_articles(packet) if packet is not None else {}
     if collection_failed and packet is None:
         raise AllFeedsFailedError("All feeds failed and no eligible saved candidate packet is available.")
@@ -137,17 +163,25 @@ def _candidate_inputs(
 
 
 async def _analyze_candidate_articles(
-    articles: dict[str, list[Article]], config: Config, progress: CandidateProgress | None,
+    articles: dict[str, list[Article]],
+    config: Config,
+    progress: CandidateProgress | None,
     packet: CandidatePacket | None,
-    cached_report: BlindReviewReport | None, cache_dir: str,
-    *, execution: ModelExecution,
+    cached_report: BlindReviewReport | None,
+    cache_dir: str,
+    *,
+    execution: ModelExecution,
 ) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
     if cached_report is not None:
         from digest.review import primary_cards
 
-        cards = primary_cards(cached_report, articles, config.radar.language,
-                              max_cards=config.review.max_selections,
-                              include_attribution=config.telegram.delivery_mode != "compact")
+        cards = primary_cards(
+            cached_report,
+            articles,
+            config.radar.language,
+            max_cards=config.review.max_selections,
+            include_attribution=config.telegram.delivery_mode != "compact",
+        )
         return [], None, cards, cached_report
     if progress is None or packet is None:
         return await analysis.analyze_articles(articles, config, execution=execution)
@@ -168,15 +202,23 @@ async def _analyze_candidate_articles(
             save_closing(decision, report, cache_dir)
         except (OSError, ValueError, TypeError, KeyError):
             logging.getLogger(__name__).warning("Optional closing capture unavailable; main review remains accepted.")
-    cards = primary_cards(report, articles, config.radar.language, max_cards=config.review.max_selections,
-                          include_attribution=config.telegram.delivery_mode != "compact")
+    cards = primary_cards(
+        report,
+        articles,
+        config.radar.language,
+        max_cards=config.review.max_selections,
+        include_attribution=config.telegram.delivery_mode != "compact",
+    )
     return [], None, cards, report
 
 
 def _save_prepared_fetch_stats(
-    source_stats: dict[str, SourceStats], fetch_metrics: dict[str, SourceFetchMetrics],
+    source_stats: dict[str, SourceStats],
+    fetch_metrics: dict[str, SourceFetchMetrics],
     articles: dict[str, list[Article]],
-    config: Config, cache_dir: str, already_failed: bool,
+    config: Config,
+    cache_dir: str,
+    already_failed: bool,
 ) -> None:
     from digest.adapters.storage.sources import save_stats
 
@@ -186,25 +228,40 @@ def _save_prepared_fetch_stats(
 
 
 def _preparation_closing(
-    cards: list[ArticleSummary], report: BlindReviewReport | None,
-    articles: dict[str, list[Article]], config: Config, cache_dir: str,
+    cards: list[ArticleSummary],
+    report: BlindReviewReport | None,
+    articles: dict[str, list[Article]],
+    config: Config,
+    cache_dir: str,
 ) -> tuple[list[ArticleSummary], ClosingDecision | None]:
     from digest.closing import ClosingDecision, eligible_ids, load_closing
     from digest.review import primary_cards
 
     if not getattr(getattr(config, "closing", None), "enabled", False):
         return cards, None
-    decision = (load_closing(report, cache_dir) if report is not None
-                else ClosingDecision("incomplete", "missing_delivery_review"))
+    decision = (
+        load_closing(report, cache_dir)
+        if report is not None
+        else ClosingDecision("incomplete", "missing_delivery_review")
+    )
     if decision.provenance is not None and report is not None:
         occurrence = decision.provenance.occurrence
-        if (decision.provenance.evidence_id not in eligible_ids(report.evidence, config.closing, config.sources)
-                or not any((binding.name, binding.url, binding.category) == (
-                    occurrence.source, occurrence.source_url, occurrence.category)
-                    for binding in config.closing.approved_sources)):
+        if decision.provenance.evidence_id not in eligible_ids(
+            report.evidence, config.closing, config.sources
+        ) or not any(
+            (binding.name, binding.url, binding.category)
+            == (occurrence.source, occurrence.source_url, occurrence.category)
+            for binding in config.closing.approved_sources
+        ):
             return cards, ClosingDecision("unavailable", "source_no_longer_eligible_for_closing")
-        main_cards = primary_cards(report, articles, config.radar.language, max_cards=config.review.max_selections,
-                                   include_attribution=False, exclude_ids=frozenset({decision.provenance.evidence_id}))
+        main_cards = primary_cards(
+            report,
+            articles,
+            config.radar.language,
+            max_cards=config.review.max_selections,
+            include_attribution=False,
+            exclude_ids=frozenset({decision.provenance.evidence_id}),
+        )
         if not main_cards:
             return cards, ClosingDecision("unavailable", "closing_would_empty_main_selection")
         cards = main_cards
@@ -212,15 +269,20 @@ def _preparation_closing(
 
 
 def _save_candidate_preparation(
-    snapshot: PreparationSnapshot, packet: CandidatePacket | None,
-    cache_dir: str, publication_date: date | None,
+    snapshot: PreparationSnapshot,
+    packet: CandidatePacket | None,
+    cache_dir: str,
+    publication_date: date | None,
 ) -> bool:
     """Return whether canonical preparation was accepted, including genuine abstention."""
     from digest.edition_runtime import save_accepted_preparation
     from digest.review import _delivery_review
 
-    if (not snapshot.top_articles and snapshot.review_report is not None
-            and _delivery_review(snapshot.review_report).status != "abstained"):
+    if (
+        not snapshot.top_articles
+        and snapshot.review_report is not None
+        and _delivery_review(snapshot.review_report).status != "abstained"
+    ):
         return False
     if not snapshot.top_articles and packet is not None and packet.disposition_attempts:
         report = snapshot.review_report
@@ -235,20 +297,33 @@ def _save_candidate_preparation(
 
 
 def _handoff_candidate(
-    progress: CandidateProgress | None, packet: CandidatePacket | None, report: BlindReviewReport | None,
-    cache_dir: str, publication_date: date | None,
+    progress: CandidateProgress | None,
+    packet: CandidatePacket | None,
+    report: BlindReviewReport | None,
+    cache_dir: str,
+    publication_date: date | None,
 ) -> None:
     from digest.candidate_review import mark_prepared
     from digest.preparation import load_preparation
 
-    if (progress is not None and packet is not None and report is not None
-            and load_preparation(cache_dir, publication_date=publication_date) is not None):
+    if (
+        progress is not None
+        and packet is not None
+        and report is not None
+        and load_preparation(cache_dir, publication_date=publication_date) is not None
+    ):
         mark_prepared(progress, packet.evidence.bundle_id, cache_dir)
 
 
 async def _collect_and_select(
-    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
-    publication_date: date | None, started_at: float,
+    config: Config,
+    config_path: str,
+    *,
+    execution: ModelExecution,
+    verbose: bool,
+    feedback_precollected: bool,
+    publication_date: date | None,
+    started_at: float,
 ) -> SelectedPreparation | RunStats:
     """Recover accepted work first; otherwise acquire one bounded candidate selection."""
     from digest._util import cleanup_stale_tmp
@@ -266,14 +341,26 @@ async def _collect_and_select(
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)
     feedback_store, feedback_usable, feedback_collected = await run_state.collect_run_feedback(
-        config, cache_dir, False, feedback_precollected,
+        config,
+        cache_dir,
+        False,
+        feedback_precollected,
     )
     run_state.require_attribution_store(config.telegram.delivery_mode == "compact", feedback_usable)
     config, execution = run_state.apply_pending_approvals(
-        config, config_path, cache_dir, feedback_store, enabled=feedback_usable, execution=execution,
+        config,
+        config_path,
+        cache_dir,
+        feedback_store,
+        enabled=feedback_usable,
+        execution=execution,
     )
     resumed = await resume_preparation(
-        config, feedback_collected, verbose=verbose, publication_date=publication_date, execution=execution,
+        config,
+        feedback_collected,
+        verbose=verbose,
+        publication_date=publication_date,
+        execution=execution,
     )
     if resumed is not None:
         return resumed
@@ -286,35 +373,52 @@ async def _collect_and_select(
             feedback_scores[source.name] = score
     if config.adaptive.enabled:
         priorities = calculate_effective_priorities(
-            config.effective_sources(source_state), source_stats, feedback_scores, config.adaptive,
+            config.effective_sources(source_state),
+            source_stats,
+            feedback_scores,
+            config.adaptive,
         )
     else:
         priorities = calculate_feedback_priorities(
-            config.effective_sources(source_state), feedback_scores, config.adaptive,
+            config.effective_sources(source_state),
+            feedback_scores,
+            config.adaptive,
         )
     source_config = dataclasses.replace(
-        config, sources=[source for source in config.sources
-                         if source.enabled and not source_state.is_demoted(source.name)],
+        config,
+        sources=[source for source in config.sources if source.enabled and not source_state.is_demoted(source.name)],
     )
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
-    progress, inventory, delivered = _candidate_setup(config.review.enabled and config.review.review_led_only,
-                                                      cache_dir)
+    progress, inventory, delivered = _candidate_setup(
+        config.review.enabled and config.review.review_led_only, cache_dir
+    )
     collection_failed = False
     try:
         articles, _cache = await collect(
-            source_config, effective_priorities=priorities, fetch_metrics=fetch_metrics,
+            source_config,
+            effective_priorities=priorities,
+            fetch_metrics=fetch_metrics,
             **({"inventory": inventory} if inventory is not None else {}),
         )
     except AllFeedsFailedError:
-        run_state.save_failed_run_stats(source_stats, fetch_metrics, cache_dir,
-                              {source.name for source in config.enabled_sources}, dry_run=False)
+        run_state.save_failed_run_stats(
+            source_stats, fetch_metrics, cache_dir, {source.name for source in config.enabled_sources}, dry_run=False
+        )
         if progress is None:
             raise
         collection_failed = True
         articles = {}
     collected_articles = sum(len(items) for items in articles.values())
     packet, cached_report, articles = _candidate_inputs(
-        progress, inventory, source_config, config, delivered, priorities, cache_dir, collection_failed, articles,
+        progress,
+        inventory,
+        source_config,
+        config,
+        delivered,
+        priorities,
+        cache_dir,
+        collection_failed,
+        articles,
     )
     if not articles:
         from digest.reconciliation_checkpoint import prepare_current_batch
@@ -330,24 +434,52 @@ async def _collect_and_select(
     deadline = reading_deadline(config, started_at) if config.reading_brief.enabled else None
     async with asyncio.timeout_at(deadline):
         summaries, trends, cards, report = await _analyze_candidate_articles(
-            articles, config, progress, packet, cached_report, cache_dir, execution=execution,
+            articles,
+            config,
+            progress,
+            packet,
+            cached_report,
+            cache_dir,
+            execution=execution,
         )
     if not summaries and not cards and report is None:
         logging.getLogger(__name__).error("All category summarizations failed.")
-        run_state.save_failed_run_stats(source_stats, fetch_metrics, cache_dir,
-                              {source.name for source in config.enabled_sources}, dry_run=False)
+        run_state.save_failed_run_stats(
+            source_stats, fetch_metrics, cache_dir, {source.name for source in config.enabled_sources}, dry_run=False
+        )
         # CLI preparation requires compact mode, so legacy failure messages are not sent.
-        return _empty_stats(len(config.enabled_sources), feedback_collected,
-                            sum(len(items) for items in articles.values()))
-    return SelectedPreparation(config, execution, source_config, articles, progress, packet, summaries, trends, cards,
-                               report,
-                               source_stats, fetch_metrics, collection_failed, collected_articles,
-                               feedback_collected, started_at)
+        return _empty_stats(
+            len(config.enabled_sources), feedback_collected, sum(len(items) for items in articles.values())
+        )
+    return SelectedPreparation(
+        config,
+        execution,
+        source_config,
+        articles,
+        progress,
+        packet,
+        summaries,
+        trends,
+        cards,
+        report,
+        source_stats,
+        fetch_metrics,
+        collection_failed,
+        collected_articles,
+        feedback_collected,
+        started_at,
+    )
 
 
 async def prepare_edition(
-    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
-    publication_date: date | None, started_at: float,
+    config: Config,
+    config_path: str,
+    *,
+    execution: ModelExecution,
+    verbose: bool,
+    feedback_precollected: bool,
+    publication_date: date | None,
+    started_at: float,
 ) -> RunStats:
     """Ordinary preparation: recover, select, accept, present and freeze; never send."""
     from digest.adapters.storage.sources import save_source_category_map
@@ -356,30 +488,49 @@ async def prepare_edition(
     from digest.preparation import PreparationSnapshot
 
     selected = await _collect_and_select(
-        config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-        publication_date=publication_date, started_at=started_at, execution=execution,
+        config,
+        config_path,
+        verbose=verbose,
+        feedback_precollected=feedback_precollected,
+        publication_date=publication_date,
+        started_at=started_at,
+        execution=execution,
     )
     if isinstance(selected, RunStats):
         return selected
     config, execution = selected.config, selected.execution
     cards, closing = _preparation_closing(selected.cards, selected.report, selected.articles, config, ".cache")
-    combined = combined_summary(selected.summaries, selected.trends,
-                                config.review.enabled and config.review.review_led_only, config.radar.language)
+    combined = combined_summary(
+        selected.summaries,
+        selected.trends,
+        config.review.enabled and config.review.review_led_only,
+        config.radar.language,
+    )
     combined = publication_intro(combined, selected.report, config)
     snapshot = PreparationSnapshot(
-        top_articles=cards, summaries=selected.summaries, combined=combined, review_report=selected.report,
-        source_count=len(selected.articles), article_count=selected.article_count,
+        top_articles=cards,
+        summaries=selected.summaries,
+        combined=combined,
+        review_report=selected.report,
+        source_count=len(selected.articles),
+        article_count=selected.article_count,
         contributing_sources=sorted({article.source for items in selected.articles.values() for article in items}),
         closing=closing,
     )
     accepted = _save_candidate_preparation(snapshot, selected.packet, ".cache", publication_date)
     _handoff_candidate(selected.progress, selected.packet, selected.report, ".cache", publication_date)
-    _save_prepared_fetch_stats(selected.source_stats, selected.fetch_metrics, selected.articles,
-                               config, ".cache", selected.collection_failed)
+    _save_prepared_fetch_stats(
+        selected.source_stats, selected.fetch_metrics, selected.articles, config, ".cache", selected.collection_failed
+    )
     save_source_category_map(config.enabled_sources, ".cache")
     stats = await finish_preparation(
-        snapshot, config, selected.feedback_collected, verbose=verbose, publication_date=publication_date,
-        selection_complete=accepted, execution=execution,
+        snapshot,
+        config,
+        selected.feedback_collected,
+        verbose=verbose,
+        publication_date=publication_date,
+        selection_complete=accepted,
+        execution=execution,
     )
     stats.feeds_fetched = len(selected.fetch_metrics)
     stats.new_articles = selected.collected_articles
@@ -388,29 +539,57 @@ async def prepare_edition(
 
 
 async def prepare_sources(
-    config: Config, config_path: str, *, execution: ModelExecution, verbose: bool, feedback_precollected: bool,
-    publication_date: date | None, started_at: float,
+    config: Config,
+    config_path: str,
+    *,
+    execution: ModelExecution,
+    verbose: bool,
+    feedback_precollected: bool,
+    publication_date: date | None,
+    started_at: float,
 ) -> RunStats:
     """Experimental source work ends in a technical handoff, not an edition."""
     from digest.reading_preparation import prepare_selected_sources, reading_deadline
     from digest.reconciliation_checkpoint import prepare_current_batch
 
     selected = await _collect_and_select(
-        config, config_path, verbose=verbose, feedback_precollected=feedback_precollected,
-        publication_date=publication_date, started_at=started_at, execution=execution,
+        config,
+        config_path,
+        verbose=verbose,
+        feedback_precollected=feedback_precollected,
+        publication_date=publication_date,
+        started_at=started_at,
+        execution=execution,
     )
     if isinstance(selected, RunStats):
         return selected
     execution = selected.execution
     result = await prepare_selected_sources(
-        selected.progress, selected.packet, selected.report, selected.source_config, Path(".cache"),
-        reading_deadline(selected.config, started_at), prepare_only=True, execution=execution,
+        selected.progress,
+        selected.packet,
+        selected.report,
+        selected.source_config,
+        Path(".cache"),
+        reading_deadline(selected.config, started_at),
+        prepare_only=True,
+        execution=execution,
     )
     await prepare_current_batch(selected.progress, selected.source_config, config_path, started_at, execution=execution)
-    _save_prepared_fetch_stats(selected.source_stats, selected.fetch_metrics, selected.articles,
-                               selected.config, ".cache", selected.collection_failed)
-    logging.getLogger(__name__).info("Source preparation: %d selected, %d technically complete, %d pending; %s",
-                                    result.selected, result.technical_complete, result.pending, result.status)
+    _save_prepared_fetch_stats(
+        selected.source_stats,
+        selected.fetch_metrics,
+        selected.articles,
+        selected.config,
+        ".cache",
+        selected.collection_failed,
+    )
+    logging.getLogger(__name__).info(
+        "Source preparation: %d selected, %d technically complete, %d pending; %s",
+        result.selected,
+        result.technical_complete,
+        result.pending,
+        result.status,
+    )
     stats = _empty_stats(len(selected.config.enabled_sources), selected.feedback_collected, selected.article_count)
     stats.edition_status = result.status
     return stats

@@ -17,15 +17,18 @@ if TYPE_CHECKING:
 # Static presentation labels follow canonical generation language, not translation targets.
 _LABELS = {
     "en": {
-        "feedback": ("Tap a vote button, then Start to send it. "
-                     "Processed on the next digest run; private owner chat only."),
+        "feedback": (
+            "Tap a vote button, then Start to send it. Processed on the next digest run; private owner chat only."
+        ),
         "feedback_plain": "Votes are processed on digest runs; private owner chat only.",
         "fallback": "Or send /vote g {hash} (good) or /vote b {hash} (bad).",
         "irritator": "Irritator",
     },
     "ru": {
-        "feedback": ("Нажмите оценку, затем Start (Запустить), чтобы отправить голос. "
-                     "Учтём при следующем выпуске; только личный чат владельца."),
+        "feedback": (
+            "Нажмите оценку, затем Start (Запустить), чтобы отправить голос. "
+            "Учтём при следующем выпуске; только личный чат владельца."
+        ),
         "feedback_plain": "Оценки обрабатываются при запусках дайджеста; только личный чат владельца.",
         "fallback": "Или отправьте /vote g {hash} (полезно) либо /vote b {hash} (неполезно).",
         "irritator": "Раздражатор",
@@ -164,7 +167,12 @@ def split_message(text: str, max_len: int = _SPLIT_LIMIT) -> list[str]:
 
 
 def render_article_card(
-    title: str, link: str, source: str, category: str, summary: str, config: Any,
+    title: str,
+    link: str,
+    source: str,
+    category: str,
+    summary: str,
+    config: Any,
 ) -> _IssueChunk:
     """Render the existing card copy and optional deep-link vote keyboard."""
     hash8 = article_hash(title, link)[:8]
@@ -178,27 +186,28 @@ def render_article_card(
     username = getattr(config.telegram, "bot_username", "")
     notice = labels["feedback"] if username else labels["feedback_plain"]
     async_note = escape_markdownv2(notice + "\n" + labels["fallback"].format(hash=hash8))
-    text = (
-        f"[{title_esc}]({url_esc})\n\n"
-        f"{summary_esc}\n\n"
-        f"*{source_esc}* \u00b7 _{cat_esc}_\n"
-        f"_{async_note}_"
-    )
+    text = f"[{title_esc}]({url_esc})\n\n{summary_esc}\n\n*{source_esc}* \u00b7 _{cat_esc}_\n_{async_note}_"
 
-    keyboard: dict[str, Any] | None = {
-        "inline_keyboard": [
-            [
-                {"text": "\U0001f44d", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
-                {"text": "\U0001f44e", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+    keyboard: dict[str, Any] | None = (
+        {
+            "inline_keyboard": [
+                [
+                    {"text": "\U0001f44d", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
+                    {"text": "\U0001f44e", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+                ]
             ]
-        ]
-    } if username else None
+        }
+        if username
+        else None
+    )
 
     return _IssueChunk(text, keyboard)
 
 
 def render_compact_issue(
-    articles: list[ArticleSummary], config: Any, notice: str,
+    articles: list[ArticleSummary],
+    config: Any,
+    notice: str,
 ) -> tuple[list[_IssueChunk], list[_IssueArticleRange]]:
     """Prepare every chunk and map escaped article ranges before dispatch."""
     username = getattr(config.telegram, "bot_username", "")
@@ -235,7 +244,8 @@ def render_compact_issue(
 
     for index, article_range in enumerate(ranges, 1):
         article_range.covering_chunks = tuple(
-            chunk_index for chunk_index, (start, end) in enumerate(chunk_ranges)
+            chunk_index
+            for chunk_index, (start, end) in enumerate(chunk_ranges)
             if start < article_range.end and article_range.start < end
         )
         if username:
@@ -243,30 +253,35 @@ def render_compact_issue(
             if final_chunk.reply_markup is None:
                 final_chunk.reply_markup = {"inline_keyboard": []}
             hash8 = article_range.full_hash[:8]
-            final_chunk.reply_markup["inline_keyboard"].append([
-                {"text": f"{index}👍", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
-                {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
-            ])
+            final_chunk.reply_markup["inline_keyboard"].append(
+                [
+                    {"text": f"{index}👍", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
+                    {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+                ]
+            )
     return chunks, ranges
 
 
 def render_counter_signals(
-    ranked_signals: list[Any], config: Any, irritator_status: IrritatorStatus | None = None,
+    ranked_signals: list[Any],
+    config: Any,
+    irritator_status: IrritatorStatus | None = None,
 ) -> tuple[list[str], bool]:
     """Render a legacy supplement and its existing notification policy."""
     if not ranked_signals:
         if irritator_status is None:
             return [], False
         prefix = f"💢 {_labels(config)['irritator']}: "
-        return (split_supplement(prefix + irritator_status.text, escape_markdownv2),
-                irritator_status.level != "error")
+        return (split_supplement(prefix + irritator_status.text, escape_markdownv2), irritator_status.level != "error")
 
     labels = _labels(config)
     language = getattr(getattr(config, "radar", None), "language", "en")
-    text = "\n\n".join([
-        f"💢🔥 {labels['irritator'].upper()} 🔥💢",
-        *(signal_text(ranked, language) for ranked in ranked_signals),
-    ])
+    text = "\n\n".join(
+        [
+            f"💢🔥 {labels['irritator'].upper()} 🔥💢",
+            *(signal_text(ranked, language) for ranked in ranked_signals),
+        ]
+    )
     if irritator_status is not None:
         text += f"\n\nIrritator status: {irritator_status.level} — {irritator_status.text}"
     return split_supplement(text, escape_markdownv2), False
@@ -274,22 +289,37 @@ def render_counter_signals(
 
 def _coverage_notice(full_source: bool, russian: bool) -> str:
     if full_source:
-        return ('Охват ограничен выбранными отрывками полных статей; это не независимая проверка всех утверждений.'
-                if russian else 'Limited coverage; selected full-source passages, not verification of every claim.')
-    return ('Охват ограничен; RSS-выдержки, не полные статьи.' if russian
-            else 'Limited coverage; RSS excerpts, not full articles.')
+        return (
+            "Охват ограничен выбранными отрывками полных статей; это не независимая проверка всех утверждений."
+            if russian
+            else "Limited coverage; selected full-source passages, not verification of every claim."
+        )
+    return (
+        "Охват ограничен; RSS-выдержки, не полные статьи."
+        if russian
+        else "Limited coverage; RSS excerpts, not full articles."
+    )
 
 
 def render_post_delivery_supplement(
-    result: EvidenceIrritatorResult, config: Any, *, full_source: bool, notice: str = "",
+    result: EvidenceIrritatorResult,
+    config: Any,
+    *,
+    full_source: bool,
+    notice: str = "",
 ) -> list[str]:
     """Render the bounded post-delivery supplement without transport or state access."""
-    russian = config.radar.language == 'ru'
-    header = ('Ирритатор: отдельная проверка одного нарратива' if russian
-              else 'Irritator: separate check of one narrative')
-    outcome = {'complete': 'проверка выполнена', 'empty': 'проверка выполнена, контрсигналов не найдено',
-               'incomplete': 'проверка неполная', 'error': 'проверка не выполнена'}
-    status = outcome.get(result.status, 'проверка неполная') if russian else result.status
+    russian = config.radar.language == "ru"
+    header = (
+        "Ирритатор: отдельная проверка одного нарратива" if russian else "Irritator: separate check of one narrative"
+    )
+    outcome = {
+        "complete": "проверка выполнена",
+        "empty": "проверка выполнена, контрсигналов не найдено",
+        "incomplete": "проверка неполная",
+        "error": "проверка не выполнена",
+    }
+    status = outcome.get(result.status, "проверка неполная") if russian else result.status
     lines = [header, status, _coverage_notice(full_source, russian)]
     if result.narratives:
         label = "Проверяем: " if russian else "Narrative checked: "
@@ -297,4 +327,4 @@ def render_post_delivery_supplement(
     lines.extend(signal_text(ranked, config.radar.language) for ranked in result.ranked_signals)
     if notice:
         lines.append(notice)
-    return split_supplement('\n\n'.join(lines), escape_markdownv2)
+    return split_supplement("\n\n".join(lines), escape_markdownv2)

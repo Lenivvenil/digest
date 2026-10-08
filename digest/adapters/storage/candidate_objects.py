@@ -3,6 +3,7 @@
 No object contains earlier progress or report history. Callers write and verify
 these objects before removing anything from the active checkpoint.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -117,21 +118,31 @@ def freeze_packet(packet: CandidatePacket, summary: dict[str, Any], cache_dir: s
     raw = asdict(replace(packet, handed_to_preparation=False))
     del raw["articles"]
     raw["article_refs"] = article_refs
-    _write(path, {"schema_version": 2,
-                  "report_sha256": digest(asdict(packet.report)) if packet.report else None,
-                  "packet_sha256": digest(asdict(replace(packet, handed_to_preparation=False))),
-                  "report_bundle_id": packet.evidence.bundle_id, "summary": summary, "packet": raw})
+    _write(
+        path,
+        {
+            "schema_version": 2,
+            "report_sha256": digest(asdict(packet.report)) if packet.report else None,
+            "packet_sha256": digest(asdict(replace(packet, handed_to_preparation=False))),
+            "report_bundle_id": packet.evidence.bundle_id,
+            "summary": summary,
+            "packet": raw,
+        },
+    )
     read_packet(report_sha, cache_dir)
     return path
 
 
 def _report_record(report_sha: str, cache_dir: str | Path) -> dict[str, Any]:
     record = _read(_path(cache_dir, "candidate_reports", report_sha))
-    if (set(record) != {"schema_version", "report_sha256", "packet_sha256", "report_bundle_id",
-                       "summary", "packet", "sha256"}
-            or type(record["schema_version"]) is not int or record["schema_version"] != 2
-            or (record["report_sha256"] or record["packet_sha256"]) != report_sha
-            or not isinstance(record["summary"], dict)):
+    if (
+        set(record)
+        != {"schema_version", "report_sha256", "packet_sha256", "report_bundle_id", "summary", "packet", "sha256"}
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 2
+        or (record["report_sha256"] or record["packet_sha256"]) != report_sha
+        or not isinstance(record["summary"], dict)
+    ):
         raise ValueError("Unsupported candidate report schema or invalid report binding; regenerate draft accounting.")
     return record
 
@@ -151,9 +162,12 @@ def _decode_packet(record: dict[str, Any], cache_dir: str | Path) -> CandidatePa
     body = {key: value for key, value in raw.items() if key != "article_refs"}
     body["articles"] = [asdict(read_article(sha, cache_dir)) for sha in raw["article_refs"]]
     packet: CandidatePacket = _restore(body, CandidatePacket)
-    if ((digest(asdict(packet.report)) if packet.report else None) != record["report_sha256"]
-            or digest(asdict(packet)) != record["packet_sha256"]
-            or packet.evidence.bundle_id != record["report_bundle_id"] or packet.handed_to_preparation):
+    if (
+        (digest(asdict(packet.report)) if packet.report else None) != record["report_sha256"]
+        or digest(asdict(packet)) != record["packet_sha256"]
+        or packet.evidence.bundle_id != record["report_bundle_id"]
+        or packet.handed_to_preparation
+    ):
         raise ValueError("Frozen candidate report binding mismatch.")
     _validate_packet(packet)
     return packet
@@ -165,8 +179,11 @@ def read_packet(report_sha: str, cache_dir: str | Path) -> CandidatePacket:
 
 def _validate_handoffs(record: dict[str, Any]) -> None:
     handoffs = record.get("report_handoffs", {})
-    if (not isinstance(handoffs, dict) or not set(handoffs) <= set(record["report_refs"])
-            or any(type(value) is not bool for value in handoffs.values())):
+    if (
+        not isinstance(handoffs, dict)
+        or not set(handoffs) <= set(record["report_refs"])
+        or any(type(value) is not bool for value in handoffs.values())
+    ):
         raise ValueError("Invalid candidate preparation handoff provenance.")
 
 
@@ -175,19 +192,39 @@ def _state_record(identity: str, cache_dir: str | Path) -> dict[str, Any] | None
     if not path.exists():
         return None
     record = _read(path)
-    fields_without_handoffs = {"schema_version", "candidate", "article_ref", "occurrence_refs",
-                               "report_refs", "policy_fields", "sha256"}
-    if (set(record) not in (fields_without_handoffs, fields_without_handoffs | {"report_handoffs"})
-            or type(record["schema_version"]) is not int or record["schema_version"] != 1
-            or not isinstance(record["candidate"], dict) or record["candidate"].get("identity") != identity
-            or not isinstance(record["occurrence_refs"], list) or not isinstance(record["report_refs"], list)):
+    fields_without_handoffs = {
+        "schema_version",
+        "candidate",
+        "article_ref",
+        "occurrence_refs",
+        "report_refs",
+        "policy_fields",
+        "sha256",
+    }
+    if (
+        set(record) not in (fields_without_handoffs, fields_without_handoffs | {"report_handoffs"})
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+        or not isinstance(record["candidate"], dict)
+        or record["candidate"].get("identity") != identity
+        or not isinstance(record["occurrence_refs"], list)
+        or not isinstance(record["report_refs"], list)
+    ):
         raise ValueError("Invalid candidate latest-state record.")
     _validate_handoffs(record)
     fields = record["policy_fields"]
-    if (not isinstance(fields, list) or len(fields) != 1 + len(record["occurrence_refs"])
-            or any(not isinstance(item, dict) or set(item) != {"source", "source_url", "category", "published"}
-                   or not all(isinstance(item[key], str) for key in ("source", "source_url", "category"))
-                   or item["published"] is not None and not isinstance(item["published"], str) for item in fields)):
+    if (
+        not isinstance(fields, list)
+        or len(fields) != 1 + len(record["occurrence_refs"])
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"source", "source_url", "category", "published"}
+            or not all(isinstance(item[key], str) for key in ("source", "source_url", "category"))
+            or item["published"] is not None
+            and not isinstance(item["published"], str)
+            for item in fields
+        )
+    ):
         raise ValueError("Invalid candidate policy fields.")
     return record
 
@@ -196,25 +233,33 @@ def load_candidate_packets(identity: str, cache_dir: str | Path) -> tuple[Candid
     record = _state_record(identity, cache_dir)
     if record is None:
         return ()
-    return tuple(replace(read_packet(sha, cache_dir),
-                         handed_to_preparation=record.get("report_handoffs", {}).get(sha, False))
-                 for sha in record["report_refs"])
+    return tuple(
+        replace(read_packet(sha, cache_dir), handed_to_preparation=record.get("report_handoffs", {}).get(sha, False))
+        for sha in record["report_refs"]
+    )
 
 
 def encode_active_candidate(candidate: Candidate, cache_dir: str | Path) -> dict[str, Any]:
     """Encode active metadata with source refs; never write an index or retire work."""
     raw = asdict(candidate)
     del raw["article"], raw["occurrences"]
-    return {"candidate": raw, "article_ref": put_article(candidate.article, cache_dir),
-            "occurrence_refs": [put_article(article, cache_dir) for article in candidate.occurrences]}
+    return {
+        "candidate": raw,
+        "article_ref": put_article(candidate.article, cache_dir),
+        "occurrence_refs": [put_article(article, cache_dir) for article in candidate.occurrences],
+    }
 
 
 def decode_active_candidate(raw: dict[str, Any], cache_dir: str | Path) -> Candidate:
     """Restore sources; active-progress validation separately binds decision proof."""
     from digest.domain.editorial.candidates import Candidate
 
-    if (not isinstance(raw, dict) or set(raw) != {"candidate", "article_ref", "occurrence_refs"}
-            or not isinstance(raw["candidate"], dict) or not isinstance(raw["occurrence_refs"], list)):
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"candidate", "article_ref", "occurrence_refs"}
+        or not isinstance(raw["candidate"], dict)
+        or not isinstance(raw["occurrence_refs"], list)
+    ):
         raise ValueError("Invalid active candidate source-reference fields.")
     body = dict(raw["candidate"])
     if "article" in body or "occurrences" in body:
@@ -222,14 +267,20 @@ def decode_active_candidate(raw: dict[str, Any], cache_dir: str | Path) -> Candi
     body["article"] = asdict(read_article(raw["article_ref"], cache_dir))
     body["occurrences"] = [asdict(read_article(sha, cache_dir)) for sha in raw["occurrence_refs"]]
     candidate: Candidate = _restore(body, Candidate)
-    if (any(article_hash(article.title, article.link) != candidate.identity
-            for article in (candidate.article, *candidate.occurrences))
-            or candidate.article in candidate.occurrences):
+    if (
+        any(
+            article_hash(article.title, article.link) != candidate.identity
+            for article in (candidate.article, *candidate.occurrences)
+        )
+        or candidate.article in candidate.occurrences
+    ):
         raise ValueError("Active candidate source identity or occurrence mismatch.")
     if datetime.fromisoformat(candidate.first_observed_at).tzinfo is None:
         raise ValueError("Candidate observation requires a timezone.")
-    if (candidate.delivery_cache_observed_at is not None
-            and datetime.fromisoformat(candidate.delivery_cache_observed_at).tzinfo is None):
+    if (
+        candidate.delivery_cache_observed_at is not None
+        and datetime.fromisoformat(candidate.delivery_cache_observed_at).tzinfo is None
+    ):
         raise ValueError("Candidate delivery-cache evidence requires a timezone.")
     return candidate
 
@@ -241,17 +292,24 @@ def read_candidate_header(identity: str, cache_dir: str | Path) -> dict[str, Any
 
 
 def _policy_fields(candidate: Candidate) -> list[dict[str, str | None]]:
-    return [{"source": article.source, "source_url": article.source_url,
-             "category": article.category, "published": article.published}
-            for article in (candidate.article, *candidate.occurrences)]
+    return [
+        {
+            "source": article.source,
+            "source_url": article.source_url,
+            "category": article.category,
+            "published": article.published,
+        }
+        for article in (candidate.article, *candidate.occurrences)
+    ]
 
 
 def _decode_candidate(record: dict[str, Any], cache_dir: str | Path) -> Candidate:
     from digest.domain.editorial.candidates import validate_candidate
 
     _validate_handoffs(record)
-    candidate = decode_active_candidate({key: record[key] for key in (
-        "candidate", "article_ref", "occurrence_refs")}, cache_dir)
+    candidate = decode_active_candidate(
+        {key: record[key] for key in ("candidate", "article_ref", "occurrence_refs")}, cache_dir
+    )
     if record["policy_fields"] != _policy_fields(candidate):
         raise ValueError("Candidate policy fields differ from the retained source evidence.")
     packets = [read_packet(sha, cache_dir) for sha in record["report_refs"]]
@@ -265,7 +323,10 @@ def load_candidate(identity: str, cache_dir: str | Path) -> Candidate | None:
 
 
 def save_candidate(
-    candidate: Candidate, packet_report_shas: tuple[str, ...], cache_dir: str | Path, *,
+    candidate: Candidate,
+    packet_report_shas: tuple[str, ...],
+    cache_dir: str | Path,
+    *,
     report_handoffs: dict[str, bool] | None = None,
 ) -> Path:
     """Verify direct proofs, archive this state, then atomically publish latest state.
@@ -273,9 +334,13 @@ def save_candidate(
     The caller removes the active record only after this succeeds. An old active
     record must take precedence after interruption at any earlier boundary.
     """
-    body = {"schema_version": 1, **encode_active_candidate(candidate, cache_dir),
-            "policy_fields": _policy_fields(candidate), "report_refs": list(dict.fromkeys(packet_report_shas)),
-            "report_handoffs": report_handoffs or {}}
+    body = {
+        "schema_version": 1,
+        **encode_active_candidate(candidate, cache_dir),
+        "policy_fields": _policy_fields(candidate),
+        "report_refs": list(dict.fromkeys(packet_report_shas)),
+        "report_handoffs": report_handoffs or {},
+    }
     if _decode_candidate(body, cache_dir) != candidate:
         raise ValueError("Candidate latest-state verification failed.")
     _write(_path(cache_dir, "candidate_history", digest(body)), body)
@@ -297,12 +362,18 @@ def list_excluded(cache_dir: str | Path) -> tuple[str, ...]:
     for path in sorted(directory.glob("*.json")):
         identity = _key(path.stem, 32)
         marker = _read(path)
-        if marker != {"schema_version": 1, "identity": identity,
-                      "sha256": digest({"schema_version": 1, "identity": identity})}:
+        if marker != {
+            "schema_version": 1,
+            "identity": identity,
+            "sha256": digest({"schema_version": 1, "identity": identity}),
+        }:
             raise ValueError("Invalid candidate exclusion marker.")
         record = _state_record(identity, cache_dir)
-        if record is not None and not record["candidate"].get("eligible", True) and record["candidate"].get(
-                "status") not in {"not_selected", "duplicate"}:
+        if (
+            record is not None
+            and not record["candidate"].get("eligible", True)
+            and record["candidate"].get("status") not in {"not_selected", "duplicate"}
+        ):
             identities.append(identity)
     return tuple(identities)
 
@@ -312,12 +383,18 @@ def read_policy(cache_dir: str | Path) -> str | None:
     if not path.exists():
         return None
     record = _read(path)
-    if (set(record) != {"schema_version", "policy_sha256", "sha256"}
-            or type(record["schema_version"]) is not int or record["schema_version"] != 1):
+    if (
+        set(record) != {"schema_version", "policy_sha256", "sha256"}
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+    ):
         raise ValueError("Invalid candidate policy header.")
     return _key(record["policy_sha256"])
 
 
 def write_policy(policy_sha: str, cache_dir: str | Path) -> Path:
-    return _write(_safe(Path(cache_dir) / "candidate_policy.json"),
-                  {"schema_version": 1, "policy_sha256": _key(policy_sha)}, immutable=False)
+    return _write(
+        _safe(Path(cache_dir) / "candidate_policy.json"),
+        {"schema_version": 1, "policy_sha256": _key(policy_sha)},
+        immutable=False,
+    )

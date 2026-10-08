@@ -76,10 +76,14 @@ def validate_manifest_record(data: dict[str, Any], owner: str, now: datetime, *,
     try:
         body = {key: value for key, value in data.items() if key != "content_sha256"}
         validate_manifest(
-            data, owner, now, content_sha256=content_sha256(canonical_bytes(body)),
+            data,
+            owner,
+            now,
+            content_sha256=content_sha256(canonical_bytes(body)),
             owner_sha256=content_sha256(owner.encode()),
             canonical_sha256=content_sha256(canonical_bytes(data["canonical_metadata"])),
-            presentation_sha256=content_sha256(canonical_bytes(data["presentation_metadata"])), fresh=fresh,
+            presentation_sha256=content_sha256(canonical_bytes(data["presentation_metadata"])),
+            fresh=fresh,
         )
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Invalid, stale or wrong-owner prepared edition; publishing blocked.") from exc

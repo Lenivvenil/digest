@@ -2,6 +2,7 @@
 
 No selection workflow, HTTP client or persistence adapter is imported here.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,8 +30,12 @@ from digest.domain.editorial.reviews import (
 )
 
 CandidateStatus = Literal[
-    "selected", "not_selected", "duplicate", "not_selected_without_editorial_reason",
-    "not_presented", "technical_pending",
+    "selected",
+    "not_selected",
+    "duplicate",
+    "not_selected_without_editorial_reason",
+    "not_presented",
+    "technical_pending",
 ]
 
 
@@ -92,31 +97,45 @@ def validate_occurrence(article: CandidateArticle) -> None:
 
 def validate_candidate_decision(candidate: Candidate, packets: Sequence[CandidatePacket]) -> None:
     if candidate.disposition is None:
-        if (candidate.status in {"not_selected", "duplicate"}
-                or any(value is not None for value in (candidate.decision_response_sha256,
-                       candidate.decision_prompt_hash, candidate.decision_occurrence_sha256))):
+        if candidate.status in {"not_selected", "duplicate"} or any(
+            value is not None
+            for value in (
+                candidate.decision_response_sha256,
+                candidate.decision_prompt_hash,
+                candidate.decision_occurrence_sha256,
+            )
+        ):
             raise ValueError("Resolved candidate lacks exact disposition evidence.")
         return
-    if (candidate.disposition.evidence_id != candidate.identity
-            or candidate.status in {"selected", "not_selected", "duplicate"}
-            and candidate.disposition.status != candidate.status
-            or candidate.decision_occurrence_sha256 != occurrence_sha256(candidate.article)):
+    if (
+        candidate.disposition.evidence_id != candidate.identity
+        or candidate.status in {"selected", "not_selected", "duplicate"}
+        and candidate.disposition.status != candidate.status
+        or candidate.decision_occurrence_sha256 != occurrence_sha256(candidate.article)
+    ):
         raise ValueError("Candidate decision source occurrence mismatch.")
     for packet in packets:
-        if not any(article_hash(article.title, article.link) == candidate.identity
-                   and occurrence_sha256(article) == candidate.decision_occurrence_sha256
-                   for article in packet.articles):
+        if not any(
+            article_hash(article.title, article.link) == candidate.identity
+            and occurrence_sha256(article) == candidate.decision_occurrence_sha256
+            for article in packet.articles
+        ):
             continue
         for attempt in packet.disposition_attempts:
-            if (attempt.response_sha256 == candidate.decision_response_sha256
-                    and attempt.prompt_hash == candidate.decision_prompt_hash
-                    and candidate.disposition in attempt.dispositions):
+            if (
+                attempt.response_sha256 == candidate.decision_response_sha256
+                and attempt.prompt_hash == candidate.decision_prompt_hash
+                and candidate.disposition in attempt.dispositions
+            ):
                 return
     raise ValueError("Candidate decision has no exact saved response evidence.")
 
 
 def validate_candidate(
-    candidate: Candidate, packets: Sequence[CandidatePacket], *, identity: str | None = None,
+    candidate: Candidate,
+    packets: Sequence[CandidatePacket],
+    *,
+    identity: str | None = None,
 ) -> None:
     """Validate one retained candidate and its actual decision-proof packets."""
     if identity is None:
@@ -125,8 +144,10 @@ def validate_candidate(
         raise ValueError("Candidate identity mismatch.")
     if datetime.fromisoformat(candidate.first_observed_at).tzinfo is None:
         raise ValueError("Candidate observation requires a timezone.")
-    if (candidate.delivery_cache_observed_at is not None
-            and datetime.fromisoformat(candidate.delivery_cache_observed_at).tzinfo is None):
+    if (
+        candidate.delivery_cache_observed_at is not None
+        and datetime.fromisoformat(candidate.delivery_cache_observed_at).tzinfo is None
+    ):
         raise ValueError("Candidate delivery-cache evidence requires a timezone.")
     if candidate.article in candidate.occurrences:
         raise ValueError("Candidate repeats its canonical occurrence.")
@@ -183,19 +204,30 @@ def validate_progress(progress: CandidateProgress) -> None:
 
 def latest_occurrence_packet(candidate: Candidate, packets: list[CandidatePacket]) -> CandidatePacket | None:
     """A retained plan for this exact source occurrence, never proof of dispatch."""
-    matches = [packet for packet in packets if candidate.article in packet.articles
-               and any(item.evidence_id == candidate.identity for item in packet.evidence.items)]
+    matches = [
+        packet
+        for packet in packets
+        if candidate.article in packet.articles
+        and any(item.evidence_id == candidate.identity for item in packet.evidence.items)
+    ]
     return max(matches, key=lambda packet: datetime.fromisoformat(packet.planned_at)) if matches else None
 
 
 def proof_packets(candidate: Candidate, packets: list[CandidatePacket]) -> list[CandidatePacket]:
-    matches = [packet for packet in packets if any(item.evidence_id == candidate.identity
-                                                  for item in packet.evidence.items)]
+    matches = [
+        packet for packet in packets if any(item.evidence_id == candidate.identity for item in packet.evidence.items)
+    ]
     if candidate.disposition is not None:
-        matches = [packet for packet in matches if any(
-            attempt.response_sha256 == candidate.decision_response_sha256
-            and attempt.prompt_hash == candidate.decision_prompt_hash
-            and candidate.disposition in attempt.dispositions for attempt in packet.disposition_attempts)]
+        matches = [
+            packet
+            for packet in matches
+            if any(
+                attempt.response_sha256 == candidate.decision_response_sha256
+                and attempt.prompt_hash == candidate.decision_prompt_hash
+                and candidate.disposition in attempt.dispositions
+                for attempt in packet.disposition_attempts
+            )
+        ]
     proof = [max(reversed(matches), key=lambda packet: datetime.fromisoformat(packet.planned_at))] if matches else []
     # Keep existing decision/history proof, plus the current occurrence's latest
     # planning opportunity when rebinding makes them different. At most two.
@@ -212,10 +244,14 @@ def accepted_empty_packet(packet: CandidatePacket) -> bool:
     review = delivery_review(packet.report)
     capture = next((item for item in packet.disposition_attempts if item.slot == review.slot), None)
     return review.status == "abstained" and (
-        not packet.disposition_attempts or capture is not None and capture.status == "complete")
+        not packet.disposition_attempts or capture is not None and capture.status == "complete"
+    )
 
 
 def packet_key(packet: CandidatePacket) -> str:
     """Address completed reports by report hash and unfinished attempts by packet hash."""
-    return _digest(asdict(packet.report)) if packet.report else _digest(asdict(replace(
-        packet, handed_to_preparation=False)))
+    return (
+        _digest(asdict(packet.report))
+        if packet.report
+        else _digest(asdict(replace(packet, handed_to_preparation=False)))
+    )

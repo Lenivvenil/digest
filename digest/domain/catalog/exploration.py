@@ -3,6 +3,7 @@
 State shapes and mutations remain compatible; decision times are supplied by the
 application independently at each existing observation point.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -48,8 +49,12 @@ def select_exploration_area(data: dict[str, Any], areas: list[str]) -> str:
         data["attempted_areas"] = []
         eligible = areas
     oldest = datetime.min.replace(tzinfo=timezone.utc)
-    area = min(eligible, key=lambda item: metadata_stamp(data["area_offers"][item]["updated_at"])
-               if item in data["area_offers"] else oldest)
+    area = min(
+        eligible,
+        key=lambda item: (
+            metadata_stamp(data["area_offers"][item]["updated_at"]) if item in data["area_offers"] else oldest
+        ),
+    )
     data["attempted_areas"].append(area)
     return area
 
@@ -60,18 +65,26 @@ def has_source_history(data: dict[str, Any], source: PendingSource, decision: st
 
 
 def append_source_history(data: dict[str, Any], source: PendingSource, decision: str, *, now: datetime) -> None:
-    data["history"].append({"binding": proposal_binding(source), "url": source.url, "name": source.name,
-                            "category": source.category, "decision": decision, "recorded_at": now.isoformat()})
+    data["history"].append(
+        {
+            "binding": proposal_binding(source),
+            "url": source.url,
+            "name": source.name,
+            "category": source.category,
+            "decision": decision,
+            "recorded_at": now.isoformat(),
+        }
+    )
 
 
 def prune_recent_metadata(data: dict[str, Any], areas: list[str], *, now: datetime) -> None:
     """Fold actual/possible offers before the original 30-day receipt/history pruning."""
     retain_area_offers(data, areas)
     cutoff = now - timedelta(days=30)
-    data["history"] = [item for item in data["history"]
-                       if datetime.fromisoformat(item["recorded_at"]) >= cutoff]
-    data["deliveries"] = {key: value for key, value in data["deliveries"].items()
-                          if datetime.fromisoformat(value["updated_at"]) >= cutoff}
+    data["history"] = [item for item in data["history"] if datetime.fromisoformat(item["recorded_at"]) >= cutoff]
+    data["deliveries"] = {
+        key: value for key, value in data["deliveries"].items() if datetime.fromisoformat(value["updated_at"]) >= cutoff
+    }
 
 
 def expire_pending_proposal(data: dict[str, Any], source: PendingSource, *, now: datetime) -> bool:
@@ -90,14 +103,19 @@ def finish_pruning(data: dict[str, Any], kept: list[PendingSource]) -> None:
     kept_bindings = {proposal_binding(source) for source in kept}
     retained_bindings = kept_bindings | set(data["deliveries"]) | {item["binding"] for item in data["history"]}
     data["proposal_areas"] = {key: area for key, area in data["proposal_areas"].items() if key in retained_bindings}
-    data["validation_failures"] = {key: value for key, value in data["validation_failures"].items()
-                                   if key in kept_bindings}
+    data["validation_failures"] = {
+        key: value for key, value in data["validation_failures"].items() if key in kept_bindings
+    }
     data["batch"] = None
 
 
 def pending_offer_eligible(
-    source: PendingSource, data: dict[str, Any], configured: set[str], cycle: str,
-    validations: int, counts: dict[str, int],
+    source: PendingSource,
+    data: dict[str, Any],
+    configured: set[str],
+    cycle: str,
+    validations: int,
+    counts: dict[str, int],
 ) -> bool:
     """Hold every existing receipt; defer failed validation for one distinct cycle."""
     binding = proposal_binding(source)
@@ -120,38 +138,63 @@ def pending_offer_eligible(
 
 def record_validation_failure(data: dict[str, Any], binding: str, cycle: str, *, now: datetime) -> None:
     data["validation_failures"][binding] = {
-        "failed_at": now.isoformat(), "failed_cycle": cycle, "skipped_cycle": None,
+        "failed_at": now.isoformat(),
+        "failed_cycle": cycle,
+        "skipped_cycle": None,
     }
 
 
 def reserve_offers(data: dict[str, Any], offers: list[PendingSource], owner: str, *, now: datetime) -> None:
     for source in offers:
         data["deliveries"][proposal_binding(source)] = {
-            "status": "reserved", "updated_at": now.isoformat(), "owner": owner,
+            "status": "reserved",
+            "updated_at": now.isoformat(),
+            "owner": owner,
         }
 
 
 def bind_batch(
-    data: dict[str, Any], offers: list[PendingSource], owner: str, target: str,
-    pending_sha: str, counts: dict[str, int],
+    data: dict[str, Any],
+    offers: list[PendingSource],
+    owner: str,
+    target: str,
+    pending_sha: str,
+    counts: dict[str, int],
 ) -> None:
-    data["batch"] = {"owner": owner, "pending_sha256": pending_sha, "target": target,
-                     "bindings": [proposal_binding(source) for source in offers],
-                     "prepare_counts": counts.copy()}
+    data["batch"] = {
+        "owner": owner,
+        "pending_sha256": pending_sha,
+        "target": target,
+        "bindings": [proposal_binding(source) for source in offers],
+        "prepare_counts": counts.copy(),
+    }
     counts["prepared"] = len(offers)
     data["batch"]["prepare_counts"] = counts.copy()
 
 
 def validate_batch(batch: dict[str, Any], owner: str, target: str, pending_sha: str | None) -> None:
-    if (batch.get("owner") != owner or batch.get("pending_sha256") != pending_sha
-            or batch.get("target") != target or not isinstance(batch.get("bindings"), list)
-            or len(batch["bindings"]) > 3 or len(set(batch["bindings"])) != len(batch["bindings"])):
+    if (
+        batch.get("owner") != owner
+        or batch.get("pending_sha256") != pending_sha
+        or batch.get("target") != target
+        or not isinstance(batch.get("bindings"), list)
+        or len(batch["bindings"]) > 3
+        or len(set(batch["bindings"])) != len(batch["bindings"])
+    ):
         raise ValueError("Discovery batch ownership or binding mismatch.")
 
 
 def validate_reserved_proposal(
-    pending: list[PendingSource], source: PendingSource, receipt: dict[str, Any], owner: str, *, now: datetime,
+    pending: list[PendingSource],
+    source: PendingSource,
+    receipt: dict[str, Any],
+    owner: str,
+    *,
+    now: datetime,
 ) -> None:
-    if (resolve_pending_proposal(pending, source.source_hash, now=now) != source
-            or receipt.get("status") != "reserved" or receipt.get("owner") != owner):
+    if (
+        resolve_pending_proposal(pending, source.source_hash, now=now) != source
+        or receipt.get("status") != "reserved"
+        or receipt.get("owner") != owner
+    ):
         raise ValueError("Discovery offer no longer matches its reservation.")
