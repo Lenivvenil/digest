@@ -232,6 +232,19 @@ These are behavioral examples of the existing contract, not new live-run instruc
 
 <a id="ordinary-preparation-candidate-accounting"></a>
 
+The review instruction evaluates substantive supplied information before reader
+relevance: a concrete development, finding, explanation or usable resource. A
+relevant question or promised discussion alone is insufficient. Concrete future
+announcements remain eligible, with attributed claims and plans distinguished from
+achieved outcomes. `deferred` is reserved for otherwise useful items exceeding the
+detail budget; insufficient substance or relevance is an editorial `not_selected`
+judgment about the supplied metadata, not the unread full article.
+
+These are model instructions, not semantic guarantees enforced by quote validation.
+The [#55 correction](https://github.com/Lenivvenil/digest/issues/55) changes prompt
+identity for future review; it neither reopens prior decisions nor proves improved
+selection before a new ordinary output is inspected.
+
 Candidate progress is saved before a review call. Admission works within the configured
 count, character, retry-opportunity and storage bounds; it does not promise to drain
 an entire feed cohort in one run. Missing/invalid dispositions and capacity-only

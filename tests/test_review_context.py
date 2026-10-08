@@ -135,10 +135,14 @@ def test_prompt_preserves_fidelity_uncertainty_and_capacity_boundaries() -> None
     assert "do not infer that the full article" in system["content"]
     assert "Missing configured context is not negative evidence" in system["content"]
     assert "do not impose category quotas" in system["content"]
-    assert ("Other useful items MUST have deferred dispositions with a concise response-capacity reason"
-            in system["content"])
+    assert "First identify substantive supplied information" in system["content"]
+    assert "A relevant question or promised discussion alone is insufficient" in system["content"]
+    assert "Concrete future announcements remain eligible" in system["content"]
+    assert "distinguish attributed claims and plans from achieved outcomes" in system["content"]
+    assert "All otherwise useful items beyond the detail budget MUST be deferred" in system["content"]
+    assert "Use not_selected, not deferred, for insufficient substance or relevance" in system["content"]
     assert "max_selections" not in json.loads(task["content"])
-    assert "Consider every supplied item for relevance" in system["content"]
+    assert "Consider every supplied item for substance and relevance" in system["content"]
     assert json.loads(task["content"])["max_detailed_selections"] == 5
     config.review.max_selections = 5
     assert _messages(config) == [system, task]
