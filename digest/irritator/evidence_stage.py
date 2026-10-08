@@ -20,6 +20,11 @@ import httpx
 from digest._serialization import extract_json as _extract_json
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
+from digest.domain.investigation.coverage import COVERAGE as COVERAGE
+from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE as FULL_SOURCE_COVERAGE
+from digest.domain.investigation.queries import SearchQuery
+from digest.domain.investigation.signals import Signal
+from digest.domain.investigation.validation import validate_signals
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import (
     GROUNDED_QUERY_CONTRACT,
@@ -29,19 +34,17 @@ from digest.irritator.query_contract import (
     find_source_anchor,
     lexical_atoms,
 )
-from digest.irritator.query_generator import SearchQuery
 from digest.irritator.ranker import (
     MAX_RANKING_JSON_CHARS,
     RANK_RELATION_CONTRACT,
     RANK_RELATIONS,
     RankedSignal,
 )
-from digest.irritator.sources import Signal, SourceUnavailableError, validate_search_response
+from digest.irritator.sources import SourceUnavailableError, validate_search_response
 from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
-from digest.irritator.validator import validate_signals
 from digest.llm import LLMRole, complete
 from digest.review import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundle, validate_full_source_evidence
@@ -61,20 +64,6 @@ MAX_OUTPUT_TOKENS = 2048
 MAX_RESPONSE_CHARS = 16000
 MAX_SECONDS = 180.0
 SAFE_SOURCES = ("hackernews", "arxiv", "lobsters")
-COVERAGE = (
-    "Limited coverage: at most one narrative from sanitized RSS excerpts, three queries, "
-    "and the configured Hacker News/arXiv/Lobsters sources. "
-    "Search snippets and complete arXiv abstracts are not full articles; "
-    "absence of a counter-signal is not confirmation of the narrative."
-)
-FULL_SOURCE_COVERAGE = (
-    "Limited coverage: at most one narrative from selected literal full-source passages, three queries, "
-    "and the configured Hacker News/arXiv/Lobsters sources. Passage selection is model-generated, "
-    "not independent corroboration or complete article coverage. "
-    "Search snippets and complete arXiv abstracts are not full articles; "
-    "absence of a counter-signal is not confirmation of the narrative."
-)
-
 Outcome = Literal["complete", "empty", "incomplete", "error"]
 StageState = Literal["not_run", "running", "complete", "empty", "incomplete", "error"]
 

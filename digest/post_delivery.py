@@ -22,10 +22,10 @@ import httpx
 from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage import post_delivery as storage
 from digest.adapters.telegram.delivery import send_post_delivery_supplement
+from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
 from digest.presentation.supplement import signal_text
 from digest.review_checkpoint import load_review_checkpoint
-from digest.review_trial import _ALLOWED_MODELS
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
@@ -49,7 +49,7 @@ def _paths(checkpoint: Path) -> tuple[Path, Path, Path]:
 def _config(path: Path) -> Config:
     config = load_config(path)
     model = config.review.secondary
-    if (model.provider, model.model) not in _ALLOWED_MODELS:
+    if (model.provider, model.model) not in ALLOWED_REVIEW_MODELS:
         raise ValueError('Post-delivery model is outside the approved free-route lineup.')
     config.llm.max_retries = 0
     return config

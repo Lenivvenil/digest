@@ -9,7 +9,7 @@ from digest.domain.catalog.occurrences import occurrence_sha256 as _occurrence_s
 
 if TYPE_CHECKING:
     from digest.domain.catalog.occurrences import SourceOccurrence
-    from digest.radar.summarizer import ArticleSummary
+    from digest.domain.editorial.summaries import ArticleSummary
 
 
 # Reviewed source-specific presentation notices, not source activation or inferred

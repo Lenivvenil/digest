@@ -17,16 +17,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review_routes import ALLOWED_REVIEW_MODELS as _ALLOWED_MODELS
 from digest.config import load_config
 from digest.radar.collector import collect
 from digest.review import render_review, run_blind_review, run_evidence_review
 from digest.review_checkpoint import load_review_checkpoint
-
-_ALLOWED_MODELS = {
-    ("gemini", "gemini-3.8-flash"),
-    ("groq", "openai/gpt-oss-120b"),
-    ("groq", "qwen/qwen3.8-27b"),
-}
 
 
 async def run_trial(

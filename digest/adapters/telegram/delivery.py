@@ -308,7 +308,7 @@ async def send_post_delivery_supplement(result: EvidenceIrritatorResult, config:
     token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
     if not config.telegram.enabled or not token or not chat:
         return 'not_configured'
-    from digest.irritator.evidence_stage import FULL_SOURCE_COVERAGE
+    from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE
 
     chunks = render_post_delivery_supplement(
         result, config, full_source=result.coverage == FULL_SOURCE_COVERAGE, notice=notice,

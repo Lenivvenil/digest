@@ -65,9 +65,11 @@ for footer failures.
 `LegacyCollection` and `LegacyOutcomePolicy` still carry mutable feedback/scoring
 state across the direct run. This slice makes its effect owner explicit, but does
 not complete feedback/catalog separation or reduce that existing state coupling.
-Discovery codecs and approval transport remain in `discovery.py`; Telegram still
-combines rendering and transport. Those debts remain separate work; ADR0020 records
-the follow-on replacement of `LLMConfig._runtime` copy/sharing with explicit holders.
+At the initial #147-A boundary, discovery codecs/approval transport and Telegram
+rendering/transport remained combined. [ADR0021](0021-catalog-feedback-boundaries.md)
+records the deployed catalog/discovery continuations; [ADR0017](0017-confirmed-delivery-application.md)
+records the local delivery continuation. ADR0020 records the follow-on replacement
+of `LLMConfig._runtime` copy/sharing with explicit holders.
 
 ## Verification and rollback
 
@@ -78,3 +80,55 @@ at each failure point and reject lower-to-main/CLI imports. No live model, feed 
 Telegram calls are used. Local check evidence is not release or editorial acceptance.
 Rollback is a compatible reviewed code revert or prior engine pin, retaining all
 operational state and receipts without migration, reset or automatic replay.
+
+## Signal validation continuation
+
+The scoped local #147 continuation gives raw signal values and URL validation explicit
+owners without changing the deployed #147-A scenario or claiming completion of #147.
+`domain/investigation/signals.py` owns the existing six-field `Signal` dataclass and
+`domain/investigation/validation.py` owns the unchanged ordered URL deduplication and
+blocklist operation. Both import independently of the source registry and HTTP.
+`application/signal_validation.py` calls the domain operation before optional bounded
+HEAD checks in `adapters/http/signal_liveness.py`. The old sources class export and
+validator function exports resolve to the same objects as their new owners; public
+signatures and runtime annotation resolution are preserved.
+
+The first URL key, lower-cased with trailing slashes stripped, is consumed before
+scheme/host validation and case-insensitive substring filtering. This preserves first
+occurrence suppression even when that occurrence is rejected. No additional URL
+normalization, scheme restriction, SSRF rule or parse-error recovery is introduced.
+Liveness-disabled and empty-result paths perform no HTTP work. Enabled checks preserve
+semaphore 10, timeout 5 seconds, no redirects, ordered results, 404/410 drops, retention
+of 401/403/429/5xx and other responses, and the existing transport/URL-error boundary.
+No search, query, ranking, configuration, source capability or serialized format changes.
+
+Existing source, validator, ranking and investigation regressions run offline. Added
+boundary coverage pins cold domain imports, export/class identity and type hints,
+first-seen blocklist suppression, malformed URL propagation and bounded ordered HEAD
+options/error handling. A synthetic comparison against the frozen pre-extraction tree
+checks unchanged operation bodies and behavior without live requests. Local checks
+are separate from runtime rollout, search availability and semantic acceptance. Rollback
+is the compatible code/engine pin with existing state retained; no migration or replay.
+
+## Shared query, coverage and route contracts
+
+The adjacent local #147 continuation moves the unchanged two-field `SearchQuery`
+dataclass to `domain/investigation/queries.py`. Query generation, evidence investigation
+and source-registry consumers use that owner; the old query-generator and irritator
+exports are the same class object. `domain/investigation/coverage.py` owns the unchanged
+RSS and full-source coverage strings, retaining the evidence-stage aliases. The
+Telegram sender compares the same full-source vocabulary without importing evidence
+orchestration for it. No prompt, serialization or rendering content changes.
+
+`application/review_routes.py` owns the shared `ALLOWED_REVIEW_MODELS` route set.
+The trial command keeps `_ALLOWED_MODELS` as an alias to that exact mutable set, while
+resume and post-delivery import the public owner. The same three provider/model pairs,
+set type, route validation, budgets and request policies remain unchanged.
+
+These pure owners import without orchestration or adapters. The existing eager
+`irritator` package and source registry still initialize when a search adapter is
+imported; removal of the direct query-value dependency is not cold adapter isolation.
+Presentation retains type-only `IrritatorStatus`/`EvidenceIrritatorResult` coupling to
+their orchestration owners, not domain I/O. Those broader ownership changes are
+outside this extraction. Offline AST, import/alias checks and existing focused
+regressions verify the local change; deployment and editorial acceptance remain separate.

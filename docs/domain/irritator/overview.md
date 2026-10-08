@@ -22,6 +22,37 @@ or that nothing is persisted describe the April snapshot, not the later
 follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
 acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
+### Signal validation ownership under #147
+
+The local structural continuation separates the unchanged six-field `Signal` into
+`domain/investigation/signals.py` and ordered URL/blocklist policy into
+`domain/investigation/validation.py`. These owners import without the search registry,
+HTTP or application code. `irritator.sources.Signal` remains the same class object;
+its `published` annotation remains `str`. The historical model below does not add a
+nullable field or new raw/validated lifecycle types to that contract.
+
+`application/signal_validation.py` runs pure validation before optional HEAD operations
+in `adapters/http/signal_liveness.py`; `irritator/validator.py` is a compatibility export.
+Deduplication still lower-cases the entire URL and strips trailing slashes. The first
+occurrence consumes that key before scheme/host and substring-blocklist checks, even
+when rejected. Malformed parsing errors still propagate. Optional liveness preserves
+result order, semaphore 10, timeout 5 seconds, disabled redirects, 404/410 removal,
+other-status retention and the existing network/URL-error drops. Disabled liveness
+and empty filtered input perform no HTTP work.
+
+This is an ownership extraction, not evidence verification, a source/SSRF policy
+change or search/ranking/query redesign. The existing source set and six fields are
+unchanged. [ADR0019](../../decisions/0019-remaining-application-scenarios.md#signal-validation-continuation)
+records the boundary; #147 retains separate release and editorial acceptance evidence.
+
+The adjacent local continuation gives the unchanged two-field `SearchQuery` a pure
+owner in `domain/investigation/queries.py` and preserves its old class-object exports.
+The unchanged RSS/full-source coverage strings now belong to
+`domain/investigation/coverage.py`, with evidence-stage aliases retained. These pure
+owners load without orchestration; importing the existing source registry or adapters
+still initializes the eager `irritator` package. Search-adapter isolation and broader
+result/status ownership are not established by this extraction.
+
 ### Draft source-context preservation under #77/#122
 
 The disabled full-source integration retains known qualification passages beside the

@@ -128,8 +128,10 @@ and matching-chat validation. All early credential/empty-selection skips remain.
 
 `post_delivery.py` owns persisted marker/archive ordering, model and translation
 work, compact archive-only exit and final outcome. Concrete persistence now delegates
-to storage as recorded in the second continuation below; Telegram send has its own adapter. The full-source coverage string remains owned by the evidence stage;
-the adapter compares it and passes a boolean to the pure localized renderer.
+to storage as recorded in the second continuation below; Telegram send has its own adapter. The first extraction retained the evidence-stage coverage constant. The later
+shared-contract continuation gives its unchanged vocabulary a pure owner in
+`domain/investigation/coverage.py`; the adapter compares it and passes a boolean
+to the pure localized renderer.
 
 The second continuation below separates the prepared claim/receipt values, codecs,
 state checks, writes and transport previously combined in `delivery/edition.py`. No schema,
@@ -139,8 +141,8 @@ a compatible code revert or engine pin, without resetting state or resending mes
 
 ## Prepared delivery persistence and application continuation
 
-Local second delivery-ownership slice under #147, 2026-10-07. This record does not
-establish merge, rollout, complete #147 acceptance or editorial acceptance.
+The second delivery-ownership slice under #147 deployed through engine PR #159 and
+runtime PR #82 on 2026-10-07. This does not establish complete #147 or editorial acceptance.
 
 `domain/delivery/edition.py` owns unchanged prepared article/edition/claim/receipt
 values and pure shape, binding, count, state, publication-window and checkpoint-reference

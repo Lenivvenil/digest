@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 
-from digest.irritator.sources import Signal, SourceUnavailableError, _register
+from digest.domain.investigation.signals import Signal
+from digest.irritator.sources import SourceUnavailableError, _register
 
 
 @_register("devto")

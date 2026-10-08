@@ -10,8 +10,9 @@ from typing import Any
 import feedparser
 import httpx
 
+from digest.domain.investigation.signals import Signal
 from digest.irritator.query_contract import lexical_atoms
-from digest.irritator.sources import Signal, _register, validate_search_response
+from digest.irritator.sources import _register, validate_search_response
 from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 
 _BASE_URL = "https://export.arxiv.org/api/query"

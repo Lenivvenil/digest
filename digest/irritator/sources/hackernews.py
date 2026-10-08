@@ -7,8 +7,9 @@ from typing import Any
 
 import httpx
 
+from digest.domain.investigation.signals import Signal
 from digest.irritator.query_contract import lexical_atoms
-from digest.irritator.sources import Signal, _register, validate_search_response
+from digest.irritator.sources import _register, validate_search_response
 
 logger = logging.getLogger(__name__)
 
