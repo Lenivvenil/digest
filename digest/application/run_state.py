@@ -94,7 +94,10 @@ def record_source_stats(
     articles_by_category: dict[str, list[Article]],
     delivered_hashes: set[str],
 ) -> None:
-    """Combine fetch observations with confirmed output, including failed feeds."""
+    """Combine all fetch observations with confirmed or eligible archive consumption.
+
+    The historical ``delivered_hashes`` argument includes both kinds of consumption.
+    """
     from digest.application.source_scoring import update_stats
     from digest.radar.collector import article_hash
 

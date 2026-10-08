@@ -70,6 +70,20 @@ class AppliedOutcome:
     sources_demoted: int = 0
 
 
+@dataclass(frozen=True)
+class _DirectAccounting:
+    """Separate transport confirmation, archive consumption and the output gate."""
+
+    confirmed_hashes: set[str]
+    archive_hashes: set[str]
+    has_output: bool
+
+    @property
+    def consumed_hashes(self) -> set[str]:
+        """Identities eligible for direct-run deduplication and source inclusion."""
+        return self.confirmed_hashes | self.archive_hashes
+
+
 def save_delivery_cache(cache: dict[str, str], compact: bool, cache_dir: str) -> None:
     """Retain strict compact writes and best-effort legacy card persistence."""
     if compact:
@@ -132,6 +146,27 @@ def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
     return AppliedOutcome()
 
 
+def _direct_accounting(policy: LegacyOutcomePolicy) -> _DirectAccounting:
+    """Decide direct-run consumption without changing state or observing time."""
+    from digest.radar.collector import article_hash
+
+    confirmed_hashes = set(policy.outcome.delivered_hashes)
+    archive_hashes: set[str] = set()
+    if (
+        not policy.compact
+        and policy.markdown_saved
+        and (not getattr(policy.config.telegram, "required", False) or policy.telegram_complete)
+    ):
+        archive_hashes.update(
+            article_hash(article.title, article.link)
+            for category, articles in policy.articles_by_category.items()
+            if category in policy.summarized_categories
+            for article in articles
+        )
+        archive_hashes.update(article_hash(article.title, article.link) for article in policy.top_articles)
+    return _DirectAccounting(confirmed_hashes, archive_hashes, policy.outcome.sent > 0 or policy.markdown_saved)
+
+
 def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
     from digest.adapters.storage.feedback import save_feedback
     from digest.adapters.storage.sources import save_source_category_map, save_source_state, save_stats
@@ -142,33 +177,22 @@ def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
     from digest.radar.collector import article_hash
 
     outcome = policy.outcome
-    delivered_hashes = set(outcome.delivered_hashes)
-    if (
-        not policy.compact
-        and policy.markdown_saved
-        and (not getattr(policy.config.telegram, "required", False) or policy.telegram_complete)
-    ):
-        delivered_hashes.update(
-            article_hash(article.title, article.link)
-            for category, articles in policy.articles_by_category.items()
-            if category in policy.summarized_categories
-            for article in articles
-        )
-        delivered_hashes.update(article_hash(article.title, article.link) for article in policy.top_articles)
+    accounting = _direct_accounting(policy)
+    consumed_hashes = accounting.consumed_hashes
     collected_hashes = {
         article_hash(article.title, article.link)
         for articles in policy.articles_by_category.values()
         for article in articles
     }
-    # Keep collection timestamps and old entries; suppress no unconfirmed new work.
-    delivered_cache = {
+    # Keep collection timestamps and old entries; consume only qualifying output.
+    consumed_cache = {
         key: timestamp
         for key, timestamp in policy.collected_cache.items()
-        if key not in collected_hashes or key in delivered_hashes
+        if key not in collected_hashes or key in consumed_hashes
     }
-    record_source_stats(policy.source_stats, policy.fetch_metrics, policy.articles_by_category, delivered_hashes)
+    record_source_stats(policy.source_stats, policy.fetch_metrics, policy.articles_by_category, consumed_hashes)
     promoted = demoted = 0
-    if outcome.sent > 0 or policy.markdown_saved:
+    if accounting.has_output:
         apply_delivery_attribution(
             policy.feedback,
             outcome.article_source_map,
@@ -178,7 +202,7 @@ def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
         )
         # Legacy order is seen -> feedback -> source state -> stats -> category map.
         # The existing owner functions keep their caught-versus-propagated failures.
-        save_delivery_cache(delivered_cache, policy.compact, policy.cache_dir)
+        save_delivery_cache(consumed_cache, policy.compact, policy.cache_dir)
         if policy.config.adaptive.enabled:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             promote, demote, start = evaluate_trial_sources(
