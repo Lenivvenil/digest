@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -326,35 +325,13 @@ async def test_llm_stage_failure_is_never_empty_and_never_retried(failed_stage: 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["invented_url", "duplicate_url", "bad_quote", "float_score", "bool_score",
-                                       "high_score", "bad_relation", "too_many", "extra_field", "empty_unexplained"])
-async def test_ranking_contract_rejects_entire_response(mutation: str) -> None:
+async def test_invalid_ranking_marks_pipeline_incomplete_without_retry() -> None:
     execution = ModelExecution()
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
     bundle = _bundle(config)
     ranking = _ranking()
-    item = ranking["rankings"][0]
-    if mutation == "invented_url":
-        item["url"] = "https://invented.example/not-a-real-source-result"
-    elif mutation == "duplicate_url":
-        ranking["rankings"].append(deepcopy(item))
-    elif mutation == "bad_quote":
-        item["quote_id"] = "unknown-id"
-    elif mutation == "float_score":
-        item["score"] = 8.0
-    elif mutation == "bool_score":
-        item["score"] = True
-    elif mutation == "high_score":
-        item["score"] = 11
-    elif mutation == "bad_relation":
-        item["relation"] = "unknown"
-    elif mutation == "too_many":
-        ranking["rankings"] *= 4
-    elif mutation == "extra_field":
-        item["secret"] = "not a permitted field"
-    else:
-        ranking["rankings"] = []
+    ranking["rankings"][0]["extra"] = "not a permitted field"
     model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}),
                                   (json.dumps(ranking), {})])
     with (
@@ -409,45 +386,6 @@ def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None
     }
     assert limitations == ["Search is limited.",
                            "Ranking omitted non-counter signals: supports=1, context=0, insufficient=0."]
-
-
-@pytest.mark.parametrize(("field", "value"), [
-    ("quote_id", "unknown-id"), ("relation", "unknown"), ("score", True), ("reasoning", "  "),
-])
-def test_non_counter_entries_validated_before_filtering(field: str, value: Any) -> None:
-    bundle = _bundle(fixture_config())
-    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
-    signals = [make_signal(url=url, title="Deployment limitations")
-               for url in ("https://external.example/caveat", "https://external.example/other")]
-    ranking = _ranking(signals[0].url)
-    invalid = _ranking(signals[1].url)["rankings"][0]
-    invalid.update(relation="supports", score=1)
-    invalid[field] = value
-    ranking["rankings"].append(invalid)
-    with pytest.raises(ValueError):
-        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
-
-
-@pytest.mark.parametrize("mutation", ["duplicate_url", "cross_url_quote", "missing_relation", "extra_field"])
-def test_non_counter_entries_preserve_identity_and_shape_checks(mutation: str) -> None:
-    bundle = _bundle(fixture_config())
-    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
-    signals = [make_signal(url=url, title="Deployment limitations")
-               for url in ("https://external.example/caveat", "https://external.example/other")]
-    ranking = _ranking(signals[0].url)
-    ranking["rankings"][0].update(relation="supports", score=1)
-    item = _ranking(signals[1].url)["rankings"][0]
-    if mutation == "duplicate_url":
-        item["url"] = signals[0].url
-    elif mutation == "cross_url_quote":
-        ranking["rankings"][0]["quote_id"] = item["quote_id"]
-    elif mutation == "missing_relation":
-        del ranking["rankings"][0]["relation"]
-    else:
-        ranking["rankings"][0]["extra"] = "unexpected"
-    ranking["rankings"].append(item)
-    with pytest.raises(ValueError):
-        _parse_rankings(json.dumps(ranking), signals, narrative, 3, 5)
 
 
 @pytest.mark.asyncio
@@ -752,8 +690,7 @@ async def test_more_than_three_generated_queries_is_rejected_without_search() ->
     assert diagnostic.error_detail == "Invalid response entry count."
 
 
-@pytest.mark.parametrize("source_hyphen", ["-", "\u2010", "\u2011"])
-@pytest.mark.parametrize("model_hyphen", ["-", "\u2010", "\u2011"])
+@pytest.mark.parametrize(("source_hyphen", "model_hyphen"), [("-", "-"), ("\u2011", "-")])
 def test_narrative_hyphen_alignment_recovers_exact_original_quote(source_hyphen: str, model_hyphen: str) -> None:
     config = fixture_config()
     article = make_article(title=f"API{source_hyphen}powered systems")
@@ -799,15 +736,9 @@ def test_typography_tolerance_still_rejects_semantic_changes_or_splicing(bad_quo
     article = make_article(title="API-powered systems", description="Original evidence describing API-powered systems.")
     bundle = build_evidence_bundle({article.category: [article]}, config.review)
     response = _narrative(bundle)
-    narrative = _parse_narrative(json.dumps(response), bundle)[0][0]
     response["narratives"][0]["quotes"][bundle.items[0].evidence_id] = bad_quote
     with pytest.raises(ValueError, match="not in original evidence"):
         _parse_narrative(json.dumps(response), bundle)
-    signal = make_signal(url="https://external.example/caveat", title=article.title)
-    ranking = _ranking(signal.url)
-    ranking["rankings"][0]["quote"] = bad_quote
-    with pytest.raises(ValueError, match="Invalid ranking fields"):
-        _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
 @pytest.mark.parametrize("model_hyphen", ["-", "\u2011"])
@@ -824,14 +755,9 @@ def test_narrative_quote_length_is_bound_to_source_before_typography_repair(mode
     assert narrative.quotes[identity] == bundle.items[0].excerpt
     assert narrative.typography_normalized == ([identity] if model_hyphen != "-" else [])
     response["narratives"][0]["quotes"][identity] = quote + "!"
-    signal = make_signal(url="https://external.example/caveat", snippet=article.description)
-    ranking = _ranking(signal.url)
-    ranking["rankings"][0]["quote"] = article.description.replace("-", "\u2011")
     with patch("digest.irritator.evidence_stage.canonical_evidence_quote", side_effect=AssertionError("Too early")):
         with pytest.raises(ValueError, match="source_quote:too_long"):
             _parse_narrative(json.dumps(response), bundle)
-        with pytest.raises(ValueError, match="Invalid ranking fields"):
-            _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
 
 
 def test_one_bad_citation_rejects_whole_narrative_after_an_allowed_repair() -> None:

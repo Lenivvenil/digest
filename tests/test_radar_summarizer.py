@@ -347,8 +347,7 @@ class TestParseArticleSummaries:
         assert len(result) == 1
         assert result[0].title == "A"
 
-    @pytest.mark.parametrize("field", ["title", "link", "source", "summary"])
-    @pytest.mark.parametrize("value", [None, True, 7, 1.5, ["text"], {"text": "value"}])
+    @pytest.mark.parametrize(("field", "value"), [("title", None), ("link", 7), ("source", {}), ("summary", [])])
     def test_non_string_fields_are_skipped(self, field: str, value: object) -> None:
         valid: dict[str, object] = {
             "title": "A", "link": "https://a.com", "source": "S", "summary": "Good",

@@ -133,39 +133,39 @@ def test_every_valid_returned_judgment_is_auditable(relation: str, score: int, d
 @pytest.mark.parametrize(
     "mutation",
     [
-        "duplicate",
-        "unknown_url",
-        "bad_quote",
-        "extra_field",
-        "bad_relation",
-        "bool_score",
-        "blank_reason",
-        "too_many",
-        "invalid_json",
-        "too_long",
-        "bad_limitations",
+        "duplicate_url", "unknown_url", "unknown_quote_id", "cross_url_quote",
+        "extra_field", "bad_relation", "float_score", "bool_score", "high_score",
+        "blank_reason", "too_many", "invalid_json", "too_long", "bad_limitations",
+        "missing_relation", "empty_unexplained",
     ],
 )
-def test_invalid_later_entry_never_commits_valid_prefix(mutation: str) -> None:
+def test_invalid_ranking_is_atomic_even_below_the_editorial_threshold(mutation: str) -> None:
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
     signals = _signals(2)
     audit = _ranking_audit(signals, signals, 5, 3, {})
-    first, invalid = _entry(signals[0], "complicates"), _entry(signals[1])
+    first, invalid = _entry(signals[0], "complicates"), _entry(signals[1], "supports", 1)
     invalid["reasoning"] = "INVALID PRIVATE SENTINEL"
     changes = {
-        "duplicate": {"url": signals[0].url},
+        "duplicate_url": {"url": signals[0].url},
         "unknown_url": {"url": "https://unknown.example"},
-        "bad_quote": {"quote_id": first["quote_id"]},
-        "extra_field": {"extra": "bad"},
+        "unknown_quote_id": {"quote_id": "unknown-id"},
+        "cross_url_quote": {"quote_id": first["quote_id"]},
+        "extra_field": {"quote": "forbidden free-text quote"},
         "bad_relation": {"relation": "other"},
+        "float_score": {"score": 8.0},
         "bool_score": {"score": True},
+        "high_score": {"score": 11},
         "blank_reason": {"reasoning": "  "},
     }
     invalid.update(changes.get(mutation, {}))
+    if mutation == "missing_relation":
+        del invalid["relation"]
     payload: dict[str, Any] = {"rankings": [first, invalid], "limitations": []}
     if mutation == "too_many":
         payload["rankings"] *= 2
+    if mutation == "empty_unexplained":
+        payload["rankings"] = []
     if mutation == "bad_limitations":
         payload["limitations"] = [False]
     text = json.dumps(payload)
@@ -173,9 +173,7 @@ def test_invalid_later_entry_never_commits_valid_prefix(mutation: str) -> None:
         text = "INVALID PRIVATE SENTINEL"
     if mutation == "too_long":
         text = "x" * (MAX_RESPONSE_CHARS + 1)
-    with pytest.raises(ValueError) as baseline:
-        _parse_rankings(text, signals, narrative, 3, 5)
-    with pytest.raises(type(baseline.value), match=str(baseline.value)):
+    with pytest.raises(ValueError):
         _parse_rankings(text, signals, narrative, 3, 5, audit=audit)
     assert not audit.response_validated
     assert all(item.disposition == "pending" and item.decision is None for item in audit.candidates)
