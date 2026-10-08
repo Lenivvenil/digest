@@ -36,9 +36,9 @@ What the repository currently runs:
 - [Review and security evidence](../docs/principles.md#definition-of-done): record the
   applicable checks and reviews actually performed; a green CI run is not the whole checklist
 
-Pytest enforces **70%** coverage; the principles specify **80% by default**. The
-project-specific disposition is still open in [#148](https://github.com/Lenivvenil/digest/issues/148).
-Neither value is changed or waived by this guide. No release-please workflow is
+Pytest enforces **80%** coverage, aligned with the principles' accepted default.
+[#148](https://github.com/Lenivvenil/digest/issues/148) records the inherited 70%
+setting and the evidence for its correction. No release-please workflow is
 installed in tracked CI; use the [release and rollback guidance](../README.md#releases-and-licensing).
 
 ## Make the PR easy to review

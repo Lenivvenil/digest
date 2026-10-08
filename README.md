@@ -115,11 +115,10 @@ Read the [working agreement](AGENTS.md#working-agreement),
 [ADR index](docs/decisions/README.md) before changing a contract. Optional local
 pre-commit hooks are configured in `.pre-commit-config.yaml`.
 
-The configured pytest coverage gate is **70%**; the principles' default is **80%**.
-The project-specific policy disposition remains pending under
-[#148](https://github.com/Lenivvenil/digest/issues/148). Neither threshold is changed
-or waived here. Unit tests mock external calls; editorial usefulness and operational
-delivery need their own evidence.
+The configured pytest coverage gate is **80%**, matching the principles' default.
+[#148](https://github.com/Lenivvenil/digest/issues/148) records the correction of the
+inherited 70% setting. Unit tests mock external calls; editorial usefulness and
+operational delivery need their own evidence.
 
 ## Find the right guide
 
