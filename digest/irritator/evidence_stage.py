@@ -25,6 +25,9 @@ from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS, EvidenceBun
 from digest.domain.investigation.coverage import COVERAGE as COVERAGE
 from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE as FULL_SOURCE_COVERAGE
 from digest.domain.investigation.queries import SearchQuery
+from digest.domain.investigation.search_policy import MAX_QUERIES as MAX_QUERIES
+from digest.domain.investigation.search_policy import SAFE_SOURCES as SAFE_SOURCES
+from digest.domain.investigation.search_policy import build_search_policy
 from digest.domain.investigation.signals import Signal
 from digest.domain.investigation.validation import validate_signals
 from digest.irritator.narrative_extractor import Narrative
@@ -45,8 +48,8 @@ from digest.irritator.ranker import (
 from digest.irritator.sources import SourceUnavailableError, validate_search_response
 from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 from digest.irritator.sources.arxiv import search_arxiv
+from digest.irritator.sources.devto import search_devto
 from digest.irritator.sources.hackernews import search_hackernews
-from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.llm import LLMRole, complete
 from digest.review_checkpoint import FullSourceEvidence, validate_full_source_evidence
 from digest.source_admission import (
@@ -57,14 +60,12 @@ from digest.source_admission import (
     route_profile,
 )
 
-MAX_QUERIES = 3
 MAX_SOURCE_RESULTS = 10
 MAX_RANKING_CANDIDATES = 12
 MAX_RANKED_SIGNALS = 3
 MAX_OUTPUT_TOKENS = 2048
 MAX_RESPONSE_CHARS = 16000
 MAX_SECONDS = 180.0
-SAFE_SOURCES = ("hackernews", "arxiv", "lobsters")
 Outcome = Literal["complete", "empty", "incomplete", "error"]
 StageState = Literal["not_run", "running", "complete", "empty", "incomplete", "error"]
 
@@ -208,7 +209,8 @@ _SAFE_ERROR_DETAILS = frozenset({
     "Ranking quote ID is not bound to the supplied signal URL.", "Invalid source result fields.",
     "Invalid source result URL.", "Invalid source score.", "Source result must be a list.",
     "Source response exceeds the response budget.", "Invalid or error arXiv feed.",
-    "Invalid Hacker News search response.", "Invalid Lobsters search response.",
+    "Invalid Hacker News search response.", "Invalid DEV.to search response.", "Invalid DEV.to article fields.",
+    "Invalid DEV.to article URL.", "Invalid DEV.to publication date.",
     "Invalid Hacker News story.", "Hacker News response contains no identifiable stories.",
     "Checkpoint evidence hash mismatch.",
     "Full-source passage hash mismatch.", "Full-source evidence hash mismatch.",
@@ -535,15 +537,13 @@ def _ranking_audit(
 
 async def _check_source_response(response: httpx.Response) -> None:
     """Reject error pages and malformed success bodies rather than reporting empty."""
-    source_hosts = {"hn.algolia.com", "export.arxiv.org", "lobste.rs"}
+    source_hosts = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "dev.to": "devto"}
     if response.request.url.host not in source_hosts:
         return
     # This also rejects redirects before a redirect-enabled client follows them.
     response.raise_for_status()
     await read_bounded_response(response, MAX_SOURCE_RESPONSE_BYTES)
-    source = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "lobste.rs": "lobsters"}[
-        response.request.url.host
-    ]
+    source = source_hosts[response.request.url.host]
     validate_search_response(response, source)
 
 
@@ -551,8 +551,8 @@ async def _search(
     result: EvidenceIrritatorResult, config: Config, client: httpx.AsyncClient,
     *, lineage: dict[str, set[int]] | None = None,
 ) -> list[Signal]:
-    adapters = {"hackernews": search_hackernews, "arxiv": search_arxiv, "lobsters": search_lobsters}
-    sources = [source for source in SAFE_SOURCES if source in config.irritator.sources]
+    adapters = {"hackernews": search_hackernews, "arxiv": search_arxiv, "devto": search_devto}
+    policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)
     semaphore = asyncio.Semaphore(3)
 
     async def attempt(query: SearchQuery, source: str, query_index: int) -> list[Signal]:
@@ -575,7 +575,7 @@ async def _search(
         except SourceUnavailableError:
             result.source_attempts.append(SourceAttempt(
                 query.query, source, "unavailable", error="SourceUnavailableError",
-                error_detail=UNAVAILABLE_REASON if source == "lobsters" else "Configured source is unavailable.",
+                error_detail="Configured source is unavailable.",
             ))
             return []
         except asyncio.CancelledError:
@@ -592,7 +592,7 @@ async def _search(
     client.event_hooks["response"].append(_check_source_response)
     try:
         batches = await asyncio.gather(*(
-            attempt(query, source, index) for index, query in enumerate(result.queries) for source in sources
+            attempt(query, source, index) for index, query in enumerate(result.queries) for source in policy.sources
         ))
     finally:
         client.event_hooks["response"].remove(_check_source_response)
@@ -701,7 +701,8 @@ async def _run_stages(
         "evidence_ids": narrative.evidence_ids, "quotes": narrative.quotes,
     }
     cited_evidence = _narrative_context(evidence, narrative)
-    maximum_queries = min(MAX_QUERIES, config.irritator.queries_per_narrative)
+    search_policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)
+    maximum_queries = search_policy.max_queries
     diagnostic = _stage(result, "queries", 1)
     if (isinstance(evidence, FullSourceEvidence)
             and len(json.dumps(cited_evidence, ensure_ascii=False, sort_keys=True)) > MAX_EVIDENCE_JSON_CHARS):
@@ -750,7 +751,7 @@ async def _run_stages(
         return
 
     diagnostic = _stage(result, "search", len(result.queries))
-    if not set(SAFE_SOURCES).intersection(config.irritator.sources):
+    if not search_policy.sources:
         diagnostic.status, diagnostic.error = "error", "NoConfiguredSafeSources"
         result.status = "error"
         return

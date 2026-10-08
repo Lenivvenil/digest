@@ -130,6 +130,22 @@ validated ranking dispositions. Omitted-source previews explicitly record trunca
 unknown or unreturned relevance is never relabeled as rejection. This deployed private archive
 trace does not change ranking behavior or establish semantic counter-evidence quality.
 
+### Versioned bounded search policy
+
+[ADR0022](../../decisions/0022-versioned-bounded-search-policy.md) repairs the existing
+DEV adapter against the current Forem V1 search contract. New bounded attempts use
+an explicit policy identity for the configured Hacker News/arXiv/DEV subset and
+query ceiling. Their schema-2 reservation must match before execution; old pending
+policy markers are held rather than silently upgraded. Historical results retain
+their original source identities, coverage and request hashes.
+
+The same three-query/three-source ceiling can now issue nine real HTTP searches,
+where the abstaining Lobsters slot previously left six. A valid empty response,
+unavailable source and malformed response remain different observations. Returned
+DEV descriptions are snippets, not verified full articles. This repair changes
+neither neutral-query intent nor ranking acceptance, and does not establish useful
+counter-evidence merely by making another source reachable.
+
 ## Historical domain snapshot — April 2026
 
 The following interview/code-derived model preserves its original headings, terms

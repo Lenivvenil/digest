@@ -80,6 +80,10 @@ async def test_prepare_persists_checkpoint_identity_without_live_work(
     assert record["checkpoint_sha256"] == hashlib.sha256(original).hexdigest()
     assert record["bundle_id"] == payload["evidence"]["bundle_id"]
     assert record["execute_started"] is None
+    assert record["schema_version"] == 2
+    assert record["search_policy"] == {
+        "id": "bounded-hn-arxiv-devto-v1", "sources": ["hackernews", "arxiv", "devto"], "max_queries": 3,
+    }
     assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {
         "checkpoint": "digests/day.review.json",
         "marker": "digests/day.post-attempt.json",
@@ -99,6 +103,91 @@ async def test_prepare_is_exclusive_and_never_replaces_an_existing_marker(tmp_pa
         assert prepare_post_delivery(Path("config.yaml"), checkpoint) is None
     run.assert_not_called()
     assert _marker(checkpoint).read_bytes() == first_marker
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["unstarted", "started", "completed"])
+async def test_schema_one_attempts_and_archives_are_held_unchanged(state: str, tmp_path: Path) -> None:
+    checkpoint = tmp_path / "digests/day.review.json"
+    await _checkpoint(checkpoint)
+    assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    record = json.loads(_marker(checkpoint).read_text())
+    record["schema_version"] = 1
+    del record["search_policy"]
+    if state != "unstarted":
+        record["execute_started"] = "2026-09-30T12:00:00+00:00"
+    if state == "completed":
+        _result(checkpoint).write_text('{"schema_version": 1, "status": "empty"}\n')
+        _markdown(checkpoint).write_text("Historical archive\n")
+    _marker(checkpoint).write_text(json.dumps(record) + "\n")
+    originals = {path: path.read_bytes() for path in (checkpoint, _marker(checkpoint),
+                                                   _result(checkpoint), _markdown(checkpoint)) if path.exists()}
+    with (
+        patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as stage,
+        patch("digest.post_delivery.storage.save_attempt") as save,
+        patch("digest.post_delivery.datetime") as timestamp,
+    ):
+        assert prepare_post_delivery(Path("config.yaml"), checkpoint) is None
+        with pytest.raises(ValueError, match="search policy|result already exists"):
+            await execute_post_delivery(Path("config.yaml"), checkpoint, execution=ModelExecution())
+    stage.assert_not_called()
+    save.assert_not_called()
+    timestamp.now.assert_not_called()
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert _result(checkpoint).exists() is (state == "completed")
+    assert _markdown(checkpoint).exists() is (state == "completed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [
+    "unknown_schema", "malformed_marker", "missing_policy", "unknown_policy", "reordered_sources",
+    "duplicate_sources", "extra_field", "noninteger_cap", "configured_sources", "configured_cap",
+])
+async def test_policy_mismatch_is_held_before_attempt_effects(change: str, tmp_path: Path) -> None:
+    config = fixture_config()
+    config.irritator.sources = ["devto", "hackernews", "arxiv", "devto", "lobsters"]
+    config.irritator.queries_per_narrative = 1
+    checkpoint = tmp_path / "digests/day.review.json"
+    await _checkpoint(checkpoint)
+    with patch("digest.post_delivery.load_config", side_effect=lambda _: deepcopy(config)):
+        assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+        record = json.loads(_marker(checkpoint).read_text())
+        if change == "unknown_schema":
+            record["schema_version"] = 3
+        elif change == "malformed_marker":
+            record = []
+        elif change == "missing_policy":
+            del record["search_policy"]
+        elif change == "unknown_policy":
+            record["search_policy"]["id"] = "another-policy"
+        elif change == "reordered_sources":
+            record["search_policy"]["sources"].reverse()
+        elif change == "duplicate_sources":
+            record["search_policy"]["sources"].append("devto")
+        elif change == "extra_field":
+            record["search_policy"]["additional_source"] = "lobsters"
+        elif change == "noninteger_cap":
+            record["search_policy"]["max_queries"] = True
+        elif change == "configured_sources":
+            config.irritator.sources = ["hackernews", "arxiv"]
+        else:
+            config.irritator.queries_per_narrative = 2
+        _marker(checkpoint).write_text(json.dumps(record) + "\n")
+        original = _marker(checkpoint).read_bytes()
+        with (
+            patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as stage,
+            patch("digest.post_delivery.storage.save_attempt") as save,
+            patch("digest.post_delivery.datetime") as timestamp,
+            patch("digest.post_delivery._send_supplement", AsyncMock()) as send,
+        ):
+            with pytest.raises(ValueError, match="search policy.*Preserve existing attempt artifacts"):
+                await execute_post_delivery(Path("config.yaml"), checkpoint, execution=ModelExecution())
+        stage.assert_not_called()
+        save.assert_not_called()
+        send.assert_not_called()
+        timestamp.now.assert_not_called()
+        assert _marker(checkpoint).read_bytes() == original
+        assert not _result(checkpoint).exists() and not _markdown(checkpoint).exists()
 
 
 @pytest.mark.asyncio
@@ -227,6 +316,9 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
     assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
     result = _stage_result(payload["evidence"]["bundle_id"])
     client = _client_context()
+    equivalent_config = fixture_config()
+    equivalent_config.irritator.sources = ["devto", "arxiv", "hackernews", "devto", "lobsters"]
+    equivalent_config.irritator.queries_per_narrative = 20
 
     async def run(
         bundle: Any, config: Any, actual_client: Any, *, execution: ModelExecution,
@@ -237,6 +329,10 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
         marker_bytes = _marker(checkpoint).read_bytes()
         record = json.loads(marker_bytes)
         assert record["execute_started"]
+        assert record["schema_version"] == 2
+        assert record["search_policy"] == {
+            "id": "bounded-hn-arxiv-devto-v1", "sources": ["hackernews", "arxiv", "devto"], "max_queries": 3,
+        }
         assert marker_bytes == json.dumps(record, indent=2).encode("utf-8")
         assert not _result(checkpoint).exists()
         return result
@@ -252,6 +348,7 @@ async def test_execute_marks_started_before_work_and_persists_result_before_supp
         return "sent"
 
     with (
+        patch("digest.post_delivery.load_config", return_value=equivalent_config),
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.irritator.evidence_stage.run_evidence_irritator", side_effect=run) as stage,
         patch("digest.post_delivery._send_supplement", side_effect=send) as sender,

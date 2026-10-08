@@ -25,6 +25,7 @@ from digest.adapters.storage.review_checkpoints import load_review_checkpoint
 from digest.adapters.telegram.delivery import send_post_delivery_supplement
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
+from digest.domain.investigation.search_policy import build_search_policy
 from digest.presentation.supplement import signal_text
 
 if TYPE_CHECKING:
@@ -66,7 +67,8 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
         return None
     relative = storage.repository_relative_path(checkpoint)
     record = {
-        'schema_version': 1, 'checkpoint': relative, 'bundle_id': bundle.bundle_id,
+        'schema_version': 2, 'checkpoint': relative, 'bundle_id': bundle.bundle_id,
+        'search_policy': asdict(build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)),
         'checkpoint_sha256': hashlib.sha256(source_bytes).hexdigest(),
         'prepared_at': datetime.now(UTC).isoformat(), 'execute_started': None,
         'supplement_status': 'not_attempted',
@@ -75,6 +77,21 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
         return None
     storage.append_github_output(relative, marker)
     return marker
+
+
+def _require_search_policy(record: object, config: Config) -> None:
+    """Hold old or changed attempts without assigning them today's search policy."""
+    expected = asdict(build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative))
+    if isinstance(record, dict):
+        policy = record.get('search_policy')
+        if (type(record.get('schema_version')) is int and record['schema_version'] == 2
+                and isinstance(policy, dict) and type(policy.get('max_queries')) is int
+                and policy == expected):
+            return
+    raise ValueError(
+        'Post-delivery search policy is missing, changed or unsupported. Preserve existing attempt artifacts; '
+        'prepare only a new checkpoint under the current policy.'
+    )
 
 
 def _render_result(
@@ -133,13 +150,13 @@ async def execute_post_delivery(
     marker, output, markdown = _paths(checkpoint)
     record = storage.load_attempt(marker, output, markdown)
     config = _config(config_path)
+    _require_search_policy(record, config)
     source_bytes = storage.read_checkpoint_bytes(checkpoint)
     bundle, _reviews = load_review_checkpoint(checkpoint, config)
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     source_evidence, require_full_source, source_error = _source_provenance(checkpoint, bundle, config, source_bytes)
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
-    if (type(record.get('schema_version')) is not int or record['schema_version'] != 1
-            or record.get('execute_started')
+    if (record.get('execute_started', False) is not None
             or record.get('checkpoint') != storage.repository_relative_path(checkpoint)
             or record.get('bundle_id') != bundle.bundle_id
             or record.get('checkpoint_sha256') != hashlib.sha256(source_bytes).hexdigest()):
