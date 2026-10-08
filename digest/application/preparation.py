@@ -212,7 +212,8 @@ async def _review_candidates(
                 save_closing(decision, result.report, cache_dir)
             except (OSError, ValueError, TypeError, KeyError):
                 logging.getLogger(__name__).warning(
-                    "Optional closing capture unavailable; main review remains accepted.")
+                    "Optional closing capture unavailable; main review remains accepted."
+                )
     cards = primary_cards(
         result,
         articles,
@@ -443,8 +444,13 @@ def _snapshot(
     from digest.domain.editorial.attempts import restore_review
     from digest.preparation import PreparationSnapshot
 
-    result = (work.result if isinstance(work, ReviewedCandidates)
-              else restore_review(work.report) if work.report is not None else None)
+    result = (
+        work.result
+        if isinstance(work, ReviewedCandidates)
+        else restore_review(work.report)
+        if work.report is not None
+        else None
+    )
     cards, closing = _preparation_closing(work.cards, result, collected.articles, config, ".cache")
     summaries = work.summaries if isinstance(work, CategoryAnalysis) else []
     trends = work.trends if isinstance(work, CategoryAnalysis) else None
@@ -478,18 +484,27 @@ async def _prepare_category_edition(
     """Explicit legacy boundary: preserve its save/no-readback and empty-success behavior."""
     from digest.adapters.storage.sources import save_source_category_map
     from digest.domain.editorial.attempts import restore_review
-    from digest.edition_runtime import finish_preparation, save_accepted_preparation
+    from digest.edition_runtime import NoEdition, finish_preparation, preparation_stats
+    from digest.preparation import save_preparation
 
     snapshot = _snapshot(work, collected, run.config)
-    # Preserve the category API's empty-result decision separately from strict
-    # candidate acceptance, including historically reordered review records.
-    selection_complete = (
-        bool(snapshot.top_articles)
-        or snapshot.review_report is None
-        or (restore_review(snapshot.review_report).chosen.review.status == "abstained")
-    )
-    if selection_complete:
-        save_accepted_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
+    report = snapshot.review_report
+    empty: NoEdition | None = None
+    if not snapshot.top_articles:
+        # Category completion follows report order; durable empty acceptance also
+        # requires a primary abstention. Neither rule is candidate acceptance.
+        complete = report is None or restore_review(report).chosen.review.status == "abstained"
+        empty = NoEdition(
+            "no_ready" if complete else "selection_incomplete",
+            report.status if report is not None else "not_requested",
+        )
+    if snapshot.top_articles or (
+        empty is not None
+        and empty.status == "no_ready"
+        and report is not None
+        and any(review.slot == "primary" and review.status == "abstained" for review in report.reviews)
+    ):
+        save_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
     _save_prepared_fetch_stats(
         run.source_stats,
         collected.fetch_metrics,
@@ -499,13 +514,20 @@ async def _prepare_category_edition(
         collected.collection_failed,
     )
     save_source_category_map(run.config.enabled_sources, ".cache")
+    if empty is not None:
+        if empty.status == "selection_incomplete":
+            logging.getLogger(__name__).error(
+                "Selection did not complete; candidate evidence remains pending and no edition is ready."
+            )
+        else:
+            logging.getLogger(__name__).info("Edition preparation: no selected articles; no ready edition created")
+        return preparation_stats(empty, run.feedback_collected)
     return await finish_preparation(
         snapshot,
         run.config,
         run.feedback_collected,
         verbose=verbose,
         publication_date=publication_date,
-        selection_complete=selection_complete,
         execution=run.execution,
     )
 

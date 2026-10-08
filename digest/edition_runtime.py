@@ -149,7 +149,6 @@ async def finish_preparation(
     execution: ModelExecution,
     verbose: bool = False,
     publication_date: date | None = None,
-    selection_complete: bool = True,
 ) -> RunStats:
     """Legacy snapshot API; ordinary preparation uses a verified accepted reference."""
     outcome = await _present_snapshot(
@@ -158,7 +157,6 @@ async def finish_preparation(
         execution=execution,
         verbose=verbose,
         publication_date=publication_date,
-        selection_complete=selection_complete,
     )
     return preparation_stats(outcome, feedback)
 
@@ -170,7 +168,6 @@ async def _present_snapshot(
     execution: ModelExecution,
     verbose: bool = False,
     publication_date: date | None = None,
-    selection_complete: bool = True,
 ) -> FrozenPreparation | NoEdition:
     """Shared presentation implementation; editorial acceptance belongs to the caller."""
     from digest.application.prepared_delivery import prepare_edition
@@ -180,11 +177,8 @@ async def _present_snapshot(
 
     review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
-        if not selection_complete:
-            logger.error("Selection did not complete; candidate evidence remains pending and no edition is ready.")
-        else:
-            logger.info("Edition preparation: no selected articles; no ready edition created")
-        return NoEdition("no_ready" if selection_complete else "selection_incomplete", review_status)
+        logger.info("Edition preparation: no selected articles; no ready edition created")
+        return NoEdition("no_ready", review_status)
     publication = await assemble_publication(snapshot, config, execution=execution, verbose=verbose)
     archive = write_digest(
         publication.combined,
@@ -410,21 +404,3 @@ def accept_preparation(
     if accepted is None or accepted.path != path or accepted.snapshot != snapshot:
         raise ValueError("Accepted preparation readback differs from the saved canonical work; handoff blocked.")
     return accepted
-
-
-def save_accepted_preparation(
-    snapshot: PreparationSnapshot,
-    *,
-    cache_dir: str,
-    publication_date: date | None = None,
-) -> None:
-    """Legacy/category save boundary, retaining its original clock and I/O behavior."""
-    from digest.preparation import save_preparation
-
-    # This compatibility API predates candidate disposition enforcement and
-    # permits a primary abstention anywhere in the stored review sequence.
-    report = snapshot.review_report
-    if snapshot.top_articles or (
-        report and any(review.slot == "primary" and review.status == "abstained" for review in report.reviews)
-    ):
-        save_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)

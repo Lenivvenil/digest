@@ -106,9 +106,25 @@ the eligible subset.
 | `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |
 
 `RunStats` is the terminal public/reporting projection, not the internal work model.
-These values add no persisted state machine or new schema. Category preparation keeps
-its existing save-without-candidate-readback/clock behavior, and compatibility
-wrappers still expose their prior interfaces.
+These values add no persisted state machine or new schema. Supported CLI and run
+entrypoints remain stable; deliberate internal API retirements are listed in the
+[changelog](../CHANGELOG.md#unreleased--reliability-rehabilitation).
+
+Category preparation owns its historical completion and save decisions together in
+`_prepare_category_edition`; shared presentation receives no editorial-completion flag.
+
+| Category result | Save canonical work? | Continue with |
+| --- | --- | --- |
+| Projected cards exist | Yes | Presentation, archive and freeze |
+| Empty, no review report | No | `NoEdition("no_ready")` |
+| Empty, report-first review abstains | Only if a primary abstention also exists | `NoEdition("no_ready")` |
+| Other empty review outcomes | No | `NoEdition("selection_incomplete")` |
+
+The category boundary preserves report ordering, including older reordered reports.
+It saves before fetch statistics and the source map, with no candidate-style readback;
+empty outcomes return only after those operational effects. Save failure prevents
+later effects, and archive failure retains the saved snapshot. Ordinary candidate
+acceptance remains the stricter verified-reference contract above.
 
 Publication assembly keeps the canonical snapshot separate from presented main
 cards and the optional closing disposition. Required main-card credit failures
