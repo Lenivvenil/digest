@@ -48,4 +48,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --tb=short --cov=digest --cov-report=term-missing --cov-fail-under=70"
+addopts = "-v --tb=short --cov=digest --cov-report=term-missing --cov-fail-under=80"
