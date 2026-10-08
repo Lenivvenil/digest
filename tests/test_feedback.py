@@ -29,21 +29,8 @@ from digest.feedback import (
 )
 
 # ---------------------------------------------------------------------------
-# Dataclass creation tests
+# Initial feedback state
 # ---------------------------------------------------------------------------
-
-
-def test_article_feedback_creation() -> None:
-    fb = ArticleFeedback(
-        article_hash="abc123",
-        source_name="Test Feed",
-        rating=1,
-        timestamp="2026-03-18T10:00:00",
-    )
-    assert fb.article_hash == "abc123"
-    assert fb.source_name == "Test Feed"
-    assert fb.rating == 1
-    assert fb.timestamp == "2026-03-18T10:00:00"
 
 
 def test_feedback_store_defaults() -> None:
@@ -52,26 +39,6 @@ def test_feedback_store_defaults() -> None:
     assert store.last_update_id == 0
     assert store.pending_replies == [] and store.seen_callback_ids == [] and store.last_poll_counts == {}
     assert store.seen_message_ids == []
-
-
-def test_feedback_store_with_ratings() -> None:
-    fb1 = ArticleFeedback(
-        article_hash="a1",
-        source_name="Feed A",
-        rating=1,
-        timestamp="2026-03-18T10:00:00",
-    )
-    fb2 = ArticleFeedback(
-        article_hash="b2",
-        source_name="Feed B",
-        rating=-1,
-        timestamp="2026-03-18T11:00:00",
-    )
-    store = FeedbackStore(ratings=[fb1, fb2], last_update_id=42)
-    assert len(store.ratings) == 2
-    assert store.last_update_id == 42
-    assert store.ratings[0].source_name == "Feed A"
-    assert store.ratings[1].rating == -1
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +75,7 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     save_feedback(original, str(tmp_path))
 
     loaded = load_feedback(str(tmp_path))
+    assert loaded.ratings == original.ratings
     assert loaded.last_update_id == 100
     assert len(loaded.ratings) == 2
     assert loaded.ratings[0].source_name == "Source A"

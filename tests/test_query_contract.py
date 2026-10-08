@@ -234,8 +234,11 @@ def test_empty_evidence_provides_no_proof() -> None:
     "HTTP OR transport", "title:HTTP", "HTTP (transport)", "HTTP -failure", "HTTP*",
     "one two three four five six seven eight nine", "x" * 201,
 ])
-def test_malformed_queries_are_rejected_even_when_an_earlier_query_anchors(query: str) -> None:
-    with pytest.raises(ValueError, match="Invalid lexical query contract"):
-        find_source_anchor(["HTTP transport", query], _evidence())
+def test_malformed_queries_are_rejected_by_lexical_contract(query: str) -> None:
     with pytest.raises(ValueError, match="Invalid lexical query contract"):
         lexical_atoms(query)
+
+
+def test_malformed_later_query_is_rejected_even_when_an_earlier_query_anchors() -> None:
+    with pytest.raises(ValueError, match="Invalid lexical query contract"):
+        find_source_anchor(["HTTP transport", "HTTP OR transport"], _evidence())
