@@ -47,14 +47,8 @@ from tests.factories import make_article
 from tests.test_reading_brief import fetched, response
 
 
-@pytest.fixture
-def saved_synthetic(tmp_path: Path) -> tuple[Source, BriefState]:
-    """Write/load synthetic modern proof, including a later abstaining Groq page."""
-    text = (
-        "Opening claim.\n\n"
-        + ("Unselected background " * 30 + "\n\n") * 60
-        + "Separate supporting finding.\n\nQUALIFICATION: only selected pilot clients qualify."
-    )
+def _saved_synthetic(tmp_path: Path, text: str) -> tuple[Source, BriefState]:
+    """Persist both provider pages before exercising the reconciliation contract."""
     selection = Selection.from_article(make_article())
     source_hash, source = save_source(tmp_path, selection, fetched(text))
     gemini = source_admission.route_profile("gemini", "gemini-3.8-flash", 2048)
@@ -98,6 +92,25 @@ def saved_synthetic(tmp_path: Path) -> tuple[Source, BriefState]:
     return load_source(tmp_path, loaded), loaded
 
 
+@pytest.fixture
+def saved_synthetic(tmp_path: Path) -> tuple[Source, BriefState]:
+    return _saved_synthetic(
+        tmp_path,
+        "Opening claim.\n\nUnselected background one.\n\nUnselected background two.\n\n"
+        "Separate supporting finding.\n\nQUALIFICATION: only selected pilot clients qualify.",
+    )
+
+
+@pytest.fixture
+def long_saved_synthetic(tmp_path: Path) -> tuple[Source, BriefState]:
+    return _saved_synthetic(
+        tmp_path,
+        "Opening claim.\n\n"
+        + ("Unselected background " * 30 + "\n\n") * 60
+        + "Separate supporting finding.\n\nQUALIFICATION: only selected pilot clients qualify.",
+    )
+
+
 @pytest.fixture(autouse=True)
 def no_model_calls(monkeypatch: pytest.MonkeyPatch) -> Any:
     count = AsyncMock(side_effect=AssertionError("Offline reconciliation cannot count remotely"))
@@ -113,9 +126,9 @@ def no_model_calls(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def test_sparse_union_retains_late_abstaining_condition_and_actual_page_proofs(
-    saved_synthetic: tuple[Source, BriefState],
+    long_saved_synthetic: tuple[Source, BriefState],
 ) -> None:
-    source, state = saved_synthetic
+    source, state = long_saved_synthetic
     before = copy.deepcopy((asdict(source), asdict(state)))
     value = build_reconciliation_input(source, state)
     last = len(source.spans)
