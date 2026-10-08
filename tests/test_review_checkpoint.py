@@ -36,7 +36,7 @@ def _trial_config() -> Config:
 
 async def _report(config: Config) -> BlindReviewReport:
     execution = ModelExecution()
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         return await run_blind_review(fixture_articles(), config, execution=execution)
 
 
@@ -101,7 +101,7 @@ async def test_resume_reuses_valid_results_and_calls_only_missing_slots() -> Non
     cached[0].resolved_model = "fixture-resolved-model"
     before_bundle, before_reviews = asdict(original.evidence), [asdict(review) for review in cached]
 
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, cached_reviews=cached, execution=execution)
 
     assert [call.kwargs["provider_override"].model for call in complete.call_args_list] == [
@@ -125,7 +125,9 @@ async def test_complete_checkpoint_makes_no_model_calls() -> None:
 
     config = _trial_config()
     original = await _report(config)
-    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("No review is missing"))) as complete:
+    with patch(
+        "digest.application.review.complete",
+        AsyncMock(side_effect=AssertionError("No review is missing"))) as complete:
         resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
     complete.assert_not_called()
     assert _report_content(resumed) == _report_content(original)
@@ -143,7 +145,8 @@ async def test_abstained_cached_reviews_are_reused_without_third_model() -> None
         review.status = "abstained"
         review.selections = []
         review.limitations = ["Supplied excerpts are insufficient to select useful evidence."]
-    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("Valid abstentions are reusable"))):
+    with patch(
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Valid abstentions are reusable"))):
         resumed = await run_evidence_review(original.evidence, config, cached, execution=execution)
     assert resumed.status == "complete"
     assert resumed.selection_overlap == 1.0
@@ -167,7 +170,7 @@ async def test_cached_review_identity_must_match_before_selections_are_validated
     stale.selections[0] = replace(stale.selections[0], quote="Absent from the supplied evidence.")
     before = asdict(stale)
     assert _reusable_slots(original.evidence, [stale], config) == set()
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, [stale], execution=execution)
     assert complete.call_count == 3
     assert _report_content(resumed) == _report_content(original)
@@ -196,7 +199,8 @@ async def test_unconfigured_third_review_is_not_revalidated_or_reused() -> None:
     original.reviews[2].selections[0] = replace(original.reviews[2].selections[0], quote="Not supplied.")
     before = asdict(original)
     assert _reusable_slots(original.evidence, original.reviews, config) == {"primary", "secondary"}
-    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("Configured reviews are reusable"))):
+    with patch(
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Configured reviews are reusable"))):
         resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
     assert [review.slot for review in resumed.reviews] == ["primary", "secondary"]
     assert all(review.reused_from_checkpoint for review in resumed.reviews)
@@ -212,7 +216,7 @@ async def test_changed_prompt_retries_all_slots_on_exact_original_evidence() -> 
     config = _trial_config()
     original = await _report(config)
     config.radar.language = "ru"
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
     assert complete.call_count == 3
     assert asdict(resumed.evidence) == asdict(original.evidence)
@@ -232,7 +236,7 @@ async def test_changed_configured_model_retries_only_that_slot() -> None:
         kwargs["provider_override"] = replace(kwargs["provider_override"], model="gemini-3.8-flash")
         return await fixture_response(role, messages, actual, **kwargs)
 
-    with patch("digest.review.complete", side_effect=replacement) as complete:
+    with patch("digest.application.review.complete", side_effect=replacement) as complete:
         resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
     assert complete.call_count == 1
     assert complete.call_args.kwargs["provider_override"].model == "replacement-model"
@@ -281,7 +285,7 @@ async def test_cached_reviews_are_revalidated_before_reuse(kind: str) -> None:
         review.selections = []
         review.limitations = []
 
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             _reusable_slots(original.evidence, cached, config)
         with pytest.raises(ValueError):
@@ -301,7 +305,7 @@ async def test_failed_cached_slots_are_retried(status: str) -> None:
     cached[0].status = status
     cached[0].selections[0] = replace(cached[0].selections[0], quote="Not supplied.")
     assert _reusable_slots(original.evidence, cached, config) == {"secondary", "third"}
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         resumed = await run_evidence_review(original.evidence, config, cached, execution=execution)
     assert complete.call_count == 1
     assert complete.call_args.kwargs["provider_override"].model == config.review.primary.model
@@ -316,7 +320,7 @@ async def test_corrupt_in_memory_bundle_is_rejected_before_model_calls() -> None
     config = _trial_config()
     original = await _report(config)
     forged = replace(original.evidence, items=(replace(original.evidence.items[0], excerpt="tampered"),))
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             await run_evidence_review(forged, config, original.reviews, execution=execution)
     complete.assert_not_called()
@@ -344,7 +348,7 @@ async def test_checkpoint_rejects_corrupt_evidence_even_with_a_recomputed_hash(k
     if kind != "hash":
         _rehash_evidence(evidence)
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             load_review_checkpoint(path, config)
     complete.assert_not_called()
@@ -371,7 +375,7 @@ async def test_duplicate_in_memory_slots_are_rejected_before_model_calls() -> No
     config = _trial_config()
     original = await _report(config)
     cached = [original.reviews[0], deepcopy(original.reviews[0])]
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError, match="(?i)duplicate"):
             await run_evidence_review(original.evidence, config, cached, execution=execution)
     complete.assert_not_called()
@@ -399,7 +403,7 @@ async def test_trial_resume_skips_collection_preserves_input_and_writes_separate
     with (
         patch("digest.review_trial.load_config", return_value=config),
         patch("digest.review_trial.collect", AsyncMock(side_effect=AssertionError("Do not collect"))) as collect,
-        patch("digest.review.complete", side_effect=fixture_response) as complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
         patch("digest.delivery.send_article_cards", side_effect=AssertionError("No Telegram")),
         patch("digest.radar.save_dedup_cache", side_effect=AssertionError("No state writes")),
         patch("digest.application.feedback.collect_feedback", side_effect=AssertionError("No feedback")),
@@ -442,7 +446,7 @@ async def test_trial_rejects_overwriting_resume_input_before_calls(
     with (
         patch("digest.review_trial.load_config", return_value=config),
         patch("digest.review_trial.collect", AsyncMock()) as collect,
-        patch("digest.review.complete", AsyncMock()) as complete,
+        patch("digest.application.review.complete", AsyncMock()) as complete,
     ):
         with pytest.raises(ValueError):
             await run_trial(tmp_path / "fixture.yaml", output, resume_path=resume, execution=execution)
@@ -466,7 +470,8 @@ async def test_legacy_checkpoint_without_timestamps_reuses_unknown_provenance(tm
         review.pop("reused_from_checkpoint")
     path.write_text(json.dumps(payload), encoding="utf-8")
     bundle, cached = load_review_checkpoint(path, config)
-    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("Legacy success is reusable"))):
+    with patch(
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Legacy success is reusable"))):
         resumed = await run_evidence_review(bundle, config, cached, execution=execution)
     assert all(review.generated_at is None for review in resumed.reviews)
     assert all(review.reused_from_checkpoint for review in resumed.reviews)
@@ -516,7 +521,7 @@ async def test_trial_rejects_corrupt_checkpoint_without_collection_or_model_call
     with (
         patch("digest.review_trial.load_config", return_value=config),
         patch("digest.review_trial.collect", AsyncMock()) as collect,
-        patch("digest.review.complete", AsyncMock()) as complete,
+        patch("digest.application.review.complete", AsyncMock()) as complete,
     ):
         with pytest.raises(ValueError):
             await run_trial(tmp_path / "fixture.yaml", tmp_path / "out", resume_path=source, execution=execution)
@@ -550,7 +555,7 @@ async def test_mutable_evidence_item_container_is_rejected_before_model_calls() 
     config = _trial_config()
     original = await _report(config)
     bundle = replace(original.evidence, items=list(original.evidence.items))
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             await run_evidence_review(bundle, config, execution=execution)
     complete.assert_not_called()

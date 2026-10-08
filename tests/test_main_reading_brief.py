@@ -40,7 +40,7 @@ async def saved_selection(
                                            "quote": item["title"], "confidence": "high"} for item in chosen],
                            "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
 
-    with patch("digest.review.complete", side_effect=select):
+    with patch("digest.application.review.complete", side_effect=select):
         report = await run_primary_review(articles, config, execution=execution)
     reconcile_packet(progress, packet, report, config, tmp_path)
     return config, progress, packet, report
@@ -58,7 +58,7 @@ async def test_saved_candidate_selection_becomes_technical_handoff_without_prese
                 AsyncMock(return_value=fetched("Complete source mechanism."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as model,
-          patch("digest.review.complete", side_effect=AssertionError("No repeated RSS selection")),
+          patch("digest.application.review.complete", side_effect=AssertionError("No repeated RSS selection")),
           patch("digest.translation.translate_publication_presentation",
                 side_effect=AssertionError("No presentation"))):
         first = await prepare_selected_sources(
@@ -161,7 +161,7 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
     with (patch("digest.candidate_review._instant", return_value=NOW),
           patch("digest.config.load_config", return_value=config),
           patch("digest.radar.collect", side_effect=collect),
-          patch("digest.review.complete", side_effect=select) as selection,
+          patch("digest.application.review.complete", side_effect=select) as selection,
           patch("digest.reading_brief.fetch_article",
                 AsyncMock(return_value=fetched("Full source evidence."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
@@ -235,7 +235,7 @@ async def test_unsupported_source_invocation_fails_before_feedback_collection_or
     with (patch("digest.config.load_config", return_value=config),
           patch("digest.application.run_state.collect_run_feedback", side_effect=AssertionError("No feedback I/O")),
           patch("digest.radar.collect", side_effect=AssertionError("No feed I/O")),
-          patch("digest.review.complete", side_effect=AssertionError("No model I/O"))):
+          patch("digest.application.review.complete", side_effect=AssertionError("No model I/O"))):
         with pytest.raises(ValueError, match="candidate-bound --prepare-edition"):
             await _run("config.yaml", True, True, False)
 
@@ -322,7 +322,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
                                             for item in items]}), {"finish_reason": "stop"}
 
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", side_effect=abstain):
+    with patch("digest.application.review.complete", side_effect=abstain):
         report = await run_primary_review(articles, config, disposition_capture=capture, execution=execution)
     reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
     identities = set(progress.candidates)

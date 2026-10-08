@@ -110,7 +110,7 @@ async def test_terminal_index_requires_exact_capture_and_occurrence(tmp_path: Pa
     response = json.dumps({"selections": [], "limitations": ["No actionable metadata"], "dispositions": [
         {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable detail."}
         for item in packet.evidence.items]})
-    with patch("digest.review.complete", return_value=(response, {})):
+    with patch("digest.application.review.complete", return_value=(response, {})):
         packet.report = await run_primary_review(articles, config,
             execution=model_execution, disposition_capture=capture)
     packet.disposition_attempts = tuple(capture.attempts)

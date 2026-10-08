@@ -65,7 +65,7 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
     usage = {"finish_reason": "length", "prompt_tokens": 4222, "completion_tokens": 4096,
              "completion_tokens_details": {"reasoning_tokens": 1800, "reasoning": "DO NOT RETAIN"}}
     completion = AsyncMock(side_effect=[RuntimeError("primary unavailable"), (raw, usage)])
-    with patch("digest.review.complete", completion) as call:
+    with patch("digest.application.review.complete", completion) as call:
         report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
     first, second = call.call_args_list
     assert "reasoning_effort" not in first.kwargs and "response_format" not in first.kwargs
@@ -90,7 +90,7 @@ async def test_other_groq_model_retains_ordinary_review_wire() -> None:
     execution = ModelExecution()
     config = fixture_config()
     config.review.primary = ReviewModelConfig("groq", "other-configured-model")
-    with patch("digest.review.complete", AsyncMock(return_value=(json.dumps(payload()), {}))) as call:
+    with patch("digest.application.review.complete", AsyncMock(return_value=(json.dumps(payload()), {}))) as call:
         await run_primary_review(fixture_articles(), config, execution=execution)
     assert "reasoning_effort" not in call.call_args.kwargs
     assert "response_format" not in call.call_args.kwargs

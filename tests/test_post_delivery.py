@@ -43,7 +43,7 @@ def isolated_post_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> A
 
 async def _checkpoint(path: Path) -> dict[str, Any]:
     execution = ModelExecution()
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = asdict(report)

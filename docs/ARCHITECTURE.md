@@ -102,7 +102,7 @@ and [review runbook](BLIND_REVIEW.md) for commands and runtime persistence steps
 | --- | --- |
 | Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
 | Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
-| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`review.py`](../digest/review.py) retains model-execution ownership. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`application/review.py`](../digest/application/review.py) owns primary/fallback and independent execution, with shared request construction in [`application/review_request.py`](../digest/application/review_request.py). |
 | Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
 | Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
 | Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. [`application/source_attribution.py`](../digest/application/source_attribution.py) resolves immutable main occurrences before calls; [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) adds reviewed notices after translation. [`finish_preparation`](../digest/edition_runtime.py) preflights credited cards before archive/freeze; optional closing omission cannot discard required main cards. |
@@ -158,7 +158,10 @@ imports usable; their locations do not identify the current owner.
 | `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
 | `radar/summarizer.py` | Category, perspective, trend and article prompts |
 | `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
-| `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
+| `domain/editorial/evidence.py`, `dispositions.py` (#165) | Deterministic bounded RSS evidence and same-response disposition parsing/capture; existing review values and validators remain in `reviews.py` |
+| `application/review_request.py`, `application/review.py` (#165) | Shared exact configured request construction; primary/fallback and independent review execution, respectively |
+| `presentation/review.py`, `adapters/models/review.py` (#165) | Review notices, publication cards and Markdown; concrete Groq structured-output wire shape, respectively |
+| `review.py`, `candidate_dispositions.py` | Compatible exports for the RSS review owners |
 | `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
 | `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
@@ -190,8 +193,8 @@ imports usable; their locations do not identify the current owner.
   and status types. Their current location is transitional contract ownership.
 - `candidate_review.py` still combines scheduling with occurrence/reconciliation
   policy. `SelectedPreparation` and `LegacyOutcomePolicy` remain transitional
-  handoffs; review, translation and experimental source reconciliation retain
-  mixed responsibilities.
+  handoffs. RSS checkpoint codecs remain in `review_checkpoint.py`; translation,
+  closing sidecars and experimental source reconciliation retain mixed responsibilities.
 - `llm.py` remains the concrete provider/request owner, `model_budget.py` owns its
   distinct durable reservation journal, and `discovery_feed.py` keeps cohesive
   URL/DNS/feed validation. Flat placement alone is not an architectural defect.
@@ -1028,6 +1031,34 @@ and registry initialization, so this does not establish cold search-adapter isol
 shared by trial, resume and post-delivery work; `review_trial._ALLOWED_MODELS` aliases
 that same set. Production consumers no longer import the trial command for policy.
 No route, prompt, call/budget policy or serialized content changes.
+
+### Stage 5: bounded RSS review ownership (#165, local slice)
+
+`domain/editorial/evidence.py` owns deterministic ordering, sanitization and bounded
+bundle construction from explicit count/excerpt limits. The existing configured
+`build_evidence_bundle` signature lives in `application/review_request.py`, beside
+exact prompt construction and closing eligibility bindings. Planning, execution and
+resume consume this shared request owner without importing execution just to build
+a request. Prompt hashing and reuse validation retain their single domain owner.
+
+`application/review.py` orders primary/fallback or independent attempts and captures
+closing before dispositions, with the existing fresh/shared `ModelExecution` rules.
+The Groq schema remains a small concrete adapter. `domain/editorial/dispositions.py`
+owns same-response parsing/capture beside stored validation. `presentation/review.py`
+owns attribution, capacity-limited cards and Markdown using domain values.
+
+Root review/disposition exports and `closing.eligible_ids` retain callable imports
+and signatures; internal consumers use the actual owners. Tests patch the execution
+owner. No reverse facade imports or forwarding execution hooks preserve old private
+monkeypatch seams. Evidence/prompt encodings, provider routes, budgets, callback order,
+partial/fallback behavior, typography quotes and publication text are unchanged.
+
+This is partial #165 progress: candidate scheduling/reconciliation policy and RSS
+checkpoint storage still need extraction. Candidate collection types retain the
+eager radar package dependency. Translation, optional full-source work, closing
+sidecar storage and trial/resume marker persistence are outside this slice. No
+runtime state, wire format or deployment changes; local verification is separate
+from release and editorial acceptance. Rollback retains existing evidence/state.
 
 ### Target responsibility map
 

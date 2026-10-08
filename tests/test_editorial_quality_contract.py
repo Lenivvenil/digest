@@ -58,7 +58,8 @@ async def test_reader_context_binds_identical_primary_and_fallback_prompt() -> N
     config = fixture_config()
     config.review.editorial_context = "Banking and fintech are primary professional interests."
     good = (json.dumps({"selections": [], "limitations": ["Synthetic fixture"]}), {})
-    with patch("digest.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), good])) as call:
+    with patch(
+        "digest.application.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), good])) as call:
         report = await run_primary_review(fixture_articles(), config, execution=model_execution)
     first, second = call.call_args_list
     assert first.args[1] == second.args[1]

@@ -50,7 +50,7 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
             return json.dumps({"selections": [], "limitations": ["Insufficient useful evidence"]}), {}
         return await fixture_response(role, messages, used, **kwargs)
 
-    with patch("digest.review.complete", side_effect=adapter) as complete:
+    with patch("digest.application.review.complete", side_effect=adapter) as complete:
         report = await run_primary_review(fixture_articles(), config, execution=execution)
     complete.assert_awaited_once()
     assert config == original
@@ -94,7 +94,7 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
             return '{"selections": [], "limitations": ["No useful evidence"]}', {}
         return await fixture_response(role, messages, used, **kwargs)
 
-    with patch("digest.review.complete", side_effect=adapter):
+    with patch("digest.application.review.complete", side_effect=adapter):
         report = await run_primary_review(fixture_articles(), config, execution=execution)
     assert [model for model, _ in calls] == [config.review.primary.model, config.review.secondary.model]
     assert calls[0][1] == calls[1][1]
@@ -116,7 +116,7 @@ async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None
         prompts.append(deepcopy(messages))
         return await fixture_response(role, messages, used, **kwargs)
 
-    with patch("digest.review.complete", side_effect=adapter):
+    with patch("digest.application.review.complete", side_effect=adapter):
         first = await run_primary_review(fixture_articles(), config, execution=execution)
         final = await run_evidence_review(first.evidence, config, first.reviews, execution=execution)
     assert len(prompts) == 3
@@ -188,7 +188,7 @@ async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.config.load_config", return_value=config),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-        patch("digest.review.complete", side_effect=fixture_response) as complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
         patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No summaries"))) as summaries,
         patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No picker"))) as picker,
         patch("digest.application.investigation.run_irritator",
@@ -277,7 +277,7 @@ async def test_reading_primary_incomplete_completion_never_implies_editorial_rej
         return text, usage | {"finish_reason": finish}
 
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", side_effect=select):
+    with patch("digest.application.review.complete", side_effect=select):
         report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
     assert bool(report.reviews[0].selections) is (finish is None)
     if finish is not None:

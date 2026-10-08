@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 from digest._sanitize import sanitize_article
 from digest._serialization import extract_json as _extract_json
+from digest.application.review_request import eligible_ids as eligible_ids
 from digest.config import ClosingConfig
 from digest.domain.catalog.articles import article_hash
 from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from digest.domain.editorial.candidates import CandidatePacket
-    from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, ModelReview
+    from digest.domain.editorial.reviews import BlindReviewReport, ModelReview
 
 
 @dataclass(frozen=True)
@@ -111,24 +112,6 @@ class ClosingCapture:
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                     separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-
-
-def eligible_ids(
-    bundle: EvidenceBundle, settings: ClosingConfig, sources: Sequence[SourceConfig],
-) -> list[str]:
-    """A sanitized name collision grants no eligible binding."""
-    eligible = []
-    for item in bundle.items:
-        matches = [source for source in sources
-                   if sanitize_article("", "", source.name)[2] == item.source
-                   and source.category[:200] == item.category]
-        if len(matches) != 1 or not matches[0].enabled:
-            continue
-        source = matches[0]
-        if any((binding.name, binding.url, binding.category) == (source.name, source.url, source.category)
-               for binding in settings.approved_sources):
-            eligible.append(item.evidence_id)
-    return eligible
 
 
 def _unique_designation(pairs: list[tuple[str, object]]) -> dict[str, object]:

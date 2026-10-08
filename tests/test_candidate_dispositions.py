@@ -41,7 +41,7 @@ async def run(data: dict[str, Any] | str) -> tuple[Any, CandidateDispositionCapt
     model_execution = ModelExecution()
     capture = CandidateDispositionCapture()
     text = data if isinstance(data, str) else json.dumps(data)
-    with patch("digest.review.complete", return_value=(text, {})) as complete:
+    with patch("digest.application.review.complete", return_value=(text, {})) as complete:
         report = await run_primary_review(fixture_articles(), fixture_config(),
             execution=model_execution, disposition_capture=capture)
     assert complete.call_count == (2 if report.reviews[0].status == "invalid" else 1)
@@ -139,7 +139,7 @@ async def test_truncation_and_provider_failure_preserve_unresolved_packet() -> N
     _, capture = await run(json.dumps(payload())[:-8])
     assert all(attempt.status == "incomplete" and attempt.unresolved_ids for attempt in capture.attempts)
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", side_effect=RuntimeError("offline")) as complete:
+    with patch("digest.application.review.complete", side_effect=RuntimeError("offline")) as complete:
         await run_primary_review(fixture_articles(), fixture_config(),
             execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 2
@@ -178,7 +178,7 @@ async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escap
         assert token_estimate < 4096
         return text, {}
 
-    with patch("digest.review.complete", side_effect=adapter) as complete:
+    with patch("digest.application.review.complete", side_effect=adapter) as complete:
         report = await run_primary_review(articles, config, execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 1
     assert len(report.evidence.items) == 20 and len(report.reviews[0].selections) == 5
@@ -193,7 +193,7 @@ async def test_fallback_capture_binds_only_its_own_response() -> None:
     data = payload()
     text = json.dumps(data)
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", side_effect=[("invalid", {}), (text, {})]) as complete:
+    with patch("digest.application.review.complete", side_effect=[("invalid", {}), (text, {})]) as complete:
         report = await run_primary_review(fixture_articles(), fixture_config(),
             execution=model_execution, disposition_capture=capture)
     assert complete.call_count == 2
@@ -291,7 +291,7 @@ async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reaso
     text = json.dumps(payload())
     capture = CandidateDispositionCapture()
     usage = {} if finish_reason is None else {"finish_reason": finish_reason}
-    with patch("digest.review.complete", return_value=(text, usage)) as complete:
+    with patch("digest.application.review.complete", return_value=(text, usage)) as complete:
         report = await run_primary_review(fixture_articles(), fixture_config(),
             execution=model_execution, disposition_capture=capture)
     terminal = finish_reason is None or finish_reason in {"stop", "STOP", "end_turn"}

@@ -62,7 +62,7 @@ def emit_preview(preview: Preview) -> None:
     for ranked in preview.ranked:
         print(f"[{ranked.score}/10] {ranked.signal.title} — {ranked.signal.url}")
     print(f"\n💢 Irritator: {preview.irritator_status.text}")
-    from digest.review import render_review
+    from digest.presentation.review import render_review
 
     print(render_review(preview.review_report) if preview.review_report is not None else "")
 

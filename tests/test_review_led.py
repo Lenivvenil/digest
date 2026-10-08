@@ -60,7 +60,7 @@ async def test_review_led_analysis_never_calls_legacy_summary_or_picker() -> Non
     config = fixture_config()
     config.review.review_led_only = True
     with (
-        patch("digest.review.complete", side_effect=fixture_response) as complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
         patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No category prose"))) as summarize,
         patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No legacy picker"))) as picker,
     ):
@@ -79,7 +79,7 @@ async def test_default_review_mode_preserves_legacy_category_analysis() -> None:
     original = await run_fixture(execution=execution)
     categories = [CategorySummary("AI", "Legacy category summary", 2)]
     with (
-        patch("digest.review.run_blind_review", AsyncMock(return_value=original)),
+        patch("digest.application.review.run_blind_review", AsyncMock(return_value=original)),
         patch("digest.radar.summarize_all", AsyncMock(return_value=(categories, "Legacy trends"))) as summarize,
     ):
         summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config, execution=execution)
@@ -96,7 +96,8 @@ async def test_review_led_mode_is_ignored_when_review_is_disabled() -> None:
     config.review.review_led_only = True
     categories = [CategorySummary("AI", "Legacy summary", 2)]
     with (
-        patch("digest.review.run_blind_review", AsyncMock(side_effect=AssertionError("Review is disabled"))),
+        patch(
+            "digest.application.review.run_blind_review", AsyncMock(side_effect=AssertionError("Review is disabled"))),
         patch("digest.radar.summarize_all", AsyncMock(return_value=(categories, None))) as summarize,
         patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])) as picker,
     ):
@@ -126,7 +127,7 @@ async def test_review_led_pipeline_archives_and_delivers_cards_without_narrative
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.config.load_config", return_value=config),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-        patch("digest.review.complete", side_effect=fixture_response) as review_complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as review_complete,
         patch("digest.radar.summarizer.complete", AsyncMock(side_effect=AssertionError("No summaries"))),
         patch("digest.irritator.narrative_extractor.complete", AsyncMock()) as narratives,
         patch("digest.irritator.query_generator.complete", AsyncMock()) as queries,

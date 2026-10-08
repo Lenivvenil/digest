@@ -19,6 +19,8 @@ from typing import Any
 
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_evidence_review
+from digest.application.review_request import build_review_messages
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
 from digest.domain.editorial.reviews import (
@@ -28,11 +30,7 @@ from digest.domain.editorial.reviews import (
     reusable_model_review,
     review_prompt_hash,
 )
-from digest.review import (
-    build_review_messages,
-    render_review,
-    run_evidence_review,
-)
+from digest.presentation.review import render_review
 from digest.review_checkpoint import load_review_checkpoint
 
 _MAX_AGE = timedelta(hours=24)

@@ -54,7 +54,7 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     capture = ClosingCapture()
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": True, "evidence_id": None} if enabled else "missing"), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     report = await run_primary_review(articles, config, execution=model_execution, closing_capture=capture)
     complete.assert_awaited_once()
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
@@ -93,7 +93,7 @@ async def test_live_review_keeps_detail_bound_with_either_closing_flag(
     assert config.review.max_detailed_selections == 5
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, "first" if enabled else "missing"), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     report = await run_primary_review(articles, config, execution=model_execution)
     assert complete.await_count == 2
     assert all(review.status == "invalid" and review.error == "invalid selection count"
@@ -113,7 +113,7 @@ async def test_enabled_closing_rejects_insufficient_capacity_before_external_cal
     collection = AsyncMock(side_effect=AssertionError("Collection must not start"))
     completion = AsyncMock(side_effect=AssertionError("Review must not start"))
     monkeypatch.setattr("digest.radar.collect", collection)
-    monkeypatch.setattr("digest.review.complete", completion)
+    monkeypatch.setattr("digest.application.review.complete", completion)
     with pytest.raises(ValueError, match="explicit detail and evidence limits"):
         await _run(path, False, False, False, prepare_only=True)
     collection.assert_not_awaited()
@@ -142,7 +142,7 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
-    monkeypatch.setattr("digest.review.complete", completion)
+    monkeypatch.setattr("digest.application.review.complete", completion)
     _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
         execution=model_execution)
     assert report is not None and len(report.reviews[0].selections) == 6
@@ -221,7 +221,7 @@ async def test_enabled_closing_preserves_technical_empty_status_and_complete_abs
 
     monkeypatch.setattr("digest.radar.collect", collect)
     completion = AsyncMock(side_effect=model)
-    monkeypatch.setattr("digest.review.complete", completion)
+    monkeypatch.setattr("digest.application.review.complete", completion)
     stats = await _run("config.yaml", False, False, False, prepare_only=True)
     incomplete = outcome != "abstained"
     assert stats.edition_status == ("selection_incomplete" if incomplete else "no_ready")

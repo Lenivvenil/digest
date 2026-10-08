@@ -40,7 +40,7 @@ async def _checkpoint(
     path: Path, *, age: timedelta = timedelta(minutes=10), failed: tuple[str, ...] = ("secondary",),
 ) -> dict[str, Any]:
     execution = ModelExecution()
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     for review in report.reviews:
         review.generated_at = review.attempted_at = (NOW - age).isoformat()
@@ -77,7 +77,7 @@ async def test_prepare_selects_newest_eligible_report_and_persists_safe_marker(
     _marker(skipped).write_text("{}")
     github_output = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         chosen = prepare_resume(Path("config.yaml"), reports, NOW)
     complete.assert_not_called()
     assert chosen == newest
@@ -106,7 +106,7 @@ async def test_prepare_skips_ineligible_reports(kind: str, tmp_path: Path) -> No
     if kind == "corrupt":
         payload["evidence"]["items"][0]["excerpt"] = "tampered"
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         assert prepare_resume(Path("config.yaml"), path.parent, NOW) is None
     complete.assert_not_called()
 
@@ -132,7 +132,7 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
         assert not config.telegram.enabled and not config.obsidian.enabled and not config.adaptive.enabled
         return await fixture_response(role, messages, config, **kwargs)
 
-    with patch("digest.review.complete", side_effect=response):
+    with patch("digest.application.review.complete", side_effect=response):
         assert await execute_resume(Path("config.yaml"), path, execution=execution) == 0
     assert calls == ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
     assert path.read_bytes() == before
@@ -140,7 +140,7 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
     assert resumed["evidence"] == json.loads(before)["evidence"]
     assert resumed["reviews"][0] == {**payload["reviews"][0], "reused_from_checkpoint": True}
     assert (path.parent / "day.review-resumed.md").exists()
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             await execute_resume(Path("config.yaml"), path, execution=execution)
     complete.assert_not_called()
@@ -152,7 +152,7 @@ async def test_both_main_failures_recover_with_two_calls_and_explicit_escalation
     path = tmp_path / "digests/day.review.json"
     await _checkpoint(path, failed=("primary", "secondary"))
     assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
     assert complete.call_count == 2
     resumed = json.loads((path.parent / "day.review-resumed.json").read_text())
@@ -177,7 +177,7 @@ async def test_execute_rejects_missing_or_mismatched_markers_before_model_calls(
         else:
             marker["execution_started_at"] = NOW.isoformat()
         _marker(path).write_text(json.dumps(marker))
-    with patch("digest.review.complete", AsyncMock()) as complete:
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             await execute_resume(Path("config.yaml"), path, execution=execution)
     complete.assert_not_called()
@@ -206,7 +206,7 @@ async def test_model_outside_approved_lineup_is_rejected_without_requests(tmp_pa
     config.review.primary = ReviewModelConfig("other", "paid-model")
     with (
         patch("digest.review_resume.load_config", return_value=config),
-        patch("digest.review.complete", AsyncMock()) as complete,
+        patch("digest.application.review.complete", AsyncMock()) as complete,
     ):
         with pytest.raises(ValueError, match="approved"):
             prepare_resume(Path("config.yaml"), tmp_path / "digests", NOW)
@@ -223,7 +223,7 @@ async def test_resume_preserves_separate_source_provenance_without_promoting_rss
     payload.update(provenance)
     checkpoint.write_text(json.dumps(payload))
     assert prepare_resume(Path("fixture.yaml"), checkpoint.parent, NOW) == checkpoint
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         await execute_resume(Path("fixture.yaml"), checkpoint, execution=execution)
     resumed = json.loads(checkpoint.with_name("day.review-resumed.json").read_text())
     assert {key: resumed[key] for key in provenance} == provenance

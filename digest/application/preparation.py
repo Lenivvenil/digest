@@ -24,10 +24,10 @@ if TYPE_CHECKING:
     from digest.closing import ClosingDecision
     from digest.config import Config
     from digest.domain.catalog.sources import SourceStats
+    from digest.domain.editorial.reviews import BlindReviewReport
     from digest.preparation import PreparationSnapshot
     from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
-    from digest.review import BlindReviewReport
 
 
 @dataclass
@@ -173,7 +173,7 @@ async def _analyze_candidate_articles(
     execution: ModelExecution,
 ) -> tuple[list[CategorySummary], str | None, list[ArticleSummary], BlindReviewReport | None]:
     if cached_report is not None:
-        from digest.review import primary_cards
+        from digest.presentation.review import primary_cards
 
         cards = primary_cards(
             cached_report,
@@ -185,10 +185,11 @@ async def _analyze_candidate_articles(
         return [], None, cards, cached_report
     if progress is None or packet is None:
         return await analysis.analyze_articles(articles, config, execution=execution)
-    from digest.candidate_dispositions import CandidateDispositionCapture
+    from digest.application.review import run_primary_review
     from digest.candidate_review import reconcile_packet
     from digest.closing import ClosingCapture, decide_closing, save_closing
-    from digest.review import primary_cards, run_primary_review
+    from digest.domain.editorial.dispositions import CandidateDispositionCapture
+    from digest.presentation.review import primary_cards
 
     capture = CandidateDispositionCapture()
 
@@ -234,8 +235,9 @@ def _preparation_closing(
     config: Config,
     cache_dir: str,
 ) -> tuple[list[ArticleSummary], ClosingDecision | None]:
-    from digest.closing import ClosingDecision, eligible_ids, load_closing
-    from digest.review import primary_cards
+    from digest.application.review_request import eligible_ids
+    from digest.closing import ClosingDecision, load_closing
+    from digest.presentation.review import primary_cards
 
     if not getattr(getattr(config, "closing", None), "enabled", False):
         return cards, None
@@ -275,8 +277,8 @@ def _save_candidate_preparation(
     publication_date: date | None,
 ) -> bool:
     """Return whether canonical preparation was accepted, including genuine abstention."""
+    from digest.domain.editorial.reviews import delivery_review as _delivery_review
     from digest.edition_runtime import save_accepted_preparation
-    from digest.review import _delivery_review
 
     if (
         not snapshot.top_articles

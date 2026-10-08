@@ -101,7 +101,7 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
     assert packet is not None
     capture = ClosingCapture()
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
-    monkeypatch.setattr("digest.review.complete", completion)
+    monkeypatch.setattr("digest.application.review.complete", completion)
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
     assert decision.card is not None and decision.provenance is not None
@@ -137,7 +137,7 @@ async def test_bad_optional_designation_preserves_all_main_selections(
     config, articles = population()
     capture = ClosingCapture()
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages, designation), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert complete.await_count == 1
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
@@ -169,7 +169,7 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
         raw["closing"]["evidence_id"] = raw["selections"][1]["evidence_id"]
         return json.dumps(raw), {}
 
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
         execution=execution)
     assert report is not None and count == 2
@@ -207,7 +207,7 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     if failure == "write":
         monkeypatch.setattr("digest.closing.save_closing", lambda *args: (_ for _ in ()).throw(OSError("disk")))
     _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
@@ -245,7 +245,7 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
     else:
         config.sources.append(replace(config.sources[0], url="https://other.example/feed"))
     capture = ClosingCapture()
-    monkeypatch.setattr("digest.review.complete", AsyncMock(
+    monkeypatch.setattr("digest.application.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert eligible_ids(report.evidence, config.closing, config.sources) == []
@@ -262,7 +262,7 @@ async def test_terminal_v2_selected_and_omitted_roundtrip_and_strict_binding(
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
     capture = ClosingCapture()
-    monkeypatch.setattr("digest.review.complete", AsyncMock(
+    monkeypatch.setattr("digest.application.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     decision = decide_closing(report, packet, capture, config.closing, config.sources)
@@ -335,7 +335,8 @@ async def test_explicit_abstention_is_persisted_without_inventing_a_story(
     execution = ModelExecution()
     config, articles = population()
     capture = ClosingCapture()
-    monkeypatch.setattr("digest.review.complete", AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
+    monkeypatch.setattr(
+        "digest.application.review.complete", AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": 1, "evidence_id": None}), {})))
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
@@ -357,7 +358,7 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
         execution=execution)
     assert report is not None
@@ -394,7 +395,7 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
         designation = json.dumps(raw["closing"])
         return text.replace(designation, designation[:-1] + ', "evidence_id": null}'), {}
 
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
     assert report.reviews[0].status in {"ok", "partial"}
     assert len(primary_cards(report, articles, "en", max_cards=2)) == 2
@@ -418,7 +419,7 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     assert packet is not None
     begin_packet(progress, packet, ".cache")
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
-    monkeypatch.setattr("digest.review.complete", complete)
+    monkeypatch.setattr("digest.application.review.complete", complete)
     _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, ".cache",
         execution=execution)
     assert report is not None
