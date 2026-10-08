@@ -97,6 +97,8 @@ acceptance. See [experimental scope](docs/BLIND_REVIEW.md#experimental-source-re
 
 ## Development
 
+Start with the [contributor guide](.github/CONTRIBUTING.md) for a focused change and review.
+
 After installing the engine in your virtual environment:
 
 ```sh

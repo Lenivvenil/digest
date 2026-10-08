@@ -78,9 +78,10 @@ difference. Resolve it explicitly under [#148](https://github.com/Lenivvenil/dig
 a passing configured gate does not itself waive the default or complete this checklist.
 Neither threshold is changed by this documentation reconciliation.
 
-Use this checklist during PR review. No tracked `pull_request_template.md` copies it,
-and CI does not verify the whole checklist. Record the applicable review and
-verification evidence in the PR.
+Use this checklist during PR review. The [PR template](../.github/pull_request_template.md)
+asks for the applicable change, evidence and follow-through without copying every
+checkbox. Neither the template nor CI verifies the whole checklist; record the
+review and verification evidence actually obtained.
 
 <a id="5-scope-инструмента-ограничен-явной-установкой"></a>
 

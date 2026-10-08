@@ -21,7 +21,9 @@ configuration, delivery destinations, the engine pin and durable state.
 
 ## Contribute a change
 
-1. [Working agreement](../AGENTS.md#working-agreement) and [development commands](../README.md#development)
+1. [Contributor guide](../.github/CONTRIBUTING.md): the short issue, check and PR workflow,
+   with the [working agreement](../AGENTS.md#working-agreement) and
+   [development commands](../README.md#development) as references
 2. [Project principles](principles.md#definition-of-done): required evidence, optional
    local tooling and the unresolved 70% configured / 80% default coverage disposition
 3. [Decision index](decisions/README.md): accepted decisions, proposals and release scope
