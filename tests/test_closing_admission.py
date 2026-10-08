@@ -12,7 +12,7 @@ import pytest
 
 from digest.adapters.storage.candidate_objects import packet_key, read_packet
 from digest.application.review_request import eligible_ids
-from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+from digest.candidate_dispositions import capture_review_dispositions
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -23,6 +23,7 @@ from digest.candidate_review import (
     reconcile_packet,
 )
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig
+from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.candidate_policy import _closing_opportunity
 from digest.domain.editorial.candidates import Candidate
 from digest.radar.collector import Article, article_hash
@@ -125,8 +126,8 @@ def test_deferred_backfill_keeps_its_original_model_disposition_and_attempt(tmp_
         }
     )
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(first.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, first, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(first.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, first, result, config, tmp_path)
     config.review.max_evidence_articles = 4
     config.review.max_technical_retry_articles = 2
     baseline = plan_packet(progress, config, NOW + timedelta(minutes=2))

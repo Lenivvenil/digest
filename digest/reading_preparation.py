@@ -19,10 +19,11 @@ from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.config import Config
+from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.candidates import Candidate, CandidateArticle, CandidatePacket, CandidateProgress
 from digest.domain.editorial.candidates import accepted_empty_packet as _accepted_empty_packet
 from digest.domain.editorial.candidates import proof_packets as _proof_packets
-from digest.domain.editorial.reviews import BlindReviewReport, delivery_review, validated_cached_selections
+from digest.domain.editorial.reviews import BlindReviewReport, validated_cached_selections
 from digest.llm import request_budget_remaining, set_request_limit
 from digest.reading_brief import _advance, _count_routes_held, _routes, _validate_progress
 from digest.reading_brief_state import (
@@ -101,7 +102,7 @@ def setup_reading_budget(config: Config, *, execution: ModelExecution) -> None:
 
 
 def _binding(packet: CandidatePacket, report: BlindReviewReport, identity: str) -> ReadingBinding:
-    review = delivery_review(report)
+    review = restore_review(report).chosen.review
     if not review.response_sha256:
         raise ValueError("technical_selection_proof_missing")
     from digest.radar.collector import article_hash
@@ -236,7 +237,7 @@ def deferred_source_reports(progress: CandidateProgress, state_dir: Path, config
         if report is None or not report.reviews:
             continue
         try:
-            selections, _ = validated_cached_selections(delivery_review(report), packet.evidence)
+            selections = restore_review(report).selections
             if not selections:
                 if _accepted_empty_packet(packet):
                     deferred.add(_hash(asdict(report)))
@@ -264,8 +265,11 @@ async def prepare_selected_sources(
     if packet.report != report or packet.evidence != report.evidence:
         raise ValueError("Reading requires the exact saved candidate report.")
     started = time.monotonic()
-    review = delivery_review(report)
-    selections, _ = validated_cached_selections(review, packet.evidence)
+    resolved = restore_review(report)
+    if resolved.chosen.review.status not in {"ok", "partial", "abstained"}:
+        # Source work has always rejected failed review before any technical state writes.
+        validated_cached_selections(resolved.chosen.review, packet.evidence)
+    selections = resolved.selections
     routes = _routes(config)
     route = routes[0] if routes else Route(config.reading_brief.provider, config.reading_brief.model,
                                          1, config.reading_brief.max_output_tokens)

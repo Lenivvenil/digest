@@ -17,7 +17,7 @@ from digest.application.results import RunStats
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
     from digest.domain.delivery.outcomes import IssueDeliveryResult
-    from digest.domain.editorial.candidates import CandidatePacket
+    from digest.domain.editorial.attempts import ResolvedReview
     from digest.preparation import AcceptedPreparation, PreparationSnapshot
 
 logger = logging.getLogger(__name__)
@@ -375,33 +375,20 @@ def _engine_provenance() -> dict[str, Any]:
 
 def _acceptance(
     snapshot: PreparationSnapshot,
-    packet: CandidatePacket,
+    result: ResolvedReview,
 ) -> Literal["selection", "abstention", "selection_incomplete"]:
-    """One editorial policy, independent of report-wide comparison completion."""
-    from digest.domain.editorial.reviews import delivery_review
-
+    """Publication projection and editorial abstention remain distinct gates."""
     if snapshot.top_articles:
         return "selection"
     report = snapshot.review_report
     if report is None:
         return "selection_incomplete"
-    delivery = delivery_review(report)
-    if delivery.status != "abstained":
-        return "selection_incomplete"
-    if packet.disposition_attempts:
-        capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
-        if capture is None or capture.status != "complete":
-            return "selection_incomplete"
-    # Fallback abstention does not replace an unavailable primary. Keep the
-    # explicit primary requirement shared with the legacy snapshot save API.
-    if not any(review.slot == "primary" and review.status == "abstained" for review in report.reviews):
-        return "selection_incomplete"
-    return "abstention"
+    return "abstention" if result.outcome == "primary_abstained" else "selection_incomplete"
 
 
 def accept_preparation(
     snapshot: PreparationSnapshot,
-    packet: CandidatePacket,
+    result: ResolvedReview,
     *,
     cache_dir: str,
     publication_date: date | None = None,
@@ -409,7 +396,9 @@ def accept_preparation(
     """Decide, save and verify the exact canonical work before any candidate handoff."""
     from digest.preparation import load_accepted_preparation, save_preparation
 
-    decision = _acceptance(snapshot, packet)
+    if snapshot.review_report != result.report:
+        raise ValueError("Preparation does not bind the resolved candidate review.")
+    decision = _acceptance(snapshot, result)
     if decision == "selection_incomplete":
         review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
         # Retain the existing validation read and clock boundary before fetch

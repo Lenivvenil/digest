@@ -3,35 +3,35 @@
 from __future__ import annotations
 
 from digest.domain.catalog.articles import Article
+from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.evidence import ordered_unique_articles
-from digest.domain.editorial.reviews import BlindReviewReport, delivery_review
+from digest.domain.editorial.reviews import BlindReviewReport
 from digest.domain.editorial.summaries import ArticleSummary
 
 
-def primary_notice(report: BlindReviewReport, language: str) -> str:
+def primary_notice(result: ResolvedReview, language: str) -> str:
     """Deterministic attribution, usable once for an entire compact issue."""
-    primary = delivery_review(report)
+    primary = result.chosen.review
     label = "Мнение модели" if language == "ru" else "Model view"
     label += f" ({primary.provider}/{primary.model})"
-    if report.status != "complete":
+    if result.report.status != "complete":
         label += "; независимое сравнение не завершено" if language == "ru" else "; independent comparison incomplete"
     return label
 
 
 def primary_cards(
-    report: BlindReviewReport, articles_by_category: dict[str, list[Article]], language: str,
+    result: ResolvedReview, articles_by_category: dict[str, list[Article]], language: str,
     *, include_attribution: bool = True, max_cards: int | None = None, exclude_ids: frozenset[str] = frozenset(),
 ) -> list[ArticleSummary]:
     """Apply publication capacity in review order without trimming the saved review."""
     if max_cards is not None and (type(max_cards) is not int or max_cards < 1):
         raise ValueError("Publication card limit must be a positive integer.")
     originals = ordered_unique_articles(articles_by_category)
-    primary = delivery_review(report)
-    if primary.status not in {"ok", "partial"}:
+    if result.outcome != "selected":
         return []
-    label = primary_notice(report, language)
+    label = primary_notice(result, language)
     cards = []
-    selections = [selection for selection in primary.selections if selection.evidence_id not in exclude_ids]
+    selections = [selection for selection in result.selections if selection.evidence_id not in exclude_ids]
     for selection in selections[:max_cards]:
         article = originals[selection.evidence_id]
         summary = f"{label}: {selection.reason}" if include_attribution else selection.reason

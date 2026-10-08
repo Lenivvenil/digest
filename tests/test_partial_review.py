@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.domain.editorial.attempts import restore_review
 from digest.radar.collector import Article
 from digest.review import (
     BlindReviewReport,
@@ -44,8 +45,9 @@ async def _slot(payload: Any) -> Any:
     bundle = build_evidence_bundle(fixture_articles(), config.review)
     raw = json.dumps(payload)
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))):
-        return await _review_slot("primary", config.review.primary, bundle,
-                                  build_review_messages(bundle, config.review, "en"), config, execution=model_execution)
+        return (await _review_slot("primary", config.review.primary, bundle,
+                                  build_review_messages(bundle, config.review, "en"), config,
+                                  execution=model_execution)).review
 
 
 @pytest.mark.asyncio
@@ -56,9 +58,9 @@ async def test_captured_response_retains_four_exact_source_selections_and_one_re
     raw = old_reviews[1].rejected_output
     assert raw is not None
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        review = await _review_slot("secondary", config.review.secondary, bundle,
+        review = (await _review_slot("secondary", config.review.secondary, bundle,
                                     build_review_messages(bundle, config.review, "en"), config,
-                                        execution=model_execution)
+                                        execution=model_execution)).review
     complete.assert_awaited_once()
     assert review.status == "partial"
     assert len(review.selections) == 4
@@ -82,7 +84,7 @@ async def test_captured_response_retains_four_exact_source_selections_and_one_re
     report = BlindReviewReport(
         1, bundle, [old_reviews[0], review], "incomplete", None, [], "pending_independent_review",
     )
-    cards = primary_cards(report, articles, "en")
+    cards = primary_cards(restore_review(report), articles, "en")
     assert len(cards) == 4
     assert all("groq/openai/gpt-oss-120b" in card.summary for card in cards)
 
@@ -166,7 +168,8 @@ async def _partial_primary() -> Any:
         return json.dumps(raw), usage
 
     with patch("digest.application.review.complete", side_effect=response) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(), execution=model_execution)
+        result = await run_primary_review(fixture_articles(), fixture_config(), execution=model_execution)
+        report = result.report
     complete.assert_awaited_once()
     return report
 
@@ -176,7 +179,7 @@ async def test_partial_primary_delivers_without_secondary_fallback() -> None:
     report = await _partial_primary()
     assert report.status == "incomplete" and report.reviews[0].status == "partial"
     assert report.reviews[1].attempted_at is None
-    assert len(primary_cards(report, fixture_articles(), "en")) == 1
+    assert len(primary_cards(restore_review(report), fixture_articles(), "en")) == 1
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from typing import Literal
 from digest._serialization import canonical_json_bytes
 from digest.domain.catalog.articles import article_hash
 from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
+from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.dispositions import (
     CandidateDisposition,
     CandidateDispositionAttempt,
@@ -23,7 +24,6 @@ from digest.domain.editorial.dispositions import (
 from digest.domain.editorial.reviews import (
     BlindReviewReport,
     EvidenceBundle,
-    delivery_review,
     validate_canonical_evidence,
     validate_canonical_report,
     validated_cached_selections,
@@ -177,6 +177,8 @@ def validate_packet(packet: CandidatePacket) -> None:
     if packet.disposition_attempts and packet.report is None:
         raise ValueError("Candidate dispositions lack their saved report.")
     if packet.report is not None:
+        if len({attempt.slot for attempt in packet.disposition_attempts}) != len(packet.disposition_attempts):
+            raise ValueError("Saved dispositions contain duplicate review slots.")
         for attempt in packet.disposition_attempts:
             matching = next((review for review in packet.report.reviews if review.slot == attempt.slot), None)
             if matching is None:
@@ -241,11 +243,7 @@ def proof_packets(candidate: Candidate, packets: list[CandidatePacket]) -> list[
 def accepted_empty_packet(packet: CandidatePacket) -> bool:
     if packet.report is None or not packet.report.reviews:
         return False
-    review = delivery_review(packet.report)
-    capture = next((item for item in packet.disposition_attempts if item.slot == review.slot), None)
-    return review.status == "abstained" and (
-        not packet.disposition_attempts or capture is not None and capture.status == "complete"
-    )
+    return restore_review(packet.report, packet.disposition_attempts).abstention_complete
 
 
 def packet_key(packet: CandidatePacket) -> str:

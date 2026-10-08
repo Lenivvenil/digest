@@ -21,9 +21,9 @@ from digest.candidate_review import (
     merge_candidates,
     plan_packet,
 )
-from digest.closing import ClosingCapture
 from digest.config import Config, ReviewModelConfig, load_config
 from digest.delivery.edition import READY_FILE
+from digest.domain.editorial.attempts import restore_review
 from digest.feedback import FeedbackStore
 from digest.main import _run, main
 from digest.preparation import load_preparation
@@ -51,14 +51,15 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     config, articles = population()
     config.review.primary = ReviewModelConfig("groq", "openai/gpt-oss-120b")
     config.closing = replace(config.closing, enabled=enabled)
-    capture = ClosingCapture()
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": True, "evidence_id": None} if enabled else "missing"), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    report = await run_primary_review(articles, config, execution=model_execution, closing_capture=capture)
+    result = await run_primary_review(articles, config, execution=model_execution)
+    report = result.report
     complete.assert_awaited_once()
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
-    assert capture.attempts[0].status == "incomplete"
+    closing = result.attempts[0].closing
+    assert (closing is not None and closing.status == "incomplete") if enabled else closing is None
     request = complete.call_args
     assert request.kwargs["reasoning_effort"] == "low"
     assert request.kwargs["max_output_tokens"] == 4096
@@ -94,7 +95,8 @@ async def test_live_review_keeps_detail_bound_with_either_closing_flag(
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, "first" if enabled else "missing"), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    report = await run_primary_review(articles, config, execution=model_execution)
+    result = await run_primary_review(articles, config, execution=model_execution)
+    report = result.report
     assert complete.await_count == 2
     assert all(review.status == "invalid" and review.error == "invalid selection count"
                and not review.selections for review in report.reviews)
@@ -147,7 +149,7 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
         execution=model_execution)
     cards, report = reviewed.cards, reviewed.report
     assert report is not None and len(report.reviews[0].selections) == 6
-    main_cards, closing = _preparation_closing(cards, report, articles, config, str(tmp_path))
+    main_cards, closing = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
     assert len(main_cards) == 5
     assert closing is not None and closing.status == "selected" and closing.card is not None
     assert closing.provenance is not None

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import CandidateDispositionCapture, validate_disposition_attempt
+from digest.candidate_dispositions import validate_disposition_attempt
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -78,11 +78,11 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     assert packet is not None and len(packet.evidence.items) == 20
     begin_packet(progress, packet, tmp_path)
     raw = _response(packet.evidence)
-    capture = CandidateDispositionCapture()
     with patch(
         "digest.application.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as complete:
-        report = await run_primary_review(packet_articles(packet), config,
-            execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(packet_articles(packet), config,
+            execution=model_execution)
+        report = result.report
     complete.assert_awaited_once()
     task = json.loads(complete.call_args.args[1][1]["content"])
     assert task["max_detailed_selections"] == 5 and "max_selections" not in task
@@ -90,14 +90,14 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     assert complete.call_args.kwargs["max_output_tokens"] == 4096
     review = report.reviews[0]
     assert review.status == "ok" and len(review.selections) == 5
-    assert len(primary_cards(report, articles, "en", max_cards=config.review.max_selections)) == 5
-    assert len(primary_cards(report, articles, "en", max_cards=2)) == 2  # Independent publication capacity.
+    assert len(primary_cards(result, articles, "en", max_cards=config.review.max_selections)) == 5
+    assert len(primary_cards(result, articles, "en", max_cards=2)) == 2  # Independent publication capacity.
     selected = {item.evidence_id for item in packet.evidence.items[:5]}
     deferred = {item.evidence_id for item in packet.evidence.items[5:]}
     assert {item.evidence_id for item in review.selections} == selected
     response_hash = hashlib.sha256(raw.encode()).hexdigest()
     assert review.response_sha256 == response_hash
-    attempt, = capture.attempts
+    attempt, = result.disposition_attempts
     validate_disposition_attempt(attempt, packet.evidence, review)
     assert attempt.response_sha256 == response_hash and attempt.prompt_hash == packet.prompt_hash
     assert attempt.status == "incomplete" and not attempt.errors
@@ -107,7 +107,7 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     assert {item.evidence_id for item in attempt.dispositions if item.status == "selected"} == selected
     assert {item.evidence_id for item in attempt.dispositions if item.status == "deferred"} == deferred
 
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    reconcile_packet(progress, packet, result, config, tmp_path)
     restored = load_candidate_progress(tmp_path)
     assert restored.packets[0].report == report
     assert restored.packets[0].disposition_attempts == (attempt,)
@@ -153,17 +153,17 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
         raw = raw[:raw.index('"dispositions"') + 20]
     else:
         assert len(json.loads(raw)["selections"]) == detailed
-    capture = CandidateDispositionCapture()
     with patch(
         "digest.application.review.complete",
         AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))) as complete:
-        report = await run_primary_review(packet_articles(packet), config,
-            execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(packet_articles(packet), config,
+            execution=model_execution)
+        report = result.report
     assert complete.await_count == 2  # Only the existing primary and fallback attempt.
-    assert len(capture.attempts) == 2
+    assert len(result.disposition_attempts) == 2
     identities = {item.evidence_id for item in packet.evidence.items}
     response_hash = hashlib.sha256(raw.encode()).hexdigest()
-    for review, attempt in zip(report.reviews, capture.attempts, strict=True):
+    for review, attempt in zip(report.reviews, result.disposition_attempts, strict=True):
         assert review.status == "invalid" and review.error == error
         assert not review.selections and not review.rejected_items
         assert review.response_sha256 == response_hash
@@ -172,11 +172,11 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
         assert attempt.response_sha256 == response_hash and attempt.finish_reason == finish_reason
         assert attempt.status == "incomplete" and not attempt.dispositions
         assert set(attempt.unresolved_ids) == identities
-    assert not primary_cards(report, articles, "en")
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    assert not primary_cards(result, articles, "en")
+    reconcile_packet(progress, packet, result, config, tmp_path)
     restored = load_candidate_progress(tmp_path)
     assert restored.packets[0].report == report
-    assert restored.packets[0].disposition_attempts == tuple(capture.attempts)
+    assert restored.packets[0].disposition_attempts == tuple(result.disposition_attempts)
     assert pending_completed_report(restored) is None
     assert set(restored.candidates) == identities
     assert all(item.status == "technical_pending" and item.eligible for item in restored.candidates.values())
@@ -191,7 +191,8 @@ async def test_saved_eight_selection_review_remains_strictly_valid_at_new_defaul
     raw = _response(bundle, 8)
     config.review.max_detailed_selections = 8
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        report = await run_primary_review(articles, config, execution=model_execution)
+        result = await run_primary_review(articles, config, execution=model_execution)
+        report = result.report
     complete.assert_awaited_once()
     assert len(report.reviews[0].selections) == 8
     path = tmp_path / "old-review.json"

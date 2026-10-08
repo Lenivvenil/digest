@@ -13,11 +13,11 @@ import pytest
 from digest.adapters.models.execution import ModelExecution
 from digest.candidate_dispositions import (
     CandidateDisposition,
-    CandidateDispositionCapture,
     capture_review_dispositions,
     validate_disposition_attempt,
 )
 from digest.config import ReviewConfig
+from digest.domain.editorial.attempts import ResolvedReview
 from digest.review import _parse_review, build_evidence_bundle, build_review_messages, run_primary_review
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article
@@ -37,26 +37,28 @@ def payload() -> dict[str, Any]:
     }
 
 
-async def run(data: dict[str, Any] | str) -> tuple[Any, CandidateDispositionCapture]:
+async def run(data: dict[str, Any] | str) -> ResolvedReview:
     model_execution = ModelExecution()
-    capture = CandidateDispositionCapture()
     text = data if isinstance(data, str) else json.dumps(data)
     with patch("digest.application.review.complete", return_value=(text, {})) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(),
-            execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution)
+        report = result.report
     assert complete.call_count == (2 if report.reviews[0].status == "invalid" else 1)
     assert all(call.kwargs["max_output_tokens"] == 4096 for call in complete.call_args_list)
-    return report, capture
+    return result
 
 
 @pytest.mark.asyncio
-async def test_complete_capture_has_exact_bindings_and_no_report_wire_fields() -> None:
+async def test_response_owns_exact_dispositions_without_changing_report_wire_fields() -> None:
     data = payload()
     data["dispositions"][1] = {"evidence_id": data["dispositions"][1]["evidence_id"], "status": "duplicate",
                                "retained_id": data["dispositions"][0]["evidence_id"],
                                "reason": "Same announcement and claims already represented by retained item."}
-    report, capture = await run(data)
-    attempt = capture.attempts[0]
+    result = await run(data)
+    report = result.report
+    assert result.outcome == "selected" and result.chosen.review is report.reviews[0]
+    attempt = result.chosen.dispositions
     assert attempt.status == "complete"
     assert not attempt.unresolved_ids and not attempt.errors
     assert len(attempt.dispositions) == len(report.evidence.items)
@@ -103,8 +105,9 @@ async def test_bad_or_unfinished_dispositions_never_become_editorial_rejections(
         entries[1]["reason"] = []
     elif kind == "deferred":
         entries[1].update(status="deferred", reason="Useful but outside this response's card allowance.")
-    report, capture = await run(data)
-    attempt = capture.attempts[0]
+    result = await run(data)
+    report = result.report
+    attempt = result.disposition_attempts[0]
     assert report.reviews[0].status == "ok"  # No extra fallback for incomplete metadata.
     assert attempt.status == "incomplete"
     assert identity in attempt.unresolved_ids
@@ -116,9 +119,9 @@ async def test_bad_or_unfinished_dispositions_never_become_editorial_rejections(
 async def test_invalid_selection_cannot_validate_selected_disposition() -> None:
     data = payload()
     data["selections"][0]["quote"] = "invented source quote"
-    _, capture = await run(data)
-    assert len(capture.attempts) == 2
-    assert all(attempt.status == "incomplete" and not attempt.dispositions for attempt in capture.attempts)
+    result = await run(data)
+    assert len(result.disposition_attempts) == 2
+    assert all(attempt.status == "incomplete" and not attempt.dispositions for attempt in result.disposition_attempts)
 
 
 @pytest.mark.asyncio
@@ -127,24 +130,24 @@ async def test_legacy_is_readable_without_fabricated_omission_reasons() -> None:
     del data["dispositions"]
     bundle = build_evidence_bundle(fixture_articles(), ReviewConfig())
     assert _parse_review(json.dumps(data), bundle)[0]
-    report, capture = await run(data)
+    result = await run(data)
+    report = result.report
     assert report.reviews[0].status == "ok"
-    assert not capture.attempts[0].dispositions
-    assert set(capture.attempts[0].unresolved_ids) == {item.evidence_id for item in bundle.items}
+    assert not result.disposition_attempts[0].dispositions
+    assert set(result.disposition_attempts[0].unresolved_ids) == {item.evidence_id for item in bundle.items}
 
 
 @pytest.mark.asyncio
 async def test_truncation_and_provider_failure_preserve_unresolved_packet() -> None:
     model_execution = ModelExecution()
-    _, capture = await run(json.dumps(payload())[:-8])
-    assert all(attempt.status == "incomplete" and attempt.unresolved_ids for attempt in capture.attempts)
-    capture = CandidateDispositionCapture()
+    result = await run(json.dumps(payload())[:-8])
+    assert all(attempt.status == "incomplete" and attempt.unresolved_ids for attempt in result.disposition_attempts)
     with patch("digest.application.review.complete", side_effect=RuntimeError("offline")) as complete:
-        await run_primary_review(fixture_articles(), fixture_config(),
-            execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution)
     assert complete.call_count == 2
-    assert [attempt.slot for attempt in capture.attempts] == ["primary", "secondary"]
-    assert all(attempt.response_sha256 is None and attempt.unresolved_ids for attempt in capture.attempts)
+    assert [attempt.slot for attempt in result.disposition_attempts] == ["primary", "secondary"]
+    assert all(attempt.response_sha256 is None and attempt.unresolved_ids for attempt in result.disposition_attempts)
 
 
 @pytest.mark.asyncio
@@ -155,7 +158,6 @@ async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escap
                           for index in range(20)]}
     config = fixture_config()
     config.radar.language = language
-    capture = CandidateDispositionCapture()
     texts = []
 
     async def adapter(role: Any, messages: Any, config: Any, **kwargs: Any) -> tuple[str, dict[str, int]]:
@@ -179,11 +181,12 @@ async def test_twenty_item_capacity_fixture_with_five_cards(language: str, escap
         return text, {}
 
     with patch("digest.application.review.complete", side_effect=adapter) as complete:
-        report = await run_primary_review(articles, config, execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(articles, config, execution=model_execution)
+        report = result.report
     assert complete.call_count == 1
     assert len(report.evidence.items) == 20 and len(report.reviews[0].selections) == 5
-    assert capture.attempts[0].status == "complete"
-    assert len(capture.attempts[0].dispositions) == 20
+    assert result.disposition_attempts[0].status == "complete"
+    assert len(result.disposition_attempts[0].dispositions) == 20
     assert len(texts) == 1
 
 
@@ -192,12 +195,12 @@ async def test_fallback_capture_binds_only_its_own_response() -> None:
     model_execution = ModelExecution()
     data = payload()
     text = json.dumps(data)
-    capture = CandidateDispositionCapture()
-    with patch("digest.application.review.complete", side_effect=[("invalid", {}), (text, {})]) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(),
-            execution=model_execution, disposition_capture=capture)
-    assert complete.call_count == 2
-    primary, secondary = capture.attempts
+    with patch("digest.application.review.complete", side_effect=[("invalid", {}), (text, {})]):
+        result = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution)
+        report = result.report
+    primary, secondary = result.disposition_attempts
+    assert result.chosen.dispositions is secondary
     assert primary.slot == "primary" and primary.status == "incomplete"
     assert secondary.slot == "secondary" and secondary.status == "complete"
     assert secondary.response_sha256 == report.reviews[1].response_sha256
@@ -209,7 +212,8 @@ async def test_fallback_capture_binds_only_its_own_response() -> None:
 @pytest.mark.asyncio
 async def test_capture_rejects_changed_raw_response_or_bundle_binding() -> None:
     data = payload()
-    report, _ = await run(data)
+    result = await run(data)
+    report = result.report
     for bundle, text in [(report.evidence, json.dumps(data) + " "),
                          (replace(report.evidence, bundle_id="other"), json.dumps(data))]:
         attempt = capture_review_dispositions(bundle, report.reviews[0], text)
@@ -225,10 +229,12 @@ async def test_explicit_metadata_abstention_can_account_for_every_input() -> Non
     data["selections"] = []
     data["limitations"] = ["None of the supplied excerpts establishes a concrete architecture consequence."]
     data["dispositions"][0].update(status="not_selected", reason="No specific architecture consequence in excerpt.")
-    report, capture = await run(data)
+    result = await run(data)
+    report = result.report
+    assert result.outcome == "primary_abstained"
     assert report.reviews[0].status == "abstained"
-    assert capture.attempts[0].status == "complete"
-    assert all(item.status == "not_selected" and item.reason for item in capture.attempts[0].dispositions)
+    assert result.disposition_attempts[0].status == "complete"
+    assert all(item.status == "not_selected" and item.reason for item in result.disposition_attempts[0].dispositions)
 
 
 @pytest.mark.asyncio
@@ -236,8 +242,9 @@ async def test_capacity_deferral_preserves_every_omitted_input_as_unresolved() -
     data = payload()
     for item in data["dispositions"][1:]:
         item.update(status="deferred", reason="Useful metadata candidate exceeds this response's card allowance.")
-    report, capture = await run(data)
-    attempt = capture.attempts[0]
+    result = await run(data)
+    report = result.report
+    attempt = result.disposition_attempts[0]
     assert report.reviews[0].status == "ok"
     assert attempt.status == "incomplete"
     assert set(attempt.unresolved_ids) == {item["evidence_id"] for item in data["dispositions"][1:]}
@@ -250,8 +257,9 @@ async def test_capacity_deferral_preserves_every_omitted_input_as_unresolved() -
                                  "duplicate_id", "unknown_id", "false_status", "false_unresolved", "selected_reason",
                                  "contradiction", "retained_id", "non_tuple", "invalid_error", "reason_whitespace"])
 async def test_persisted_attempt_tampering_is_rejected(kind: str) -> None:
-    report, capture = await run(payload())
-    attempt = capture.attempts[0]
+    result = await run(payload())
+    report = result.report
+    attempt = result.disposition_attempts[0]
     validate_disposition_attempt(attempt, report.evidence, report.reviews[0])
     if kind in {"slot", "provider", "model", "bundle_id", "prompt_hash", "response_sha256"}:
         attempt = replace(attempt, **{kind: "changed"})
@@ -289,17 +297,17 @@ async def test_persisted_attempt_tampering_is_rejected(kind: str) -> None:
 async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reason: str | None) -> None:
     model_execution = ModelExecution()
     text = json.dumps(payload())
-    capture = CandidateDispositionCapture()
     usage = {} if finish_reason is None else {"finish_reason": finish_reason}
     with patch("digest.application.review.complete", return_value=(text, usage)) as complete:
-        report = await run_primary_review(fixture_articles(), fixture_config(),
-            execution=model_execution, disposition_capture=capture)
+        result = await run_primary_review(fixture_articles(), fixture_config(),
+            execution=model_execution)
+        report = result.report
     terminal = finish_reason is None or finish_reason in {"stop", "STOP", "end_turn"}
     assert complete.call_count == (1 if terminal else 2)
     assert report.reviews[0].status == ("ok" if terminal else "invalid")
     assert bool(report.reviews[0].selections) is terminal
     assert "finish_reason" not in asdict(report.reviews[0])
-    attempt = capture.attempts[0]
+    attempt = result.disposition_attempts[0]
     assert attempt.finish_reason == finish_reason
     validate_disposition_attempt(attempt, report.evidence, report.reviews[0])
     if finish_reason is None or finish_reason in {"stop", "STOP", "end_turn"}:
@@ -314,9 +322,10 @@ async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reaso
 
 @pytest.mark.asyncio
 async def test_stored_truncated_finish_reason_cannot_claim_resolved_dispositions() -> None:
-    report, capture = await run(payload())
+    result = await run(payload())
+    report = result.report
     for reason in ("length", "MAX_TOKENS", 123):
-        changed = replace(capture.attempts[0], finish_reason=reason)
+        changed = replace(result.disposition_attempts[0], finish_reason=reason)
         with pytest.raises(ValueError):
             validate_disposition_attempt(changed, report.evidence, report.reviews[0])
 
@@ -327,9 +336,10 @@ async def test_rejected_selection_cannot_be_resolved_by_not_selected_disposition
     rejected_id = data["dispositions"][1]["evidence_id"]
     data["selections"].append({"evidence_id": rejected_id, "reason": "Alleged architecture consequence.",
                                "quote": "invented quote absent from evidence", "confidence": "medium"})
-    report, capture = await run(data)
+    result = await run(data)
+    report = result.report
     review = report.reviews[0]
-    attempt = capture.attempts[0]
+    attempt = result.disposition_attempts[0]
     assert review.status == "partial"
     assert len(review.selections) == 1
     assert review.rejected_items[0].evidence_id == rejected_id
@@ -355,10 +365,11 @@ async def test_duplicate_cannot_resolve_to_identity_with_rejected_selection_outp
     duplicate_id = data["dispositions"][1]["evidence_id"]
     data["dispositions"][1] = {"evidence_id": duplicate_id, "status": "duplicate",
                                "retained_id": selected_id, "reason": "Same specific announcement."}
-    report, capture = await run(data)
+    result = await run(data)
+    report = result.report
     assert report.reviews[0].status == "partial"
     assert len(report.reviews[0].selections) == 1
-    attempt = capture.attempts[0]
+    attempt = result.disposition_attempts[0]
     assert {selected_id, duplicate_id} <= set(attempt.unresolved_ids)
     assert not any(item.evidence_id in {selected_id, duplicate_id} for item in attempt.dispositions)
     validate_disposition_attempt(attempt, report.evidence, report.reviews[0])

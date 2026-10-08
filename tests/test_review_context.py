@@ -13,6 +13,7 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, SourceConfig
+from digest.domain.editorial.attempts import restore_review
 from digest.radar.collector import Article
 from digest.review import (
     build_evidence_bundle,
@@ -155,7 +156,8 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),
         patch("digest.application.review.complete", side_effect=fixture_response) as complete,
     ):
-        primary = await run_primary_review(fixture_articles(), config, execution=execution)
+        primary_result = await run_primary_review(fixture_articles(), config, execution=execution)
+        primary = primary_result.report
         assert complete.call_count == 1
         assert complete.call_args.args[1] == expected
         assert _reusable_slots(primary.evidence, primary.reviews, config) == {"primary"}
@@ -186,7 +188,8 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
     _sources(config)
     config.review.tie_breaker = None
     with patch("digest.application.review.complete", side_effect=fixture_response):
-        original = await run_primary_review(fixture_articles(), config, execution=execution)
+        original_result = await run_primary_review(fixture_articles(), config, execution=execution)
+        original = original_result.report
     old = deepcopy(original)
     for review in old.reviews:
         review.prompt_hash = hashlib.sha256(b"older archived selection prompt").hexdigest()
@@ -195,7 +198,8 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
     before = path.read_bytes()
     bundle, cached = load_review_checkpoint(path, config)
     assert [asdict(review) for review in cached] == [asdict(review) for review in old.reviews]
-    assert primary_cards(old, fixture_articles(), "en") == primary_cards(original, fixture_articles(), "en")
+    assert primary_cards(restore_review(old), fixture_articles(), "en") == primary_cards(
+        original_result, fixture_articles(), "en")
     assert _reusable_slots(bundle, cached, config) == set()
     with (
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),

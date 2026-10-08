@@ -14,6 +14,7 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ReviewModelConfig
+from digest.domain.editorial.attempts import restore_review
 from digest.review import BlindReviewReport, EvidenceBundle, ModelReview, primary_cards, run_blind_review
 from digest.review_checkpoint import FullSourceEvidence
 from digest.review_resume import _reusable_slots
@@ -478,15 +479,14 @@ async def test_legacy_checkpoint_without_timestamps_reuses_unknown_provenance(tm
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["invalid", "unavailable"])
 @pytest.mark.parametrize("language", ["en", "ru"])
-async def test_cards_fall_back_to_successful_secondary_with_explicit_attribution(status: str, language: str) -> None:
+async def test_historical_fallback_cards_preserve_explicit_attribution(language: str) -> None:
     config = _trial_config()
     report = await _report(config)
-    report.reviews[0].status = status
+    report.reviews[0].status = "unavailable"
     report.reviews[0].selections = []
     report.status = "incomplete"
-    cards = primary_cards(report, fixture_articles(), language)
+    cards = primary_cards(restore_review(report), fixture_articles(), language)
     secondary = report.reviews[1]
     expected_urls = {item.url for item in report.evidence.items
                      if item.evidence_id in {selection.evidence_id for selection in secondary.selections}}
@@ -502,7 +502,7 @@ async def test_primary_abstention_does_not_silently_fall_back_to_secondary() -> 
     report.reviews[0].status = "abstained"
     report.reviews[0].selections = []
     report.reviews[0].limitations = ["Evidence is insufficient."]
-    assert primary_cards(report, fixture_articles(), "en") == []
+    assert primary_cards(restore_review(report), fixture_articles(), "en") == []
 
 
 @pytest.mark.asyncio

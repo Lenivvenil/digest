@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from digest._serialization import extract_json as _extract_json
@@ -35,11 +35,6 @@ class CandidateDispositionAttempt:
     unresolved_ids: tuple[str, ...]
     errors: tuple[str, ...]
     finish_reason: str | None = None
-
-
-@dataclass
-class CandidateDispositionCapture:
-    attempts: list[CandidateDispositionAttempt] = field(default_factory=list)
 
 
 def _entry(value: object, known: set[str], selected: set[str]) -> CandidateDisposition:

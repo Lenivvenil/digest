@@ -24,15 +24,17 @@ async def analyze_articles(
 
     if getattr(getattr(config, "review", None), "enabled", False):
         from digest.application.review import run_blind_review, run_primary_review
+        from digest.domain.editorial.attempts import restore_review
         from digest.presentation.review import primary_cards
 
-        report = await (
-            run_primary_review(articles, config, execution=execution)
-            if config.review.review_led_only
-            else run_blind_review(articles, config, execution=execution)
-        )
+        if config.review.review_led_only:
+            result = await run_primary_review(articles, config, execution=execution)
+            report = result.report
+        else:
+            report = await run_blind_review(articles, config, execution=execution)
+            result = restore_review(report)
         cards = primary_cards(
-            report,
+            result,
             articles,
             config.radar.language,
             max_cards=config.review.max_selections,
