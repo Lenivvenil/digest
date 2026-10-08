@@ -199,16 +199,22 @@ def _closing_opportunity(
 
 
 def plan_articles(
-    progress: CandidateProgress, instant: datetime, *, max_evidence_articles: int,
-    max_excerpt_chars: int, max_technical_retry_articles: int,
+    progress: CandidateProgress,
+    instant: datetime,
+    *,
+    max_evidence_articles: int,
+    max_excerpt_chars: int,
+    max_technical_retry_articles: int,
     closing_sources: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> list[CandidateArticle]:
     """Bound fresh/age source turns and technical continuation in one request.
 
-    A fitting unseen item gets the first opportunity. Retry reservations consume
-    only actual admitted evidence, then unused count/character capacity backfills.
-    With a one-item limit, unseen work retains preference. No extra request or
-    editorial decision is implied by a turn, a byte skip or a saved plan.
+    The oldest fitting unseen identity gets the protected first opportunity.
+    Remaining unseen work keeps its established fresh/age source turns.
+    Retry reservations consume only actual admitted evidence, then unused
+    count/character capacity backfills. With a one-item limit, unseen age takes
+    precedence over freshness. No extra request or editorial decision is implied
+    by a turn, a byte skip or a saved plan.
     An absent approved closing source gets one bounded final opportunity, using
     spare capacity or deferring only the last ordinary backfill admission.
     """
@@ -222,16 +228,28 @@ def plan_articles(
     retries = _source_turns(retries, instant, retry_times)
     # Filter the established queues so retry attempt-age ordering survives.
     closing_candidates = [
-        item for item in [*unseen, *retries]
+        item
+        for item in [*unseen, *retries]
         if (item.article.source, item.article.source_url, item.article.category) in closing_sources
     ]
     limit = max_evidence_articles
     reserved = min(max_technical_retry_articles, max(0, limit - bool(unseen)))
     selected: list[CandidateArticle] = []
-    # Count and byte protection for the first fitting unseen opportunity. Skips
-    # stay pending; do not reserve fictitious capacity for an unadmitted item.
-    while unseen and not selected:
-        _admit_candidate(selected, unseen.pop(0), max_evidence_articles, max_excerpt_chars)
+    # Identity age survives occurrence changes. Preserve the existing backfill
+    # queue; rebuilding source turns here would change its fresh/age parity.
+    oldest_unseen = sorted(
+        unseen,
+        key=lambda item: (
+            datetime.fromisoformat(item.first_observed_at),
+            -item.priority,
+            item.article.source,
+            item.identity,
+        ),
+    )
+    for candidate in oldest_unseen:
+        unseen.remove(candidate)
+        if _admit_candidate(selected, candidate, max_evidence_articles, max_excerpt_chars):
+            break
     used_retries = 0
     while retries and used_retries < reserved and len(selected) < limit:
         used_retries += _admit_candidate(selected, retries.pop(0), max_evidence_articles, max_excerpt_chars)
@@ -241,8 +259,11 @@ def plan_articles(
             break
         _admit_candidate(selected, candidate, max_evidence_articles, max_excerpt_chars)
     return _closing_opportunity(
-        selected, closing_candidates, protected_count,
-        max_evidence_articles=max_evidence_articles, max_excerpt_chars=max_excerpt_chars,
+        selected,
+        closing_candidates,
+        protected_count,
+        max_evidence_articles=max_evidence_articles,
+        max_excerpt_chars=max_excerpt_chars,
     )
 
 

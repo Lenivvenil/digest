@@ -237,6 +237,10 @@ the shared detail budget and retest main preservation before closing activation.
 
 ## Deployed freshness and technical continuation correction (#121 / #132)
 
+The first-unseen choice below records the October 7 policy. The
+[oldest-unseen amendment](#oldest-unseen-opportunity-amendment-196) supersedes that
+choice while preserving the remaining fresh/age source queue and retry policy.
+
 The October 7 private-state replay exposed two limits in the deployed ordering:
 new same-source entries wait behind that source's entire unseen inventory, and
 unseen work can exclude every technical retry. Owner approval on 2026-10-07
@@ -295,6 +299,43 @@ age/retry turns. No source is automatically accepted, and no fintech quota is
 introduced. With 96 new entries and at most 20 admissions per ordinary window,
 ordering alone cannot establish sustainable coverage before source recency expiry.
 The remaining outcomes stay open in #121 and #132.
+
+## Oldest-unseen opportunity amendment (#196)
+
+The fresh source round can consume every unseen place before an age turn. A
+finite eight-window probe of the existing planner and checkpoint reload reproduced
+that documented limitation: stable eligible old identities remained unseen while
+new source heads filled each packet. This is a fairness-policy amendment, not a
+claim that candidate evidence was lost or that the previous guarantee was broken.
+
+The existing protected first-unseen opportunity now chooses the oldest **fitting**
+eligible identity by parsed `first_observed_at`, then descending effective priority,
+source name and stable identity. Publication dates and category do not break these
+ties. Original identity observation age survives a changed source occurrence; no
+cursor or new persisted field is introduced. Existing timestamp validation remains
+unchanged.
+
+After that opportunity, technical reservation and the precomputed fresh/age unseen
+queue continue unchanged, with attempted protected candidates removed. The queue
+is not rebuilt after promotion. Closing-source ordering also keeps the original
+queues, and the optional closing opportunity cannot displace the protected item.
+Individually unrepresentable evidence remains technical pending; source-recency
+exclusions remain recorded exclusions rather than editorial rejection.
+
+At a one-item cap, age deliberately takes precedence over freshness. The protected
+identity and a fresh backfill item may come from the same source. One scheduling
+opportunity changes, but a larger old item can consume more of the existing
+character budget and reduce later admissions or distinct-source coverage by more
+than one. Technical reservations still mean fitting opportunities, not a promise
+of four admissions. There is no added evidence slot, detail allowance, model call
+or execution budget.
+
+Beginning and saving a packet advances its admitted identity to technical pending;
+repeated planning alone does not. This bounded admission rule establishes neither
+editorial suitability nor delivery, and does not guarantee drainage when arrivals
+exceed capacity or progress before every source's recency expiry. Future packet
+membership and its request hashes intentionally change. Stored packet bytes,
+historical decisions, formats and accepted-preparation precedence do not.
 
 ## Review and occurrence ownership amendment (#146)
 

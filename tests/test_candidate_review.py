@@ -212,7 +212,7 @@ def test_source_round_rechecks_head_age_before_priority() -> None:
     assert packet is not None and [article.source for article in packet.articles] == ["A", "B", "B"]
 
 
-def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: Path) -> None:
+def test_old_unseen_identities_advance_despite_continual_fresh_arrivals(tmp_path: Path) -> None:
     config, articles = population(3)
     config.sources.append(SourceConfig("B", "https://b.example/feed", "science", True, priority=1))
     articles["science"] = [Article("Science", "https://b.example/1", "Evidence", "B", "science", NOW)]
@@ -220,6 +220,7 @@ def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: P
     progress = merge_candidates(CandidateProgress(), articles, config, {}, {"A": 5}, NOW)
     observed_at = {identity: candidate.first_observed_at for identity, candidate in progress.candidates.items()}
     served = []
+    admitted = []
     for window in range(1, 5):
         later = NOW + timedelta(hours=window)
         fresh = {"tech": [Article(f"Fresh {window}-{index}", f"https://a.example/{window}-{index}", "Evidence",
@@ -228,13 +229,16 @@ def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: P
         packet = plan_packet(progress, config, later)
         assert packet is not None
         served.append(packet.articles[0].source)
+        admitted.append(packet.evidence.items[0].evidence_id)
         begin_packet(progress, packet, tmp_path)
         reconcile_packet(progress, packet, restore_review(report_for(packet, config)), config, tmp_path)
         mark_prepared(progress, packet.evidence.bundle_id, tmp_path)
         progress = load_candidate_progress(tmp_path)
-    # A's freshness turn exposes its newer head; B's older observation now
-    # precedes that head. Its opportunity no longer waits for A's old backlog.
-    assert served == ["B", "A", "A", "A"]
+    # Coeval unseen identities use source priority as a tie-breaker. Every
+    # original identity gets its opportunity before any newer arrival.
+    assert served == ["A", "A", "A", "B"]
+    assert len(admitted) == len(set(admitted)) == len(observed_at)
+    assert set(admitted) == set(observed_at)
     assert all(candidate.first_observed_at == observed_at[identity]
                for identity, candidate in progress.candidates.items() if identity in observed_at)
 

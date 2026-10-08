@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Give the existing protected unseen-candidate opportunity to the oldest fitting
+  identity before technical retries and fresh backfill. This changes future
+  admission order within existing limits; it adds no model calls or packet slots
+  and preserves stored decisions and optional closing protection. See
+  [#196](https://github.com/Lenivvenil/digest/issues/196) for the explicit freshness,
+  source-diversity and character-budget tradeoffs.
+
 - Search adapters now own response validation and bounded buffering (#190).
   The bounded Irritator no longer installs or removes response hooks on a caller's
   HTTP client. Direct/legacy Hacker News requests now reject bodies over 512,000
