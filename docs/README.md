@@ -46,8 +46,10 @@ current onboarding instructions or newly ratified operating contracts:
 - `plans/completed/`: completed implementation plans.
 - [Archived Irritator diagnostic](domain/irritator-bc.md): explicitly superseded by the
   canonical Irritator overview; do not rewrite its diagnostic history.
-- Repository-root `plan.md` and `qa-report.md`: earlier investigation/implementation
-  artifacts, not a second active backlog.
+- [Terse summaries and bubble plan](plans/completed/terse-summaries-and-bubble.md) and
+  [Reddit QA report](history/reddit-qa.md): earlier implementation records, not a second active backlog.
+- [April 24 output](history/output/2026-04-24.md): preserved historical publication,
+  not a current output example or runtime directory.
 - [CHANGELOG.md](../CHANGELOG.md): historical release entries, not current quality evidence.
 
 Original versions of translated documents remain available through git history. Legacy
