@@ -75,6 +75,12 @@ agent-only design.
 ```
 ├── digest/
 │   ├── application/         # prepared/direct/discovery scenarios and shared application operations
+│   ├── domain/              # pure values, invariants and decision rules
+│   │   ├── catalog/         # sources, proposals, source occurrences and exploration
+│   │   ├── editorial/       # candidates, evidence, review and disposition contracts
+│   │   ├── delivery/        # frozen editions, claims, receipts and confirmed coverage
+│   │   ├── feedback/        # votes, replay and exact proposal decisions
+│   │   └── investigation/   # signals, queries, coverage vocabulary and URL rules
 │   ├── __init__.py          # __version__
 │   ├── __main__.py          # enables `python -m digest`
 │   ├── main.py              # public compatibility wrappers and CLI dispatch
@@ -96,6 +102,8 @@ agent-only design.
 │   │   └── sources/                # multi-platform search adapters
 │   │       ├── arxiv.py, devto.py, hackernews.py, lobsters.py, reddit.py
 │   ├── presentation/        # Pure publication copy, escaping and chunk coverage
+│   ├── adapters/http/       # Optional bounded signal-liveness checks
+│   ├── adapters/models/     # Explicit lazy model-execution state
 │   ├── adapters/telegram/   # Concrete Telegram protocols
 │   ├── adapters/storage/    # Exact persisted records, path guards and local writes
 │   └── delivery/            # Compatible distribution imports and legacy issue guard

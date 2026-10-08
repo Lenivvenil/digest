@@ -2,6 +2,33 @@
 
 _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written against commit `cc974f5`; issue-#53 fixes incorporated)._
 
+## Current domain model
+
+Irritator tests the operator's reading against external evidence. It receives
+attributed narratives, plans bounded searches, validates external candidates and
+ranks their relevance to those narratives. A different model opinion, popularity
+score or matching quotation alone does not establish a useful counter-signal.
+
+| Concept | Contract that matters |
+| --- | --- |
+| Narrative and cited target | Keep the attributed claim and supporting source evidence distinct from exploratory hypotheses. Hypotheses guide query planning; ranking excludes them. |
+| Search query | A bounded topic/entity search can be valid without copying a source phrase. Optional phrase matches are provenance diagnostics. |
+| External signal | A search hit retains its URL and source data. Deterministic filtering and optional liveness checks do not verify its truth or relevance. |
+| Ranked result and status | Report validated ranking outcomes, omissions and incomplete coverage honestly. No result, unavailable search and rejected evidence are different outcomes. |
+| Saved investigation evidence | The review-led supplementary path uses saved checkpoints and private archive traces. Compact mode keeps actual results in the archive; the legacy summary path can still run synchronously. |
+
+The application orchestrates search/model work; [pure investigation owners](../../../digest/domain/investigation/)
+hold signal/query values and URL rules. Concrete adapters handle search and liveness.
+The [current ownership map](../../ARCHITECTURE.md#modules-and-responsibilities) and
+[remaining coupling](../../ARCHITECTURE.md#deliberate-remaining-coupling) describe
+those boundaries, including the eager compatibility package.
+
+Useful counter-evidence remains an empirical acceptance gate under
+[#77](https://github.com/Lenivvenil/digest/issues/77). Read the current status below
+for deployed versus local work, then the [historical model](#historical-domain-snapshot--april-2026)
+for the original analysis. The [Digest requirements](../digest/overview.md#current-owner-requirements-and-acceptance-traces)
+define the primary-delivery and operating constraints.
+
 ## Current status — 2026-10-07
 
 This page preserves the April domain model and observations below. The current
@@ -24,7 +51,9 @@ acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77)
 
 ### Signal validation ownership under #147
 
-The local structural continuation separates the unchanged six-field `Signal` into
+The structural continuation deployed on 2026-10-08 through
+[PR #160](https://github.com/Lenivvenil/digest/pull/160) and
+[runtime PR #83](https://github.com/Lenivvenil/digest-prod/pull/83). It separates the unchanged six-field `Signal` into
 `domain/investigation/signals.py` and ordered URL/blocklist policy into
 `domain/investigation/validation.py`. These owners import without the search registry,
 HTTP or application code. `irritator.sources.Signal` remains the same class object;
@@ -45,7 +74,7 @@ change or search/ranking/query redesign. The existing source set and six fields 
 unchanged. [ADR0019](../../decisions/0019-remaining-application-scenarios.md#signal-validation-continuation)
 records the boundary; #147 retains separate release and editorial acceptance evidence.
 
-The adjacent local continuation gives the unchanged two-field `SearchQuery` a pure
+The adjacent continuation in the same draft gives the unchanged two-field `SearchQuery` a pure
 owner in `domain/investigation/queries.py` and preserves its old class-object exports.
 The unchanged RSS/full-source coverage strings now belong to
 `domain/investigation/coverage.py`, with evidence-stage aliases retained. These pure
@@ -100,6 +129,13 @@ JSON trace of post-validation external candidates, admission omissions and fully
 validated ranking dispositions. Omitted-source previews explicitly record truncation;
 unknown or unreturned relevance is never relabeled as rejection. This deployed private archive
 trace does not change ranking behavior or establish semantic counter-evidence quality.
+
+## Historical domain snapshot — April 2026
+
+The following interview/code-derived model preserves its original headings, terms
+and rationale. Statements about wholly transient work, data shapes and ownership
+refer to that snapshot unless explicitly amended. Use the current model and status
+above for the saved-evidence path and the actual source contracts.
 
 ---
 

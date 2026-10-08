@@ -1,19 +1,40 @@
 # Documentation map and status
 
-Current English entry points:
+Choose a route for the work you need to do. These are the existing canonical guides;
+dated decisions and archived models remain linked for context.
 
-- [Product and onboarding](../README.md)
-- [Architecture and staged migration](ARCHITECTURE.md#structural-migration-current-stage-and-target)
-- [Digest domain](domain/digest/overview.md)
-- [Irritator domain](domain/irritator/overview.md)
-- [Project principles](principles.md)
-- [RSS review and supplementary-stage runbook](BLIND_REVIEW.md)
-- [Architecture decision index](decisions/README.md)
-- [Safe example configuration](../examples/config.example.yaml)
+## Operate a runtime
 
-The canonical domain pages retain dated snapshots and distinguish intended behavior,
-observed implementation, accepted owner requirements and proposals. Their translation
-does not retroactively approve an architectural change. Source links remain evidence.
+1. [Purpose and safe quick start](../README.md#quick-start): install the engine and
+   validate the [disabled example configuration](../examples/config.example.yaml)
+   without credentials or external requests
+2. [CLI and configuration](../README.md#cli-reference): distinguish offline validation,
+   report-only model work and enabled delivery
+3. [Prepared publication and recovery](BLIND_REVIEW.md#prepared-editions-and-delivery-recovery-120):
+   use the runtime's saved-state, reservation and recovery boundaries
+4. [Primary-first supplementary processing](BLIND_REVIEW.md#primary-first-runtime-with-preserved-irritator):
+   run bounded Irritator work from saved evidence after primary delivery
+
+The engine does not install a schedule. The separate runtime owns secrets, source
+configuration, delivery destinations, the engine pin and durable state.
+
+## Contribute a change
+
+1. [Working agreement](../AGENTS.md#working-agreement) and [development commands](../README.md#development)
+2. [Project principles](principles.md#definition-of-done): required evidence, optional
+   local tooling and the unresolved 70% configured / 80% default coverage disposition
+3. [Decision index](decisions/README.md): accepted decisions, proposals and release scope
+
+## Understand the architecture
+
+1. [Runtime boundary and scenarios](ARCHITECTURE.md#overview)
+2. [Entities and invariants](ARCHITECTURE.md#entities-contracts-and-enforcement), then
+   [current ownership](ARCHITECTURE.md#modules-and-responsibilities)
+3. [Digest current model](domain/digest/overview.md#current-domain-model) and
+   [Irritator current model](domain/irritator/overview.md#current-domain-model), followed
+   by their requirement, acceptance and historical records
+4. [Migration and release appendix](ARCHITECTURE.md#appendix-migration-and-release-history)
+   for why the boundaries changed and what has actually been deployed
 
 ## Historical material
 

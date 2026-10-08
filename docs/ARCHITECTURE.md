@@ -1,20 +1,566 @@
 # Architecture — Daily News Digest
 
-> Delivery, review-reuse and source-attribution ownership reflect the scoped
-> #145/#146 implementations on 2026-10-07. The #145 boundary is deployed through
-> engine PR #151 and runtime PR #74. The #146 boundary is deployed through
-> engine PR #152 and runtime PR #75.
-> #147-A is deployed through engine PR #153 and runtime PR #76.
-> #147-B is deployed through engine PR #154 and runtime PR #77.
-> #147-C is deployed through engine PR #155 and runtime PR #78.
-> Source values, quality/trial rules and JSON codecs are deployed through engine PR #156 and runtime PR #79.
-> Discovery adapters are deployed through engine PR #157 and runtime PR #80.
-> Telegram presentation/transport is deployed through engine PR #158 and runtime PR #81.
-> Prepared domain/storage/application ownership is deployed through engine PR #159 and runtime PR #82.
-> Scoped local continuations separate Signal, pure URL filtering, optional HEAD execution and shared query/coverage/route contracts.
-> Release evidence and editorial acceptance remain separate.
-> Other sections retain their stated implementation scope; this is not a complete project audit.
-> [Digest context](domain/digest/overview.md) · [Irritator context](domain/irritator/overview.md)
+Start with the runtime boundary, scenarios and contracts below. The
+[ownership map](#modules-and-responsibilities) identifies current code owners;
+[recovery and persistence](#cache-architecture) explains the operational limits.
+The [migration appendix](#appendix-migration-and-release-history) preserves the
+staged decisions, dates and rollback rationale. [Digest](domain/digest/overview.md)
+and [Irritator](domain/irritator/overview.md) hold domain intent and acceptance evidence.
+
+## Overview
+
+Digest is a personal information-intake product, not simply an article formatter.
+Radar collects and analyses a chosen source portfolio. Feedback and approved discovery
+adjust that portfolio. Irritator searches for external evidence that challenges or
+complicates the narratives in the operator's reading.
+
+The public engine contains Python code and CI. A separate runtime owns configuration,
+credentials, schedules, JSON state and Markdown output. GitHub Actions can execute and
+persist each run without a continuously running service or external database. Persistence
+requires the runtime workflow to save state; writing a local file is not a durable push.
+See [ADR-0002](decisions/0002-engine-instance-split.md) and
+[ADR-0003](decisions/0003-source-state-split.md).
+
+The package is 2.0.0. The older architecture document described v1 category summarization
+as the only execution path. The original is retained in git history; current behavior
+has a second, opt-in RSS-review path. Full-source enrichment in
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
+not the operating architecture documented below.
+
+The draft source-admission adapter reuses safe acquisition and contiguous page progress.
+It admits only current candidate occurrences with exact saved selection proof, and
+freezes technical source evidence before accepted preparation. It does not publish the
+draft reading-angle concatenation or mark independent comparison complete. Request
+intents preserve ambiguous generation holds; count uncertainty is separate. Proposed
+[ADR0009](decisions/0009-selected-source-admission.md) records this integration. #55
+owns useful, faithful editorial output; full-source reconciliation is an optional
+experimental mechanism, with runtime activation off.
+
+## Prepared-edition data flow
+
+The deployed review-led path separates model work from sending. Recovery inspects
+existing ready editions and accepted preparation before fresh collection/selection.
+
+```mermaid
+flowchart TD
+    RUN[Preparation invocation] --> STATE{Existing durable work?}
+    STATE -->|Existing frozen edition| READY[Inspect frozen edition and receipts]
+    STATE -->|Accepted canonical preparation| CANON[Inspect accepted canonical snapshot]
+    STATE -->|No reusable work| COL[Collect RSS and retain candidate occurrences]
+    COL --> PACKET[Admit bounded candidate packet]
+    PACKET --> REVIEW[Primary review or explicit fallback]
+    REVIEW -->|Accepted selection or genuine abstention| ACCEPT[Save canonical preparation]
+    REVIEW -->|Technical failure| PENDING[Retain pending candidates; no ready edition]
+    ACCEPT --> CANON
+    CANON -->|Cards available| PRESENT[Presentation and optional translation]
+    CANON -->|Genuine empty editorial result| EMPTY[No ready edition; successful abstention]
+    PRESENT --> FREEZE[Archive evidence and freeze final payloads]
+    FREEZE --> PERSIST[Runtime persists ready state]
+    PERSIST --> READY
+    READY -->|Ready| CLAIM[Claim exact ready hash]
+    READY -->|Confirmed| RECOVER[Reuse already applied confirmation; no resend]
+    READY -->|Held or pending window| HOLD[Wait for recovery or publication window]
+    CLAIM --> CLAIMSAVE[Runtime persists exact claim]
+    CLAIMSAVE --> SEND[Send only frozen payloads]
+    SEND --> RECEIPT[Persist chunk receipts and apply confirmed delivery]
+    RECEIPT -.->|Only if runtime reservation permits| OPTIONAL[Separately bounded supplementary work]
+    RECOVER -.->|Only if runtime reservation permits| OPTIONAL
+```
+
+The runtime owns the remote persistence barriers; local atomic writes alone do not
+survive loss of a runner. The sender uses frozen payloads and makes no model calls.
+A confirmed chunk is not replayed; an uncertain send remains held for reconciliation.
+Accepted preparation may still need presentation work, including translation on a
+cache miss. It is not equivalent to a ready edition.
+
+Legacy category-summary/direct-delivery modes remain supported. They can run
+synchronous Irritator analysis before delivery and do not inherit the prepared-path
+failure isolation merely because they use the same presentation functions.
+
+## Supported application scenarios
+
+The entrypoint delegates to an explicit scenario; sharing a renderer does not make
+those scenarios interchangeable.
+
+| Scenario | Application owner | Effect and recovery boundary |
+| --- | --- | --- |
+| Prepare an edition | `application/preparation.py` | Recover saved work first, then select, accept canonical preparation, present and freeze. It does not send the edition. |
+| Publish a prepared edition | `application/prepared_delivery.py` | Validate persisted ready and claim hashes, send frozen payloads and record receipts. No model work; uncertain or unapplied outcomes hold. |
+| Legacy category/direct run | `application/legacy.py` | Analyse, optionally investigate and deliver within the legacy guard lifetime. Preserve its own accounting and failure order. |
+| Discover proposed sources | `application/discovery.py` | Generate and validate proposals, persist them, emit managed-runtime output, then send the persisted approval cards. Discovery cannot activate a source. |
+| Apply feedback and approved changes | `application/feedback.py`, `application/run_state.py` | Persist feedback before acknowledging exact bytes; revalidate an approval against the saved proposal before changing source configuration. |
+| Run supplementary investigation | `post_delivery.py`, `irritator/evidence_stage.py` | Use the saved evidence checkpoint and a separate bounded reservation. Compact publication retains supplementary results in the archive. |
+
+`application/execution.py` chooses the scenario and validates incompatible modes
+before configuration effects. `main.py` retains public wrappers and the deliberate
+managed-output barrier for discovery. Operators should use the [CLI reference](../README.md#cli-reference)
+and [review runbook](BLIND_REVIEW.md) for commands and runtime persistence steps.
+
+## Entities, contracts and enforcement
+
+| Entity / transition | Invariant and implementation boundary |
+| --- | --- |
+| Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
+| Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
+| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`review.py`](../digest/review.py) retains model-execution ownership. |
+| Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
+| Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
+| Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. [`application/source_attribution.py`](../digest/application/source_attribution.py) resolves immutable main occurrences before calls; [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) adds reviewed notices after translation. [`finish_preparation`](../digest/edition_runtime.py) preflights credited cards before archive/freeze; optional closing omission cannot discard required main cards. |
+| Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`application/prepared_delivery.py`](../digest/application/prepared_delivery.py) orders domain/storage/transport checks, while the runtime persists them remotely. |
+| Confirmed coverage → operational state (#145) | [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) projects complete article coverage. [`application/delivery.py`](../digest/application/delivery.py) applies scenario-specific attribution, deduplication and accounting; the caller marks receipts applied only afterward. Partial writes remain a held inspection boundary, not automatic recovery. |
+| Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
+
+These are deterministic identity, recovery and bounded-execution contracts. Useful
+selection, faithful translation and meaningful counter-evidence remain empirical
+acceptance under #55/#77; no row certifies model semantics. Existing regression entry
+points are `test_candidate_preparation.py`, `test_preparation.py`,
+`test_edition_runtime.py`, `test_prepared_edition.py`, `test_translation.py` and
+`test_irritator_evidence.py`.
+
+`--radar-only` prints Radar summary output and returns before normal delivery or
+Irritator. It can still collect/analyse sources; use `--dry-run` as well to suppress
+the normal feedback/state mutation path.
+
+In the review-led-only mode, the runtime can run a bounded Irritator process after
+primary delivery from its saved evidence checkpoint. This ordering prevents that
+supplementary process from blocking the already completed primary output. It does not
+prove the primary card is factually correct. Independent model selection is a separate
+experiment, not external counter-evidence or a verified factual consensus.
+
+## Modules and responsibilities
+
+The source tree is a modular monolith: one Python engine, a separate runtime and no
+additional service or workflow framework. Domain values and rules own deterministic
+invariants. Applications coordinate them with concrete adapters; presentation owns
+publication text. Lower layers do not import CLI or `main` orchestration.
+
+The map below describes this checkout. The [release scope](#release-scope--2026-10-07)
+distinguishes deployed slices from prepared changes. Compatibility facades keep old
+imports usable; their locations do not identify the current owner.
+
+| Module | Responsibility |
+| --- | --- |
+| `main.py` | Public Python compatibility wrappers and CLI command dispatch |
+| `cli/` (#147-A) | Argument parsing, explicit diagnostics, preview/result reporting and managed-runtime outputs |
+| `application/` | Prepared/direct/discovery scenarios, execution validation/cleanup, shared analysis/presentation, confirmed-outcome application, run-state operations and typed results/previews |
+| `domain/catalog/`, `domain/editorial/` (#144, #146, #147) | Source declarations, quality/trial rules, proposals and exploration; article identity and source occurrences; evidence, review, disposition and candidate contracts. Application scheduling and model execution remain separate |
+| `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
+| `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |
+| `application/delivery.py` (#145) | Explicit prepared/direct policies, confirmed attribution/deduplication/accounting coordination and ordered persistence |
+| `application/source_attribution.py` (#146) | Resolve main credits from accepted report-bound immutable packets before presentation calls; preserve required versus legacy recovery policy |
+| `presentation/source_attribution.py` (#146) | Exact-feed reviewed literal notices and pure attributed card copies, independent of optional closing |
+| `closing.py` | Optional designation/provenance, sidecar persistence and omission rules; compatibility wrappers for moved occurrence/attribution contracts |
+| `domain/catalog/proposals.py`, `domain/feedback/` (#147-C) | Proposal identity/eligibility, feedback values, vote/replay/source decision rules and confirmed attribution with explicit decision times |
+| `adapters/storage/` (#144, #145, #147-C) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence; feedback and pending-source codecs/pruning. No scheduling, retirement or accounting policy |
+| `application/feedback.py`, `adapters/telegram/feedback.py` (#147-C) | Collect/persist/ack ordering and exact-byte acknowledgement; owner/update/cursor protocol and bounded Telegram replies, respectively |
+| `config.py` | YAML settings loading, dataclasses and validation; no model execution state |
+| `adapters/models/execution.py` (#147-B) | Explicit lazy model-execution holders and per-loop request state; independent from the durable cycle budget |
+| `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
+| `radar/summarizer.py` | Category, perspective, trend and article prompts |
+| `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
+| `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
+| `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
+| `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
+| `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
+| `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
+| `domain/investigation/` | Signal/query values, ordered URL/blocklist rules and evidence-coverage vocabulary; no HTTP or orchestration |
+| `application/signal_validation.py`, `adapters/http/signal_liveness.py` | Pure validation before optional bounded HEAD checks; preserve input order and existing status/error behavior |
+| `application/review_routes.py` | Shared approved model-route set for bounded trial, resume and post-delivery work |
+| `presentation/telegram.py`, `presentation/supplement.py` | Pure Telegram rendering, vote keyboards, canonical supplement text and lossless chunking; transitional type-only investigation result/status coupling |
+| `adapters/telegram/delivery.py` | Separate legacy, direct-compact and post-delivery Telegram protocols |
+| `delivery/telegram.py`, `delivery/supplement.py` | Compatibility exports for presentation, transport and delivery result values |
+| `delivery/markdown.py` | Markdown archive and review checkpoint output |
+| `preparation.py`, `edition_runtime.py`, `application/prepared_delivery.py` | Resumable canonical preparation and ordered ready/claim/receipt effects through explicit domain/storage/transport owners |
+| `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
+| `source_scorer.py` | Compatibility exports for catalog values/rules, source-scoring application composition, storage and bubble presentation |
+| `discovery.py` | Compatibility exports for proposal/exploration values, storage, approval transport and discovery application operations |
+| `domain/catalog/exploration.py`, `application/discovery.py` | Pure exploration/pruning/retry/reservation rules with explicit time; ordered generation, persistence and persisted-pair sending effects |
+| `adapters/storage/discovery.py`, `adapters/storage/source_config.py`, `adapters/telegram/discovery.py` | Bounded schema-1 metadata and exact hashes; comment-preserving YAML additions; state-independent approval-card transport |
+| `discovery_feed.py` | Cohesive URL/DNS, redirect and RSS/Atom content validation |
+| `_dns_pinning.py`, `_sanitize.py` | URL validation/DNS pinning for feed/article acquisition and untrusted feed-text sanitization |
+| `_util.py` | Atomic JSON write and temporary-file utilities |
+
+### Deliberate remaining coupling
+
+- `irritator/__init__.py` still eagerly initializes legacy orchestration and public
+  exports. Importing a search adapter is not a cold, value-only import, even though
+  `Signal` and `SearchQuery` now have pure owners. The source registry retains lazy
+  registration and its existing package/decorator relationship.
+- `presentation/telegram.py` retains type-only references to investigation result
+  and status types. Their current location is transitional contract ownership.
+- `candidate_review.py` still combines scheduling with occurrence/reconciliation
+  policy. `SelectedPreparation` and `LegacyOutcomePolicy` remain transitional
+  handoffs; review, translation and experimental source reconciliation retain
+  mixed responsibilities.
+- `llm.py` remains the concrete provider/request owner, `model_budget.py` owns its
+  distinct durable reservation journal, and `discovery_feed.py` keeps cohesive
+  URL/DNS/feed validation. Flat placement alone is not an architectural defect.
+
+These limits are explicit; the migration does not claim that every package is pure
+or every responsibility has moved. See the [migration record](#structural-migration-current-stage-and-target)
+for the compatibility decisions and preserved effect order.
+
+## Adaptive priority system
+
+`adaptive.enabled: true` enables the existing priority-adjustment path. Base priority,
+source statistics and available feedback contribute to a bounded effective priority:
+
+```text
+base_norm = source.priority / 5.0
+score = calculate_score(source_stats)
+feedback = source_feedback_score if present, otherwise 0.5
+weighted = base_norm * base_weight + score * score_weight + feedback * feedback_weight
+priority = round(min_priority + weighted * (max_priority - min_priority))
+priority += 1 if the source is trending else 0
+priority = clamp(priority, min_priority, max_priority)
+```
+
+```yaml
+adaptive:
+  enabled: true
+  feedback_weight: 0.3
+  score_weight: 0.5
+  base_weight: 0.2
+  trial_slots: 2
+  min_priority: 1
+  max_priority: 5
+```
+
+This is source allocation, not an article-level measure of novelty, relevance or truth.
+The intended influence of feedback through every current selection path is still an
+acceptance requirement in [#48](https://github.com/Lenivvenil/digest/issues/48).
+
+## Source quality scoring
+
+`calculate_score()` returns a bounded value from four observations:
+
+| Observation | Weight | Current calculation |
+| --- | --- | --- |
+| Reliability | 0.3 | Successful fetches divided by total fetches |
+| Productivity | 0.3 | Included/found articles over the last seven saved snapshots, with cumulative fallback |
+| Description length | 0.2 | Mean description length divided by 100, capped at 1 |
+| Recency | 0.2 | Full score through day 3, decreasing to zero by day 10 since last seen |
+
+A source with no fetch history receives 0.5. History retains at most 30 snapshots.
+Snapshots represent recorded dates; same-day runs are merged. Gaps can make seven
+snapshots span more than seven calendar days. Long descriptions and frequent publications do not establish useful
+content. Trending detection compares saved windows and can add a priority bonus.
+
+## Provider execution
+
+Roles such as `summarize`, `extract_narratives`, `generate_queries`, `rank_signals` and
+`fallback` assign work to configured providers. Category routing can override the
+normal route. Missing credentials remove unavailable routes. The category mode uses
+async concurrency, subject to `llm.max_concurrent_requests` and configured pacing.
+Provider failure can advance to an eligible fallback; exhaustion is visible failure.
+
+Review slots are pinned to provider/model identities. Their opinions remain independent:
+reusing a first review as a second model's input would break that contract. The leading
+successful primary/secondary slot may supply cards, with incomplete comparison explicit.
+See [BLIND_REVIEW.md](BLIND_REVIEW.md) for evidence limits, retry budgets and semantics.
+
+Enabled translation and optional reading briefs reuse a provider/model identity
+already present in `llm.providers` or an explicitly supplied `review.primary`,
+`review.secondary` or `review.tie_breaker` mapping. Implicit review defaults and
+category-routing entries do not authorize reuse. [`_configured_model_routes` and its
+loader callers](../digest/config.py) enforce this before execution; feature-specific
+language and mode checks remain separate. Reuse does not change ordinary provider
+roles or unify the features' fallback policies. See [ADR0005](decisions/0005-optional-presentation-translation.md),
+`test_explicit_review_translation_route_preserves_ordinary_roles_and_cache_identity`
+and `test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes`.
+
+Free-only operation requires actual account/model entitlement. Context size does not
+specify TPM, RPM, daily allowance or price. A timeout or empty result must not be reported
+as proof that no interesting articles or counter-signals exist.
+
+## Feedback loop
+
+Article cards use vote URL buttons when `telegram.bot_username` is configured.
+The URL carries `start=vote_g_{article_hash}` or `start=vote_b_{article_hash}`;
+Telegram requires a subsequent Start tap, generating an ordinary `/start` message.
+A visible `/vote g|b <article_hash>` fallback requires no username configuration.
+Legacy `fb:a:g/b:{article_hash}` callbacks remain best effort only.
+The article/source mapping connects a later vote to the source. Polling is independent
+of automatic adaptation and does not continuously handle buttons between scheduled runs.
+A private owner chat and matching sender are required; group/inline callbacks cannot
+change preferences. An active webhook is reported and preserved, never deleted.
+
+One bounded batch is applied to a candidate store and strictly persisted with its offset
+and minimal pending reply receipts. Managed runtimes commit/push that store before
+acknowledging its exact SHA256-bound batch; `--feedback-precollected` prevents a second
+poll even after optional-stage failure. Local CLI use has a local-disk durability scope.
+Callback queue expiry can prevent ingestion entirely: the upstream lifetime is 150s.
+An acknowledgement failure after persistence is different: recorded votes remain saved.
+Pending UI receipts are best effort: a later successful collection supersedes any
+unanswered earlier receipts while keeping their votes. Command replies and expired
+button acknowledgements are not promised eventual delivery.
+Only recognized authorized command tags are retained, never arbitrary message bodies.
+
+When adaptive management is off, a rated source receives the centered adjustment
+`round((2 * feedback_score - 1) * feedback_weight * (max_priority - min_priority))`
+to its configured priority, clamped to the configured range. Unrated sources retain their
+exact configured priority. No quality/trending bonuses or lifecycle decisions are added.
+Collection allocation uses these effective priorities; model prompts receive
+ordinary article evidence, not individual vote data. This changes candidate availability,
+not a promise about the final editorial selection.
+
+Source feedback uses a 14-day window and the latest valid rating per article; repeated
+taps do not multiply its influence. Stored history is retained unchanged until the
+existing 30-day pruning policy applies. Callback IDs and owner-bound vote-message identities are each bounded to the newest
+1,000 receipts, alongside the existing 1,000-entry article map; a batch contains at most 100
+updates. Ordinary messages have at most 24-hour upstream retention, not a guaranteed
+processing window. Schedule delays/failures can lose votes before collection.
+See [ADR-0006](decisions/0006-batch-message-voting.md); no continuous receiver is provisioned.
+
+Telegram may restart update IDs after a week without events. A missing, future or
+six-day-old observation timestamp therefore triggers a single read with no offset.
+This does not confirm pending updates. The previous cursor is retained as audit data;
+a nonempty returned batch establishes the new cursor only through strict persistence.
+An empty recovery read leaves the old cursor untrusted. The six-day trust limit is
+conservative because received events may already be up to 24 hours old. See the
+[official update semantics](https://core.telegram.org/bots/api#getupdates).
+The article/source mapping is bounded to 1,000 retained entries. Existing `/status`
+and `/bubble` commands are handled through this same scheduled poller and restrict
+responses to the configured owner chat. Bubble diagnostics describe saved diversity,
+category mix, feedback and lifecycle state; they do not measure factual accuracy.
+
+## Trial source lifecycle and discovery
+
+1. `--discover` asks a model for feeds in configured exploration areas, validates feed
+   URLs, persists candidates and requests operator approval where Telegram is configured.
+2. Discovery sends Add/Reject deep links (`/start source_ok_HASH` or
+   `/start source_no_HASH`) after persisting the proposal. Without a valid configured
+   bot username, the message provides `/source ok HASH` and `/source no HASH` commands.
+   The private owner poller persists decisions, replay receipts and the cursor before
+   sending a single aggregate source-decision receipt. Legacy callbacks remain best effort.
+   A decision requires exactly one pending proposal whose hash matches its URL and
+   whose age is 0–30 days, and stores a SHA-256 binding to all proposal fields.
+   Application repeats those checks and requires the same binding; legacy unbound
+   decisions remain historical. Approved additions are written idempotently to the
+   **runtime** configuration before feed collection, independently of digest success.
+   The pipeline reloads config before collecting. Config/backup failures preserve the
+   decision and proposal; strict state-write failures never clear the in-memory decision.
+   Rejected candidates are removed from pending. Receipts confirm saved decisions,
+   not successful config additions. Decision messages share the at-most-24-hour
+   Telegram retention limit of article votes.
+3. Approved sources enter runtime configuration at priority 3 as trials. Trial start,
+   graduation and demotion are runtime state in `source_state.json`, not fields repeatedly
+   written into source configuration by the evaluator. The daily candidate scheduler
+   does not enforce `adaptive.trial_slots`; this setting is not proof of protected
+   professional coverage or exploratory admission.
+4. After `trial_days`, the current evaluator uses its source score threshold to graduate
+   or demote the source. These operational observations are not editorial acceptance.
+
+Discovery keeps `pending_sources.json` compatible and stores delivery/history metadata
+separately in `discovery_delivery.json`. Preparation prunes expired proposals before
+deduplication and validates up to three feeds, including safe redirects and RSS/Atom
+content. Still-valid legacy pending proposals without a receipt get the first available
+offer slots; a full legacy batch uses no model call. Otherwise generation makes at
+most two physical requests for one logical generation: the first two existing summarize/
+fallback routes in configured order, with zero retries per route and shared pacing.
+It stops after the first successful response, including a valid empty response; no third
+route or new provider is added. Weekly discovery retains its ten-minute runtime ceiling.
+A valid empty result is distinct from feed-validation or delivery failure.
+
+`discovery.exploration_areas` provisionally defaults to fintech/banking/architecture,
+science, society/institutions, history/culture, environment and design. This keeps
+professional source refresh eligible alongside other disciplines; it is not an
+owner-mandated proportion. It accepts 1–16 distinct trimmed names of at most 80 characters;
+case-insensitive duplicates are rejected. These proposal targets are independent of
+active categories, feeds and priorities. Generation matches the requested area;
+cross-field targets require no contrived technology or banking connection. The request
+remains capped at 2,048 output tokens.
+
+Rotation uses a bounded pass through configured areas. Among areas not yet attempted
+in the pass, choose the least recently offered, with configured-order ties; only after
+all areas have been attempted does a new pass begin. Persist the attempt before the
+model call. Empty, invalid or interrupted generations advance the pass but never
+mark coverage. A full legacy pending batch uses no generation and advances no area.
+At the next prepare, confirmed and unknown receipts are folded into one latest offer
+record per configured area, preserving the actual status. Unknown means possible
+delivery, not confirmed exposure. Reserved or explicitly rejected sends do not count;
+in particular, the transient pre-POST unknown is not counted if the final receipt is
+rejected. Area summaries survive the 30-day receipt horizon; removing an area removes
+its summary and its place in the current pass. Source rejection does not erase a prior
+offer. Exact requested areas do not prove actual disciplinary novelty or publisher diversity.
+
+Additive schema-1 metadata in `discovery_delivery.json` keeps `proposal_areas` by exact
+binding, bounded `area_offers` and `attempted_areas`, the latest `generation` record
+(requested area, cycle, time, outcome and up to three validated bindings), and pending
+`validation_failures`. Old metadata initializes these fields empty. `PendingSource`
+and its `asdict` decision binding remain byte-compatible; legacy proposals receive no
+invented area. Present malformed fields fail closed. Metadata reads and writes enforce
+the existing 256,000-byte ceiling. No new cache file or persistence path is needed.
+
+Each failed pending validation still consumes one of that prepare's three checks.
+Its binding records `failed_cycle` and initially null `skipped_cycle`. All attempts
+of the failed managed run remain deferred; the next distinct eligible prepare cycle
+records `skipped_cycle` and defers it, including reruns of that cycle. A subsequent
+cycle may retry; another failure restarts this finite cooldown. Eligibility requires
+that the pending loop reach the binding before exhausting its three-check cap, so
+larger pending backlogs can delay generation. Managed cycle identity uses `GITHUB_RUN_ID`
+without the attempt number; send ownership still includes the attempt. Each direct
+local invocation is a distinct cycle. Send-only calls never advance cooldowns. Success
+clears the marker and expiry/removal prunes it; neither resets discovery time, changes
+the binding, nor records an editorial rejection.
+
+Managed discovery uses `--discover --discovery-phase prepare`, commits/pushes both
+files, and verifies both hashes from the same remote revision before `--discovery-phase
+send --discovery-pending-sha ... --discovery-delivery-sha ...`. The sender binds the
+batch to its run/attempt, exact proposal identities and destination. It records
+uncertainty before each POST and confirms only an accepted Bot API message ID.
+Reserved/unknown offers are held for inspection, including a crash between reservation
+and send; no automatic replay or exactly-once promise is made. Final receipts must
+be persisted even after partial failure. Direct `--discover` provides local-file
+durability only. History is retained for the existing 30-day proposal horizon.
+The runtime keeps its weekly ten-minute job; this change adds no polling schedule.
+
+The first slice of [#132](https://github.com/Lenivvenil/digest/issues/132) covers proposals
+and finite validation retries only. Approval-to-candidate protection of professional
+signals and non-starving exploratory admission remain open, as does ordinary-output
+evaluation. No scheduler adjustment, fixed daily fraction or automatic feed activation
+is implied. The accepted first-slice state decision is
+[ADR-0013](decisions/0013-discovery-exploration-state.md); owner approval on 2026-10-06
+covered PR #133 and its engine-pin rollout, with those remaining gates still open.
+
+No source-discovery schedule is installed by the engine. The runtime owns its cadence
+and serialized access to the same state as the main digest.
+
+## Cache architecture
+
+| Runtime file | Purpose and retention |
+| --- | --- |
+| `seen_articles.json` | Article identity/timestamps; dedup retention policy in collector |
+| `source_stats.json` | Per-source observations and up to 30 saved history snapshots |
+| `feedback.json` | Votes, last update offset, last-digest metadata and article/source mapping |
+| `source_state.json` | Versioned trial/graduation/demotion state; not automatically pruned as statistics |
+| `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
+| `pending_sources.json` | Proposed sources awaiting decisions |
+| `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
+| `candidate_progress.json`, `candidate_sources/`, `candidate_reports/`, `candidate_index/`, `candidate_excluded/` | Current candidate work, immutable source/packet evidence and separately indexed history; no delivered-state mutation |
+| `digests/*.candidates.json` | Private inventory/selection coverage evidence bound into prepared-edition archive hashes |
+
+Atomic temporary-file replacement protects an individual JSON write; it does not make
+several files a transaction or prove remote persistence. The runtime must retain state
+on partial success and avoid overlapping writers. Do not consume undelivered items just
+because they were collected. Review-led required Telegram delivery distinguishes useful
+article cards from a diagnostic footer; a footer alone cannot satisfy that requirement.
+Unknown send outcomes require explicit handling rather than an assumed safe resend.
+
+## GitHub Actions and release operations
+
+The engine repository's workflow is CI. Daily/discovery schedules and output commits
+belong to the separate runtime, so this repository specifies no universal UTC schedule.
+Pin a reviewed immutable engine commit, serialize jobs sharing `.cache/`, and persist
+confirmed delivery outcomes even if an optional stage fails. A rebase before push alone
+is not a replacement for consistent concurrency and failure ordering.
+
+For review-led supplementary stages, follow the exact saved-checkpoint and reservation
+procedure in the review runbook. Retain prior engine/config pins for rollback. Do not
+merge experimental full-source code merely because unit tests or transport succeeded.
+The unresolved product gates and their current dispositions are tracked in #91 and
+#55. English documentation, configured translation and message voting are implemented;
+remaining daily-output acceptance is tracked separately; full-source experiments do not define a mandatory release gate.
+
+## Security
+
+[`radar/collector.py`](../digest/radar/collector.py) validates the initial configured
+feed URL and pins that hostname's resolved addresses. Its HTTP client follows redirects
+automatically; a redirect to another hostname uses ordinary DNS resolution without
+that initial URL validation/pinning guard. [`discovery_feed.py`](../digest/discovery_feed.py)
+and optional article acquisition in [`article_source.py`](../digest/article_source.py)
+instead follow bounded redirects explicitly and validate/pin each requested hop,
+rejecting non-global destinations. These are distinct acquisition boundaries, not a
+universal outbound-HTTP guarantee. The fixed-endpoint Hacker News, Reddit and arXiv
+[search clients](../digest/irritator/sources/) use their own HTTP requests; optional
+signal URL liveness checks are separate in
+[`application/signal_validation.py`](../digest/application/signal_validation.py) and
+[`adapters/http/signal_liveness.py`](../digest/adapters/http/signal_liveness.py);
+`irritator/validator.py` preserves compatibility imports.
+
+Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
+entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
+an excerpt into a full article or guarantee immunity to all malicious instructions.
+
+Keep real keys/tokens in runtime environment variables or Actions secrets. The engine
+does not automatically load `.env`. Never commit credentials or source-account details
+in public examples. Runtime artifacts can contain source bodies and model outputs;
+choose access and retention deliberately rather than copying them into the public repo.
+
+## Diagnostics and monitoring
+
+The main run summary reports feed counts, new articles, review status and delivery
+outcomes. Telegram status text may include source successes/errors and adaptive metrics.
+A successful footer is not a successful article delivery, and a completed comparison is
+not a fact-check certificate. Runtime failure notifications depend on its workflow;
+the engine alone does not install an Actions-to-Telegram alert service.
+
+Python modules use logging. `--verbose` enables DEBUG; routine operation uses INFO.
+Preserve useful failure reasons without exposing credentials or treating unknown quota
+causes as known provider limits.
+
+<a id="ограничения-и-известные-особенности"></a>
+
+## Limitations and known behavior
+
+- Free provider quotas and GitHub Actions minute allowances are account-dependent.
+  Verify actual capacity; multiplying an assumed short run time is not a throughput test.
+- Scheduled Telegram polling delays acknowledgements and can miss upstream retention
+  windows. Polling is independent of `adaptive.enabled`; ordinary collector acceptance
+  of recorded-vote influence remains open in #48.
+- RSS selection has bounded excerpt/candidate coverage. Missing candidates are not
+  proven irrelevant; #55 keeps this quality gap explicit.
+- Renaming a configured source affects its statistics identity; inactive statistics may
+  be pruned, while lifecycle ownership follows its separate state contract.
+- External adapter failures in #77 limit counter-evidence coverage. Preserve a visible
+  incomplete result rather than asserting that the world supplied no contrary evidence.
+- `radar.language` controls direct en/ru generation. Optional presentation translation
+  requires canonical English and leaves source evidence and analysis language unchanged;
+  see [ADR-0005](decisions/0005-optional-presentation-translation.md). Its generated-text
+  scope and unverified semantic-fidelity boundary are documented explicitly.
+
+
+## Daily operating boundary (proposal, 2026-10-02)
+
+The canonical [Digest operating envelope](domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02)
+records the measured cost, applied daily schedule, proposed operating allocation,
+maintenance reserve, account-quota
+uncertainty and retention risks. This architecture page does not duplicate that budget.
+A cron change alone does not implement compact output. Legacy card mode can retry
+uncertain requests; the deployed compact mode initially used a coarse durable issue
+reservation with complete text/source identity and confirmed per-article chunk coverage. See
+[ADR0007](decisions/0007-compact-issue-reservation.md) for the hold-after-crash policy;
+exactly-once delivery is not claimed. The #120 amendment moves this claim after
+immutable readiness: preparation can target a later UTC publication day, while the
+sender validates frozen payloads and window without running generation.
+
+Retain configured translation and actual bounded Irritator/comparison processing.
+The compact presentation keeps optional outcomes in the archive, with honest
+status, instead of extra Telegram pushes. No new receiver, queue or feedback polling
+cron is implied. Daily voting remains best effort under [ADR0006](decisions/0006-batch-message-voting.md).
+
+## Appendix: migration and release history
+
+This appendix records how the current boundaries were introduced. Stage descriptions
+retain their original sequence, headings and rationale; phrases such as “for now”
+refer to that stage. Use the current ownership map above for present-day navigation.
+
+### Release scope — 2026-10-07
+
+Deployment status refreshed on 2026-10-08 UTC.
+
+| Scope | Verified release state |
+| --- | --- |
+| Prepared application, candidate ownership, confirmed-outcome application and review/source attribution | Deployed through engine/runtime PR pairs #149/#72, #150/#73, #151/#74 and #152/#75 |
+| #147 scenarios, model execution, feedback/proposals, source catalog, discovery and Telegram presentation/transport | Deployed through engine/runtime PR pairs #153/#76, #154/#77, #155/#78, #156/#79, #157/#80 and #158/#81 |
+| Prepared delivery domain/storage/application/transport | [PR #159](https://github.com/Lenivvenil/digest/pull/159) merged at `60b2daa7ea982c593cb22660fd008d2e8052ebbc` and deployed through [runtime PR #82](https://github.com/Lenivvenil/digest-prod/pull/82) |
+| Investigation signal validation and shared query/coverage/route contracts | [PR #160](https://github.com/Lenivvenil/digest/pull/160) merged at `73616465bc71712ab1f4728280cfdd01a35e7d42` and deployed through [runtime PR #83](https://github.com/Lenivvenil/digest-prod/pull/83) |
+
+Verified engine main and deployed runtime engine pin:
+`73616465bc71712ab1f4728280cfdd01a35e7d42`; runtime main:
+`0160e9b62cce141e8392dd7be3a7544105d9c921`. These rollouts changed
+the runtime engine requirement only and did not dispatch a new live run. Release
+verification does not establish editorial acceptance or whole-project completion.
 
 ## Structural migration: current stage and target
 
@@ -532,484 +1078,3 @@ Each stage needs a reviewable dependency change, existing behavioral regression
 checks, exact-head CI and runtime-state preservation. Green checks alone do not prove
 clarity or editorial quality. Useful content, humane closing supply, faithful
 translation and meaningful external counter-evidence retain their separate acceptance.
-
-## Overview
-
-Digest is a personal information-intake product, not simply an article formatter.
-Radar collects and analyses a chosen source portfolio. Feedback and approved discovery
-adjust that portfolio. Irritator searches for external evidence that challenges or
-complicates the narratives in the operator's reading.
-
-The public engine contains Python code and CI. A separate runtime owns configuration,
-credentials, schedules, JSON state and Markdown output. GitHub Actions can execute and
-persist each run without a continuously running service or external database. Persistence
-requires the runtime workflow to save state; writing a local file is not a durable push.
-See [ADR-0002](decisions/0002-engine-instance-split.md) and
-[ADR-0003](decisions/0003-source-state-split.md).
-
-The package is 2.0.0. The older architecture document described v1 category summarization
-as the only execution path. The original is retained in git history; current behavior
-has a second, opt-in RSS-review path. Full-source enrichment in
-[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not available on main and is
-not the operating architecture documented below.
-
-The draft source-admission adapter reuses safe acquisition and contiguous page progress.
-It admits only current candidate occurrences with exact saved selection proof, and
-freezes technical source evidence before accepted preparation. It does not publish the
-draft reading-angle concatenation or mark independent comparison complete. Request
-intents preserve ambiguous generation holds; count uncertainty is separate. Proposed
-[ADR0009](decisions/0009-selected-source-admission.md) records this integration. #55
-owns useful, faithful editorial output; full-source reconciliation is an optional
-experimental mechanism, with runtime activation off.
-
-## Prepared-edition data flow
-
-The deployed review-led path separates model work from sending. Recovery inspects
-existing ready editions and accepted preparation before fresh collection/selection.
-
-```mermaid
-flowchart TD
-    RUN[Preparation invocation] --> STATE{Existing durable work?}
-    STATE -->|Existing frozen edition| READY[Inspect frozen edition and receipts]
-    STATE -->|Accepted canonical preparation| CANON[Inspect accepted canonical snapshot]
-    STATE -->|No reusable work| COL[Collect RSS and retain candidate occurrences]
-    COL --> PACKET[Admit bounded candidate packet]
-    PACKET --> REVIEW[Primary review or explicit fallback]
-    REVIEW -->|Accepted selection or genuine abstention| ACCEPT[Save canonical preparation]
-    REVIEW -->|Technical failure| PENDING[Retain pending candidates; no ready edition]
-    ACCEPT --> CANON
-    CANON -->|Cards available| PRESENT[Presentation and optional translation]
-    CANON -->|Genuine empty editorial result| EMPTY[No ready edition; successful abstention]
-    PRESENT --> FREEZE[Archive evidence and freeze final payloads]
-    FREEZE --> PERSIST[Runtime persists ready state]
-    PERSIST --> READY
-    READY -->|Ready| CLAIM[Claim exact ready hash]
-    READY -->|Confirmed| RECOVER[Reuse already applied confirmation; no resend]
-    READY -->|Held or pending window| HOLD[Wait for recovery or publication window]
-    CLAIM --> CLAIMSAVE[Runtime persists exact claim]
-    CLAIMSAVE --> SEND[Send only frozen payloads]
-    SEND --> RECEIPT[Persist chunk receipts and apply confirmed delivery]
-    RECEIPT -.->|Only if runtime reservation permits| OPTIONAL[Separately bounded supplementary work]
-    RECOVER -.->|Only if runtime reservation permits| OPTIONAL
-```
-
-The runtime owns the remote persistence barriers; local atomic writes alone do not
-survive loss of a runner. The sender uses frozen payloads and makes no model calls.
-A confirmed chunk is not replayed; an uncertain send remains held for reconciliation.
-Accepted preparation may still need presentation work, including translation on a
-cache miss. It is not equivalent to a ready edition.
-
-Legacy category-summary/direct-delivery modes remain supported. They can run
-synchronous Irritator analysis before delivery and do not inherit the prepared-path
-failure isolation merely because they use the same presentation functions.
-
-### Entities, contracts and enforcement
-
-| Entity / transition | Invariant and implementation boundary |
-| --- | --- |
-| Candidate occurrence → `CandidatePacket` | Original source observations and pending status survive bounded admission. Planning is an opportunity, not a successful review. [`plan_packet`, `begin_packet`](../digest/candidate_review.py) preserve packet bounds and proof; capacity deferral is not editorial rejection. |
-| Candidate proof → retained history / active checkpoint (#144) | [`domain validators`](../digest/domain/editorial/candidates.py) check actual occurrence, packet and decision bindings. [`candidate_lifecycle`](../digest/application/candidate_lifecycle.py) coordinates verified retirement; [`storage`](../digest/adapters/storage/candidate_progress.py) writes the resulting working set. Persistence without retirement is a separate operation; retained objects and the active file are not one transaction. |
-| `EvidenceBundle` → `BlindReviewReport` | Stable evidence IDs bind model selections; allowed one-to-one typography normalization returns the exact original source slice. Detailed-response and publication-card limits are separate; a syntactically valid response is not factual verification. The [`domain review contracts`](../digest/domain/editorial/reviews.py) own distinct request, canonical and cached validators plus exact-request reuse; [`disposition contracts`](../digest/domain/editorial/dispositions.py) bind dispositions. [`review.py`](../digest/review.py) retains model-execution ownership. |
-| Report → `PreparationSnapshot` | Accepted canonical cards, report and optional closing decision are saved before presentation. [`preparation.py`](../digest/preparation.py) validates versioned content; [`save_accepted_preparation`](../digest/edition_runtime.py) preserves the recovery boundary. |
-| Canonical cards → presentation copies | Translation changes generated prose, not article identity, source quotes or canonical evidence. Primary preview uses the same publication path with no signals and a temporary cache. [`application/presentation.py`](../digest/application/presentation.py), [`translation.py`](../digest/translation.py) retain explicit fallback and cache semantics. |
-| Presentation → ready edition | Exact payloads, article ranges and archive references freeze together. [`application/source_attribution.py`](../digest/application/source_attribution.py) resolves immutable main occurrences before calls; [`presentation/source_attribution.py`](../digest/presentation/source_attribution.py) adds reviewed notices after translation. [`finish_preparation`](../digest/edition_runtime.py) preflights credited cards before archive/freeze; optional closing omission cannot discard required main cards. |
-| Ready edition → claim → receipts | Hash-bound claim and per-chunk receipts govern sending; confirmed work is reusable and unknown send outcomes are not blindly retried. [`application/prepared_delivery.py`](../digest/application/prepared_delivery.py) orders domain/storage/transport checks, while the runtime persists them remotely. |
-| Confirmed coverage → operational state (#145) | [`domain/delivery/outcomes.py`](../digest/domain/delivery/outcomes.py) projects complete article coverage. [`application/delivery.py`](../digest/application/delivery.py) applies scenario-specific attribution, deduplication and accounting; the caller marks receipts applied only afterward. Partial writes remain a held inspection boundary, not automatic recovery. |
-| Saved evidence → Irritator archive | Labelled hypotheses guide query planning only. Ranking compares the attributed target with external evidence; empty, unavailable and rejected outcomes remain distinct. [`evidence_stage.py`](../digest/irritator/evidence_stage.py), [`post_delivery.py`](../digest/post_delivery.py) keep optional work separate from primary receipts. |
-
-These are deterministic identity, recovery and bounded-execution contracts. Useful
-selection, faithful translation and meaningful counter-evidence remain empirical
-acceptance under #55/#77; no row certifies model semantics. Existing regression entry
-points are `test_candidate_preparation.py`, `test_preparation.py`,
-`test_edition_runtime.py`, `test_prepared_edition.py`, `test_translation.py` and
-`test_irritator_evidence.py`.
-
-`--radar-only` prints Radar summary output and returns before normal delivery or
-Irritator. It can still collect/analyse sources; use `--dry-run` as well to suppress
-the normal feedback/state mutation path.
-
-In the review-led-only mode, the runtime can run a bounded Irritator process after
-primary delivery from its saved evidence checkpoint. This ordering prevents that
-supplementary process from blocking the already completed primary output. It does not
-prove the primary card is factually correct. Independent model selection is a separate
-experiment, not external counter-evidence or a verified factual consensus.
-
-## Modules and responsibilities
-
-| Module | Responsibility |
-| --- | --- |
-| `main.py` | Public Python compatibility wrappers and CLI command dispatch |
-| `cli/` (#147-A) | Argument parsing, explicit diagnostics, preview/result reporting and managed-runtime outputs |
-| `application/` | Prepared/direct/discovery scenarios, execution validation/cleanup, shared analysis/presentation, confirmed-outcome application, run-state operations and typed results/previews |
-| `domain/catalog/`, `domain/editorial/` (#144, #146) | Article identity and canonical source occurrences; evidence/review/disposition/candidate values, distinct request/canonical validation and exact-request reuse; not the complete catalog or editorial workflow |
-| `application/candidate_lifecycle.py` (#144) | Explicit verified retirement, persistence without retirement and report-accounting orchestration |
-| `domain/delivery/outcomes.py` (#145) | Transport-independent result values and pure article-to-chunk coverage projection; no HTTP, state writes or receipt validation |
-| `application/delivery.py` (#145) | Explicit prepared/direct policies, confirmed attribution/deduplication/accounting coordination and ordered persistence |
-| `application/source_attribution.py` (#146) | Resolve main credits from accepted report-bound immutable packets before presentation calls; preserve required versus legacy recovery policy |
-| `presentation/source_attribution.py` (#146) | Exact-feed reviewed literal notices and pure attributed card copies, independent of optional closing |
-| `closing.py` | Optional designation/provenance, sidecar persistence and omission rules; compatibility wrappers for moved occurrence/attribution contracts |
-| `domain/catalog/proposals.py`, `domain/feedback/` (#147-C) | Proposal identity/eligibility, feedback values, vote/replay/source decision rules and confirmed attribution with explicit decision times |
-| `adapters/storage/` (#144, #145, #147-C) | Candidate/checkpoint codecs and verified writes; strict prepared-delivery cache/statistics/lifecycle persistence; feedback and pending-source codecs/pruning. No scheduling, retirement or accounting policy |
-| `application/feedback.py`, `adapters/telegram/feedback.py` (#147-C) | Collect/persist/ack ordering and exact-byte acknowledgement; owner/update/cursor protocol and bounded Telegram replies, respectively |
-| `config.py` | YAML settings loading, dataclasses and validation; no model execution state |
-| `adapters/models/execution.py` (#147-B) | Explicit lazy model-execution holders and per-loop request state; independent from the durable cycle budget |
-| `radar/collector.py` | Concurrent HTTP feed acquisition, parsing, freshness/blocklist filtering, title/URL deduplication and source-slot allocation |
-| `radar/summarizer.py` | Category, perspective, trend and article prompts |
-| `llm.py` | Provider adapters, roles/routes, fallback and bounded request controls |
-| `review.py` | Immutable RSS evidence packet, independent selections, partial-item validation and fallback card attribution |
-| `candidate_review.py` | Pre-slot candidate accounting, bounded packet continuation and report-bound accounting snapshots |
-| `review_checkpoint.py`, `review_resume.py` | Validated saved reviews and bounded missing-review resume |
-| `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
-| `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
-| `domain/investigation/queries.py`, `domain/investigation/coverage.py` | Unchanged query values and evidence-coverage vocabulary shared by investigation and delivery |
-| `application/review_routes.py` | Shared approved model-route set for bounded trial, resume and post-delivery work |
-| `presentation/telegram.py`, `presentation/supplement.py` | Pure Telegram rendering, vote keyboards, canonical supplement text and lossless chunking; transitional type-only investigation result/status coupling |
-| `adapters/telegram/delivery.py` | Separate legacy, direct-compact and post-delivery Telegram protocols |
-| `delivery/telegram.py`, `delivery/supplement.py` | Compatibility exports for presentation, transport and delivery result values |
-| `delivery/markdown.py` | Markdown archive and review checkpoint output |
-| `preparation.py`, `edition_runtime.py`, `application/prepared_delivery.py` | Resumable canonical preparation and ordered ready/claim/receipt effects through explicit domain/storage/transport owners |
-| `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
-| `source_scorer.py` | Compatibility exports for catalog values/rules, source-scoring application composition, storage and bubble presentation |
-| `discovery.py` | Compatibility exports for proposal/exploration values, storage, approval transport and discovery application operations |
-| `domain/catalog/exploration.py`, `application/discovery.py` | Pure exploration/pruning/retry/reservation rules with explicit time; ordered generation, persistence and persisted-pair sending effects |
-| `adapters/storage/discovery.py`, `source_config.py`, `adapters/telegram/discovery.py` | Bounded schema-1 metadata and exact hashes; comment-preserving YAML additions; state-independent approval-card transport |
-| `discovery_feed.py` | Cohesive URL/DNS, redirect and RSS/Atom content validation |
-| `_dns_pinning.py`, `_sanitize.py` | URL validation/DNS pinning for feed/article acquisition and untrusted feed-text sanitization |
-| `_util.py` | Atomic JSON write and temporary-file utilities |
-
-## Adaptive priority system
-
-`adaptive.enabled: true` enables the existing priority-adjustment path. Base priority,
-source statistics and available feedback contribute to a bounded effective priority:
-
-```text
-base_norm = source.priority / 5.0
-score = calculate_score(source_stats)
-feedback = source_feedback_score if present, otherwise 0.5
-weighted = base_norm * base_weight + score * score_weight + feedback * feedback_weight
-priority = round(min_priority + weighted * (max_priority - min_priority))
-priority += 1 if the source is trending else 0
-priority = clamp(priority, min_priority, max_priority)
-```
-
-```yaml
-adaptive:
-  enabled: true
-  feedback_weight: 0.3
-  score_weight: 0.5
-  base_weight: 0.2
-  trial_slots: 2
-  min_priority: 1
-  max_priority: 5
-```
-
-This is source allocation, not an article-level measure of novelty, relevance or truth.
-The intended influence of feedback through every current selection path is still an
-acceptance requirement in [#48](https://github.com/Lenivvenil/digest/issues/48).
-
-## Source quality scoring
-
-`calculate_score()` returns a bounded value from four observations:
-
-| Observation | Weight | Current calculation |
-| --- | --- | --- |
-| Reliability | 0.3 | Successful fetches divided by total fetches |
-| Productivity | 0.3 | Included/found articles over the last seven saved snapshots, with cumulative fallback |
-| Description length | 0.2 | Mean description length divided by 100, capped at 1 |
-| Recency | 0.2 | Full score through day 3, decreasing to zero by day 10 since last seen |
-
-A source with no fetch history receives 0.5. History retains at most 30 snapshots.
-Snapshots represent recorded dates; same-day runs are merged. Gaps can make seven
-snapshots span more than seven calendar days. Long descriptions and frequent publications do not establish useful
-content. Trending detection compares saved windows and can add a priority bonus.
-
-## Provider execution
-
-Roles such as `summarize`, `extract_narratives`, `generate_queries`, `rank_signals` and
-`fallback` assign work to configured providers. Category routing can override the
-normal route. Missing credentials remove unavailable routes. The category mode uses
-async concurrency, subject to `llm.max_concurrent_requests` and configured pacing.
-Provider failure can advance to an eligible fallback; exhaustion is visible failure.
-
-Review slots are pinned to provider/model identities. Their opinions remain independent:
-reusing a first review as a second model's input would break that contract. The leading
-successful primary/secondary slot may supply cards, with incomplete comparison explicit.
-See [BLIND_REVIEW.md](BLIND_REVIEW.md) for evidence limits, retry budgets and semantics.
-
-Enabled translation and optional reading briefs reuse a provider/model identity
-already present in `llm.providers` or an explicitly supplied `review.primary`,
-`review.secondary` or `review.tie_breaker` mapping. Implicit review defaults and
-category-routing entries do not authorize reuse. [`_configured_model_routes` and its
-loader callers](../digest/config.py) enforce this before execution; feature-specific
-language and mode checks remain separate. Reuse does not change ordinary provider
-roles or unify the features' fallback policies. See [ADR0005](decisions/0005-optional-presentation-translation.md),
-`test_explicit_review_translation_route_preserves_ordinary_roles_and_cache_identity`
-and `test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes`.
-
-Free-only operation requires actual account/model entitlement. Context size does not
-specify TPM, RPM, daily allowance or price. A timeout or empty result must not be reported
-as proof that no interesting articles or counter-signals exist.
-
-## Feedback loop
-
-Article cards use vote URL buttons when `telegram.bot_username` is configured.
-The URL carries `start=vote_g_{article_hash}` or `start=vote_b_{article_hash}`;
-Telegram requires a subsequent Start tap, generating an ordinary `/start` message.
-A visible `/vote g|b <article_hash>` fallback requires no username configuration.
-Legacy `fb:a:g/b:{article_hash}` callbacks remain best effort only.
-The article/source mapping connects a later vote to the source. Polling is independent
-of automatic adaptation and does not continuously handle buttons between scheduled runs.
-A private owner chat and matching sender are required; group/inline callbacks cannot
-change preferences. An active webhook is reported and preserved, never deleted.
-
-One bounded batch is applied to a candidate store and strictly persisted with its offset
-and minimal pending reply receipts. Managed runtimes commit/push that store before
-acknowledging its exact SHA256-bound batch; `--feedback-precollected` prevents a second
-poll even after optional-stage failure. Local CLI use has a local-disk durability scope.
-Callback queue expiry can prevent ingestion entirely: the upstream lifetime is 150s.
-An acknowledgement failure after persistence is different: recorded votes remain saved.
-Pending UI receipts are best effort: a later successful collection supersedes any
-unanswered earlier receipts while keeping their votes. Command replies and expired
-button acknowledgements are not promised eventual delivery.
-Only recognized authorized command tags are retained, never arbitrary message bodies.
-
-When adaptive management is off, a rated source receives the centered adjustment
-`round((2 * feedback_score - 1) * feedback_weight * (max_priority - min_priority))`
-to its configured priority, clamped to the configured range. Unrated sources retain their
-exact configured priority. No quality/trending bonuses or lifecycle decisions are added.
-Collection allocation uses these effective priorities; model prompts receive
-ordinary article evidence, not individual vote data. This changes candidate availability,
-not a promise about the final editorial selection.
-
-Source feedback uses a 14-day window and the latest valid rating per article; repeated
-taps do not multiply its influence. Stored history is retained unchanged until the
-existing 30-day pruning policy applies. Callback IDs and owner-bound vote-message identities are each bounded to the newest
-1,000 receipts, alongside the existing 1,000-entry article map; a batch contains at most 100
-updates. Ordinary messages have at most 24-hour upstream retention, not a guaranteed
-processing window. Schedule delays/failures can lose votes before collection.
-See [ADR-0006](decisions/0006-batch-message-voting.md); no continuous receiver is provisioned.
-
-Telegram may restart update IDs after a week without events. A missing, future or
-six-day-old observation timestamp therefore triggers a single read with no offset.
-This does not confirm pending updates. The previous cursor is retained as audit data;
-a nonempty returned batch establishes the new cursor only through strict persistence.
-An empty recovery read leaves the old cursor untrusted. The six-day trust limit is
-conservative because received events may already be up to 24 hours old. See the
-[official update semantics](https://core.telegram.org/bots/api#getupdates).
-The article/source mapping is bounded to 1,000 retained entries. Existing `/status`
-and `/bubble` commands are handled through this same scheduled poller and restrict
-responses to the configured owner chat. Bubble diagnostics describe saved diversity,
-category mix, feedback and lifecycle state; they do not measure factual accuracy.
-
-## Trial source lifecycle and discovery
-
-1. `--discover` asks a model for feeds in configured exploration areas, validates feed
-   URLs, persists candidates and requests operator approval where Telegram is configured.
-2. Discovery sends Add/Reject deep links (`/start source_ok_HASH` or
-   `/start source_no_HASH`) after persisting the proposal. Without a valid configured
-   bot username, the message provides `/source ok HASH` and `/source no HASH` commands.
-   The private owner poller persists decisions, replay receipts and the cursor before
-   sending a single aggregate source-decision receipt. Legacy callbacks remain best effort.
-   A decision requires exactly one pending proposal whose hash matches its URL and
-   whose age is 0–30 days, and stores a SHA-256 binding to all proposal fields.
-   Application repeats those checks and requires the same binding; legacy unbound
-   decisions remain historical. Approved additions are written idempotently to the
-   **runtime** configuration before feed collection, independently of digest success.
-   The pipeline reloads config before collecting. Config/backup failures preserve the
-   decision and proposal; strict state-write failures never clear the in-memory decision.
-   Rejected candidates are removed from pending. Receipts confirm saved decisions,
-   not successful config additions. Decision messages share the at-most-24-hour
-   Telegram retention limit of article votes.
-3. Approved sources enter runtime configuration at priority 3 as trials. Trial start,
-   graduation and demotion are runtime state in `source_state.json`, not fields repeatedly
-   written into source configuration by the evaluator. The daily candidate scheduler
-   does not enforce `adaptive.trial_slots`; this setting is not proof of protected
-   professional coverage or exploratory admission.
-4. After `trial_days`, the current evaluator uses its source score threshold to graduate
-   or demote the source. These operational observations are not editorial acceptance.
-
-Discovery keeps `pending_sources.json` compatible and stores delivery/history metadata
-separately in `discovery_delivery.json`. Preparation prunes expired proposals before
-deduplication and validates up to three feeds, including safe redirects and RSS/Atom
-content. Still-valid legacy pending proposals without a receipt get the first available
-offer slots; a full legacy batch uses no model call. Otherwise generation makes at
-most two physical requests for one logical generation: the first two existing summarize/
-fallback routes in configured order, with zero retries per route and shared pacing.
-It stops after the first successful response, including a valid empty response; no third
-route or new provider is added. Weekly discovery retains its ten-minute runtime ceiling.
-A valid empty result is distinct from feed-validation or delivery failure.
-
-`discovery.exploration_areas` provisionally defaults to fintech/banking/architecture,
-science, society/institutions, history/culture, environment and design. This keeps
-professional source refresh eligible alongside other disciplines; it is not an
-owner-mandated proportion. It accepts 1–16 distinct trimmed names of at most 80 characters;
-case-insensitive duplicates are rejected. These proposal targets are independent of
-active categories, feeds and priorities. Generation matches the requested area;
-cross-field targets require no contrived technology or banking connection. The request
-remains capped at 2,048 output tokens.
-
-Rotation uses a bounded pass through configured areas. Among areas not yet attempted
-in the pass, choose the least recently offered, with configured-order ties; only after
-all areas have been attempted does a new pass begin. Persist the attempt before the
-model call. Empty, invalid or interrupted generations advance the pass but never
-mark coverage. A full legacy pending batch uses no generation and advances no area.
-At the next prepare, confirmed and unknown receipts are folded into one latest offer
-record per configured area, preserving the actual status. Unknown means possible
-delivery, not confirmed exposure. Reserved or explicitly rejected sends do not count;
-in particular, the transient pre-POST unknown is not counted if the final receipt is
-rejected. Area summaries survive the 30-day receipt horizon; removing an area removes
-its summary and its place in the current pass. Source rejection does not erase a prior
-offer. Exact requested areas do not prove actual disciplinary novelty or publisher diversity.
-
-Additive schema-1 metadata in `discovery_delivery.json` keeps `proposal_areas` by exact
-binding, bounded `area_offers` and `attempted_areas`, the latest `generation` record
-(requested area, cycle, time, outcome and up to three validated bindings), and pending
-`validation_failures`. Old metadata initializes these fields empty. `PendingSource`
-and its `asdict` decision binding remain byte-compatible; legacy proposals receive no
-invented area. Present malformed fields fail closed. Metadata reads and writes enforce
-the existing 256,000-byte ceiling. No new cache file or persistence path is needed.
-
-Each failed pending validation still consumes one of that prepare's three checks.
-Its binding records `failed_cycle` and initially null `skipped_cycle`. All attempts
-of the failed managed run remain deferred; the next distinct eligible prepare cycle
-records `skipped_cycle` and defers it, including reruns of that cycle. A subsequent
-cycle may retry; another failure restarts this finite cooldown. Eligibility requires
-that the pending loop reach the binding before exhausting its three-check cap, so
-larger pending backlogs can delay generation. Managed cycle identity uses `GITHUB_RUN_ID`
-without the attempt number; send ownership still includes the attempt. Each direct
-local invocation is a distinct cycle. Send-only calls never advance cooldowns. Success
-clears the marker and expiry/removal prunes it; neither resets discovery time, changes
-the binding, nor records an editorial rejection.
-
-Managed discovery uses `--discover --discovery-phase prepare`, commits/pushes both
-files, and verifies both hashes from the same remote revision before `--discovery-phase
-send --discovery-pending-sha ... --discovery-delivery-sha ...`. The sender binds the
-batch to its run/attempt, exact proposal identities and destination. It records
-uncertainty before each POST and confirms only an accepted Bot API message ID.
-Reserved/unknown offers are held for inspection, including a crash between reservation
-and send; no automatic replay or exactly-once promise is made. Final receipts must
-be persisted even after partial failure. Direct `--discover` provides local-file
-durability only. History is retained for the existing 30-day proposal horizon.
-The runtime keeps its weekly ten-minute job; this change adds no polling schedule.
-
-The first slice of [#132](https://github.com/Lenivvenil/digest/issues/132) covers proposals
-and finite validation retries only. Approval-to-candidate protection of professional
-signals and non-starving exploratory admission remain open, as does ordinary-output
-evaluation. No scheduler adjustment, fixed daily fraction or automatic feed activation
-is implied. The accepted first-slice state decision is
-[ADR-0013](decisions/0013-discovery-exploration-state.md); owner approval on 2026-10-06
-covered PR #133 and its engine-pin rollout, with those remaining gates still open.
-
-No source-discovery schedule is installed by the engine. The runtime owns its cadence
-and serialized access to the same state as the main digest.
-
-## Cache architecture
-
-| Runtime file | Purpose and retention |
-| --- | --- |
-| `seen_articles.json` | Article identity/timestamps; dedup retention policy in collector |
-| `source_stats.json` | Per-source observations and up to 30 saved history snapshots |
-| `feedback.json` | Votes, last update offset, last-digest metadata and article/source mapping |
-| `source_state.json` | Versioned trial/graduation/demotion state; not automatically pruned as statistics |
-| `source_category_map.json` | Config-derived category mapping used by bubble diagnostics |
-| `pending_sources.json` | Proposed sources awaiting decisions |
-| `digests/*.review.json` | Immutable RSS evidence and recorded review outcomes for compatible resume |
-| `candidate_progress.json`, `candidate_sources/`, `candidate_reports/`, `candidate_index/`, `candidate_excluded/` | Current candidate work, immutable source/packet evidence and separately indexed history; no delivered-state mutation |
-| `digests/*.candidates.json` | Private inventory/selection coverage evidence bound into prepared-edition archive hashes |
-
-Atomic temporary-file replacement protects an individual JSON write; it does not make
-several files a transaction or prove remote persistence. The runtime must retain state
-on partial success and avoid overlapping writers. Do not consume undelivered items just
-because they were collected. Review-led required Telegram delivery distinguishes useful
-article cards from a diagnostic footer; a footer alone cannot satisfy that requirement.
-Unknown send outcomes require explicit handling rather than an assumed safe resend.
-
-## GitHub Actions and release operations
-
-The engine repository's workflow is CI. Daily/discovery schedules and output commits
-belong to the separate runtime, so this repository specifies no universal UTC schedule.
-Pin a reviewed immutable engine commit, serialize jobs sharing `.cache/`, and persist
-confirmed delivery outcomes even if an optional stage fails. A rebase before push alone
-is not a replacement for consistent concurrency and failure ordering.
-
-For review-led supplementary stages, follow the exact saved-checkpoint and reservation
-procedure in the review runbook. Retain prior engine/config pins for rollback. Do not
-merge experimental full-source code merely because unit tests or transport succeeded.
-The unresolved product gates and their current dispositions are tracked in #91 and
-#55. English documentation, configured translation and message voting are implemented;
-remaining daily-output acceptance is tracked separately; full-source experiments do not define a mandatory release gate.
-
-## Security
-
-[`radar/collector.py`](../digest/radar/collector.py) validates the initial configured
-feed URL and pins that hostname's resolved addresses. Its HTTP client follows redirects
-automatically; a redirect to another hostname uses ordinary DNS resolution without
-that initial URL validation/pinning guard. [`discovery_feed.py`](../digest/discovery_feed.py)
-and optional article acquisition in [`article_source.py`](../digest/article_source.py)
-instead follow bounded redirects explicitly and validate/pin each requested hop,
-rejecting non-global destinations. These are distinct acquisition boundaries, not a
-universal outbound-HTTP guarantee. The fixed-endpoint Hacker News, Reddit and arXiv
-[search clients](../digest/irritator/sources/) use their own HTTP requests; optional
-signal URL liveness checks are separate in
-[`irritator/validator.py`](../digest/irritator/validator.py).
-
-Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
-entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
-an excerpt into a full article or guarantee immunity to all malicious instructions.
-
-Keep real keys/tokens in runtime environment variables or Actions secrets. The engine
-does not automatically load `.env`. Never commit credentials or source-account details
-in public examples. Runtime artifacts can contain source bodies and model outputs;
-choose access and retention deliberately rather than copying them into the public repo.
-
-## Diagnostics and monitoring
-
-The main run summary reports feed counts, new articles, review status and delivery
-outcomes. Telegram status text may include source successes/errors and adaptive metrics.
-A successful footer is not a successful article delivery, and a completed comparison is
-not a fact-check certificate. Runtime failure notifications depend on its workflow;
-the engine alone does not install an Actions-to-Telegram alert service.
-
-Python modules use logging. `--verbose` enables DEBUG; routine operation uses INFO.
-Preserve useful failure reasons without exposing credentials or treating unknown quota
-causes as known provider limits.
-
-<a id="ограничения-и-известные-особенности"></a>
-
-## Limitations and known behavior
-
-- Free provider quotas and GitHub Actions minute allowances are account-dependent.
-  Verify actual capacity; multiplying an assumed short run time is not a throughput test.
-- Scheduled Telegram polling delays acknowledgements and can miss upstream retention
-  windows. Polling is independent of `adaptive.enabled`; ordinary collector acceptance
-  of recorded-vote influence remains open in #48.
-- RSS selection has bounded excerpt/candidate coverage. Missing candidates are not
-  proven irrelevant; #55 keeps this quality gap explicit.
-- Renaming a configured source affects its statistics identity; inactive statistics may
-  be pruned, while lifecycle ownership follows its separate state contract.
-- External adapter failures in #77 limit counter-evidence coverage. Preserve a visible
-  incomplete result rather than asserting that the world supplied no contrary evidence.
-- `radar.language` controls direct en/ru generation. Optional presentation translation
-  requires canonical English and leaves source evidence and analysis language unchanged;
-  see [ADR-0005](decisions/0005-optional-presentation-translation.md). Its generated-text
-  scope and unverified semantic-fidelity boundary are documented explicitly.
-
-
-## Daily operating boundary (proposal, 2026-10-02)
-
-The canonical [Digest operating envelope](domain/digest/overview.md#operating-envelope-and-daily-edition-decision--2026-10-02)
-records the measured cost, applied daily schedule, proposed operating allocation,
-maintenance reserve, account-quota
-uncertainty and retention risks. This architecture page does not duplicate that budget.
-A cron change alone does not implement compact output. Legacy card mode can retry
-uncertain requests; the deployed compact mode initially used a coarse durable issue
-reservation with complete text/source identity and confirmed per-article chunk coverage. See
-[ADR0007](decisions/0007-compact-issue-reservation.md) for the hold-after-crash policy;
-exactly-once delivery is not claimed. The #120 amendment moves this claim after
-immutable readiness: preparation can target a later UTC publication day, while the
-sender validates frozen payloads and window without running generation.
-
-Retain configured translation and actual bounded Irritator/comparison processing.
-The compact presentation keeps optional outcomes in the archive, with honest
-status, instead of extra Telegram pushes. No new receiver, queue or feedback polling
-cron is implied. Daily voting remains best effort under [ADR0006](decisions/0006-batch-message-voting.md).
