@@ -113,6 +113,11 @@ policy explicit domain owners, codecs/Telegram transport explicit adapters, and 
 scoring/discovery explicit application owners. Telegram presentation/transport is deployed
 through engine PR #158/runtime PR #81.
 Prepared delivery is deployed through engine PR #159/runtime PR #82; investigation
-validation and shared contracts are prepared in draft PR #160 and are not yet deployed. These continuations are recorded in ADR0017/ADR0019; source activation and
+validation and shared contracts are deployed through engine PR #160/runtime PR #83. These continuations are recorded in ADR0017/ADR0019; source activation and
 editorial
 acceptance remain separate from these ownership releases.
+
+[0022](0022-versioned-bounded-search-policy.md) records the existing DEV adapter's
+Forem V1 repair, unchanged bounded attempt/deadline ceilings, and explicit future-only
+search-policy binding. Old attempts and results remain intact; transport reachability
+and genuinely useful counter-evidence are separate acceptance facts.

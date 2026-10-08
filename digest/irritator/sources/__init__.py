@@ -55,6 +55,7 @@ def validate_search_response(response: httpx.Response, source: str) -> Any:
         "hackernews": "Invalid Hacker News search response.",
         "lobsters": "Invalid Lobsters search response.",
         "reddit": "Invalid Reddit search response.",
+        "devto": "Invalid DEV.to search response.",
     }
     if source not in messages:
         raise SourceUnavailableError("Source response validation is unavailable.")
@@ -67,6 +68,8 @@ def validate_search_response(response: httpx.Response, source: str) -> Any:
         valid = isinstance(raw, dict) and isinstance(raw.get("hits"), list)
     elif source == "lobsters":
         valid = isinstance(raw, list) or (isinstance(raw, dict) and isinstance(raw.get("results"), list))
+    elif source == "devto":
+        valid = isinstance(raw, list)
     else:
         valid = (isinstance(raw, dict) and isinstance(raw.get("data"), dict)
                  and isinstance(raw["data"].get("children"), list))

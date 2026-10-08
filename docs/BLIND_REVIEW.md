@@ -297,6 +297,19 @@ fallback according to its existing contract. In compact mode the supplement is
 `archive_only`: it does not send another Telegram message. The legacy/post-delivery
 transport retains its separately documented behavior.
 
+New post-attempt markers bind the versioned Hacker News/arXiv/DEV search policy,
+effective source list and query ceiling. DEV uses the documented unauthenticated
+Forem V1 first-page search; it does not fetch full articles. Operators enable that
+bounded slot explicitly in `irritator.sources`. Up to nine real source requests
+can now occur within the existing three-by-three ceiling and stage deadline.
+See [ADR0022](decisions/0022-versioned-bounded-search-policy.md) for the exact
+contract, validation and historical-policy boundary.
+
+An older schema-1 marker or a changed source-policy binding is held before
+execution. Preserve it and inspect its original engine/configuration; do not
+remove markers or archives to rerun an old edition. Completed attempts and saved
+results remain protected. Confirm no pending old-policy attempt crosses a rollout.
+
 Independent comparison and genuine external counter-evidence are separate operations.
 Neither a matching quotation nor successful transport establishes factual usefulness.
 The [Irritator model](domain/irritator/overview.md#current-domain-model) describes the

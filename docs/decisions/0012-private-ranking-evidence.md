@@ -66,10 +66,13 @@ No publisher body, new fetch, or full provider response is added.
 
 The limit covers omitted title/snippet characters, not the entire serialized archive.
 Existing retrieval bounds permit at most 3 queries × 3 sources × 10 records = 90
-candidates; currently Lobsters abstains, leaving at most 60 from working adapters.
-Each decoded source response is limited to 512,000 bytes. Thus current successful
-transport bodies total at most 3.072 MB (4.608 MB for nine active source/query calls),
-which is not a strict parsed-Signal or serialized-archive bound. URLs remain bounded to
+candidates. The initial policy's abstaining Lobsters slot left at most 60 from
+working adapters. [ADR0022](0022-versioned-bounded-search-policy.md) replaces that
+bounded slot with DEV for new policy-bound attempts. With all three configured
+working adapters, the existing ninety-candidate ceiling becomes reachable.
+Each decoded source response remains limited to 512,000 bytes: at most 4.608 MB
+for nine active source/query calls, compared with 3.072 MB for the earlier six.
+This is not a strict parsed-Signal or serialized-archive bound. URLs remain bounded to
 2,048 characters and publication fields to 80; UTF-8 and JSON escaping add bytes.
 Returned decision text is bounded by the unchanged 16,000-character response envelope.
 
