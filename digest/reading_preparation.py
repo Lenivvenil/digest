@@ -18,13 +18,8 @@ from digest._serialization import restore_dataclass as _restore
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
-from digest.candidate_review import (
-    Candidate,
-    CandidateArticle,
-    CandidatePacket,
-    CandidateProgress,
-)
 from digest.config import Config
+from digest.domain.editorial.candidates import Candidate, CandidateArticle, CandidatePacket, CandidateProgress
 from digest.domain.editorial.candidates import accepted_empty_packet as _accepted_empty_packet
 from digest.domain.editorial.candidates import proof_packets as _proof_packets
 from digest.domain.editorial.reviews import BlindReviewReport, delivery_review, validated_cached_selections

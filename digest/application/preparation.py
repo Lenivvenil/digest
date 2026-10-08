@@ -20,10 +20,10 @@ from digest.application.results import RunStats
 
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
-    from digest.candidate_review import CandidatePacket, CandidateProgress
     from digest.closing import ClosingDecision
     from digest.config import Config
     from digest.domain.catalog.sources import SourceStats
+    from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.preparation import PreparationSnapshot
     from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
@@ -71,7 +71,7 @@ def _candidate_setup(
 ) -> tuple[CandidateProgress | None, CollectionInventory | None, dict[str, str]]:
     if not review_led_only:
         return None, None, {}
-    from digest.candidate_review import load_candidate_progress
+    from digest.adapters.storage.candidate_progress import load_candidate_progress
     from digest.edition_runtime import _strict_cache
     from digest.radar.collector import CollectionInventory
 
@@ -95,17 +95,10 @@ def _candidate_inputs(
 ) -> tuple[CandidatePacket | None, BlindReviewReport | None, dict[str, list[Article]]]:
     if progress is None:
         return None, None, allocated
-    from digest.application.candidate_lifecycle import checkpoint_candidates
-    from digest.candidate_review import (
-        MAX_BYTES,
-        begin_packet,
-        ensure_report_accounting,
-        merge_candidates,
-        packet_articles,
-        pending_completed_report,
-        plan_packet,
-        progress_size,
-    )
+    from digest.adapters.storage.candidate_progress import MAX_BYTES, progress_size
+    from digest.application.candidate_lifecycle import checkpoint_candidates, ensure_report_accounting
+    from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
+    from digest.domain.editorial.candidate_policy import packet_articles, pending_completed_report
     from digest.radar import AllFeedsFailedError
     from digest.radar.collector import _prune_cache
 
@@ -185,8 +178,8 @@ async def _analyze_candidate_articles(
         return [], None, cards, cached_report
     if progress is None or packet is None:
         return await analysis.analyze_articles(articles, config, execution=execution)
+    from digest.application.candidate_review import reconcile_packet
     from digest.application.review import run_primary_review
-    from digest.candidate_review import reconcile_packet
     from digest.closing import ClosingCapture, decide_closing, save_closing
     from digest.domain.editorial.dispositions import CandidateDispositionCapture
     from digest.presentation.review import primary_cards
@@ -305,7 +298,7 @@ def _handoff_candidate(
     cache_dir: str,
     publication_date: date | None,
 ) -> None:
-    from digest.candidate_review import mark_prepared
+    from digest.application.candidate_review import mark_prepared
     from digest.preparation import load_preparation
 
     if (

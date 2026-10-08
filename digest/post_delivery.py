@@ -21,11 +21,11 @@ import httpx
 
 from digest.adapters.models.execution import ModelExecution
 from digest.adapters.storage import post_delivery as storage
+from digest.adapters.storage.review_checkpoints import load_review_checkpoint
 from digest.adapters.telegram.delivery import send_post_delivery_supplement
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
 from digest.presentation.supplement import signal_text
-from digest.review_checkpoint import load_review_checkpoint
 
 if TYPE_CHECKING:
     from digest.domain.editorial.reviews import EvidenceBundle

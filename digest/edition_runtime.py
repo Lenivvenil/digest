@@ -153,7 +153,10 @@ async def finish_preparation(
     if archive is not None:
         paths = [archive]
         if snapshot.review_report is not None:
-            from digest.candidate_review import archive_candidate_accounting, candidate_accounting_sources
+            from digest.adapters.storage.candidate_progress import (
+                archive_candidate_accounting,
+                candidate_accounting_sources,
+            )
 
             paths.append(archive.with_suffix(".review.json"))
             accounting_path = archive_candidate_accounting(snapshot.review_report, archive)

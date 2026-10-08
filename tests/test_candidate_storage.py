@@ -344,7 +344,7 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
     limit = current_bytes + review.RESPONSE_STORAGE_RESERVE + 512
     assert review.progress_size(preview) + review.RESPONSE_STORAGE_RESERVE > limit
 
-    monkeypatch.setattr(review, "MAX_BYTES", limit)
+    monkeypatch.setattr("digest.application.candidate_review.MAX_BYTES", limit)
     review.begin_packet(progress, new, tmp_path)
     restored = review.load_candidate_progress(tmp_path)
     assert len(restored.packets) == 2
