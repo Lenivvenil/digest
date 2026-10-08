@@ -49,9 +49,12 @@ def _owned_message(message: Any, sender: Any, owner: str) -> bool:
         return False
     chat = message.get("chat")
     return (
-        isinstance(chat, dict) and chat.get("type") == "private"
-        and type(chat.get("id")) is int and str(chat["id"]) == owner
-        and type(sender.get("id")) is int and str(sender["id"]) == owner
+        isinstance(chat, dict)
+        and chat.get("type") == "private"
+        and type(chat.get("id")) is int
+        and str(chat["id"]) == owner
+        and type(sender.get("id")) is int
+        and str(sender["id"]) == owner
     )
 
 
@@ -65,7 +68,10 @@ def _record_article_vote(store: FeedbackStore, article_hash: str, rating: str) -
 
 
 def _record_source_decision(
-    store: FeedbackStore, pending: list[PendingSource], hash8: str, action: str,
+    store: FeedbackStore,
+    pending: list[PendingSource],
+    hash8: str,
+    action: str,
 ) -> str:
     return record_source_decision(store, pending, hash8, action, now=datetime.now(tz=timezone.utc))
 
@@ -75,19 +81,25 @@ def owned_source_update(update: dict[str, Any], owner: str) -> bool:
     callback = update.get("callback_query")
     if callback is not None:
         return (
-            isinstance(callback, dict) and _owned_message(callback.get("message"), callback.get("from"), owner)
-            and isinstance(callback.get("data"), str) and callback["data"].startswith("src:")
+            isinstance(callback, dict)
+            and _owned_message(callback.get("message"), callback.get("from"), owner)
+            and isinstance(callback.get("data"), str)
+            and callback["data"].startswith("src:")
         )
     message = update.get("message")
     return (
-        isinstance(message, dict) and _owned_message(message, message.get("from"), owner)
+        isinstance(message, dict)
+        and _owned_message(message, message.get("from"), owner)
         and isinstance(message.get("text"), str)
         and message["text"].strip().startswith(("/start source_", "/source"))
     )
 
 
 def _collect_callback(
-    callback: dict[str, Any], store: FeedbackStore, owner: str, pending: list[PendingSource],
+    callback: dict[str, Any],
+    store: FeedbackStore,
+    owner: str,
+    pending: list[PendingSource],
 ) -> str:
     if not _owned_message(callback.get("message"), callback.get("from"), owner):
         return "rejected_owner"
@@ -117,7 +129,10 @@ def _collect_callback(
 
 
 def collect_update(
-    update: dict[str, Any], store: FeedbackStore, owner: str, pending: list[PendingSource],
+    update: dict[str, Any],
+    store: FeedbackStore,
+    owner: str,
+    pending: list[PendingSource],
 ) -> str:
     callback = update.get("callback_query")
     if callback is not None:
@@ -139,10 +154,12 @@ def collect_update(
         record_command_reply(store, command)
         return "commands"
     vote = re.fullmatch(r"/start vote_([gb])_([0-9a-f]{8})", command) or re.fullmatch(
-        r"/vote ([gb]) ([0-9a-f]{8})", command,
+        r"/vote ([gb]) ([0-9a-f]{8})",
+        command,
     )
     source = re.fullmatch(r"/start source_(ok|no)_([0-9a-f]{8})", command) or re.fullmatch(
-        r"/source (ok|no) ([0-9a-f]{8})", command,
+        r"/source (ok|no) ([0-9a-f]{8})",
+        command,
     )
     if vote is None and source is None:
         if command.startswith(("/vote", "/start vote_", "/source", "/start source_")):
@@ -202,7 +219,8 @@ async def poll_updates(bot_token: str, *, offset: int | None) -> list[dict[str, 
         response.raise_for_status()
         info = response.json()
         if (
-            not isinstance(info, dict) or info.get("ok") is not True
+            not isinstance(info, dict)
+            or info.get("ok") is not True
             or not isinstance(info.get("result"), dict)
             or not isinstance(info["result"].get("url"), str)
         ):
@@ -210,7 +228,9 @@ async def poll_updates(bot_token: str, *, offset: int | None) -> list[dict[str, 
         if info["result"]["url"]:
             raise FeedbackWebhookActive("Active Telegram webhook; polling disabled")
         body: dict[str, object] = {
-            "allowed_updates": ["callback_query", "message"], "timeout": 10, "limit": 100,
+            "allowed_updates": ["callback_query", "message"],
+            "timeout": 10,
+            "limit": 100,
         }
         if offset is not None:
             body["offset"] = offset
@@ -229,7 +249,10 @@ async def poll_updates(bot_token: str, *, offset: int | None) -> list[dict[str, 
 
 
 async def send_replies(
-    bot_token: str, store: FeedbackStore, owner: str, command_reply: Callable[[str], str],
+    bot_token: str,
+    store: FeedbackStore,
+    owner: str,
+    command_reply: Callable[[str], str],
 ) -> dict[str, int]:
     """Bound terminal UI dispatch to one vote/source summary and 30 seconds total."""
     counts = {"attempted": 0, "ack_ok": 0, "ack_failed": 0}
@@ -258,11 +281,15 @@ async def send_replies(
                     if reply.kind == "callback":
                         response = await client.post(
                             f"{api_url}/answerCallbackQuery",
-                            json={"callback_query_id": reply.identifier, "text": reply.text}, timeout=5.0,
+                            json={"callback_query_id": reply.identifier, "text": reply.text},
+                            timeout=5.0,
                         )
                     else:
                         text = (
-                            vote_text if reply.kind == "vote" else source_text if reply.kind == "source"
+                            vote_text
+                            if reply.kind == "vote"
+                            else source_text
+                            if reply.kind == "source"
                             else command_reply(reply.identifier)
                         )
                         response = await client.post(

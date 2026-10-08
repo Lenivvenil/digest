@@ -1,4 +1,5 @@
 """Synchronous external investigation used by supported legacy workflows."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -13,8 +14,11 @@ if TYPE_CHECKING:
 
 
 async def run_irritator(
-    summaries: list[CategorySummary], config: Config, verbose: bool,
-    *, execution: ModelExecution,
+    summaries: list[CategorySummary],
+    config: Config,
+    verbose: bool,
+    *,
+    execution: ModelExecution,
 ) -> tuple[list[Narrative], list[RankedSignal], IrritatorStatus]:
     """Thin wrapper: creates an AsyncClient and delegates to the public run_irritator()."""
     import httpx

@@ -14,7 +14,8 @@ def compute_bubble_report(
     source_stats: dict[str, SourceStats],
     source_state: SourceStateStore,
     category_map: dict[str, str] | None = None,
-    *, now: datetime,
+    *,
+    now: datetime,
 ) -> str:
     """Build a single-screen filter bubble snapshot from cached data. No I/O."""
     lines: list[str] = ["=== Filter Bubble Report ==="]
@@ -23,9 +24,9 @@ def compute_bubble_report(
 
     if feedback_store.last_digest_time:
         try:
-            last_dt = datetime.strptime(
-                feedback_store.last_digest_time, "%Y-%m-%d %H:%M UTC"
-            ).replace(tzinfo=timezone.utc)
+            last_dt = datetime.strptime(feedback_store.last_digest_time, "%Y-%m-%d %H:%M UTC").replace(
+                tzinfo=timezone.utc
+            )
             age_h = int((now - last_dt).total_seconds() // 3600)
             lines.append(f"Last digest: {feedback_store.last_digest_time} ({age_h}h ago)")
         except ValueError:
@@ -77,10 +78,7 @@ def compute_bubble_report(
 
     graduated = sum(1 for e in source_state.sources.values() if e.graduated)
     demoted = sum(1 for e in source_state.sources.values() if e.demoted)
-    trial = sum(
-        1 for e in source_state.sources.values()
-        if e.trial_started and not e.graduated and not e.demoted
-    )
+    trial = sum(1 for e in source_state.sources.values() if e.trial_started and not e.graduated and not e.demoted)
     if graduated or demoted or trial:
         lines.append(f"Sources: {graduated} graduated | {trial} trial | {demoted} demoted")
 

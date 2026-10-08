@@ -14,11 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 def update_stats(
-    stats: dict[str, SourceStats], source_name: str, fetch_ok: bool,
-    articles_found: int, articles_included: int, avg_desc_len: float,
+    stats: dict[str, SourceStats],
+    source_name: str,
+    fetch_ok: bool,
+    articles_found: int,
+    articles_included: int,
+    avg_desc_len: float,
 ) -> None:
     source_rules.update_stats(
-        stats, source_name, fetch_ok, articles_found, articles_included, avg_desc_len,
+        stats,
+        source_name,
+        fetch_ok,
+        articles_found,
+        articles_included,
+        avg_desc_len,
         observed_at=datetime.now(tz=timezone.utc),
     )
 
@@ -31,22 +40,29 @@ def calculate_score(stats: SourceStats) -> float:
 
 
 def calculate_effective_priorities(
-    sources: list[SourceConfig], stats: dict[str, SourceStats],
-    feedback_scores: dict[str, float], adaptive_config: AdaptiveConfig,
+    sources: list[SourceConfig],
+    stats: dict[str, SourceStats],
+    feedback_scores: dict[str, float],
+    adaptive_config: AdaptiveConfig,
 ) -> dict[str, int]:
     trending = source_rules.detect_trending_sources(stats)
     result: dict[str, int] = {}
     for source in sources:
         score = calculate_score(stats[source.name]) if source.name in stats else 0.5
         result[source.name] = source_rules.calculate_effective_priority(
-            source, score, feedback_scores.get(source.name, 0.5), adaptive_config,
+            source,
+            score,
+            feedback_scores.get(source.name, 0.5),
+            adaptive_config,
             trending=source.name in trending,
         )
     return result
 
 
 def evaluate_trial_sources(
-    sources: list[SourceConfig], stats: dict[str, SourceStats], today: str,
+    sources: list[SourceConfig],
+    stats: dict[str, SourceStats],
+    today: str,
     source_state: SourceStateStore | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """Keep trial-day eligibility separate from each eligible source's score time."""
@@ -77,9 +93,15 @@ def evaluate_trial_sources(
 
 
 def compute_bubble_report(
-    feedback_store: FeedbackStore, source_stats: dict[str, SourceStats], source_state: SourceStateStore,
+    feedback_store: FeedbackStore,
+    source_stats: dict[str, SourceStats],
+    source_state: SourceStateStore,
     category_map: dict[str, str] | None = None,
 ) -> str:
     return bubble.compute_bubble_report(
-        feedback_store, source_stats, source_state, category_map, now=datetime.now(tz=timezone.utc),
+        feedback_store,
+        source_stats,
+        source_state,
+        category_map,
+        now=datetime.now(tz=timezone.utc),
     )

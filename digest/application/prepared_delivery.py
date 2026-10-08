@@ -201,7 +201,11 @@ async def send_prepared_edition(
                     receipts.attempted = index + 1
                     storage.write_record(path, asdict(receipts))
                     outcome, message_id = await send_prepared_chunk(
-                        client, token, payload, owner, timeout_seconds=_DISPATCH_SECONDS,
+                        client,
+                        token,
+                        payload,
+                        owner,
+                        timeout_seconds=_DISPATCH_SECONDS,
                     )
                     if outcome == "failed":
                         receipts.state = "partial" if receipts.confirmed else "failed"

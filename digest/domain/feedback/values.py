@@ -9,8 +9,17 @@ from typing import Literal
 SEEN_CALLBACK_LIMIT = 1000
 SEEN_MESSAGE_LIMIT = 1000
 POLL_COUNT_KEYS = (
-    "received", "recorded_votes", "source_decisions", "commands",
-    "unknown_source", "rejected_owner", "ignored", "malformed", "duplicates", "unknown_article", "superseded_replies",
+    "received",
+    "recorded_votes",
+    "source_decisions",
+    "commands",
+    "unknown_source",
+    "rejected_owner",
+    "ignored",
+    "malformed",
+    "duplicates",
+    "unknown_article",
+    "superseded_replies",
 )
 COMMANDS = ("/status", "/bubble")
 VOTE_REPLIES = {

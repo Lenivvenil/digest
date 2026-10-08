@@ -109,8 +109,11 @@ def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
     for identity in outcome.delivered_hashes:
         cache.setdefault(identity, now.isoformat())
     apply_delivery_attribution(
-        store, outcome.article_source_map, complete=outcome.complete,
-        contributing_sources=policy.contributing_sources, delivered_at=now,
+        store,
+        outcome.article_source_map,
+        complete=outcome.complete,
+        contributing_sources=policy.contributing_sources,
+        delivered_at=now,
     )
 
     # Preserve current votes/cursors/decisions; every write failure propagates.
@@ -140,8 +143,11 @@ def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
 
     outcome = policy.outcome
     delivered_hashes = set(outcome.delivered_hashes)
-    if (not policy.compact and policy.markdown_saved
-            and (not getattr(policy.config.telegram, "required", False) or policy.telegram_complete)):
+    if (
+        not policy.compact
+        and policy.markdown_saved
+        and (not getattr(policy.config.telegram, "required", False) or policy.telegram_complete)
+    ):
         delivered_hashes.update(
             article_hash(article.title, article.link)
             for category, articles in policy.articles_by_category.items()
@@ -151,19 +157,24 @@ def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
         delivered_hashes.update(article_hash(article.title, article.link) for article in policy.top_articles)
     collected_hashes = {
         article_hash(article.title, article.link)
-        for articles in policy.articles_by_category.values() for article in articles
+        for articles in policy.articles_by_category.values()
+        for article in articles
     }
     # Keep collection timestamps and old entries; suppress no unconfirmed new work.
     delivered_cache = {
-        key: timestamp for key, timestamp in policy.collected_cache.items()
+        key: timestamp
+        for key, timestamp in policy.collected_cache.items()
         if key not in collected_hashes or key in delivered_hashes
     }
     record_source_stats(policy.source_stats, policy.fetch_metrics, policy.articles_by_category, delivered_hashes)
     promoted = demoted = 0
     if outcome.sent > 0 or policy.markdown_saved:
         apply_delivery_attribution(
-            policy.feedback, outcome.article_source_map, complete=policy.telegram_complete,
-            contributing_sources=policy.contributing_sources, delivered_at=policy.delivered_at,
+            policy.feedback,
+            outcome.article_source_map,
+            complete=policy.telegram_complete,
+            contributing_sources=policy.contributing_sources,
+            delivered_at=policy.delivered_at,
         )
         # Legacy order is seen -> feedback -> source state -> stats -> category map.
         # The existing owner functions keep their caught-versus-propagated failures.
@@ -171,7 +182,10 @@ def _apply_legacy(policy: LegacyOutcomePolicy) -> AppliedOutcome:
         if policy.config.adaptive.enabled:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             promote, demote, start = evaluate_trial_sources(
-                policy.config.enabled_sources, policy.source_stats, today, policy.source_state,
+                policy.config.enabled_sources,
+                policy.source_stats,
+                today,
+                policy.source_state,
             )
             if promote or demote or start:
                 apply_trial_decisions_to_cache(policy.source_state, promote, demote, today, start)

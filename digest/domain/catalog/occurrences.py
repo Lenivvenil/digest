@@ -21,8 +21,14 @@ class SourceOccurrence:
     source_url: str
 
     def article(self) -> Article:
-        return Article(self.title, self.link, self.description, self.source, self.category,
-                       datetime.fromisoformat(self.published) if self.published else None)
+        return Article(
+            self.title,
+            self.link,
+            self.description,
+            self.source,
+            self.category,
+            datetime.fromisoformat(self.published) if self.published else None,
+        )
 
 
 def occurrence_sha256(occurrence: SourceOccurrence) -> str:

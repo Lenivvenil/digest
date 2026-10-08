@@ -88,8 +88,15 @@ def parse_instant(value: Any) -> datetime:
 
 
 def validate_manifest(
-    data: dict[str, Any], owner: str, now: datetime, *, content_sha256: str,
-    owner_sha256: str, canonical_sha256: str, presentation_sha256: str, fresh: bool = True,
+    data: dict[str, Any],
+    owner: str,
+    now: datetime,
+    *,
+    content_sha256: str,
+    owner_sha256: str,
+    canonical_sha256: str,
+    presentation_sha256: str,
+    fresh: bool = True,
 ) -> None:
     try:
         if data["content_sha256"] != content_sha256 or data["owner_sha256"] != owner_sha256:

@@ -32,12 +32,17 @@ def supports_source_attribution(source_url: str) -> bool:
 
 
 def attribute_source_card(
-    card: ArticleSummary, occurrence: SourceOccurrence, occurrence_sha256: str,
+    card: ArticleSummary,
+    occurrence: SourceOccurrence,
+    occurrence_sha256: str,
 ) -> tuple[ArticleSummary, bool]:
     """Credit a supported exact feed on presentation only; validate frozen identity."""
-    if ((card.title, card.link, card.source, card.category) != (
-            occurrence.title, occurrence.link, occurrence.source, occurrence.category)
-            or occurrence_sha256 != _occurrence_sha256(occurrence)):
+    if (card.title, card.link, card.source, card.category) != (
+        occurrence.title,
+        occurrence.link,
+        occurrence.source,
+        occurrence.category,
+    ) or occurrence_sha256 != _occurrence_sha256(occurrence):
         raise ValueError("Source attribution differs from the frozen article occurrence.")
     credit = SOURCE_CREDITS.get(occurrence.source_url)
     if credit is None:

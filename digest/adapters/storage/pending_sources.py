@@ -60,7 +60,10 @@ def load_pending(cache_dir: str, *, strict: bool = False) -> list[PendingSource]
 
 
 def save_pending(
-    sources: list[PendingSource], cache_dir: str, *, strict: bool = False,
+    sources: list[PendingSource],
+    cache_dir: str,
+    *,
+    strict: bool = False,
 ) -> None:
     """Save pending sources, pruning old entries; optionally propagate I/O errors."""
     path = Path(cache_dir) / PENDING_FILE

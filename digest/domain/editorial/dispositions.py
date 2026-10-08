@@ -65,34 +65,57 @@ def _entry(value: object, known: set[str], selected: set[str]) -> CandidateDispo
 
 
 def validate_disposition_attempt(
-    attempt: CandidateDispositionAttempt, bundle: EvidenceBundle, review: ModelReview,
+    attempt: CandidateDispositionAttempt,
+    bundle: EvidenceBundle,
+    review: ModelReview,
 ) -> None:
     """Validate a stored capture's structure and exact report binding, without raw text.
 
     The original capture checked the raw response hash. This checks its persisted
     provenance and decisions; it cannot reconstruct or certify absent raw output.
     """
-    binding = (attempt.slot, attempt.provider, attempt.model, attempt.bundle_id,
-               attempt.prompt_hash, attempt.response_sha256)
-    expected = (review.slot, review.provider, review.model, bundle.bundle_id,
-                review.prompt_hash, review.response_sha256)
+    binding = (
+        attempt.slot,
+        attempt.provider,
+        attempt.model,
+        attempt.bundle_id,
+        attempt.prompt_hash,
+        attempt.response_sha256,
+    )
+    expected = (
+        review.slot,
+        review.provider,
+        review.model,
+        bundle.bundle_id,
+        review.prompt_hash,
+        review.response_sha256,
+    )
     if binding != expected or review.bundle_id != bundle.bundle_id:
         raise ValueError("Disposition attempt report binding mismatch.")
     known = {item.evidence_id for item in bundle.items}
     selected = {item.evidence_id for item in review.selections}
     rejected = {item.evidence_id for item in review.rejected_items if item.evidence_id in known}
-    if (not isinstance(attempt.dispositions, tuple) or len(attempt.dispositions) > len(known)
-            or not isinstance(attempt.unresolved_ids, tuple)
-            or attempt.finish_reason is not None and not isinstance(attempt.finish_reason, str)
-            or not isinstance(attempt.errors, tuple) or len(attempt.errors) > 2 * len(known) + 2
-            or any(not isinstance(error, str) or not error.strip() or len(error) > 600
-                   for error in attempt.errors)):
+    if (
+        not isinstance(attempt.dispositions, tuple)
+        or len(attempt.dispositions) > len(known)
+        or not isinstance(attempt.unresolved_ids, tuple)
+        or attempt.finish_reason is not None
+        and not isinstance(attempt.finish_reason, str)
+        or not isinstance(attempt.errors, tuple)
+        or len(attempt.errors) > 2 * len(known) + 2
+        or any(not isinstance(error, str) or not error.strip() or len(error) > 600 for error in attempt.errors)
+    ):
         raise ValueError("Invalid disposition attempt fields.")
     parsed: dict[str, CandidateDisposition] = {}
     for item in attempt.dispositions:
-        if (not isinstance(item, CandidateDisposition) or not isinstance(item.reason, str)
-                or item.status == "selected" and item.reason != ""
-                or item.status != "duplicate" and item.retained_id is not None):
+        if (
+            not isinstance(item, CandidateDisposition)
+            or not isinstance(item.reason, str)
+            or item.status == "selected"
+            and item.reason != ""
+            or item.status != "duplicate"
+            and item.retained_id is not None
+        ):
             raise ValueError("Invalid stored disposition fields.")
         raw = {"evidence_id": item.evidence_id, "status": item.status}
         if item.status != "selected":
@@ -112,8 +135,11 @@ def validate_disposition_attempt(
             retained = parsed.get(item.retained_id or "")
             if retained is None or retained.status != "selected":
                 raise ValueError("Stored duplicate target is not a validated selection.")
-    unresolved = tuple(item.evidence_id for item in bundle.items
-                       if item.evidence_id not in parsed or parsed[item.evidence_id].status == "deferred")
+    unresolved = tuple(
+        item.evidence_id
+        for item in bundle.items
+        if item.evidence_id not in parsed or parsed[item.evidence_id].status == "deferred"
+    )
     expected_status = "incomplete" if unresolved or attempt.errors else "complete"
     if attempt.unresolved_ids != unresolved or attempt.status != expected_status:
         raise ValueError("Stored disposition completeness is inconsistent.")
@@ -122,6 +148,9 @@ def validate_disposition_attempt(
     if review.status == "partial" and not attempt.errors:
         raise ValueError("Partial review cannot claim complete disposition validation.")
 
-    if (attempt.finish_reason is not None and attempt.finish_reason not in {"stop", "STOP", "end_turn"}
-            and (parsed or not attempt.errors)):
+    if (
+        attempt.finish_reason is not None
+        and attempt.finish_reason not in {"stop", "STOP", "end_turn"}
+        and (parsed or not attempt.errors)
+    ):
         raise ValueError("Unfinished provider response cannot supply dispositions.")

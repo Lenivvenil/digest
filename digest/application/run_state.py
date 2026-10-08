@@ -17,7 +17,9 @@ if TYPE_CHECKING:
 
 
 def process_pending_approvals(
-    config_path: str, cache_dir: str, feedback_store: FeedbackStore,
+    config_path: str,
+    cache_dir: str,
+    feedback_store: FeedbackStore,
 ) -> None:
     """Apply only decisions bound to a still-current proposal, independently of delivery."""
     from copy import deepcopy
@@ -50,6 +52,7 @@ def process_pending_approvals(
         return
     # Config additions are idempotent if a later persistence step fails.
     from datetime import timedelta
+
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=30)
     for source in remaining:
         stamp = datetime.fromisoformat(source.discovered_at)
@@ -64,8 +67,13 @@ def process_pending_approvals(
 
 
 def apply_pending_approvals(
-    config: Config, config_path: str, cache_dir: str, feedback_store: FeedbackStore, *,
-    execution: ModelExecution, enabled: bool,
+    config: Config,
+    config_path: str,
+    cache_dir: str,
+    feedback_store: FeedbackStore,
+    *,
+    execution: ModelExecution,
+    enabled: bool,
 ) -> tuple[Config, ModelExecution]:
     """Apply durable decisions before collection, then use the current runtime config."""
     from digest.config import load_config
@@ -97,8 +105,12 @@ def record_source_stats(
                 included[article.source] = included.get(article.source, 0) + 1
     for name, metrics in fetch_metrics.items():
         update_stats(
-            source_stats, name, metrics.fetch_ok, metrics.articles_found,
-            included.get(name, 0), metrics.avg_description_length,
+            source_stats,
+            name,
+            metrics.fetch_ok,
+            metrics.articles_found,
+            included.get(name, 0),
+            metrics.avg_description_length,
         )
 
 
@@ -119,7 +131,10 @@ def save_failed_run_stats(
 
 
 async def collect_run_feedback(
-    config: Config, cache_dir: str, dry_run: bool, precollected: bool,
+    config: Config,
+    cache_dir: str,
+    dry_run: bool,
+    precollected: bool,
 ) -> tuple[FeedbackStore, bool, int]:
     """Feedback durability is independent of today's analysis/delivery outcome."""
     from digest.adapters.storage.feedback import load_feedback

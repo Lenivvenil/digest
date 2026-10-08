@@ -26,7 +26,8 @@ def update_stats(
     articles_found: int,
     articles_included: int,
     avg_desc_len: float,
-    *, observed_at: datetime,
+    *,
+    observed_at: datetime,
 ) -> None:
     """Update statistics for a source after a fetch. Caps history at 30 days."""
     today = observed_at.strftime("%Y-%m-%d")
@@ -45,9 +46,7 @@ def update_stats(
             if s.avg_description_length == 0.0:
                 s.avg_description_length = avg_desc_len
             else:
-                s.avg_description_length = (
-                    s.avg_description_length * 0.7 + avg_desc_len * 0.3
-                )
+                s.avg_description_length = s.avg_description_length * 0.7 + avg_desc_len * 0.3
 
     if s.history and s.history[-1].date == today:
         snap = s.history[-1]
@@ -128,7 +127,9 @@ def source_score_factors(stats: SourceStats) -> tuple[float, float, float, datet
 
 
 def score_from_factors(
-    factors: tuple[float, float, float, datetime | None] | None, *, now: datetime | None,
+    factors: tuple[float, float, float, datetime | None] | None,
+    *,
+    now: datetime | None,
 ) -> float:
     """Apply an explicit recency observation and the unchanged quality weights."""
     if factors is None:
@@ -146,18 +147,11 @@ def score_from_factors(
                 recency = max(0.0, 1.0 - (days_ago - 3) / 7.0)
         except ValueError:
             recency = 0.0
-    score = (
-        reliability * 0.3
-        + productivity * 0.3
-        + desc_quality * 0.2
-        + recency * 0.2
-    )
+    score = reliability * 0.3 + productivity * 0.3 + desc_quality * 0.2 + recency * 0.2
     return min(1.0, max(0.0, score))
 
 
-def detect_trending_sources(
-    stats: dict[str, SourceStats], window: int = 7
-) -> list[str]:
+def detect_trending_sources(stats: dict[str, SourceStats], window: int = 7) -> list[str]:
     """Return source names where articles_found shows >50% increase."""
     trending: list[str] = []
     for name, s in stats.items():
@@ -176,8 +170,12 @@ def detect_trending_sources(
 
 
 def calculate_effective_priority(
-    source: SourceConfig, quality_score: float, feedback_score: float,
-    adaptive_config: AdaptiveConfig, *, trending: bool,
+    source: SourceConfig,
+    quality_score: float,
+    feedback_score: float,
+    adaptive_config: AdaptiveConfig,
+    *,
+    trending: bool,
 ) -> int:
     """Combine one source's observed quality, feedback and configured priority."""
     min_p = adaptive_config.min_priority
@@ -196,7 +194,9 @@ def calculate_effective_priority(
 
 
 def calculate_feedback_priorities(
-    sources: list[SourceConfig], feedback_scores: dict[str, float], adaptive_config: AdaptiveConfig,
+    sources: list[SourceConfig],
+    feedback_scores: dict[str, float],
+    adaptive_config: AdaptiveConfig,
 ) -> dict[str, int]:
     """Bounded vote-only adjustment; unrated sources keep their configured priority.
 
@@ -211,13 +211,18 @@ def calculate_feedback_priorities(
             result[source.name] = source.priority
             continue
         delta = round((2 * score - 1) * adaptive_config.feedback_weight * span)
-        result[source.name] = max(adaptive_config.min_priority,
-                                  min(adaptive_config.max_priority, source.priority + delta))
+        result[source.name] = max(
+            adaptive_config.min_priority, min(adaptive_config.max_priority, source.priority + delta)
+        )
     return result
 
 
 def trial_source_status(
-    source: SourceConfig, source_state: SourceStateStore, *, today: str, today_dt: datetime,
+    source: SourceConfig,
+    source_state: SourceStateStore,
+    *,
+    today: str,
+    today_dt: datetime,
 ) -> Literal["skip", "start", "score"]:
     """Select the existing trial path without reading time or source statistics."""
     if not source.trial:
@@ -228,7 +233,8 @@ def trial_source_status(
     if trial_started is None:
         logger.info(
             "Trial source '%s' has no trial_started date; will initialize to %s",
-            source.name, today,
+            source.name,
+            today,
         )
         return "start"
     try:

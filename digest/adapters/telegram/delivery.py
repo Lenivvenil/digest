@@ -79,7 +79,7 @@ async def _send_chunk(
                 retry_after = int(exc.response.headers.get("Retry-After", 2))
                 await asyncio.sleep(retry_after)
             else:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
 
 async def send_status_message(text: str, *, disable_notification: bool = False) -> bool:
@@ -93,8 +93,13 @@ async def send_status_message(text: str, *, disable_notification: bool = False) 
     if not token or not chat_id:
         return False
     async with httpx.AsyncClient() as client:
-        await _send_chunk(client, f"https://api.telegram.org/bot{token}/sendMessage", chat_id,
-                          escape_markdownv2(text), disable_notification=disable_notification)
+        await _send_chunk(
+            client,
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            chat_id,
+            escape_markdownv2(text),
+            disable_notification=disable_notification,
+        )
     return True
 
 
@@ -125,17 +130,14 @@ async def send_article_cards(
     if not top_articles:
         total = sum(len(v) for v in articles_by_category.values())
         logger.warning(
-            "send_article_cards skipped: no top_articles "
-            "(would have flooded %d raw articles)",
+            "send_article_cards skipped: no top_articles (would have flooded %d raw articles)",
             total,
         )
         return ArticleDeliveryResult()
 
     api_url = _API_BASE.format(token=token)
     source_by_hash = {
-        article_hash(art.title, art.link): art.source
-        for articles in articles_by_category.values()
-        for art in articles
+        article_hash(art.title, art.link): art.source for articles in articles_by_category.values() for art in articles
     }
 
     # (title, link, source, cat, desc)
@@ -166,14 +168,18 @@ async def send_article_cards(
             except Exception as exc:
                 result.failed += 1
                 logger.warning(
-                    "Failed to send card for '%s': %s", title[:50], exc,
+                    "Failed to send card for '%s': %s",
+                    title[:50],
+                    exc,
                 )
 
             await asyncio.sleep(0.5)
 
     logger.info(
         "Telegram article cards: %d attempted, %d sent, %d failed",
-        result.attempted, result.sent, result.failed,
+        result.attempted,
+        result.sent,
+        result.failed,
     )
     return result
 
@@ -259,7 +265,10 @@ async def send_compact_issue(
     )
     logger.info(
         "Compact Telegram issue: %s, %d/%d chunks confirmed, %d articles confirmed",
-        result.outcome, result.confirmed_chunks, result.total_chunks, result.sent,
+        result.outcome,
+        result.confirmed_chunks,
+        result.total_chunks,
+        result.sent,
     )
     return result
 
@@ -287,7 +296,10 @@ async def send_counter_signals(
             async with asyncio.timeout(_SUPPLEMENT_DISPATCH_SECONDS), httpx.AsyncClient() as client:
                 for chunk in chunks:
                     await _send_chunk(
-                        client, api_url, chat_id, chunk,
+                        client,
+                        api_url,
+                        chat_id,
+                        chunk,
                         disable_notification=disable_notification,
                     )
             logger.info("Irritator status sent to Telegram: %s", irritator_status.text)
@@ -305,23 +317,32 @@ async def send_counter_signals(
 
 async def send_post_delivery_supplement(result: EvidenceIrritatorResult, config: Config, *, notice: str = "") -> str:
     """Send silent chunks once, accepting HTTP success plus an explicit Telegram ok."""
-    token, chat = os.environ.get('TELEGRAM_BOT_TOKEN'), os.environ.get('TELEGRAM_CHAT_ID')
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not config.telegram.enabled or not token or not chat:
-        return 'not_configured'
+        return "not_configured"
     from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE
 
     chunks = render_post_delivery_supplement(
-        result, config, full_source=result.coverage == FULL_SOURCE_COVERAGE, notice=notice,
+        result,
+        config,
+        full_source=result.coverage == FULL_SOURCE_COVERAGE,
+        notice=notice,
     )
     # Never retry an uncertain POST: Telegram has no idempotency key for sendMessage.
     async with asyncio.timeout(_POST_DELIVERY_DISPATCH_SECONDS), httpx.AsyncClient() as client:
         for text in chunks:
-            response = await client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={
-                'chat_id': chat, 'text': text, 'parse_mode': 'MarkdownV2',
-                'disable_notification': True,
-            }, timeout=30.0)
+            response = await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": chat,
+                    "text": text,
+                    "parse_mode": "MarkdownV2",
+                    "disable_notification": True,
+                },
+                timeout=30.0,
+            )
             response.raise_for_status()
             body = response.json()
-            if not isinstance(body, dict) or body.get('ok') is not True:
-                raise ValueError('Telegram did not confirm the supplement.')
-    return 'sent'
+            if not isinstance(body, dict) or body.get("ok") is not True:
+                raise ValueError("Telegram did not confirm the supplement.")
+    return "sent"

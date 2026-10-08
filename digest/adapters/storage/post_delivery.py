@@ -48,9 +48,9 @@ def attempt_artifacts_exist(marker: Path, result: Path, markdown: Path) -> bool:
 def load_attempt(marker: Path, result: Path, markdown: Path) -> dict[str, Any]:
     """Require an existing marker and no result before reading the attempt."""
     if not marker.is_file() or marker.is_symlink():
-        raise ValueError('Persisted post-delivery attempt marker is required.')
+        raise ValueError("Persisted post-delivery attempt marker is required.")
     if any(path.exists() or path.is_symlink() for path in (result, markdown)):
-        raise ValueError('Post-delivery result already exists; refusing another attempt.')
+        raise ValueError("Post-delivery result already exists; refusing another attempt.")
     record: dict[str, Any] = json.loads(marker.read_text())
     return record
 
@@ -58,9 +58,9 @@ def load_attempt(marker: Path, result: Path, markdown: Path) -> dict[str, Any]:
 def create_attempt(marker: Path, record: dict[str, Any]) -> bool:
     """Exclusively persist the initial claim, leaving a concurrent winner intact."""
     try:
-        with marker.open('x', encoding='utf-8') as handle:
+        with marker.open("x", encoding="utf-8") as handle:
             json.dump(record, handle, indent=2)
-            handle.write('\n')
+            handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
     except FileExistsError:
@@ -77,18 +77,18 @@ def save_result(result: Path, payload: dict[str, Any]) -> None:
 
 
 def save_markdown_archive(markdown: Path, content: str) -> None:
-    markdown.write_text(content, encoding='utf-8')
+    markdown.write_text(content, encoding="utf-8")
 
 
 def save_failure_archives(result: Path, markdown: Path, payload: dict[str, Any]) -> None:
     """Retain the unexpected-failure JSON and diagnostic archive write order."""
     atomic_json_write(result, payload)
-    markdown.write_text('# Irritator incomplete\n' + json.dumps(payload, indent=2) + '\n')
+    markdown.write_text("# Irritator incomplete\n" + json.dumps(payload, indent=2) + "\n")
 
 
 def append_github_output(checkpoint: str, marker: Path) -> None:
-    output = os.environ.get('GITHUB_OUTPUT')
+    output = os.environ.get("GITHUB_OUTPUT")
     if output:
-        with Path(output).open('a', encoding='utf-8') as handle:
-            handle.write(f'checkpoint={checkpoint}\n')
-            handle.write(f'marker={repository_relative_path(marker)}\n')
+        with Path(output).open("a", encoding="utf-8") as handle:
+            handle.write(f"checkpoint={checkpoint}\n")
+            handle.write(f"marker={repository_relative_path(marker)}\n")

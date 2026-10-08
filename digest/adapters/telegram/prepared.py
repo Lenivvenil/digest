@@ -21,11 +21,18 @@ def accepted_message_id(response: httpx.Response, owner: str) -> int | None:
 
 
 async def send_prepared_chunk(
-    client: httpx.AsyncClient, token: str, payload: dict[str, Any], owner: str, *, timeout_seconds: float,
+    client: httpx.AsyncClient,
+    token: str,
+    payload: dict[str, Any],
+    owner: str,
+    *,
+    timeout_seconds: float,
 ) -> tuple[Literal["confirmed", "failed", "unknown"], int | None]:
     """One POST only; the application persists attempted/confirmed progress around it."""
     response = await client.post(
-        f"https://api.telegram.org/bot{token}/sendMessage", json=payload, timeout=timeout_seconds,
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json=payload,
+        timeout=timeout_seconds,
     )
     if 400 <= response.status_code < 500:
         return "failed", None

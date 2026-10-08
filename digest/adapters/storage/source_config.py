@@ -1,4 +1,5 @@
 """Comment-preserving, idempotent trial-source additions to runtime YAML."""
+
 from __future__ import annotations
 
 import logging
@@ -87,12 +88,12 @@ def _insert_source_entry(content: str, entry: dict[str, Any]) -> str:
     if node.flow_style:
         # An inline sources list can be extended without rewriting its comments.
         index = node.end_mark.index - 1
-        if content[index:index + 1] != "]":
+        if content[index : index + 1] != "]":
             raise ValueError("Cannot safely insert a source into this YAML config layout.")
         serialized = yaml.safe_dump(entry, default_flow_style=True, sort_keys=False, allow_unicode=True).strip()
         separator = ", " if node.value else ""
         return content[:index] + separator + serialized + content[index:]
-    if content[node.start_mark.index:node.start_mark.index + 1] != "-":
+    if content[node.start_mark.index : node.start_mark.index + 1] != "-":
         raise ValueError("Cannot safely insert a source into an aliased or anchored sources list.")
     index = node.end_mark.index
     # The end mark may include indentation preceding the next top-level key.

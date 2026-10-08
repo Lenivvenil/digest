@@ -102,24 +102,42 @@ def review_prompt_hash(messages: list[dict[str, str]]) -> str:
 
 
 def validate_request_evidence_bundle(
-    bundle: EvidenceBundle, *, max_evidence_articles: int, max_excerpt_chars: int,
+    bundle: EvidenceBundle,
+    *,
+    max_evidence_articles: int,
+    max_excerpt_chars: int,
 ) -> None:
     """Validate RSS request evidence under current limits, separately from stored integrity."""
-    if (type(bundle.schema_version) is not int or bundle.schema_version != SCHEMA_VERSION
-            or not isinstance(bundle.items, tuple) or bundle.evidence_kind != "sanitized_rss_excerpt"
-            or type(bundle.omitted_articles) is not int or bundle.omitted_articles < 0
-            or not bundle.items or len(bundle.items) > max_evidence_articles):
+    if (
+        type(bundle.schema_version) is not int
+        or bundle.schema_version != SCHEMA_VERSION
+        or not isinstance(bundle.items, tuple)
+        or bundle.evidence_kind != "sanitized_rss_excerpt"
+        or type(bundle.omitted_articles) is not int
+        or bundle.omitted_articles < 0
+        or not bundle.items
+        or len(bundle.items) > max_evidence_articles
+    ):
         raise ValueError("Unsupported or over-budget checkpoint evidence.")
     seen: set[str] = set()
     for item in bundle.items:
-        if (not all(isinstance(value, str) for value in (
-                item.evidence_id, item.title, item.url, item.source, item.category, item.excerpt))
-                or item.published is not None and not isinstance(item.published, str)
-                or type(item.excerpt_shortened_or_sanitized) is not bool):
+        if (
+            not all(
+                isinstance(value, str)
+                for value in (item.evidence_id, item.title, item.url, item.source, item.category, item.excerpt)
+            )
+            or item.published is not None
+            and not isinstance(item.published, str)
+            or type(item.excerpt_shortened_or_sanitized) is not bool
+        ):
             raise ValueError("Invalid checkpoint evidence fields.")
-        if (not item.evidence_id or item.evidence_id in seen
-                or len(item.excerpt) > max_excerpt_chars
-                or urlparse(item.url).scheme not in {"http", "https"} or not urlparse(item.url).netloc):
+        if (
+            not item.evidence_id
+            or item.evidence_id in seen
+            or len(item.excerpt) > max_excerpt_chars
+            or urlparse(item.url).scheme not in {"http", "https"}
+            or not urlparse(item.url).netloc
+        ):
             raise ValueError("Invalid checkpoint evidence identity, URL or budget.")
         seen.add(item.evidence_id)
     if sum(len(json.dumps(asdict(item), ensure_ascii=False)) for item in bundle.items) > MAX_EVIDENCE_JSON_CHARS:
@@ -132,34 +150,46 @@ def validate_request_evidence_bundle(
 
 
 def reusable_model_review(
-    review: ModelReview, bundle: EvidenceBundle, identity: ReviewReuseIdentity | None,
+    review: ModelReview,
+    bundle: EvidenceBundle,
+    identity: ReviewReuseIdentity | None,
 ) -> ModelReview | None:
     """Revalidate an eligible exact-request success and retain its recorded provenance."""
-    if (identity is None or identity.bundle_id != bundle.bundle_id
-            or review.status not in {"ok", "partial", "abstained"}
-            or (review.slot, review.provider, review.model, review.bundle_id, review.prompt_hash)
-            != (identity.slot, identity.provider, identity.model, identity.bundle_id, identity.prompt_hash)):
+    if (
+        identity is None
+        or identity.bundle_id != bundle.bundle_id
+        or review.status not in {"ok", "partial", "abstained"}
+        or (review.slot, review.provider, review.model, review.bundle_id, review.prompt_hash)
+        != (identity.slot, identity.provider, identity.model, identity.bundle_id, identity.prompt_hash)
+    ):
         return None
     selections, limitations = validated_cached_selections(review, bundle)
     return replace(review, selections=selections, limitations=limitations, reused_from_checkpoint=True)
 
 
 def _parse_review_envelope(
-    text: str, max_entries: int, *, allow_closing: bool = False,
+    text: str,
+    max_entries: int,
+    *,
+    allow_closing: bool = False,
 ) -> tuple[list[object], list[str]]:
     if len(text) > 32000:
         raise ValueError("response exceeds review budget")
     raw = _extract_json(text)
     if allow_closing and isinstance(raw, dict):
         raw = {key: value for key, value in raw.items() if key != "closing"}
-    if (not isinstance(raw, dict)
-            or set(raw) not in ({"selections", "limitations"}, {"selections", "limitations", "dispositions"})):
+    if not isinstance(raw, dict) or set(raw) not in (
+        {"selections", "limitations"},
+        {"selections", "limitations", "dispositions"},
+    ):
         raise ValueError("expected selections and limitations")
     selections, limitations = raw["selections"], raw["limitations"]
     if not isinstance(selections, list) or len(selections) > max_entries:
         raise ValueError("invalid selection count")
-    if not isinstance(limitations, list) or len(limitations) > 5 or any(
-        not isinstance(s, str) or not s.strip() or len(s) > 600 for s in limitations
+    if (
+        not isinstance(limitations, list)
+        or len(limitations) > 5
+        or any(not isinstance(s, str) or not s.strip() or len(s) > 600 for s in limitations)
     ):
         raise ValueError("invalid limitations")
     if not selections and not limitations:
@@ -205,7 +235,7 @@ def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length
     for source in (title, excerpt):
         start = source.translate(typography).find(quote.translate(typography))
         if start >= 0:
-            return source[start:start + len(quote)], True
+            return source[start : start + len(quote)], True
     raise ValueError("quote is not in supplied evidence")
 
 
@@ -226,7 +256,10 @@ def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: lis
 
 
 def _parse_live_review(
-    text: str, bundle: EvidenceBundle, *, max_detailed_selections: int | None = None,
+    text: str,
+    bundle: EvidenceBundle,
+    *,
+    max_detailed_selections: int | None = None,
     allow_closing: bool = False,
 ) -> tuple[list[EvidenceSelection], list[str], list[RejectedSelection]]:
     """Salvage individual entries only after the complete envelope is valid."""
@@ -252,29 +285,47 @@ def _parse_live_review(
 
 
 def validated_cached_selections(
-    review: ModelReview, bundle: EvidenceBundle,
+    review: ModelReview,
+    bundle: EvidenceBundle,
 ) -> tuple[list[EvidenceSelection], list[str]]:
     """Validate against exact evidence membership, independently of publication capacity."""
-    selections, limitations = _parse_review(json.dumps({
-        "selections": [{key: value for key, value in asdict(item).items() if key != "typography_normalized"}
-                       for item in review.selections],
-        "limitations": review.limitations,
-    }, ensure_ascii=False, separators=(",", ":")), bundle)
+    selections, limitations = _parse_review(
+        json.dumps(
+            {
+                "selections": [
+                    {key: value for key, value in asdict(item).items() if key != "typography_normalized"}
+                    for item in review.selections
+                ],
+                "limitations": review.limitations,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        bundle,
+    )
     if any(type(item.typography_normalized) is not bool for item in review.selections):
         raise ValueError("Invalid checkpoint typography provenance.")
-    selections = [replace(item, typography_normalized=original.typography_normalized)
-                  for item, original in zip(selections, review.selections, strict=True)]
+    selections = [
+        replace(item, typography_normalized=original.typography_normalized)
+        for item, original in zip(selections, review.selections, strict=True)
+    ]
     expected_status = "ok" if selections else "abstained"
     if review.status == "partial":
         known = {item.evidence_id for item in bundle.items}
         indices = [item.index for item in review.rejected_items]
-        if (not selections or not review.rejected_items
-                or len(selections) + len(indices) > len(bundle.items) or len(set(indices)) != len(indices)
-                or any(type(index) is not int or not 0 <= index < len(bundle.items) for index in indices)
-                or any(item.evidence_id is not None and item.evidence_id not in known for item in review.rejected_items)
-                or any(not isinstance(item.reason, str)
-                       or _rejected_output_diagnostics("", ValueError(item.reason))[0] != item.reason
-                       for item in review.rejected_items)):
+        if (
+            not selections
+            or not review.rejected_items
+            or len(selections) + len(indices) > len(bundle.items)
+            or len(set(indices)) != len(indices)
+            or any(type(index) is not int or not 0 <= index < len(bundle.items) for index in indices)
+            or any(item.evidence_id is not None and item.evidence_id not in known for item in review.rejected_items)
+            or any(
+                not isinstance(item.reason, str)
+                or _rejected_output_diagnostics("", ValueError(item.reason))[0] != item.reason
+                for item in review.rejected_items
+            )
+        ):
             raise ValueError("Invalid checkpoint partial-review provenance.")
     elif review.status != expected_status or review.rejected_items:
         raise ValueError("Checkpoint review status contradicts its selections.")
@@ -284,17 +335,26 @@ def validated_cached_selections(
 def _rejected_output_diagnostics(text: str, exc: Exception) -> tuple[str, str, bool]:
     """Retain bounded untrusted model text, never HTTP error bodies or headers."""
     known_reasons = {
-        "response exceeds review budget", "expected selections and limitations",
-        "invalid selection count", "invalid limitations", "abstention needs an explanation",
-        "invalid selection schema", "selection fields must be strings", "unknown evidence id",
-        "duplicated evidence id", "invalid selection text budget", "invalid confidence",
-        "quote is not in supplied evidence", "provider reported unfinished response",
+        "response exceeds review budget",
+        "expected selections and limitations",
+        "invalid selection count",
+        "invalid limitations",
+        "abstention needs an explanation",
+        "invalid selection schema",
+        "selection fields must be strings",
+        "unknown evidence id",
+        "duplicated evidence id",
+        "invalid selection text budget",
+        "invalid confidence",
+        "quote is not in supplied evidence",
+        "provider reported unfinished response",
     }
     reason = str(exc) if str(exc) in known_reasons else "invalid JSON or review contract"
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     cleaned = re.sub(
         r"(?:sk-[A-Za-z0-9_-]{16,}|gsk_[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,})",
-        "[redacted credential-like text]", cleaned,
+        "[redacted credential-like text]",
+        cleaned,
     )
     cleaned = re.sub(r"(?i)Bearer\s+[A-Za-z0-9._-]{16,}", "Bearer [redacted]", cleaned)
     return reason, cleaned[:32000], len(cleaned) > 32000
@@ -304,13 +364,22 @@ def validate_canonical_evidence(bundle: EvidenceBundle) -> None:
     """Validate the stored bundle itself, without constructing an empty report."""
     evidence_payload = asdict(bundle)
     evidence_payload.pop("bundle_id")
-    evidence_hash = hashlib.sha256(json.dumps(
-        evidence_payload, ensure_ascii=False, sort_keys=True,
-    ).encode()).hexdigest()
+    evidence_hash = hashlib.sha256(
+        json.dumps(
+            evidence_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
     known = {item.evidence_id: item for item in bundle.items}
-    if (bundle.schema_version != 1 or bundle.evidence_kind != "sanitized_rss_excerpt"
-            or bundle.omitted_articles < 0 or bundle.bundle_id != evidence_hash
-            or len(known) != len(bundle.items) or any(not key for key in known)):
+    if (
+        bundle.schema_version != 1
+        or bundle.evidence_kind != "sanitized_rss_excerpt"
+        or bundle.omitted_articles < 0
+        or bundle.bundle_id != evidence_hash
+        or len(known) != len(bundle.items)
+        or any(not key for key in known)
+    ):
         raise ValueError("Invalid canonical review evidence or report metadata.")
 
 
@@ -318,19 +387,31 @@ def validate_canonical_report(report: BlindReviewReport) -> None:
     bundle = report.evidence
     validate_canonical_evidence(bundle)
     known = {item.evidence_id: item for item in bundle.items}
-    if (report.schema_version != 1 or len(report.reviews) > 3
-            or len({review.slot for review in report.reviews}) != len(report.reviews)
-            or any(identity not in known for identity in report.disputed_ids)
-            or report.selection_overlap is not None and not 0 <= report.selection_overlap <= 1):
+    if (
+        report.schema_version != 1
+        or len(report.reviews) > 3
+        or len({review.slot for review in report.reviews}) != len(report.reviews)
+        or any(identity not in known for identity in report.disputed_ids)
+        or report.selection_overlap is not None
+        and not 0 <= report.selection_overlap <= 1
+    ):
         raise ValueError("Invalid canonical review evidence or report metadata.")
     for review in report.reviews:
-        if (review.slot not in {"primary", "secondary", "third"} or review.bundle_id != bundle.bundle_id
-                or len({item.evidence_id for item in review.selections}) != len(review.selections)):
+        if (
+            review.slot not in {"primary", "secondary", "third"}
+            or review.bundle_id != bundle.bundle_id
+            or len({item.evidence_id for item in review.selections}) != len(review.selections)
+        ):
             raise ValueError("Invalid canonical review identity.")
         for selection in review.selections:
             evidence = known.get(selection.evidence_id)
-            if (evidence is None or not selection.quote.strip() or not selection.reason.strip()
-                    or selection.quote not in evidence.title and selection.quote not in evidence.excerpt):
+            if (
+                evidence is None
+                or not selection.quote.strip()
+                or not selection.reason.strip()
+                or selection.quote not in evidence.title
+                and selection.quote not in evidence.excerpt
+            ):
                 raise ValueError("Canonical review quote is not in stored evidence.")
 
 

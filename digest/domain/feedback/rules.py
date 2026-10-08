@@ -25,21 +25,34 @@ def apply_delivery_attribution(
 
 
 def record_article_vote(
-    store: FeedbackStore, article_hash: str, rating: str, *, recorded_at: datetime | None,
+    store: FeedbackStore,
+    article_hash: str,
+    rating: str,
+    *,
+    recorded_at: datetime | None,
 ) -> str:
     source = store.article_source_map.get(article_hash, "")
     if not source:
         return "unknown_article"
     assert recorded_at is not None
-    store.ratings.append(ArticleFeedback(
-        article_hash, source, 1 if rating == "g" else -1,
-        recorded_at.isoformat(),
-    ))
+    store.ratings.append(
+        ArticleFeedback(
+            article_hash,
+            source,
+            1 if rating == "g" else -1,
+            recorded_at.isoformat(),
+        )
+    )
     return "recorded_votes"
 
 
 def record_source_decision(
-    store: FeedbackStore, pending: list[PendingSource], hash8: str, action: str, *, now: datetime,
+    store: FeedbackStore,
+    pending: list[PendingSource],
+    hash8: str,
+    action: str,
+    *,
+    now: datetime,
 ) -> str:
     proposal = resolve_pending_proposal(pending, hash8, now=now)
     if proposal is None:
@@ -50,13 +63,20 @@ def record_source_decision(
 
 
 def applicable_source_decision(
-    store: FeedbackStore, pending: list[PendingSource], hash8: str, *, now: datetime,
+    store: FeedbackStore,
+    pending: list[PendingSource],
+    hash8: str,
+    *,
+    now: datetime,
 ) -> str | None:
     """Revalidate a saved decision at application, independently of collection."""
     decision = store.source_decisions.get(hash8)
     current = resolve_pending_proposal(pending, hash8, now=now)
-    if (decision not in ("approved", "rejected") or current is None
-            or store.source_decision_bindings.get(hash8) != proposal_binding(current)):
+    if (
+        decision not in ("approved", "rejected")
+        or current is None
+        or store.source_decision_bindings.get(hash8) != proposal_binding(current)
+    ):
         # Legacy unbound decisions cannot authorize a future proposal.
         return None
     return decision
@@ -67,9 +87,7 @@ def is_replayed_feedback(store: FeedbackStore, identifier: str, *, callback: boo
     return identifier in (store.seen_callback_ids if callback else store.seen_message_ids)
 
 
-def get_source_feedback_score(
-    store: FeedbackStore, source_name: str, days: int = 14, *, now: datetime
-) -> float | None:
+def get_source_feedback_score(store: FeedbackStore, source_name: str, days: int = 14, *, now: datetime) -> float | None:
     """Aggregate the latest vote per article for a source over the last N days.
 
     Returns a score between 0.0 and 1.0, or None if no feedback exists.
@@ -102,7 +120,10 @@ def record_callback_reply(store: FeedbackStore, identifier: str, text: str) -> N
 
 
 def record_message_reply(
-    store: FeedbackStore, identifier: str, kind: Literal["vote", "source"], outcome: str,
+    store: FeedbackStore,
+    identifier: str,
+    kind: Literal["vote", "source"],
+    outcome: str,
 ) -> None:
     """Consume a recognized owner message independently of callback IDs."""
     store.seen_message_ids.append(identifier)

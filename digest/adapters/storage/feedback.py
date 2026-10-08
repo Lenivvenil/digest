@@ -60,16 +60,25 @@ def parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
                 raise ValueError("Invalid feedback rating")
             logger.warning("Skipping malformed feedback rating")
             continue
-        parsed_ratings.append(ArticleFeedback(
-            rating["article_hash"], rating["source_name"], rating["rating"], rating["timestamp"],
-        ))
+        parsed_ratings.append(
+            ArticleFeedback(
+                rating["article_hash"],
+                rating["source_name"],
+                rating["rating"],
+                rating["timestamp"],
+            )
+        )
     offset = data.get("last_update_id", 0)
     digest_time = data.get("last_digest_time", "")
     cursor_observed = data.get("cursor_observed_at", "")
     previous = data.get("previous_update_id", 0)
     if (
-        type(offset) is not int or offset < 0 or not isinstance(digest_time, str)
-        or not isinstance(cursor_observed, str) or type(previous) is not int or previous < 0
+        type(offset) is not int
+        or offset < 0
+        or not isinstance(digest_time, str)
+        or not isinstance(cursor_observed, str)
+        or type(previous) is not int
+        or previous < 0
     ):
         raise ValueError("Invalid feedback metadata")
     replies = data.get("pending_replies", [])
@@ -84,9 +93,10 @@ def parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
             or not reply["identifier"]
             or not isinstance(reply.get("text", ""), str)
             or (reply["kind"] == "command" and (reply["identifier"] not in COMMANDS or reply.get("text", "")))
-            or (reply["kind"] == "source" and (
-                reply["identifier"] not in ("source_decisions", "unknown_source") or reply.get("text", "")
-            ))
+            or (
+                reply["kind"] == "source"
+                and (reply["identifier"] not in ("source_decisions", "unknown_source") or reply.get("text", ""))
+            )
             or (reply["kind"] == "vote" and (reply["identifier"] not in VOTE_REPLIES or reply.get("text", "")))
         ):
             raise ValueError("Invalid pending feedback reply")

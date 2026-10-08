@@ -19,7 +19,9 @@ def signal_text(ranked: Any, language: str = "en") -> str:
 
 
 def split_supplement(
-    text: str, escape: Callable[[str], str], max_units: int = 3800,
+    text: str,
+    escape: Callable[[str], str],
+    max_units: int = 3800,
 ) -> list[str]:
     """Escape independently valid chunks without losing text or splitting URLs.
 
