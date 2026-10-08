@@ -5,6 +5,11 @@ and the output archive. Start with the [safe quick start](../README.md#quick-sta
 for installation. The [domain model](domain/digest/overview.md) explains the terms;
 [Architecture](ARCHITECTURE.md) explains why the persistence boundaries exist.
 
+For a new runtime, use [configuration and delivery settings](#runtime-configuration).
+For an interrupted edition, start with [delivery states and recovery](#delivery-states-and-recovery).
+[Language](#language-and-optional-post-translation), [feedback](#feedback-and-source-decisions)
+and [discovery](#source-discovery) have separate settings and operating boundaries.
+
 ## Choose the scenario
 
 | Task | Entry | Important boundary |
@@ -21,6 +26,26 @@ The `--check` command probes feeds. To validate configuration without external c
 use the disabled example and commands in the quick start. Model routes, credentials,
 source activation and schedules belong to the operator's runtime.
 
+### CLI options
+
+Use `python -m digest --help` for the complete option list.
+
+| Option | Behavior |
+| --- | --- |
+| No flags | Run the configured non-prepared scenario (category summaries or review-led cards); compact publication still requires its guard. The runtime owns Git persistence. |
+| `--config PATH` | Read YAML configuration; default `config.yaml`. |
+| `--dry-run` | Fetch/analyse and print results without normal Telegram/Markdown digest delivery; may call models. |
+| `--radar-only` | Return before Irritator and normal digest delivery; may fetch/call models and, without `--dry-run`, poll feedback. |
+| `--verbose` | Enable debug logging; inspect logs before sharing. |
+| `--check` | Validate configuration, check expected environment variables and probe feeds. |
+| `--feedback-precollected` | The managed runtime owns feedback ingestion; do not poll again in this process. |
+| `--discover` | Propose/validate sources, persist candidates and send approval cards when configured. |
+
+Prepared-edition flags use the [publication barriers below](#persist-claim-and-send).
+Managed `--discovery-phase prepare|send` and its pending/delivery hashes also require
+[separate proposal persistence](ARCHITECTURE.md#trial-source-lifecycle-and-discovery).
+Neither operation is made safe by a local hash alone.
+
 ## Ordinary preparation
 
 <a id="review-led-delivery-without-legacy-enrichment"></a>
@@ -29,10 +54,13 @@ The ordinary mode uses `review.enabled: true`, `review.review_led_only: true` an
 `telegram.delivery_mode: compact`. It does not generate legacy category summaries
 or wait for an independent comparison before preparing selected cards.
 
-The managed runtime first collects feedback, durably saves its batch and acknowledges
-those exact bytes. Pass `--feedback-precollected` only when that separate work has
-already happened. Without the flag, preparation uses its normal feedback path;
-local saving alone is not a remote persistence guarantee.
+The managed runtime owns feedback collection, durable persistence and acknowledgement
+of the exact saved batch. Pass `--feedback-precollected` whenever that separate stage
+owns ingestion, including if its optional collection/persistence/acknowledgement fails,
+so preparation cannot consume another uncommitted batch. The flag skips polling; it
+does not certify prior success. Without it, preparation uses its normal feedback path.
+See the [feedback sequence](#feedback-and-source-decisions); local saving alone is not
+a remote persistence guarantee.
 
 ```sh
 python -m digest --config config.yaml --feedback-precollected --prepare-edition
@@ -265,6 +293,308 @@ Neither a matching quotation nor successful transport establishes factual useful
 The [Irritator model](domain/irritator/overview.md#current-domain-model) describes the
 source/evidence relationship; [transport compatibility](ARCHITECTURE.md#supported-application-scenarios)
 describes the different sending protocols.
+
+## Runtime configuration
+
+Keep `config.yaml`, credentials, `.cache/` and generated output in a separate runtime.
+Install a reviewed immutable engine commit there, retain the previous pin, and run
+from its own working directory. Two instances must not share writable state.
+The engine's CI checks source code; it does not install a daily schedule. A managed
+runtime owns its schedule, secrets, engine pin, serialized runs and Git persistence.
+
+Start from the [disabled example](../examples/config.example.yaml), replace the model
+and feed placeholders, and enable the intended source. Keep Telegram and Markdown
+delivery disabled while reviewing an intentional live preview:
+
+```sh
+python -m digest --config config.yaml --check
+python -m digest --config config.yaml --dry-run --radar-only
+```
+
+`--check` probes feed URLs and checks expected environment variables. It does not
+establish editorial quality. `--dry-run` can fetch sources and call models, consuming
+their quotas, while suppressing normal digest delivery and saved digest output.
+Use the README's disabled-example commands for an offline empty-input check.
+
+### Environment variables
+
+Load selected credentials securely through the shell or runner. The engine does
+**not** automatically load `.env`; [.env.example](../.env.example) lists reference
+names only. Never put real credentials in a committed URL, screenshot, issue or log.
+
+| Variable | Purpose |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Anthropic provider |
+| `GEMINI_API_KEY` | Gemini provider |
+| `GROQ_API_KEY` | Groq provider |
+| `MISTRAL_API_KEY` | Mistral provider |
+| `DEEPSEEK_API_KEY` | DeepSeek provider |
+| `TELEGRAM_BOT_TOKEN` | Configured Telegram bot |
+| `TELEGRAM_CHAT_ID` | Intended destination and supported owner checks |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME` | Optional existing Reddit adapter credentials |
+
+Missing keys disable matching provider routes; they do not guarantee another route
+can succeed. Missing required Telegram credentials is a failure even when Markdown
+can be saved.
+
+### Model routes
+
+The provider adapters support Anthropic, Gemini, Groq, Mistral and DeepSeek.
+Configure only intended services and models. Check current model availability,
+account entitlement, pricing, request limits and token limits before a live run;
+context capacity is not a free throughput budget. Do not inadvertently add a paid
+fallback to a free-only runtime. Exhausted eligible routes can leave failed or
+incomplete work.
+
+Category-analysis mode uses role/provider routing, bounded retries and fallback.
+Category work runs concurrently within configured limits before cross-category trends.
+A category-specific route can nominate a provider/model; unrouted categories use the
+configured chain. Missing credentials follow the existing fallback rules. These
+model IDs are placeholders, not recommendations:
+
+```yaml
+llm:
+  providers:
+    - name: gemini
+      model: YOUR_GEMINI_MODEL_ID
+      role: [summarize, rank_signals, fallback]
+    - name: groq
+      model: YOUR_GROQ_MODEL_ID
+      role: [fallback]
+  routing:
+    - categories: [AI Engineering]
+      provider: gemini
+      model: YOUR_GEMINI_MODEL_ID
+```
+
+Review slots are separately pinned. See [ordinary primary/fallback preparation](#ordinary-preparation)
+and [independent comparison](#independent-comparison-and-resume) rather than assuming
+category routing supplies the same fallback semantics for every operation.
+
+### Sources and categories
+
+Edit the runtime's `sources` list. The public example contains no private source list:
+
+```yaml
+sources:
+  - name: My Feed
+    url: https://example.com/feed.xml  # Replace before enabling
+    category: Architecture
+    enabled: false
+    priority: 3
+    recency_hours: 24
+    trial: false
+    trial_days: 7
+```
+
+Priority ranges from 1 to 5 and influences source-slot allocation; it does not prove
+editorial value. Categories are operator-defined. Banking/payments, AI engineering,
+distributed systems, enterprise architecture and regional affairs are examples from
+the project's original use, not mandatory personal-profile presets.
+
+### Delivery settings
+
+Create a Telegram bot through the official BotFather flow and configure its token and
+intended chat ID in runtime environment variables or Actions secrets. The engine sends
+to `TELEGRAM_CHAT_ID`; it does not select recipients. Set `telegram.enabled: true`
+when ready, and `telegram.required: true` if a Markdown archive alone must not count
+as successful delivery. Enable `obsidian` to save Markdown to its configured output
+directory, then sync that runtime archive to Obsidian. API acceptance does not mean
+a person read the edition.
+
+`telegram.delivery_mode: compact` assembles selected articles into one logical edition,
+using necessary chunks without cutting selected text or source URLs. Indexed vote
+buttons retain article identity; translation and model-attribution notices appear
+once per issue. The ordinary managed path requires [prepare, persist, claim and send](#persist-claim-and-send).
+Omitting delivery mode preserves legacy per-article cards; switching formatting alone
+does not supply the prepared publication protocol.
+
+## Language and optional post translation
+
+Without a `translation` section, legacy `radar.language` accepts `en` or `ru` and
+its omitted-field default remains `ru`. Upgrading an existing Russian runtime does
+not implicitly add translation calls. A new explicit translation section defaults
+to English canonical generation only when no generation language was specified.
+Enabled translation rejects an explicit `radar.language: ru` conflict.
+
+To opt in, choose an already configured, entitled route:
+
+```yaml
+radar:
+  language: en
+translation:
+  enabled: true
+  target_language: ru
+  provider: gemini             # Must exist in llm.providers or an explicit review route
+  model: YOUR_GEMINI_MODEL_ID  # Exact match to that configured provider/model
+  max_calls: 1                # Per presentation pass, without HTTP retries
+  timeout_seconds: 90         # Total budget, including shared pacing and the request
+  max_output_tokens: 2048
+  max_input_chars: 12000
+```
+
+Translation changes generated card/category prose and published Irritator narratives
+and reasoning. Original titles, source metadata, URLs, literal quotations and raw
+reviews/evidence remain canonical. The target does not change analysis, review input
+or search queries. Telegram and Markdown receive the same presentation.
+
+The route is pinned with no automatic provider fallback or retry. Limits constrain
+optional presentation, not article selection. Oversized input or exhausted allowance
+keeps canonical publication with a visible status. The default total timeout is 90
+seconds; explicit values up to 180 are supported. Include provider pacing in that
+budget: a 65-second shared interval leaves little request time in a short budget.
+A known wait beyond the remaining deadline makes no attempt record or request.
+See [supplementary timing and canonical archives](decisions/0005-optional-presentation-translation.md#bounded-supplementary-presentation)
+for the separate post-delivery allowance; configuration does not establish free quota.
+
+Persist private `.cache/translations/` for primary reuse and the supplement's
+`.translations/` records beside its canonical `.irritator.json` archive. Compatible
+completed batches can be reused. An attempted failure or interruption ends translation
+for that canonical version; fallback may already have been delivered. Inspect the
+record before an explicit retry, and never delete delivery state to retry translation.
+New canonical text, target, model or prompt gets a separate key. Dry-run uses temporary
+translation storage and may still consume quota.
+
+Structural validation preserves field IDs, numeric literals, URLs and recognized
+quotation/code spans, not every aspect of meaning. Machine translation is labelled;
+incomplete translation falls back to canonical English. Finite observed translation
+and fallback evidence is recorded in [ADR-0005](decisions/0005-optional-presentation-translation.md#what-validation-does-and-does-not-establish).
+It does not establish general fidelity or complete #55's editorial acceptance.
+
+## Feedback and source decisions
+
+Feedback collection is independent of `adaptive.enabled` and uses no continuously
+running bot service. The supported owner is the configured private chat; the sender
+must match it. Group and inline callbacks are rejected. Set `telegram.bot_username`
+to the plain username of the same bot as the token for 👍/👎 links. Tap a vote and
+Telegram's **Start** button; the next eligible run collects the message. Commands
+`/vote g <article-code>` and `/vote b <article-code>` also work without a username.
+Only recognized vote data and `/status` or `/bubble` tags are retained, not arbitrary
+message bodies.
+
+For a managed runtime, keep these three steps in order:
+
+```sh
+python -m digest.feedback_poll collect
+# Commit/push .cache/feedback.json; verify its SHA256 from the successful remote revision.
+python -m digest.feedback_poll ack --expected-sha256 "$FEEDBACK_SHA"
+```
+
+`FEEDBACK_SHA` must identify those exact durably persisted file bytes. Pass
+`--feedback-precollected` to the digest whenever the managed runtime owns collection,
+including if its optional feedback stage fails, so the digest cannot consume another
+uncommitted batch. Direct local use saves votes and polling offset together before
+acknowledgement; local saving alone does not establish remote durability.
+
+Ordinary vote/decision messages remain available for at most 24 hours. Legacy callback
+buttons are best effort, with about 150 seconds of server retention. A sleeping or
+failed schedule can lose uncollected feedback; see [ADR-0006](decisions/0006-batch-message-voting.md).
+Saved votes survive later feed/model/delivery failures. Pending replies are best effort
+and can be superseded by later collection. Corrupt state is retained for diagnosis.
+Unknown/stale cursor history uses a non-confirming read without an offset before
+re-anchoring, not an old high offset that could discard updates.
+
+Only the latest valid vote per article is effective. Raw votes never enter model input.
+Even with automatic adaptation disabled, feedback can adjust priorities within existing
+bounds; unrated sources retain configured priority. With adaptation enabled, reliability,
+productivity, description length and recency also affect source scoring, and trials may
+graduate or be demoted. Disabling adaptation also disables automatic trial decisions.
+See the [feedback contract](ARCHITECTURE.md#feedback-loop) and
+[retained scoring rules](history/architecture-2026-10-08.md#source-quality-scoring).
+An allocation change does not guarantee article selection.
+
+Source proposals use Add/Reject links followed by Start, or `/source ok HASH` and
+`/source no HASH`. A private owner decision must match the exact saved proposal,
+URL hash and age of 0–30 days during collection and application. A batch receipt means
+**decisions saved**, not sources added. Approved sources are applied before collection,
+even if later work is empty or fails. Configuration/backup failures retain the decision
+for retry; unbound historical decisions cannot authorize replacement proposals.
+[#48](https://github.com/Lenivvenil/digest/issues/48) tracks operational acceptance.
+
+## Source discovery
+
+Discovery is separate from Irritator. `python -m digest --discover` proposes feeds,
+validates URLs, saves candidates and requests approval through Telegram when configured.
+Its exploration areas are independent of the active professional source portfolio:
+
+```yaml
+discovery:
+  exploration_areas:
+    - fintech/banking/architecture
+    - science
+    - society/institutions
+    - history/culture
+    - environment
+    - design
+```
+
+These are provisional defaults, not historical preferences or a required proportion.
+Use 1–16 distinct nonempty names, up to 80 characters each. Each pass prefers the
+least recently offered area, breaking ties in configured order. Empty/failed attempts
+advance the pass without counting as offers. Requested areas are not verified
+classifications or proof of novelty. Professional refresh stays eligible; cross-field
+requests need no contrived professional connection.
+
+One logical generation permits at most two configured routes, three feed checks/offers
+and a 2,048-token output limit. Invalid pending proposals consume the current check
+then skip one later eligible preparation before retry; managed retries do not consume
+that skip. Confirmed messages, uncertain possible sends, reservations and explicit
+API rejections remain distinct. Follow the [discovery state contract](ARCHITECTURE.md#trial-source-lifecycle-and-discovery)
+and [ADR-0013](decisions/0013-discovery-exploration-state.md) for persistence and cooldowns.
+
+Approval adds a priority-3 trial source; configuration and lifecycle state are separate
+under [ADR-0003](decisions/0003-source-state-split.md). Discovery does not change engine
+source files or install a weekly schedule. The proposal-generation slice of
+[#132](https://github.com/Lenivvenil/digest/issues/132) leaves active-feed selection and
+daily candidate scheduling unchanged; `adaptive.trial_slots` alone does not protect
+important professional work after admission. Delivered recommendations still need
+editorial evaluation.
+
+## Legacy format and optional features
+
+The category-summary path supports `radar.summary_style` values `analytical`, `brief`
+and `detailed`. Set `radar.perspectives: true` to request Optimist, Skeptic and Realist
+views of significant topics; brief mode omits them. Views should supply different
+reasoning, with short comments for minor items and cross-category trends for related
+developments. The [retained illustrative format](history/readme-2026-10-08.md#digest-format-and-perspectives)
+is not a factual news item or benchmark. Markdown includes Obsidian front matter.
+Ordinary review-led preparation instead selects attributed cards from RSS evidence.
+Neither format establishes that the complete source was read.
+
+An optional humane closing item is implemented but disabled by default. It uses an
+eligible, explicitly bound source and the existing review packet without another
+selection call or reducing the main-card cap. Activating this optional feature requires
+approved closing-source bindings and attribution review; its finite editorial/capacity
+acceptance remains open. Follow [ADR-0014](decisions/0014-optional-humane-closing-item.md)
+for exact settings, main-versus-closing translation/credit behavior and recovery.
+Sparse supply is not a promise of a daily positive story.
+
+### Experimental source reading
+
+`reading_brief` is off by default and requires English canonical text, review-led
+selection and an explicit model route. It runs only through `--prepare-edition`;
+unsupported preview/direct-publish modes stop before source/model work. Completed
+source pages are a technical evidence handoff, not an accepted or published edition.
+Unknown generation outcomes remain held across invocations and route changes.
+The [accounting guide](reading-brief-accounting.md) describes verified profiles,
+optional offline tokenizer preparation and the bounded configured fallback. Unknown
+profiles remain technical pending; advertised context does not establish free quota.
+Proposed [ADR0009](decisions/0009-selected-source-admission.md) retains the open
+factual-quality, reconciliation and throughput gates. The separate
+[closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not on main.
+
+## Upgrades and retained state
+
+Use the package version, immutable commit and [changelog](../CHANGELOG.md) together.
+Keep the previous engine pin and compatible runtime configuration for rollback.
+The runtime owns its [cache and archived evidence](ARCHITECTURE.md#cache-architecture);
+no database or always-on service is required.
+
+Before rollback, verify that the chosen engine and configuration can interpret retained
+state. Preserve receipts, deduplication/feedback records, translation records and issue
+reservations. Hold publication if compatibility or an earlier delivery is uncertain.
+Do not reset state or resend an edition merely because the engine was rolled back.
+Optional supplementary failures must remain visible without erasing primary receipts.
 
 ## Where to look in code
 

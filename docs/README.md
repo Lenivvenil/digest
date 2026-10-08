@@ -8,7 +8,8 @@ dated decisions and archived models remain linked for context.
 1. [Purpose and safe quick start](../README.md#quick-start): install the engine and
    validate the [disabled example configuration](../examples/config.example.yaml)
    without credentials or external requests
-2. [CLI and configuration](../README.md#cli-reference): distinguish offline validation,
+2. [Runtime configuration](BLIND_REVIEW.md#runtime-configuration) and
+   [CLI options](BLIND_REVIEW.md#cli-options): distinguish offline validation,
    report-only model work and enabled delivery
 3. [Prepared publication and recovery](BLIND_REVIEW.md#prepared-editions-and-delivery-recovery-120):
    use the runtime's saved-state, reservation and recovery boundaries
@@ -42,6 +43,8 @@ configuration, delivery destinations, the engine pin and durable state.
 The following retain their original language, date and decision context. They are not
 current onboarding instructions or newly ratified operating contracts:
 
+- [Prior README and onboarding/reference examples](history/readme-2026-10-08.md):
+  preserved before the README became a concise reader entry point
 - [Prior Digest domain/acceptance record](history/digest-domain-2026-10-08.md),
   [architecture/migration record](history/architecture-2026-10-08.md) and
   [review/operations record](history/review-operations-2026-10-08.md): preserved before
@@ -77,6 +80,7 @@ closed without merging; its experimental enrichment is not available on main. Th
 ordered requirements and acceptance status live in [#91](https://github.com/Lenivvenil/digest/issues/91).
 
 An absent translation section preserves legacy direct `radar.language` generation.
-README and ADR-0005 document explicit English canonical generation and optional
-translation of generated publication prose. No software-license grant is supplied;
+The [operator guide](BLIND_REVIEW.md#language-and-optional-post-translation) and
+ADR-0005 document explicit English canonical generation and optional translation
+of generated publication prose. No software-license grant is supplied;
 choosing a distribution license is outside this personal-runtime milestone.
