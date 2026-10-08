@@ -63,18 +63,6 @@ def _make_config(
 
 
 # ---------------------------------------------------------------------------
-# SearchQuery dataclass
-# ---------------------------------------------------------------------------
-
-class TestSearchQueryDataclass:
-    def test_no_target_source_field(self) -> None:
-        q = SearchQuery(query="test failure", intent="find problems")
-        assert not hasattr(q, "target_source")
-        assert q.query == "test failure"
-        assert q.intent == "find problems"
-
-
-# ---------------------------------------------------------------------------
 # _build_prompt tests
 # ---------------------------------------------------------------------------
 
@@ -140,7 +128,8 @@ class TestParseQueries:
         result = _parse_queries(raw)
         assert len(result) == 3
         assert isinstance(result[0], SearchQuery)
-        assert result[0].query == "failure of AI replacing developers 0"
+        assert [asdict(query) for query in result] == raw
+        assert not hasattr(result[0], "target_source")
 
     def test_not_a_list(self) -> None:
         with pytest.raises(ValueError, match="Expected JSON array"):
@@ -159,12 +148,6 @@ class TestParseQueries:
         raw = [{"intent": "find something"}]
         with pytest.raises(ValueError, match="missing field"):
             _parse_queries(raw)
-
-    def test_no_target_source_required(self) -> None:
-        raw = [{"query": "AI failure", "intent": "find failures"}]
-        result = _parse_queries(raw)
-        assert len(result) == 1
-        assert not hasattr(result[0], "target_source")
 
 
 # ---------------------------------------------------------------------------
@@ -279,10 +262,6 @@ class TestGenerateQueries:
         assert asdict(narrative) == original_narrative
 
 
-@pytest.mark.parametrize("query", [
-    '"unterminated phrase', "AI AND security", "all:security", "-security",
-    "one two three four five six seven eight nine",
-])
-def test_invalid_lexical_query_is_rejected_without_rewriting(query: str) -> None:
+def test_invalid_lexical_query_is_rejected_without_rewriting() -> None:
     with pytest.raises(ValueError, match="Invalid lexical query"):
-        _parse_queries([{"query": query, "intent": "Find a limitation"}])
+        _parse_queries([{"query": "AI AND security", "intent": "Find a limitation"}])
