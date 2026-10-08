@@ -54,6 +54,11 @@ def test_saved_source_packet_closing_and_preparation_match_pre_extraction_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    # This historical wire fixture binds its original request, not today's editorial instructions.
+    monkeypatch.setattr(
+        "digest.application.candidate_review.review_prompt_hash",
+        lambda _: "f79d60aa5b8de2bad6766db4e41474362d742b6523e0336ce4a182be5e826399",
+    )
     main = ArticleSummary("Source title — исходный", "https://example.com/article?tag=a%20b", "Source", "Tech",
                           'Canonical claim with "quoted text"\nand café.')
     closing = ArticleSummary("Closing title", "https://example.com/closing", "Community", "Society",
