@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import CandidateDispositionCapture
 from digest.config import ReviewModelConfig
 from digest.review import _groq_review_format, _review_usage, run_primary_review
 from digest.review_checkpoint import load_review_checkpoint
@@ -60,13 +59,13 @@ def test_strict_wire_shape_disallows_per_selection_limitations_and_preserves_dis
 async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_survive(tmp_path: Path) -> None:
     execution = ModelExecution()
     config = fixture_config()
-    capture = CandidateDispositionCapture()
     raw = json.dumps(payload())
     usage = {"finish_reason": "length", "prompt_tokens": 4222, "completion_tokens": 4096,
              "completion_tokens_details": {"reasoning_tokens": 1800, "reasoning": "DO NOT RETAIN"}}
     completion = AsyncMock(side_effect=[RuntimeError("primary unavailable"), (raw, usage)])
     with patch("digest.application.review.complete", completion) as call:
-        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
+        result = await run_primary_review(fixture_articles(), config, execution=execution)
+        report = result.report
     first, second = call.call_args_list
     assert "reasoning_effort" not in first.kwargs and "response_format" not in first.kwargs
     assert second.kwargs["reasoning_effort"] == "low"
@@ -77,7 +76,7 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
     assert report.reviews[1].status == "invalid" and not report.reviews[1].selections
     assert report.reviews[1].usage["reasoning_tokens"] == 1800
     assert "DO NOT RETAIN" not in json.dumps(asdict(report))
-    assert capture.attempts[1].finish_reason == "length"
+    assert result.disposition_attempts[1].finish_reason == "length"
     assert len(call.call_args_list) == 2
     checkpoint = tmp_path / "review.json"
     checkpoint.write_text(json.dumps(asdict(report)))

@@ -2,7 +2,6 @@
 
 from digest.domain.editorial.dispositions import CandidateDisposition as CandidateDisposition
 from digest.domain.editorial.dispositions import CandidateDispositionAttempt as CandidateDispositionAttempt
-from digest.domain.editorial.dispositions import CandidateDispositionCapture as CandidateDispositionCapture
 from digest.domain.editorial.dispositions import DispositionStatus as DispositionStatus
 from digest.domain.editorial.dispositions import _entry as _entry
 from digest.domain.editorial.dispositions import _parse_dispositions as _parse_dispositions

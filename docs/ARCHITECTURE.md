@@ -69,8 +69,11 @@ recoverable work or a hold, according to the boundary already crossed.
    reports are considered after collection and eligibility reconciliation. With no
    reusable report, persist the planned attempt before the bounded primary review.
    Planning does not prove that a provider received a request.
-6. **Accept an editorial result.** Valid selected cards, including accepted partial
-   results, can advance. A valid primary abstention requires resolved disposition
+6. **Resolve the response, then accept projected cards.** One response-owned result
+   binds the chosen primary/fallback review to its dispositions and optional closing
+   designation. Consumers do not independently reselect a review slot. The comparison
+   report remains an audit artifact and can still be incomplete. Valid projected
+   cards, including accepted partial results, can advance. A valid primary abstention requires resolved disposition
    evidence when recorded attempts carry it, as fresh candidate packets do. Older
    packets without that capture retain their existing compatibility behavior.
    If the primary is invalid/unavailable and the secondary only abstains, the
@@ -96,7 +99,8 @@ the eligible subset.
 | Operation | Explicit result | Meaning for the next step |
 | --- | --- | --- |
 | `recover_preparation` | `ExistingEdition`, `AcceptedPreparation` or `FreshPreparation.REQUIRED` | Return an existing edition outcome, resume locally verified accepted content, or collect fresh work. `held` remains the inspector’s conservative summary, not a detailed receipt diagnosis. |
-| Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Candidate work carries required progress, packet and report values; category and empty outcomes do not masquerade as that record. |
+| Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Ordinary candidate work carries progress, packet and one resolved review; category and empty outcomes remain separate. |
+| Editorial authority | `ReviewAttempt` → `ResolvedReview` | One response owns its review, dispositions and optional closing designation. The resolver chooses authority; the unchanged comparison report is its audit projection. |
 | `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | One policy decides whether ordinary work is acceptable, saves it and verifies the exact restored snapshot before handoff. |
 | `assemble_publication` | `PublicationAssembly` | Resolve required provenance, present main content and decide whether the optional closer can accompany it. Final card order and existing metadata derive from this result. |
 | `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |

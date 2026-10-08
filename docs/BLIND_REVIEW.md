@@ -624,7 +624,7 @@ Optional supplementary failures must remain visible without erasing primary rece
 | --- | --- |
 | Which scenario runs? | `main.main`, `application/execution.py` |
 | What is recovered before collection? | `application/preparation.py`, `edition_runtime.recover_preparation` |
-| Which primary/fallback result is usable? | `application/review.py:run_primary_review`, `domain/editorial/reviews.py:delivery_review` |
+| Which primary/fallback result is usable? | `application/review.py:run_primary_review`, `domain/editorial/attempts.py:resolve_review`; saved records enter through `restore_review` |
 | What does accepted storage validate? | `edition_runtime.accept_preparation`, `preparation.py:load_accepted_preparation` |
 | What does presentation preserve or hold? | `edition_runtime.present_preparation` (legacy callers retain `finish_preparation`) |
 | What can claim/send/inspect do? | `application/prepared_delivery.py` |

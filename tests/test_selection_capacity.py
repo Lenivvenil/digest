@@ -27,6 +27,7 @@ from digest.candidate_review import (
 )
 from digest.config import Config, SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE
+from digest.domain.editorial.attempts import restore_review
 from digest.edition_runtime import delivery_phase
 from digest.feedback import FeedbackStore, save_feedback
 from digest.main import _run
@@ -218,7 +219,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     for before, after in zip(original.reviews, reused.reviews, strict=True):
         assert asdict(after) == {**asdict(before), "reused_from_checkpoint": True}
     before_cards = asdict(reused)
-    assert len(primary_cards(reused, articles, "en", max_cards=config.review.max_selections)) == 2
+    assert len(primary_cards(restore_review(reused), articles, "en", max_cards=config.review.max_selections)) == 2
     assert asdict(reused) == before_cards
     if partial:
         assert cached[0].rejected_items[0].index == 7

@@ -10,8 +10,10 @@ from pathlib import Path
 from digest._util import utc_instant as _instant
 from digest.adapters.storage import candidate_objects as storage
 from digest.adapters.storage.candidate_progress import MAX_BYTES, materialize_progress, progress_size, write_progress
+from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.candidates import Candidate, CandidateProgress, accepted_empty_packet, proof_packets
-from digest.domain.editorial.reviews import BlindReviewReport, delivery_review
+from digest.domain.editorial.dispositions import CandidateDispositionAttempt
+from digest.domain.editorial.reviews import BlindReviewReport
 
 
 def index_candidate(candidate: Candidate, progress: CandidateProgress, cache_dir: str | Path) -> None:
@@ -91,8 +93,8 @@ def ensure_report_accounting(
     ]
     inventory = json.loads(packet.collection_json)
     serialized_bytes = progress_size(progress, cache_dir)
-    delivery = delivery_review(report)
-    attempt = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
+    captured = restore_review(report, packet.disposition_attempts).chosen.dispositions
+    attempt = captured if isinstance(captured, CandidateDispositionAttempt) else None
     packet_ids = {item.evidence_id for item in packet.evidence.items}
     summary = {
         "accounted_at": instant.isoformat(),

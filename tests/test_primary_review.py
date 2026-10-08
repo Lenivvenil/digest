@@ -51,7 +51,8 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.application.review.complete", side_effect=adapter) as complete:
-        report = await run_primary_review(fixture_articles(), config, execution=execution)
+        result = await run_primary_review(fixture_articles(), config, execution=execution)
+        report = result.report
     complete.assert_awaited_once()
     assert config == original
     assert report.status == "incomplete"
@@ -69,7 +70,7 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
     assert primary.prompt_hash == secondary.prompt_hash
     assert primary.bundle_id == secondary.bundle_id == report.evidence.bundle_id
     assert "pending independent review (not attempted)" in render_review(report)
-    assert bool(primary_cards(report, fixture_articles(), "en")) is not abstain
+    assert bool(primary_cards(result, fixture_articles(), "en")) is not abstain
 
 
 @pytest.mark.asyncio
@@ -95,14 +96,15 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.application.review.complete", side_effect=adapter):
-        report = await run_primary_review(fixture_articles(), config, execution=execution)
+        result = await run_primary_review(fixture_articles(), config, execution=execution)
+        report = result.report
     assert [model for model, _ in calls] == [config.review.primary.model, config.review.secondary.model]
     assert calls[0][1] == calls[1][1]
     assert [review.status for review in report.reviews] == [failure, fallback]
     assert all(review.attempted_at for review in report.reviews)
     assert report.status == "incomplete" and report.selection_overlap is None
     assert report.third_model_reason == "pending_independent_review"
-    assert bool(primary_cards(report, fixture_articles(), "en")) is (fallback == "ok")
+    assert bool(primary_cards(result, fixture_articles(), "en")) is (fallback == "ok")
     assert config.llm.max_retries == 3
 
 
@@ -117,7 +119,8 @@ async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None
         return await fixture_response(role, messages, used, **kwargs)
 
     with patch("digest.application.review.complete", side_effect=adapter):
-        first = await run_primary_review(fixture_articles(), config, execution=execution)
+        first_result = await run_primary_review(fixture_articles(), config, execution=execution)
+        first = first_result.report
         final = await run_evidence_review(first.evidence, config, first.reviews, execution=execution)
     assert len(prompts) == 3
     assert all(prompt == prompts[0] for prompt in prompts)
@@ -141,7 +144,8 @@ async def test_delivery_retries_disabled_in_real_completion_wrapper() -> None:
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.llm._call_provider", AsyncMock(side_effect=httpx.ReadTimeout("offline"))) as provider,
     ):
-        report = await run_primary_review(fixture_articles(), config, execution=execution)
+        result = await run_primary_review(fixture_articles(), config, execution=execution)
+        report = result.report
     assert provider.await_count == 2
     assert [review.status for review in report.reviews] == ["unavailable", "unavailable"]
     assert config.llm.max_retries == 3
@@ -266,7 +270,6 @@ async def test_non_delivery_modes_never_publish_checkpoint(args: list[str]) -> N
 @pytest.mark.parametrize("finish", [None, "MAX_TOKENS"])
 async def test_reading_primary_incomplete_completion_never_implies_editorial_rejection(finish: str | None) -> None:
     execution = ModelExecution()
-    from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.config import ReadingBriefConfig
 
     config = fixture_config()
@@ -276,11 +279,11 @@ async def test_reading_primary_incomplete_completion_never_implies_editorial_rej
         text, usage = await fixture_response(*args, **kwargs)
         return text, usage | {"finish_reason": finish}
 
-    capture = CandidateDispositionCapture()
     with patch("digest.application.review.complete", side_effect=select):
-        report = await run_primary_review(fixture_articles(), config, disposition_capture=capture, execution=execution)
+        result = await run_primary_review(fixture_articles(), config, execution=execution)
+        report = result.report
     assert bool(report.reviews[0].selections) is (finish is None)
     if finish is not None:
         assert report.reviews[0].error == "provider reported unfinished response"
-    assert capture.attempts[0].status == "incomplete"
-    assert not any(item.status in {"not_selected", "duplicate"} for item in capture.attempts[0].dispositions)
+    assert result.disposition_attempts[0].status == "incomplete"
+    assert not any(item.status in {"not_selected", "duplicate"} for item in result.disposition_attempts[0].dispositions)

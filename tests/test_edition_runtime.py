@@ -17,9 +17,11 @@ import respx
 from digest.adapters.models.execution import ModelExecution
 from digest.candidate_review import CandidateProgress, merge_candidates, plan_packet
 from digest.candidate_storage import freeze_packet
-from digest.closing import ClosingCapture, ClosingDecision, capture_closing, decide_closing
+from digest.closing import ClosingDecision, capture_closing, decide_closing
 from digest.config import ClosingConfig, ClosingSourceBinding, SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE, inspect_edition
+from digest.domain.editorial.attempts import ReviewAttempt, resolve_review
+from digest.domain.editorial.dispositions import capture_review_dispositions
 from digest.edition_runtime import delivery_phase, finish_preparation, resume_preparation
 from digest.feedback import FeedbackStore, load_feedback, save_feedback
 from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
@@ -66,8 +68,9 @@ def bound_snapshot(
     freeze_packet(packet, {}, ".cache")
     decision = original.closing
     if closing_card is not None:
-        capture = ClosingCapture([capture_closing(review, raw, "stop")])
-        decision = decide_closing(report, packet, capture, config.closing, config.sources)
+        result = resolve_review(report, (ReviewAttempt(
+            review, capture_review_dispositions(report.evidence, review, raw), capture_closing(review, raw, "stop")),))
+        decision = decide_closing(result, packet, config.closing, config.sources)
         assert decision.status == "selected" and decision.card == closing_card
     return replace(original, review_report=report, closing=decision)
 

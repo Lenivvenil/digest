@@ -240,7 +240,10 @@ async def run_legacy(
         return _empty_run_stats(feeds_count, feedback_collected, total_articles)
 
     combined = presentation.combined_summary(summaries, trends, review_led_only, config.radar.language)
-    combined = presentation.publication_intro(combined, review_report, config)
+    from digest.domain.editorial.attempts import restore_review
+
+    combined = presentation.publication_intro(
+        combined, restore_review(review_report) if review_report is not None else None, config)
 
     if radar_only:
         combined, top_articles = await presentation.primary_presentation(

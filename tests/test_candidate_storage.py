@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import CandidateDispositionCapture
 from digest.candidate_review import CandidatePacket, CandidateProgress, merge_candidates, plan_packet
 from digest.candidate_storage import (
     decode_active_candidate,
@@ -28,6 +27,7 @@ from digest.candidate_storage import (
     save_candidate,
     write_policy,
 )
+from digest.domain.editorial.attempts import restore_review
 from digest.review import run_primary_review
 from tests.test_candidate_review import NOW, population, report_for
 
@@ -106,16 +106,16 @@ async def test_terminal_index_requires_exact_capture_and_occurrence(tmp_path: Pa
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
     assert packet is not None
-    capture = CandidateDispositionCapture()
     response = json.dumps({"selections": [], "limitations": ["No actionable metadata"], "dispositions": [
         {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable detail."}
         for item in packet.evidence.items]})
     with patch("digest.application.review.complete", return_value=(response, {})):
-        packet.report = await run_primary_review(articles, config,
-            execution=model_execution, disposition_capture=capture)
-    packet.disposition_attempts = tuple(capture.attempts)
+        result = await run_primary_review(articles, config,
+            execution=model_execution)
+        packet.report = result.report
+    packet.disposition_attempts = tuple(result.disposition_attempts)
     path = freeze_packet(packet, {}, tmp_path)
-    attempt = capture.attempts[0]
+    attempt = result.disposition_attempts[0]
     candidate = progress.candidates[attempt.dispositions[0].evidence_id]
     candidate.status = "not_selected"
     candidate.disposition = attempt.dispositions[0]
@@ -326,7 +326,7 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
     old.collection_json = progress.latest_collection_json
     review.begin_packet(progress, old, tmp_path)
     report = report_for(old, config, "invalid")
-    review.reconcile_packet(progress, old, report, config, tmp_path)
+    review.reconcile_packet(progress, old, restore_review(report), config, tmp_path)
     progress = review.load_candidate_progress(tmp_path)
 
     _, fresh = population(1)
@@ -388,8 +388,8 @@ def measured_candidate_window(
     import hashlib
 
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, cache_dir)
     report_key = digest(asdict(report))
     frozen = read_packet(report_key, cache_dir)
     assert frozen.report == report and frozen.articles == packet.articles
@@ -487,8 +487,8 @@ def test_packet_collection_retains_excluded_source_references_after_active_retir
     raw = json.dumps({"selections": [], "dispositions": [{"evidence_id": packet.evidence.items[0].evidence_id,
                        "status": "not_selected", "reason": "No actionable metadata."}]})
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     record = read_report_record(digest(asdict(report)), tmp_path)
     collection = json.loads(record["packet"]["collection_json"])
     assert record["summary"]["current_collection"] == collection

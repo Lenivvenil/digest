@@ -40,8 +40,9 @@ async def saved_selection(
                            "limitations": ["RSS evidence only"]}), {"finish_reason": "stop"}
 
     with patch("digest.application.review.complete", side_effect=select):
-        report = await run_primary_review(articles, config, execution=execution)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+        result = await run_primary_review(articles, config, execution=execution)
+        report = result.report
+    reconcile_packet(progress, packet, result, config, tmp_path)
     return config, progress, packet, report
 
 
@@ -303,7 +304,6 @@ async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
 @pytest.mark.asyncio
 async def test_complete_empty_source_packet_retires_resolved_metadata_without_fake_preparation(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.candidate_review import load_candidate_progress, save_candidate_progress
     from digest.candidate_storage import load_candidate
     from digest.reading_preparation import deferred_source_reports
@@ -322,10 +322,9 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
                                              "reason": "This fixture has no role-relevant technical mechanism."}
                                             for item in items]}), {"finish_reason": "stop"}
 
-    capture = CandidateDispositionCapture()
     with patch("digest.application.review.complete", side_effect=abstain):
-        report = await run_primary_review(articles, config, disposition_capture=capture, execution=execution)
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+        result = await run_primary_review(articles, config, execution=execution)
+    reconcile_packet(progress, packet, result, config, tmp_path)
     identities = set(progress.candidates)
     deferred = deferred_source_reports(progress, tmp_path, config)
     assert deferred

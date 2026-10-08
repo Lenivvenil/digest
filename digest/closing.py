@@ -7,18 +7,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from digest._sanitize import sanitize_article
-from digest._serialization import extract_json as _extract_json
 from digest.application.review_request import eligible_ids as eligible_ids
 from digest.config import ClosingConfig
 from digest.domain.catalog.articles import article_hash
 from digest.domain.catalog.occurrences import SourceOccurrence, occurrence_sha256
 from digest.domain.catalog.sources import SourceConfig
-from digest.domain.editorial.reviews import delivery_review, validated_cached_selections
+from digest.domain.editorial.attempts import ClosingAttempt as ClosingAttempt
+from digest.domain.editorial.attempts import ResolvedReview, restore_review
+from digest.domain.editorial.attempts import capture_closing as capture_closing
 from digest.presentation.source_attribution import attribute_source_card as attribute_source_card
 from digest.radar.summarizer import ArticleSummary
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from digest.domain.editorial.candidates import CandidatePacket
-    from digest.domain.editorial.reviews import BlindReviewReport, ModelReview
+    from digest.domain.editorial.reviews import BlindReviewReport
 
 
 @dataclass(frozen=True)
@@ -91,76 +92,19 @@ def attribute_closing_card(decision: ClosingDecision, card: ArticleSummary) -> A
     return attributed if credited else None
 
 
-@dataclass(frozen=True)
-class ClosingAttempt:
-    slot: str
-    provider: str
-    model: str
-    bundle_id: str
-    prompt_hash: str
-    response_sha256: str | None
-    status: Literal["selected", "unavailable", "incomplete"]
-    reason: str
-    evidence_id: str | None = None
-
-
-@dataclass
-class ClosingCapture:
-    attempts: list[ClosingAttempt] = field(default_factory=list)
-
-
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                     separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
-def _unique_designation(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("Conflicting JSON fields cannot designate a closing item.")
-        result[key] = value
-    return result
-
-
-def capture_closing(review: ModelReview, text: str | None, finish_reason: str | None) -> ClosingAttempt:
-    status: Literal["selected", "unavailable", "incomplete"] = "incomplete"
-    reason, identity = "missing_or_invalid_closing_designation", None
-    if (text is not None and review.status in {"ok", "partial", "abstained"}
-            and hashlib.sha256(text.encode()).hexdigest() == review.response_sha256
-            and finish_reason in {None, "stop", "STOP", "end_turn"}):
-        try:
-            raw = _extract_json(text)
-            unique, _ = json.JSONDecoder(object_pairs_hook=_unique_designation).raw_decode(text[text.index("{"):])
-            if raw != unique:
-                raise ValueError("Closing designation differs from the accepted review envelope.")
-            closing = raw.get("closing") if isinstance(raw, dict) else None
-            if (isinstance(closing, dict) and set(closing) == {"schema_version", "evidence_id"}
-                    and type(closing["schema_version"]) is int and closing["schema_version"] == 1):
-                proposed = closing["evidence_id"]
-                if proposed is None:
-                    status, reason = "unavailable", "no_suitable_item_in_packet"
-                elif (isinstance(proposed, str) and proposed in {item.evidence_id for item in review.selections}
-                      and proposed not in {item.evidence_id for item in review.rejected_items}):
-                    status, reason, identity = "selected", "same_response_designation", proposed
-        except (ValueError, TypeError, KeyError):
-            pass
-    return ClosingAttempt(review.slot, review.provider, review.model, review.bundle_id, review.prompt_hash,
-                          review.response_sha256, status, reason, identity)
-
-
 def decide_closing(
-    report: BlindReviewReport, packet: CandidatePacket, capture: ClosingCapture,
+    result: ResolvedReview, packet: CandidatePacket,
     settings: ClosingConfig, sources: Sequence[SourceConfig],
 ) -> ClosingDecision:
-    review = delivery_review(report)
-    matches = [attempt for attempt in capture.attempts if attempt.slot == review.slot]
-    if len(matches) != 1:
+    report, review = result.report, result.chosen.review
+    attempt = result.chosen.closing
+    if attempt is None:
         return ClosingDecision("incomplete", "missing_delivery_closing_capture")
-    attempt = matches[0]
-    if (attempt.provider, attempt.model, attempt.bundle_id, attempt.prompt_hash, attempt.response_sha256) != (
-            review.provider, review.model, report.evidence.bundle_id, review.prompt_hash, review.response_sha256):
-        return ClosingDecision("incomplete", "closing_capture_binding_mismatch")
     if attempt.status != "selected":
         return ClosingDecision(attempt.status, attempt.reason)
     if attempt.evidence_id not in eligible_ids(report.evidence, settings, sources):
@@ -197,7 +141,7 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
     card, provenance = decision.card, decision.provenance
     if report is None or card is None or provenance is None:
         raise ValueError("Selected closing decision requires report, card and provenance.")
-    review = delivery_review(report)
+    review = restore_review(report).chosen.review
     if (provenance.contract_version != 1 or provenance.report_sha256 != _digest(asdict(report))
             or (provenance.slot, provenance.provider, provenance.model, provenance.bundle_id,
                 provenance.prompt_hash, provenance.response_sha256) != (
@@ -205,7 +149,6 @@ def validate_closing(decision: ClosingDecision, report: BlindReviewReport | None
                     review.prompt_hash, review.response_sha256)
             or review.status not in {"ok", "partial"} or not provenance.response_sha256):
         raise ValueError("Closing delivery review binding mismatch.")
-    validated_cached_selections(review, report.evidence)
     if provenance.evidence_id in {item.evidence_id for item in review.rejected_items}:
         raise ValueError("Conflicting selected identity cannot supply a closing story.")
     evidence = next((item for item in report.evidence.items if item.evidence_id == provenance.evidence_id), None)

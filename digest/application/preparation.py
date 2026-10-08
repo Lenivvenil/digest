@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from digest.closing import ClosingDecision
     from digest.config import Config
     from digest.domain.catalog.sources import SourceStateStore, SourceStats
+    from digest.domain.editorial.attempts import ResolvedReview
     from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.domain.feedback.values import FeedbackStore
@@ -84,8 +85,12 @@ class CandidateWork:
 @dataclass
 class ReviewedCandidates:
     work: CandidateWork
-    report: BlindReviewReport
+    result: ResolvedReview
     cards: list[ArticleSummary]
+
+    @property
+    def report(self) -> BlindReviewReport:
+        return self.result.report
 
 
 @dataclass
@@ -189,44 +194,33 @@ async def _review_candidates(
     *,
     execution: ModelExecution,
 ) -> ReviewedCandidates:
+    from digest.application.candidate_review import reconcile_packet
+    from digest.application.review import run_primary_review
+    from digest.closing import decide_closing, save_closing
+    from digest.domain.editorial.attempts import restore_review
     from digest.presentation.review import primary_cards
 
     progress, packet = work.progress, work.packet
     if packet.report is not None:
-        cards = primary_cards(
-            packet.report,
-            articles,
-            config.radar.language,
-            max_cards=config.review.max_selections,
-            include_attribution=config.telegram.delivery_mode != "compact",
-        )
-        return ReviewedCandidates(work, packet.report, cards)
-    from digest.application.candidate_review import reconcile_packet
-    from digest.application.review import run_primary_review
-    from digest.closing import ClosingCapture, decide_closing, save_closing
-    from digest.domain.editorial.dispositions import CandidateDispositionCapture
-    from digest.presentation.review import primary_cards
-
-    capture = CandidateDispositionCapture()
-
-    closing_capture = ClosingCapture() if getattr(getattr(config, "closing", None), "enabled", False) else None
-    kwargs = {"closing_capture": closing_capture} if closing_capture is not None else {}
-    report = await run_primary_review(articles, config, disposition_capture=capture, **kwargs, execution=execution)
-    reconcile_packet(progress, packet, report, config, cache_dir, disposition_capture=capture)
-    if closing_capture is not None:
-        try:
-            decision = decide_closing(report, packet, closing_capture, config.closing, config.sources)
-            save_closing(decision, report, cache_dir)
-        except (OSError, ValueError, TypeError, KeyError):
-            logging.getLogger(__name__).warning("Optional closing capture unavailable; main review remains accepted.")
+        result = restore_review(packet.report, packet.disposition_attempts)
+    else:
+        result = await run_primary_review(articles, config, execution=execution)
+        reconcile_packet(progress, packet, result, config, cache_dir)
+        if getattr(getattr(config, "closing", None), "enabled", False):
+            try:
+                decision = decide_closing(result, packet, config.closing, config.sources)
+                save_closing(decision, result.report, cache_dir)
+            except (OSError, ValueError, TypeError, KeyError):
+                logging.getLogger(__name__).warning(
+                    "Optional closing capture unavailable; main review remains accepted.")
     cards = primary_cards(
-        report,
+        result,
         articles,
         config.radar.language,
         max_cards=config.review.max_selections,
         include_attribution=config.telegram.delivery_mode != "compact",
     )
-    return ReviewedCandidates(work, report, cards)
+    return ReviewedCandidates(work, result, cards)
 
 
 def _save_prepared_fetch_stats(
@@ -246,7 +240,7 @@ def _save_prepared_fetch_stats(
 
 def _preparation_closing(
     cards: list[ArticleSummary],
-    report: BlindReviewReport | None,
+    result: ResolvedReview | None,
     articles: dict[str, list[Article]],
     config: Config,
     cache_dir: str,
@@ -257,12 +251,13 @@ def _preparation_closing(
 
     if not getattr(getattr(config, "closing", None), "enabled", False):
         return cards, None
+    report = result.report if result is not None else None
     decision = (
         load_closing(report, cache_dir)
         if report is not None
         else ClosingDecision("incomplete", "missing_delivery_review")
     )
-    if decision.provenance is not None and report is not None:
+    if decision.provenance is not None and report is not None and result is not None:
         occurrence = decision.provenance.occurrence
         if decision.provenance.evidence_id not in eligible_ids(
             report.evidence, config.closing, config.sources
@@ -273,7 +268,7 @@ def _preparation_closing(
         ):
             return cards, ClosingDecision("unavailable", "source_no_longer_eligible_for_closing")
         main_cards = primary_cards(
-            report,
+            result,
             articles,
             config.radar.language,
             max_cards=config.review.max_selections,
@@ -445,13 +440,16 @@ def _snapshot(
     config: Config,
 ) -> PreparationSnapshot:
     from digest.application.presentation import combined_summary, publication_intro
+    from digest.domain.editorial.attempts import restore_review
     from digest.preparation import PreparationSnapshot
 
-    cards, closing = _preparation_closing(work.cards, work.report, collected.articles, config, ".cache")
+    result = (work.result if isinstance(work, ReviewedCandidates)
+              else restore_review(work.report) if work.report is not None else None)
+    cards, closing = _preparation_closing(work.cards, result, collected.articles, config, ".cache")
     summaries = work.summaries if isinstance(work, CategoryAnalysis) else []
     trends = work.trends if isinstance(work, CategoryAnalysis) else None
     combined = combined_summary(summaries, trends, isinstance(work, ReviewedCandidates), config.radar.language)
-    combined = publication_intro(combined, work.report, config)
+    combined = publication_intro(combined, result, config)
     return PreparationSnapshot(
         top_articles=cards,
         summaries=summaries,
@@ -479,7 +477,7 @@ async def _prepare_category_edition(
 ) -> RunStats:
     """Explicit legacy boundary: preserve its save/no-readback and empty-success behavior."""
     from digest.adapters.storage.sources import save_source_category_map
-    from digest.domain.editorial.reviews import delivery_review
+    from digest.domain.editorial.attempts import restore_review
     from digest.edition_runtime import finish_preparation, save_accepted_preparation
 
     snapshot = _snapshot(work, collected, run.config)
@@ -488,7 +486,7 @@ async def _prepare_category_edition(
     selection_complete = (
         bool(snapshot.top_articles)
         or snapshot.review_report is None
-        or (delivery_review(snapshot.review_report).status == "abstained")
+        or (restore_review(snapshot.review_report).chosen.review.status == "abstained")
     )
     if selection_complete:
         save_accepted_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
@@ -573,7 +571,7 @@ async def prepare_edition(
     else:
         accepted = accept_preparation(
             _snapshot(work, collected, run.config),
-            work.work.packet,
+            work.result,
             cache_dir=".cache",
             publication_date=publication_date,
         )

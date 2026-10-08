@@ -73,6 +73,20 @@ exhausting the response or publication budget must not become a false reason tha
 an article is uninteresting. Contrary reports are not duplicates merely because
 they share a topic.
 
+### A response owns its decision evidence
+
+An ordinary review attempt returns the model review, per-item dispositions and
+optional closing designation together. One resolver chooses the usable
+primary/fallback attempt. Independent comparison status describes a different
+question and does not decide whether primary cards can be used.
+
+This result describes raw editorial selections. Projection still decides which
+main cards fit, whether approved closing evidence remains eligible and whether
+attribution is complete. Persisted records are revalidated when restored; a missing
+chosen-slot capture is not the same as a historical packet that never recorded
+captures. [ADR0023](../../decisions/0023-response-owned-editorial-outcome.md) records
+the internal contract and compatibility boundary.
+
 ### Acceptance is a recovery boundary
 
 The ordinary path can accept selected cards, including a validated partial review,

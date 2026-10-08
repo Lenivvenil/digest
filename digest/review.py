@@ -16,7 +16,6 @@ from digest.application.review_request import _configured_category_interests as 
 from digest.application.review_request import build_evidence_bundle as build_evidence_bundle
 from digest.application.review_request import build_review_messages as build_review_messages
 from digest.application.review_request import eligible_ids as eligible_ids
-from digest.closing import ClosingCapture as ClosingCapture
 from digest.closing import capture_closing as capture_closing
 from digest.config import ClosingConfig as ClosingConfig
 from digest.config import Config as Config
@@ -26,7 +25,6 @@ from digest.config import ReviewModelConfig as ReviewModelConfig
 from digest.domain.catalog.articles import Article as Article
 from digest.domain.catalog.articles import article_hash as article_hash
 from digest.domain.catalog.sources import SourceConfig as SourceConfig
-from digest.domain.editorial.dispositions import CandidateDispositionCapture as CandidateDispositionCapture
 from digest.domain.editorial.dispositions import capture_review_dispositions as capture_review_dispositions
 from digest.domain.editorial.evidence import ordered_unique_articles
 from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS as MAX_EVIDENCE_JSON_CHARS
@@ -44,7 +42,6 @@ from digest.domain.editorial.reviews import _parse_review as _parse_review
 from digest.domain.editorial.reviews import _parse_review_envelope as _parse_review_envelope
 from digest.domain.editorial.reviews import _rejected_output_diagnostics as _rejected_output_diagnostics
 from digest.domain.editorial.reviews import canonical_evidence_quote as canonical_evidence_quote
-from digest.domain.editorial.reviews import delivery_review as delivery_review
 from digest.domain.editorial.reviews import reusable_model_review as reusable_model_review
 from digest.domain.editorial.reviews import review_prompt_hash as review_prompt_hash
 from digest.domain.editorial.reviews import validate_request_evidence_bundle as validate_request_evidence_bundle
@@ -58,5 +55,4 @@ from digest.presentation.review import render_review as render_review
 
 _ordered_unique_articles = ordered_unique_articles
 _groq_review_format = groq_review_response_format
-_delivery_review = delivery_review
 _validated_cached_selections = validated_cached_selections

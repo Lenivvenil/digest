@@ -25,6 +25,7 @@ from digest.candidate_review import (
     save_candidate_progress,
 )
 from digest.config import Config, SourceConfig
+from digest.domain.editorial.attempts import restore_review
 from digest.radar.collector import Article
 from digest.review import (
     BlindReviewReport,
@@ -68,7 +69,7 @@ def test_47_candidates_continue_beyond_first_twenty_and_preserve_report(tmp_path
     assert build_evidence_bundle(packet_articles(first), config.review) == first.evidence
     begin_packet(progress, first, tmp_path)
     report = report_for(first, config)
-    reconcile_packet(progress, first, report, config, tmp_path)
+    reconcile_packet(progress, first, restore_review(report), config, tmp_path)
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
     mark_prepared(restored, report.evidence.bundle_id, tmp_path)
@@ -78,7 +79,7 @@ def test_47_candidates_continue_beyond_first_twenty_and_preserve_report(tmp_path
     assert not ({item.evidence_id for item in first.evidence.items}
                 & {item.evidence_id for item in second.evidence.items})
     begin_packet(restored, second, tmp_path)
-    reconcile_packet(restored, second, report_for(second, config), config, tmp_path)
+    reconcile_packet(restored, second, restore_review(report_for(second, config)), config, tmp_path)
     assert sum(candidate.status == "selected" for candidate in restored.candidates.values()) == 2
     assert sum(candidate.status == "not_selected_without_editorial_reason"
                for candidate in restored.candidates.values()) == 38
@@ -103,7 +104,7 @@ def test_invalid_response_never_becomes_editorial_rejection(tmp_path: Path) -> N
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
     begin_packet(progress, packet, tmp_path)
-    reconcile_packet(progress, packet, report_for(packet, config, "invalid"), config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report_for(packet, config, "invalid")), config, tmp_path)
     assert {candidate.status for candidate in progress.candidates.values()} == {"technical_pending"}
     assert pending_completed_report(load_candidate_progress(tmp_path)) is None
 
@@ -143,9 +144,10 @@ def test_bundle_mismatch_and_tampering_fail_closed(tmp_path: Path) -> None:
     packet = plan_packet(progress, config, NOW)
     path = begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
+    result = restore_review(report)
     report.evidence = replace(report.evidence, bundle_id="changed")
     with pytest.raises(ValueError, match="planned evidence"):
-        reconcile_packet(progress, packet, report, config, tmp_path)
+        reconcile_packet(progress, packet, result, config, tmp_path)
     record = json.loads(path.read_text())
     record["candidate_accounting"]["candidates"][next(iter(progress.candidates))]["priority"] = 999
     path.write_text(json.dumps(record))
@@ -227,7 +229,7 @@ def test_old_unseen_source_advances_despite_continual_fresh_arrivals(tmp_path: P
         assert packet is not None
         served.append(packet.articles[0].source)
         begin_packet(progress, packet, tmp_path)
-        reconcile_packet(progress, packet, report_for(packet, config), config, tmp_path)
+        reconcile_packet(progress, packet, restore_review(report_for(packet, config)), config, tmp_path)
         mark_prepared(progress, packet.evidence.bundle_id, tmp_path)
         progress = load_candidate_progress(tmp_path)
     # A's freshness turn exposes its newer head; B's older observation now
@@ -248,7 +250,7 @@ def test_partial_keeps_rejected_identity_technical_and_fallback_matches_delivery
     report.reviews[0].status = "partial"
     rejected_id = packet.evidence.items[1].evidence_id
     report.reviews[0].rejected_items = [RejectedSelection(1, "quote is not in supplied evidence", rejected_id)]
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     assert progress.candidates[rejected_id].status == "technical_pending"
     assert pending_completed_report(load_candidate_progress(tmp_path)) == report
 
@@ -257,7 +259,7 @@ def test_partial_keeps_rejected_identity_technical_and_fallback_matches_delivery
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config, "invalid")
     report.reviews.append(report_for(packet, config, "ok", "secondary").reviews[0])
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     assert progress.candidates[packet.evidence.items[0].evidence_id].status == "selected"
 
 
@@ -268,7 +270,7 @@ def test_abstained_fallback_does_not_invent_primary_selection(tmp_path: Path) ->
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config, "invalid")
     report.reviews.append(report_for(packet, config, "abstained", "secondary").reviews[0])
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     assert {candidate.status for candidate in progress.candidates.values()} == {"technical_pending"}
     assert pending_completed_report(progress) is None
 
@@ -314,7 +316,7 @@ def test_private_archive_exact_match_summary_and_legacy_compatibility(tmp_path: 
     archive = tmp_path / "review.json"
     assert archive_candidate_accounting(report, archive, tmp_path) is None
     begin_packet(progress, packet, tmp_path)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     sidecar = archive_candidate_accounting(report, archive, tmp_path)
     saved = json.loads(sidecar.read_text())
     assert saved["summary"]["statuses"] == {
@@ -351,7 +353,7 @@ def test_disabled_original_source_preserves_packet_and_uses_eligible_duplicate(t
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     first = plan_packet(progress, config, NOW)
     begin_packet(progress, first, tmp_path)
-    reconcile_packet(progress, first, report_for(first, config), config, tmp_path)
+    reconcile_packet(progress, first, restore_review(report_for(first, config)), config, tmp_path)
     config.sources[0].enabled = False
     config.sources.append(SourceConfig("B", "https://b.example/feed", "science", True))
     duplicate = replace(articles["tech"][0], source="B", category="science")
@@ -394,7 +396,7 @@ def test_frozen_report_accounting_is_independent_of_mutable_work(tmp_path: Path)
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     frozen = next((tmp_path / "candidate_reports").glob("*.json"))
     original = frozen.read_bytes()
     (tmp_path / CANDIDATE_FILE).write_text("corrupt unrelated subsequent work")
@@ -414,7 +416,7 @@ def test_handed_unsent_selection_recovers_after_expiry_but_delivery_cache_exclud
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     mark_prepared(progress, report.evidence.bundle_id, tmp_path)
     restored = load_candidate_progress(tmp_path)
     merge_candidates(restored, {}, config, {}, now=NOW + timedelta(days=1))
@@ -435,7 +437,7 @@ def test_partly_ineligible_selection_requeues_eligible_subset_and_abstention_sta
     report = report_for(packet, config)
     second = packet.evidence.items[1]
     report.reviews[0].selections.append(EvidenceSelection(second.evidence_id, "Useful too", second.title, "high"))
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     mark_prepared(progress, report.evidence.bundle_id, tmp_path)
     first_id = packet.evidence.items[0].evidence_id
     merge_candidates(progress, {}, config, {first_id: NOW.isoformat()}, now=NOW)
@@ -446,7 +448,7 @@ def test_partly_ineligible_selection_requeues_eligible_subset_and_abstention_sta
 
     begin_packet(progress, retry, tmp_path)
     abstention = report_for(retry, config, "abstained")
-    reconcile_packet(progress, retry, abstention, config, tmp_path)
+    reconcile_packet(progress, retry, restore_review(abstention), config, tmp_path)
     mark_prepared(progress, abstention.evidence.bundle_id, tmp_path)
     assert pending_completed_report(progress) is None
     assert plan_packet(progress, config, NOW) is None
@@ -495,7 +497,7 @@ def test_parser_population_fits_candidate_bound_without_duplicate_metadata(tmp_p
     first = plan_packet(restored, config, NOW)
     assert first is not None
     begin_packet(restored, first, tmp_path)
-    reconcile_packet(restored, first, report_for(first, config), config, tmp_path)
+    reconcile_packet(restored, first, restore_review(report_for(first, config)), config, tmp_path)
     second = plan_packet(restored, config, NOW)
     assert second is not None
     assert not ({item.evidence_id for item in first.evidence.items}
@@ -512,7 +514,7 @@ def test_observed_cache_fact_outlives_pruning_without_inventing_delivery_on_hand
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     mark_prepared(progress, report.evidence.bundle_id, tmp_path)
     identity = report.reviews[0].selections[0].evidence_id
     candidate = progress.candidates[identity]
@@ -556,7 +558,7 @@ def test_report_persistence_boundaries_recover_without_false_completion(
     monkeypatch.setattr(progress_storage, "atomic_json_write", fail_one_write)
     monkeypatch.setattr("digest.adapters.storage.candidate_objects.atomic_json_write", fail_one_write)
     with pytest.raises(OSError, match="interrupted persistence"):
-        reconcile_packet(progress, packet, report, config, tmp_path)
+        reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     restored = load_candidate_progress(tmp_path)
     if failed_boundary == "progress":
         assert restored.packets[0].report is None
@@ -583,7 +585,7 @@ def test_frozen_accounting_rejects_outer_schema_even_with_valid_hash(tmp_path: P
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     frozen = next((tmp_path / "candidate_reports").glob("*.json"))
     record = json.loads(frozen.read_text())
     record["schema_version"] = True
@@ -603,7 +605,7 @@ def compactable_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, str]
     packet = plan_packet(progress, config, NOW)
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
-    reconcile_packet(progress, packet, report_for(packet, config), config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report_for(packet, config)), config, tmp_path)
     excluded = next(candidate for candidate in progress.candidates.values() if candidate.status == "not_presented")
     config.filters.blocklist_keywords = [excluded.article.title]
     merge_candidates(progress, {}, config, {}, now=NOW)
@@ -643,7 +645,7 @@ def test_excluded_selected_unknown_and_technical_work_retains_original_status_an
     assert packet is not None
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config)
-    reconcile_packet(progress, packet, report, config, tmp_path)
+    reconcile_packet(progress, packet, restore_review(report), config, tmp_path)
     selected = report.reviews[0].selections[0].evidence_id
     progress.candidates[selected].delivery_cache_observed_at = NOW.isoformat()
     next(candidate for candidate in progress.candidates.values()
@@ -699,7 +701,7 @@ def test_interrupted_retirement_keeps_previous_active_checkpoint(
 
 
 def resolved_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, BlindReviewReport]:
-    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.candidate_dispositions import capture_review_dispositions
 
     config, articles = population(3)
     for article in articles["tech"]:
@@ -715,9 +717,9 @@ def resolved_fixture(tmp_path: Path) -> tuple[CandidateProgress, Config, BlindRe
         for item in packet.evidence.items
     ]})
     report.reviews[0] = replace(report.reviews[0], response_sha256=hashlib.sha256(raw.encode()).hexdigest())
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    assert capture.attempts[0].status == "complete"
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    assert result.disposition_attempts[0].status == "complete"
+    reconcile_packet(progress, packet, result, config, tmp_path)
     return progress, config, report
 
 
@@ -777,7 +779,7 @@ def test_changed_excerpt_reopens_indexed_identity_and_preserves_original_decisio
 def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(tmp_path: Path) -> None:
     from dataclasses import asdict
 
-    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.candidate_dispositions import capture_review_dispositions
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -792,8 +794,8 @@ def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(t
          "reason": "RSS descriptions identify the same reproduced announcement without a distinct result."},
     ]})
     report.reviews[0] = replace(report.reviews[0], response_sha256=hashlib.sha256(raw.encode()).hexdigest())
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     path = mark_prepared(progress, report.evidence.bundle_id, tmp_path)
     wire = json.loads(path.read_text())["candidate_accounting"]
     assert duplicate.evidence_id not in wire["candidates"]
@@ -810,7 +812,7 @@ def test_duplicate_metadata_compacts_without_retiring_selected_retained_target(t
 
 @pytest.mark.parametrize("selected", [True, False])
 def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, selected: bool) -> None:
-    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.candidate_dispositions import capture_review_dispositions
 
     config, articles = population(1)
     config.sources.append(SourceConfig("B", "https://b.example/feed", "tech", True))
@@ -827,8 +829,8 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
         decision["reason"] = "Useful work remains outside this response allowance."
     raw = json.dumps({"dispositions": [decision]})
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     original_capture = packet.disposition_attempts
     assert progress.candidates[identity].disposition is not None
     config.sources[0].enabled = False
@@ -844,7 +846,7 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
 
 @pytest.mark.parametrize("kind", ["deferred", "missing", "complete", "legacy"])
 def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferral(tmp_path: Path, kind: str) -> None:
-    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.candidate_dispositions import capture_review_dispositions
     from digest.edition_runtime import IncompleteSelection, accept_preparation
     from digest.preparation import AcceptedPreparation, PreparationSnapshot, load_preparation
 
@@ -863,11 +865,11 @@ def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferr
         ]
     raw = json.dumps(raw_data)
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = (None if kind == "legacy" else CandidateDispositionCapture([
-        capture_review_dispositions(packet.evidence, report.reviews[0], raw)]))
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (() if kind == "legacy" else (
+        capture_review_dispositions(packet.evidence, report.reviews[0], raw),)))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     snapshot = PreparationSnapshot([], [], "", report, 1, 2, ["A"])
-    outcome = accept_preparation(snapshot, packet, cache_dir=str(tmp_path))
+    outcome = accept_preparation(snapshot, result, cache_dir=str(tmp_path))
     assert isinstance(outcome, AcceptedPreparation if kind in {"complete", "legacy"} else IncompleteSelection)
     assert (load_preparation(tmp_path) is not None) == (kind in {"complete", "legacy"})
     assert (pending_completed_report(progress) is not None) == (kind in {"complete", "legacy"})
@@ -899,7 +901,7 @@ def test_accepted_readback_must_match_the_saved_snapshot(tmp_path: Path, monkeyp
 
     monkeypatch.setattr("digest.preparation.load_accepted_preparation", mismatched_readback)
     with pytest.raises(ValueError, match="readback differs"):
-        accept_preparation(snapshot, packet, cache_dir=str(tmp_path))
+        accept_preparation(snapshot, restore_review(report, packet.disposition_attempts), cache_dir=str(tmp_path))
     accepted = load_accepted_preparation(tmp_path)
     assert accepted is not None and accepted.snapshot == snapshot
     assert not packet.handed_to_preparation
@@ -912,7 +914,6 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
-    from digest.candidate_dispositions import CandidateDispositionCapture
     from digest.candidate_review import RESPONSE_STORAGE_RESERVE, progress_size
     from digest.review import run_primary_review
 
@@ -939,17 +940,17 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
     raw = json.dumps({"selections": selections, "limitations": ["x"], "dispositions": dispositions}, ensure_ascii=False)
     provider = AsyncMock(side_effect=[("😀" * 32000, {}), (raw, {})])
     monkeypatch.setattr("digest.application.review.complete", provider)
-    capture = CandidateDispositionCapture()
-    report = await run_primary_review(packet_articles(packet), config,
-        execution=model_execution, disposition_capture=capture)
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = await run_primary_review(packet_articles(packet), config,
+        execution=model_execution)
+    report = result.report
+    reconcile_packet(progress, packet, result, config, tmp_path)
     growth = progress_size(progress) - before
     assert 1_048_576 < growth <= RESPONSE_STORAGE_RESERVE
     assert provider.await_count == 2 and [review.status for review in report.reviews] == ["invalid", "partial"]
 
 
 def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_path: Path) -> None:
-    from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+    from digest.candidate_dispositions import capture_review_dispositions
 
     config, articles = population(1)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -961,8 +962,8 @@ def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_pa
         {"evidence_id": item.evidence_id, "status": "deferred", "reason": "Useful but output capacity exhausted."}
         for item in packet.evidence.items]})
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     # Emulate a valid archived report from a different prompt contract, preserving
     # every matching provenance reference before the ordinary save/load boundary.
     old_hash = hashlib.sha256(b"older selection contract").hexdigest()

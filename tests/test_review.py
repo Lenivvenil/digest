@@ -14,6 +14,7 @@ import pytest
 from digest.adapters.models.execution import ModelExecution
 from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
+from digest.domain.editorial.attempts import restore_review
 from digest.review import _parse_review, build_evidence_bundle, primary_cards, run_blind_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
 
@@ -94,7 +95,7 @@ async def test_peer_failure_is_incomplete_not_disagreement(failure: object) -> N
     assert report.selection_overlap is None
     assert report.reviews[0].status == "ok"
     assert report.disputed_ids == []
-    assert len(primary_cards(report, fixture_articles(), "en")) == 2
+    assert len(primary_cards(restore_review(report), fixture_articles(), "en")) == 2
 
 
 def _valid_output() -> tuple:
@@ -194,7 +195,7 @@ async def test_duplicate_article_identity_uses_same_canonical_source_for_cards()
     with patch("digest.application.review.complete", side_effect=fixture_response):
         report = await run_blind_review(articles, fixture_config(), execution=execution)
     evidence = {i.url: i for i in report.evidence.items}[original.link]
-    card = next(c for c in primary_cards(report, articles, "en") if c.link == original.link)
+    card = next(c for c in primary_cards(restore_review(report), articles, "en") if c.link == original.link)
     assert evidence.source == card.source == original.source
     assert evidence.category == card.category == original.category
 

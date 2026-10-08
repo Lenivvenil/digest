@@ -22,7 +22,6 @@ from digest.candidate_review import (
     plan_packet,
 )
 from digest.closing import (
-    ClosingCapture,
     ClosingDecision,
     attribute_closing_card,
     decide_closing,
@@ -31,6 +30,7 @@ from digest.closing import (
     save_closing,
 )
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig, load_config
+from digest.domain.editorial.attempts import restore_review
 from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
 from digest.radar.collector import Article
 from digest.review import build_evidence_bundle, build_review_messages, primary_cards, run_primary_review
@@ -99,11 +99,11 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
                            for index, item in enumerate(articles["Society"])]
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
-    capture = ClosingCapture()
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", completion)
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
-    decision = decide_closing(report, packet, capture, config.closing, config.sources)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
+    decision = decide_closing(result, packet, config.closing, config.sources)
     assert decision.card is not None and decision.provenance is not None
     canonical = _canonical((asdict(decision), asdict(report), asdict(packet)))
     config.sources[0].url = "https://changed.example/feed"
@@ -135,14 +135,14 @@ async def test_bad_optional_designation_preserves_all_main_selections(
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
-    capture = ClosingCapture()
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages, designation), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
     assert complete.await_count == 1
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
-    assert capture.attempts[0].status == "incomplete"
-    assert len(primary_cards(report, articles, "en", max_cards=2)) == 2
+    assert result.attempts[0].closing.status == "incomplete"
+    assert len(primary_cards(result, articles, "en", max_cards=2)) == 2
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
         execution=execution)
     cards, report = reviewed.cards, reviewed.report
     assert report is not None and count == 2
-    main, decision = _preparation_closing(cards, report, articles, config, str(tmp_path))
+    main, decision = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
     assert decision is not None and decision.status == "selected" and decision.provenance is not None
     assert decision.provenance.slot == "secondary"
     assert decision.provenance.response_sha256 == report.reviews[1].response_sha256
@@ -192,7 +192,7 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
     )
     recovered, reused = replayed.cards, replayed.report
     assert count == 2 and reused == report
-    assert _preparation_closing(recovered, report, articles, config, str(tmp_path)) == (main, decision)
+    assert _preparation_closing(recovered, restore_review(report), articles, config, str(tmp_path)) == (main, decision)
     assert _canonical(asdict(report)) == report_bytes
     assert "closing" not in asdict(packet) and "closing" not in asdict(report.reviews[1])
 
@@ -221,7 +221,7 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
             path.unlink()
         elif failure == "corrupt":
             path.write_text("{bad")
-    main, decision = _preparation_closing(cards, report, articles, config, str(tmp_path))
+    main, decision = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
     assert main == cards and decision is not None and decision.status == "incomplete"
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
@@ -247,13 +247,13 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
         config.sources[0].url += "changed"
     else:
         config.sources.append(replace(config.sources[0], url="https://other.example/feed"))
-    capture = ClosingCapture()
     monkeypatch.setattr("digest.application.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
     assert eligible_ids(report.evidence, config.closing, config.sources) == []
-    decision = decide_closing(report, packet, capture, config.closing, config.sources)
-    assert decision.status == "unavailable" and len(primary_cards(report, articles, "en", max_cards=2)) == 2
+    decision = decide_closing(result, packet, config.closing, config.sources)
+    assert decision.status == "unavailable" and len(primary_cards(result, articles, "en", max_cards=2)) == 2
 
 
 @pytest.mark.asyncio
@@ -264,13 +264,13 @@ async def test_terminal_v2_selected_and_omitted_roundtrip_and_strict_binding(
     config, articles = population()
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
-    capture = ClosingCapture()
     monkeypatch.setattr("digest.application.review.complete", AsyncMock(
         side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
-    decision = decide_closing(report, packet, capture, config.closing, config.sources)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
+    decision = decide_closing(result, packet, config.closing, config.sources)
     save_closing(decision, report, tmp_path)
-    cards, _ = _preparation_closing(primary_cards(report, articles, "en"), report, articles, config, str(tmp_path))
+    cards, _ = _preparation_closing(primary_cards(result, articles, "en"), result, articles, config, str(tmp_path))
     snapshot = PreparationSnapshot(cards, [], "Notice", report, 1, 4, ["Community"], decision)
     path = save_preparation(snapshot, tmp_path, NOW)
     assert json.loads(path.read_text())["schema_version"] == 2
@@ -337,14 +337,14 @@ async def test_explicit_abstention_is_persisted_without_inventing_a_story(
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
-    capture = ClosingCapture()
     monkeypatch.setattr(
         "digest.application.review.complete", AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
         response(messages, {"schema_version": 1, "evidence_id": None}), {})))
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
-    decision = decide_closing(report, packet, capture, config.closing, config.sources)
+    decision = decide_closing(result, packet, config.closing, config.sources)
     assert decision == ClosingDecision("unavailable", "no_suitable_item_in_packet")
     save_closing(decision, report, tmp_path)
     assert load_closing(report, tmp_path) == decision
@@ -366,12 +366,12 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
         execution=execution)
     cards, report = reviewed.cards, reviewed.report
     assert report is not None
-    main, selected = _preparation_closing(cards, report, articles, config, str(tmp_path))
+    main, selected = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
     assert selected is not None and selected.status == "selected"
     snapshot = PreparationSnapshot(main, [], "Notice", report, 1, 4, ["Community"], selected)
     save_preparation(snapshot, tmp_path, NOW)
     config.closing = ClosingConfig(True, (ClosingSourceBinding("Other", "https://other.example/feed", "Other"),))
-    unchanged, omitted = _preparation_closing(cards, report, articles, config, str(tmp_path))
+    unchanged, omitted = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
     assert unchanged == cards
     assert omitted == ClosingDecision("unavailable", "source_no_longer_eligible_for_closing")
     assert load_preparation(tmp_path, NOW) == snapshot
@@ -385,7 +385,6 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
-    capture = ClosingCapture()
 
     async def complete(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
         raw = json.loads(response(messages))
@@ -400,10 +399,11 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
         return text.replace(designation, designation[:-1] + ', "evidence_id": null}'), {}
 
     monkeypatch.setattr("digest.application.review.complete", complete)
-    report = await run_primary_review(articles, config, closing_capture=capture, execution=execution)
+    result = await run_primary_review(articles, config, execution=execution)
+    report = result.report
     assert report.reviews[0].status in {"ok", "partial"}
-    assert len(primary_cards(report, articles, "en", max_cards=2)) == 2
-    assert capture.attempts[0].status == "incomplete"
+    assert len(primary_cards(result, articles, "en", max_cards=2)) == 2
+    assert result.attempts[0].closing.status == "incomplete"
 
 
 @pytest.mark.asyncio
@@ -428,7 +428,7 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
         execution=execution)
     cards, report = reviewed.cards, reviewed.report
     assert report is not None
-    main, decision = _preparation_closing(cards, report, articles, config, ".cache")
+    main, decision = _preparation_closing(cards, restore_review(report), articles, config, ".cache")
     assert main == cards and len(main) == 1
     assert decision == ClosingDecision("unavailable", "closing_would_empty_main_selection")
     snapshot = PreparationSnapshot(main, [], "Notice", report, 1, 1, ["Community"], decision)

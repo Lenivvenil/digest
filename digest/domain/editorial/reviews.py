@@ -413,10 +413,3 @@ def validate_canonical_report(report: BlindReviewReport) -> None:
                 and selection.quote not in evidence.excerpt
             ):
                 raise ValueError("Canonical review quote is not in stored evidence.")
-
-
-def delivery_review(report: BlindReviewReport) -> ModelReview:
-    primary = report.reviews[0]
-    if primary.status in {"invalid", "unavailable"}:
-        primary = next((r for r in report.reviews if r.slot == "secondary" and r.status in {"ok", "partial"}), primary)
-    return primary

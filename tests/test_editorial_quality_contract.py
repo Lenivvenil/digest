@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
+from digest.candidate_dispositions import capture_review_dispositions
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -21,6 +21,7 @@ from digest.candidate_review import (
     reconcile_packet,
 )
 from digest.config import _load_review
+from digest.domain.editorial.attempts import restore_review
 from digest.review import build_evidence_bundle, build_review_messages, canonical_evidence_quote, run_primary_review
 from digest.translation import PROMPT_VERSION, SYSTEM, _parse
 from scripts.review_fixture import fixture_articles, fixture_config
@@ -60,7 +61,8 @@ async def test_reader_context_binds_identical_primary_and_fallback_prompt() -> N
     good = (json.dumps({"selections": [], "limitations": ["Synthetic fixture"]}), {})
     with patch(
         "digest.application.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), good])) as call:
-        report = await run_primary_review(fixture_articles(), config, execution=model_execution)
+        result = await run_primary_review(fixture_articles(), config, execution=model_execution)
+        report = result.report
     first, second = call.call_args_list
     assert first.args[1] == second.args[1]
     expected = hashlib.sha256(json.dumps(first.args[1], sort_keys=True).encode()).hexdigest()
@@ -78,8 +80,8 @@ def test_context_change_does_not_reopen_terminal_history(tmp_path: Path) -> None
         {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "Original relevance judgment"}
         for item in packet.evidence.items]})
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
-    capture = CandidateDispositionCapture([capture_review_dispositions(packet.evidence, report.reviews[0], raw)])
-    reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
+    result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
+    reconcile_packet(progress, packet, result, config, tmp_path)
     mark_prepared(progress, packet.evidence.bundle_id, tmp_path)
     frozen = asdict(report)
     config.review.editorial_context = "Banking business and operational relevance do not require architecture detail."

@@ -20,6 +20,7 @@ from digest.application.candidate_lifecycle import (
 from digest.application.review_request import build_evidence_bundle, build_review_messages, closing_source_bindings
 from digest.config import Config
 from digest.domain.catalog.articles import Article, article_hash
+from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.candidate_policy import (
     apply_packet_report,
     clear_disposition,
@@ -32,8 +33,7 @@ from digest.domain.editorial.candidate_policy import (
     validate_packet_report,
 )
 from digest.domain.editorial.candidates import CandidateArticle, CandidatePacket, CandidateProgress
-from digest.domain.editorial.dispositions import CandidateDispositionCapture
-from digest.domain.editorial.reviews import BlindReviewReport, review_prompt_hash, validate_request_evidence_bundle
+from digest.domain.editorial.reviews import review_prompt_hash, validate_request_evidence_bundle
 from digest.radar.collector import CollectionInventory
 
 # Candidate-only current-work capacity: source bodies and resolved history live
@@ -165,10 +165,11 @@ def begin_packet(
 
 
 def reconcile_packet(
-    progress: CandidateProgress, packet: CandidatePacket, report: BlindReviewReport, config: Config,
-    cache_dir: str | Path = ".cache", *, disposition_capture: CandidateDispositionCapture | None = None,
+    progress: CandidateProgress, packet: CandidatePacket, result: ResolvedReview, config: Config,
+    cache_dir: str | Path = ".cache",
 ) -> Path:
     """Keep only validated primary/fallback results; technical failure is unfinished."""
+    report = result.report
     validate_packet_report(
         progress, packet, report, max_evidence_articles=config.review.max_evidence_articles,
         max_excerpt_chars=config.review.max_excerpt_chars,
@@ -176,7 +177,7 @@ def reconcile_packet(
     prompt_hash = review_prompt_hash(build_review_messages(
         report.evidence, config.review, config.radar.language, sources=config.sources,
         closing=getattr(config, "closing", None)))
-    apply_packet_report(progress, packet, report, prompt_hash, disposition_capture=disposition_capture)
+    apply_packet_report(progress, packet, result, prompt_hash)
     path = persist_candidates(progress, cache_dir)
     ensure_report_accounting(progress, report, cache_dir)
     return path

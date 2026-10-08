@@ -14,16 +14,15 @@ from typing import Any
 from digest._serialization import canonical_json_bytes as _canonical
 from digest.domain.catalog.articles import Article, article_hash
 from digest.domain.catalog.sources import SourceConfig
+from digest.domain.editorial.attempts import HistoricalDispositions, ResolvedReview, restore_review
 from digest.domain.editorial.candidates import Candidate, CandidateArticle, CandidatePacket, CandidateProgress
 from digest.domain.editorial.candidates import latest_occurrence_packet as _latest_occurrence_packet
 from digest.domain.editorial.candidates import validate_progress as _validate
-from digest.domain.editorial.dispositions import CandidateDispositionCapture, validate_disposition_attempt
+from digest.domain.editorial.dispositions import CandidateDispositionAttempt
 from digest.domain.editorial.evidence import build_evidence_bundle
 from digest.domain.editorial.reviews import (
     BlindReviewReport,
-    delivery_review,
     validate_request_evidence_bundle,
-    validated_cached_selections,
 )
 from digest.domain.editorial.reviews import validate_canonical_report as _validate_report
 from digest.filters import is_blocked
@@ -274,37 +273,21 @@ def validate_packet_report(
 
 
 def apply_packet_report(
-    progress: CandidateProgress, packet: CandidatePacket, report: BlindReviewReport, prompt_hash: str,
-    *, disposition_capture: CandidateDispositionCapture | None = None,
+    progress: CandidateProgress, packet: CandidatePacket, result: ResolvedReview, prompt_hash: str,
 ) -> None:
-    """Apply validated delivery decisions before the application persists accounting."""
-    selected: set[str] = set()
-    rejected: set[str] = set()
-    valid = False
-    for review in [delivery_review(report)]:
-        if review.slot not in {"primary", "secondary"} or review.status not in {"ok", "partial", "abstained"}:
-            continue
-        if review.prompt_hash != prompt_hash or review.prompt_hash != packet.prompt_hash:
-            raise ValueError("Candidate result prompt differs from the planned review contract.")
-        selections, _ = validated_cached_selections(review, report.evidence)
-        selected.update(item.evidence_id for item in selections)
-        rejected.update(item.evidence_id for item in review.rejected_items if item.evidence_id is not None)
-        valid = True
-        break  # Same primary-first fallback semantics as delivery.
-    selected_review = delivery_review(report)
-    captured = None
-    if disposition_capture is not None:
-        for attempt in disposition_capture.attempts:
-            matching = next((item for item in report.reviews if item.slot == attempt.slot), None)
-            if matching is None:
-                raise ValueError("Disposition capture has no matching review slot.")
-            validate_disposition_attempt(attempt, packet.evidence, matching)
-            if attempt.slot == selected_review.slot:
-                if captured is not None:
-                    raise ValueError("Duplicate delivery disposition capture.")
-                captured = attempt
-        packet.disposition_attempts = tuple(disposition_capture.attempts)
-    dispositions = {item.evidence_id: item for item in captured.dispositions} if captured else {}
+    """Apply the resolved delivery response before persisting candidate accounting."""
+    review = result.chosen.review
+    accountable = review.slot in {"primary", "secondary"}
+    if accountable and review.status in {"ok", "partial", "abstained"} and (
+        review.prompt_hash != prompt_hash or review.prompt_hash != packet.prompt_hash
+    ):
+        raise ValueError("Candidate result prompt differs from the planned review contract.")
+    selected = {item.evidence_id for item in result.selections} if accountable else set()
+    rejected = {item.evidence_id for item in review.rejected_items if item.evidence_id is not None}
+    captured = result.chosen.dispositions
+    dispositions = ({item.evidence_id: item for item in captured.dispositions}
+                    if isinstance(captured, CandidateDispositionAttempt) else {})
+    packet.disposition_attempts = result.disposition_attempts
     for item in packet.evidence.items:
         candidate = progress.candidates[item.evidence_id]
         clear_disposition(candidate)
@@ -313,18 +296,18 @@ def apply_packet_report(
             candidate.status = "selected"
         elif decision is not None and decision.status in {"not_selected", "duplicate"}:
             candidate.status = "duplicate" if decision.status == "duplicate" else "not_selected"
-        elif disposition_capture is not None:
+        elif captured is not HistoricalDispositions.NOT_RECORDED:
             candidate.status = "technical_pending"
-        elif valid and item.evidence_id not in rejected:
+        elif accountable and review.status in {"ok", "partial", "abstained"} and item.evidence_id not in rejected:
             candidate.status = "not_selected_without_editorial_reason"
         else:
             candidate.status = "technical_pending"
-        if decision is not None and captured is not None:
+        if decision is not None and isinstance(captured, CandidateDispositionAttempt):
             candidate.disposition = decision
             candidate.decision_response_sha256 = captured.response_sha256
             candidate.decision_prompt_hash = captured.prompt_hash
             candidate.decision_occurrence_sha256 = _digest(asdict(candidate.article))
-    packet.report = report
+    packet.report = result.report
 
 
 def pending_completed_report(
@@ -339,21 +322,22 @@ def pending_completed_report(
     for packet in reversed(progress.packets):
         if packet.report is None or _digest(asdict(packet.report)) in (skip_reports or set()):
             continue
-        successful = delivery_review(packet.report) if packet.report.reviews else None
-        if successful is None or successful.status not in {"ok", "partial", "abstained"}:
+        if not packet.report.reviews:
             continue
-        selections = successful.selections
+        try:
+            result = restore_review(packet.report, packet.disposition_attempts)
+        except ValueError:
+            continue  # Invalid historical selections cannot be promoted to recoverable work.
+        selections = result.selections
         if not selections:
-            capture = next((item for item in packet.disposition_attempts if item.slot == successful.slot), None)
-            complete = not packet.disposition_attempts or capture is not None and capture.status == "complete"
             same_eligible_occurrences = all(
                 article_hash(saved.title, saved.link) in progress.candidates
                 and progress.candidates[article_hash(saved.title, saved.link)].eligible
                 and progress.candidates[article_hash(saved.title, saved.link)].article == saved
                 for saved in packet.articles
             )
-            if (successful.status == "abstained" and not packet.handed_to_preparation
-                    and complete and same_eligible_occurrences):
+            if (result.abstention_complete and not packet.handed_to_preparation
+                    and same_eligible_occurrences):
                 return packet.report
             continue
         eligible = [item for item in selections if item.evidence_id in progress.candidates

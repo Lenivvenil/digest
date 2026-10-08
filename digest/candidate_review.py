@@ -34,10 +34,8 @@ from digest.domain.editorial.candidates import CandidateArticle as CandidateArti
 from digest.domain.editorial.candidates import CandidatePacket as CandidatePacket
 from digest.domain.editorial.candidates import CandidateProgress as CandidateProgress
 from digest.domain.editorial.candidates import CandidateStatus as CandidateStatus
-from digest.domain.editorial.dispositions import CandidateDispositionCapture as CandidateDispositionCapture
 from digest.domain.editorial.dispositions import validate_disposition_attempt as validate_disposition_attempt
 from digest.domain.editorial.reviews import BlindReviewReport as BlindReviewReport
-from digest.domain.editorial.reviews import delivery_review as delivery_review
 from digest.domain.editorial.reviews import review_prompt_hash as review_prompt_hash
 from digest.domain.editorial.reviews import validate_request_evidence_bundle as validate_request_evidence_bundle
 from digest.domain.editorial.reviews import validated_cached_selections as validated_cached_selections

@@ -121,3 +121,8 @@ acceptance remain separate from these ownership releases.
 Forem V1 repair, unchanged bounded attempt/deadline ceilings, and explicit future-only
 search-policy binding. Old attempts and results remain intact; transport reachability
 and genuinely useful counter-evidence are separate acceptance facts.
+
+[0023](0023-response-owned-editorial-outcome.md) records #181's response-owned
+attempt and single ordinary editorial resolver. Mutable capture outputs and repeated
+live slot joins are removed while persisted trust checks, card projection and
+historical recovery remain distinct contracts.
