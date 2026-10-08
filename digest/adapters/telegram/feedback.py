@@ -112,7 +112,7 @@ def _collect_callback(
     outcome = "ignored"
     reply_text = ""
     if len(parts) == 4 and parts[:2] == ["fb", "a"] and parts[2] in ("g", "b"):
-        if not re.fullmatch(r"[0-9a-f]{8}", parts[3]):
+        if not re.fullmatch(r"(?:[0-9a-f]{8}|[0-9a-f]{32})", parts[3]):
             return "malformed"
         outcome = _record_article_vote(store, parts[3], parts[2])
         if outcome == "unknown_article":
@@ -153,8 +153,8 @@ def collect_update(
     if command in COMMANDS:
         record_command_reply(store, command)
         return "commands"
-    vote = re.fullmatch(r"/start vote_([gb])_([0-9a-f]{8})", command) or re.fullmatch(
-        r"/vote ([gb]) ([0-9a-f]{8})",
+    vote = re.fullmatch(r"/start vote_([gb])_([0-9a-f]{8}|[0-9a-f]{32})", command) or re.fullmatch(
+        r"/vote ([gb]) ([0-9a-f]{8}|[0-9a-f]{32})",
         command,
     )
     source = re.fullmatch(r"/start source_(ok|no)_([0-9a-f]{8})", command) or re.fullmatch(

@@ -126,3 +126,8 @@ and genuinely useful counter-evidence are separate acceptance facts.
 attempt and single ordinary editorial resolver. Mutable capture outputs and repeated
 live slot joins are removed while persisted trust checks, card projection and
 historical recovery remain distinct contracts.
+
+[0024](0024-full-article-vote-identity.md) records full article identities for future
+votes, ready-only schema 2, preserved historical feedback and the compatible-reader
+floor for both sending and polling. Legacy ambiguity and mixed-token scoring remain
+explicit limitations rather than a guessed history migration.

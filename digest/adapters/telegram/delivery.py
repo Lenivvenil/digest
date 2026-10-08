@@ -258,6 +258,7 @@ async def send_compact_issue(
 
     result = project_issue_coverage(
         (ArticleCoverage(article.full_hash, article.source, article.covering_chunks) for article in ranges),
+        vote_protocol="legacy8",
         outcome=result.outcome,
         total_chunks=result.total_chunks,
         attempted_chunks=result.attempted_chunks,

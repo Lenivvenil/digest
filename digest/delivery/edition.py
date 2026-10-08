@@ -28,6 +28,7 @@ from digest.application.prepared_delivery import inspect_edition as inspect_edit
 from digest.application.prepared_delivery import mark_applied as mark_applied
 from digest.application.prepared_delivery import prepare_edition as prepare_edition
 from digest.application.prepared_delivery import send_prepared_edition as send_prepared_edition
+from digest.domain.delivery.edition import READY_SCHEMA_VERSION as READY_SCHEMA_VERSION
 from digest.domain.delivery.edition import SCHEMA_VERSION as SCHEMA_VERSION
 from digest.domain.delivery.edition import (
     ChunkReceipt,

@@ -29,6 +29,7 @@ from digest.domain.delivery.edition import (
     Receipts,
     parse_instant,
     project_result,
+    validate_dispatch_identity,
     validate_owner,
 )
 from digest.domain.delivery.outcomes import IssueDeliveryResult
@@ -156,6 +157,7 @@ def claim_edition(
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
     if storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Edition receipts already exist; automatic replay is blocked.")
+    validate_dispatch_identity(data)
     path = cache / CLAIM_FILE
     claim = Claim(SCHEMA_VERSION, digest, owner_sha, uuid.uuid4().hex, instant.isoformat())
     return path, storage.write_record(path, asdict(claim), exclusive=True)
@@ -186,6 +188,7 @@ async def send_prepared_edition(
             return project_result(data, existing)
         raise ValueError("Edition dispatch is held; automatic replay is blocked.")
     storage.validate_manifest_record(asdict(data), owner, instant)
+    validate_dispatch_identity(data)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
     _legacy_guard(cache, instant)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
