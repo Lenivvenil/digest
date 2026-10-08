@@ -26,17 +26,9 @@ partial failure cannot silently become a different result.
 
 ```mermaid
 flowchart LR
-    SOURCE[Source] --> OCC[Observed source occurrence]
-    OCC --> CAND[Candidate]
-    CAND --> PACKET[Bounded evidence packet]
-    PACKET --> REVIEW[Recorded review]
-    REVIEW --> ACCEPT[Accepted preparation]
-    ACCEPT --> READY[Frozen edition]
-    READY --> CLAIM[Publication claim]
-    CLAIM --> RECEIPTS[Chunk receipts]
-    RECEIPTS --> APPLIED[Confirmed coverage applied]
-    APPLIED --> VOTE[Article feedback]
-    VOTE --> SOURCE
+    E["Evidence<br/>Sources and candidates"] --> A["Editorial acceptance<br/>Review and preparation"]
+    A --> P["Publication<br/>Edition and receipts"]
+    P -.->|Feedback| E
 ```
 
 This is the ordinary review-led reading cycle. Source approval and supplementary

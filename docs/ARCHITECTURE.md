@@ -31,28 +31,21 @@ so confirmed transport and completed local effects are separate facts.
 ## Prepared-edition data flow
 
 ```mermaid
-flowchart TD
-    START[Load configuration and process feedback / approved changes] --> INSPECT{Existing ready or claimed edition?}
-    INSPECT -->|Reusable or held| EXISTING[Return ready / window / confirmed / held outcome]
-    INSPECT -->|No active edition| ACCEPTED{Accepted preparation for this day?}
-    ACCEPTED -->|Yes| PRESENT[Present accepted canonical work]
-    ACCEPTED -->|No| COLLECT[Collect and reconcile candidate eligibility]
-    COLLECT --> REPORT{Reusable completed candidate report?}
-    REPORT -->|Yes| DECIDE[Apply selection acceptance policy]
-    REPORT -->|No| REVIEW[Plan one packet and run primary / permitted fallback]
-    REVIEW --> DECIDE
-    DECIDE -->|Incomplete| PENDING[Keep unfinished candidate evidence]
-    DECIDE -->|Accepted| SAVE[Save canonical preparation and hand off candidate proof]
-    SAVE --> PRESENT
-    PRESENT -->|Accepted empty result| EMPTY[No ready edition for this day]
-    PRESENT -->|Cards| FREEZE[Write archive and freeze exact edition]
-    FREEZE --> READY[Runtime persists ready state]
-    READY --> CLAIM[Create claim and persist it remotely]
-    CLAIM --> SEND[Send frozen chunks once]
-    SEND --> RECEIPTS[Persist known transport receipts]
-    RECEIPTS --> APPLY[Apply confirmed coverage, then mark applied]
+sequenceDiagram
+    participant R as Runtime
+    participant P as Preparation
+    participant D as Publication
+    R->>P: Feedback and approvals;<br/>then recover or prepare
+    P-->>R: Frozen ready edition
+    R->>R: Persist and verify ready remotely<br/>with referenced evidence
+    R->>D: Create claim for ready hash
+    D-->>R: Claim file
+    R->>R: Persist claim remotely;<br/>verify ready and claim hashes
+    R->>D: Send; record receipts;<br/>apply known coverage
+    D-->>R: Outcome for persistence
 ```
 
+This overview follows a publishable edition; recovery and no-edition outcomes are detailed below.
 The arrows are ordered operations, not a transaction. Failure between them leaves
 recoverable work or a hold, according to the boundary already crossed.
 
