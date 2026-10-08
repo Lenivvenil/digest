@@ -45,8 +45,7 @@ from digest.irritator.ranker import (
     RANK_RELATIONS,
     RankedSignal,
 )
-from digest.irritator.sources import SourceUnavailableError, validate_search_response
-from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
+from digest.irritator.sources import SourceUnavailableError
 from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.devto import search_devto
 from digest.irritator.sources.hackernews import search_hackernews
@@ -543,21 +542,12 @@ def _admit_ranking(
     return RankingAdmission(tuple(candidates), audit)
 
 
-async def _check_source_response(response: httpx.Response) -> None:
-    """Reject error pages and malformed success bodies rather than reporting empty."""
-    source_hosts = {"hn.algolia.com": "hackernews", "export.arxiv.org": "arxiv", "dev.to": "devto"}
-    if response.request.url.host not in source_hosts:
-        return
-    # This also rejects redirects before a redirect-enabled client follows them.
-    response.raise_for_status()
-    await read_bounded_response(response, MAX_SOURCE_RESPONSE_BYTES)
-    source = source_hosts[response.request.url.host]
-    validate_search_response(response, source)
-
-
 async def _search(
-    result: EvidenceIrritatorResult, config: Config, client: httpx.AsyncClient,
-    *, lineage: dict[str, set[int]] | None = None,
+    result: EvidenceIrritatorResult,
+    config: Config,
+    client: httpx.AsyncClient,
+    *,
+    lineage: dict[str, set[int]] | None = None,
 ) -> list[Signal]:
     adapters = {"hackernews": search_hackernews, "arxiv": search_arxiv, "devto": search_devto}
     policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)
@@ -575,35 +565,45 @@ async def _search(
                     original = json.dumps(asdict(signal), ensure_ascii=True, sort_keys=True)
                     identity = hashlib.sha256(original.encode()).hexdigest()
                     lineage.setdefault(identity, set()).add(query_index)
-            result.source_attempts.append(SourceAttempt(
-                query.query, source, "complete" if signals else "empty", len(signals),
-                max(0, len(raw) - len(signals)),
-            ))
+            result.source_attempts.append(
+                SourceAttempt(
+                    query.query,
+                    source,
+                    "complete" if signals else "empty",
+                    len(signals),
+                    max(0, len(raw) - len(signals)),
+                )
+            )
             return signals
         except SourceUnavailableError:
-            result.source_attempts.append(SourceAttempt(
-                query.query, source, "unavailable", error="SourceUnavailableError",
-                error_detail="Configured source is unavailable.",
-            ))
+            result.source_attempts.append(
+                SourceAttempt(
+                    query.query,
+                    source,
+                    "unavailable",
+                    error="SourceUnavailableError",
+                    error_detail="Configured source is unavailable.",
+                )
+            )
             return []
         except asyncio.CancelledError:
             result.source_attempts.append(SourceAttempt(query.query, source, "error", error="CancelledError"))
             raise
         except Exception as exc:
-            result.source_attempts.append(SourceAttempt(
-                query.query, source, "error", error=type(exc).__name__, error_detail=_safe_error_detail(exc),
-            ))
+            result.source_attempts.append(
+                SourceAttempt(
+                    query.query,
+                    source,
+                    "error",
+                    error=type(exc).__name__,
+                    error_detail=_safe_error_detail(exc),
+                )
+            )
             return []
 
-    # Add bounded response size/redirect checks to the shared envelope validation.
-    # Preserve the caller's hooks and remove only our own, including on cancellation.
-    client.event_hooks["response"].append(_check_source_response)
-    try:
-        batches = await asyncio.gather(*(
-            attempt(query, source, index) for index, query in enumerate(result.queries) for source in policy.sources
-        ))
-    finally:
-        client.event_hooks["response"].remove(_check_source_response)
+    batches = await asyncio.gather(
+        *(attempt(query, source, index) for index, query in enumerate(result.queries) for source in policy.sources)
+    )
     result.source_attempts.sort(key=lambda attempt: (attempt.query, attempt.source))
     return [signal for batch in batches for signal in batch]
 

@@ -10,6 +10,7 @@ import httpx
 from digest.domain.investigation.signals import Signal
 from digest.irritator.query_contract import lexical_atoms
 from digest.irritator.sources import _register, validate_search_response
+from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,20 @@ async def search_hackernews(
 ) -> list[Signal]:
     """Search Hacker News via the Algolia API."""
     lexical_atoms(query)
-    resp = await client.get(
+    async with client.stream(
+        "GET",
         _BASE_URL,
         params={
-            "query": query, "tags": "story", "hitsPerPage": _MAX_RESULTS,
+            "query": query,
+            "tags": "story",
+            "hitsPerPage": _MAX_RESULTS,
             "advancedSyntax": "true",
         },
         timeout=_TIMEOUT,
-    )
-    resp.raise_for_status()
+        follow_redirects=False,
+    ) as resp:
+        resp.raise_for_status()
+        await read_bounded_response(resp, MAX_SOURCE_RESPONSE_BYTES)
     data = validate_search_response(resp, "hackernews")
     hits = data["hits"]
     signals: list[Signal] = []
