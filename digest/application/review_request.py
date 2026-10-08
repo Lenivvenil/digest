@@ -43,22 +43,29 @@ def _configured_category_interests(bundle: EvidenceBundle, sources: Sequence[Sou
     return sorted(categories)
 
 
+def closing_source_bindings(
+    settings: ClosingConfig, sources: Sequence[SourceConfig],
+) -> frozenset[tuple[str, str, str]]:
+    """Resolve exact approved feeds; sanitized name/category collisions grant none."""
+    bindings: dict[tuple[str, str], list[SourceConfig]] = {}
+    for source in sources:
+        key = (sanitize_article("", "", source.name)[2], source.category[:200])
+        bindings.setdefault(key, []).append(source)
+    approved = {(binding.name, binding.url, binding.category) for binding in settings.approved_sources}
+    return frozenset(
+        (source.name, source.url, source.category)
+        for matches in bindings.values() if len(matches) == 1
+        for source in matches if source.enabled and (source.name, source.url, source.category) in approved
+    )
+
+
 def eligible_ids(
     bundle: EvidenceBundle, settings: ClosingConfig, sources: Sequence[SourceConfig],
 ) -> list[str]:
-    """A sanitized name collision grants no eligible binding."""
-    eligible = []
-    for item in bundle.items:
-        matches = [source for source in sources
-                   if sanitize_article("", "", source.name)[2] == item.source
-                   and source.category[:200] == item.category]
-        if len(matches) != 1 or not matches[0].enabled:
-            continue
-        source = matches[0]
-        if any((binding.name, binding.url, binding.category) == (source.name, source.url, source.category)
-               for binding in settings.approved_sources):
-            eligible.append(item.evidence_id)
-    return eligible
+    """Use the same unambiguous approved feeds for admission and review eligibility."""
+    bindings = {(sanitize_article("", "", name)[2], category[:200])
+                for name, _, category in closing_source_bindings(settings, sources)}
+    return [item.evidence_id for item in bundle.items if (item.source, item.category) in bindings]
 
 
 def build_review_messages(

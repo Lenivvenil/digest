@@ -1,13 +1,15 @@
 # 0014. Keep an optional humane closing item inside accepted preparation
 
-Status: proposed; implemented, disabled by default, for
-[#127](https://github.com/Lenivvenil/digest/issues/127). No source activation,
-production rollout, daily-availability guarantee or editorial acceptance is implied.
-The issue remains open.
+Status: implemented as an optional, disabled-by-default feature for
+[#127](https://github.com/Lenivvenil/digest/issues/127), initially released through
+[PR #135](https://github.com/Lenivvenil/digest/pull/135). The bounded admission
+amendment below changes new-packet planning, not source approval or editorial
+acceptance. The issue remains open; neither activation nor a successful technical
+run guarantees a suitable daily story.
 
-This reconciliation uses merged PR #139 (`e0740534`), including the reviewed
+The initial integration used merged PR #139 (`e0740534`), including the reviewed
 PR #138 editorial context, quantitative-qualifier and translation-v3 controls.
-It does not activate closing or approve its source and attribution choices.
+Source activation and its attribution review remain separate operator decisions.
 
 ## Context
 
@@ -40,7 +42,7 @@ in both `max_detailed_selections` and `max_evidence_articles`. The default remai
 five detailed entries: enabling a five-main-card issue therefore requires a
 separately reviewed setting of at least six detailed entries. Nothing silently
 raises the 4096-token output allowance or lowers the main card cap. This checks
-configured capacity, not actual evidence-byte fit, provider completion or a
+configured capacity, not actual evidence-character fit, provider completion or a
 guaranteed number of useful cards.
 
 The Groq GPT-OSS strict schema adds its closed `closing` property only while
@@ -52,13 +54,46 @@ Add a versioned `closing` designation to the existing primary/fallback review
 response: `{"schema_version": 1, "evidence_id": "selected ID"}` or an ID of `null`.
 Only a normally validated selected ID already admitted to that bounded evidence
 packet can qualify. The existing reason and exact quote provide the content; no
-second ranker, request, queue, reserved evidence slot or full-article prerequisite
-is introduced. The prompt asks for concrete supported human-good events, avoids
+second ranker, request, queue or full-article prerequisite is introduced. The
+initial implementation reserved no evidence opportunity; the amendment below
+addresses that admission gap. The prompt asks for concrete supported human-good events, avoids
 promotion and speculative benefits, retains material caveats, and allows
 abstention. A failed whole response remains a normal primary-review failure.
 Malformed, conflicting, missing or unsupported optional metadata preserves valid
 main selections. The designation always comes from the delivery-used slot;
 a failed primary cannot supply a fallback's closing story.
+
+<a id="bounded-closing-source-opportunity"></a>
+
+### Bounded closing-source opportunity — 2026-10-08 amendment
+
+Source approval alone did not give those observations an opportunity in a bounded
+review packet. When closing is enabled, new-packet planning can admit one otherwise
+absent, currently eligible occurrence from an exact approved feed binding. It uses
+the existing ordered unseen queue, then the ordered technical-retry queue, without
+resetting retry-attempt age or adding a semantic ranker. If an eligible approved
+occurrence is already admitted, the ordinary packet stays unchanged.
+
+Use spare count and character capacity first. For a saturated packet, preserve the
+first unseen opportunity and reserved technical retries; only the final ordinary
+backfill admission may be deferred for one fitting closing-source occurrence.
+Limits come from configuration, not a hardcoded packet size. Verify the complete
+replacement bundle with the existing evidence serializer and excerpt/count/character
+bounds. If no candidate fits after at most one such deferral, or there is no safe
+backfill donor, retain the ordinary packet. Never remove several ordinary items
+to create space for the optional opportunity.
+
+The deferred item remains pending with its existing observation history and normal
+later priority. It receives no model decision or editorial rejection. This explicit
+one-item tradeoff can defer a professional item; numerical priority does not provide
+semantic fintech protection. Existing planned packets, accepted preparations and
+frozen editions retain their evidence, hashes and recovery behavior.
+
+Admission establishes an opportunity only. The same bounded review decides whether
+the excerpt supports a suitable humane story and may return null. The unchanged
+main publication cap, detailed-selection limit, output allowance, shared calls and
+translation budget still apply. No extra model call, guaranteed closing card or
+invented positive interpretation follows from feed membership.
 
 Persist completed candidate work first. Then retain a separate bounded terminal
 closing sidecar keyed by the exact canonical report hash, including selected card,
@@ -112,7 +147,7 @@ one successful response when both fit. Oversized optional input is omitted befor
 dispatch and cannot displace main fields. Shared generation still has an output
 limit: a truncated or invalid whole response follows ordinary main fallback. This
 is field-validation isolation, not independently fault-tolerant model computation.
-Real ordinary capacity and faithful translation remain activation gates.
+Real ordinary capacity and faithful translation remain acceptance gates.
 
 Preflight required main rendering first; its errors still fail preparation.
 Preflight the assembled optional card next and omit it if unsafe to render. Pass
@@ -138,7 +173,7 @@ closing selection, route and output allowance. Cache schema2 is distinct from
 prompt version3. No old record is rewritten or relabelled, and no second closing
 translation call is introduced.
 
-## Literal attribution support in this draft
+## Literal attribution support
 
 The #146 ownership extraction in
 [ADR0018](0018-review-reuse-and-source-attribution.md) places these general notices
@@ -207,21 +242,21 @@ Source terms: [NHS](https://www.england.nhs.uk/terms-and-conditions-2/),
 [GOV.UK feeds](https://www.gov.uk/help/terms-conditions),
 [OGL v3](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
 
-## Unapplied source and capacity recommendation
+## Initial source and capacity profile
 
-A minimal activation proposal is these two text-only feeds with explicit seven-day
+A minimal activation profile uses these two text-only feeds with explicit seven-day
 recency, allocation priority 1, and a community/everyday-life category. Add their
 exact bindings to `closing.approved_sources`, retain the main five-card cap, and
 explicitly set `review.max_detailed_selections: 6`. Keep the existing 20-item packet,
 4096 review tokens, shared calls, deadlines and translation allowance. This is an
-unapplied recommendation requiring source/config approval; no existing professional
+operator configuration requiring source/config approval; no existing professional
 source is replaced or silently reweighted. Priority is not a semantic role label.
 
 The October 7 public feed sample contained five Environment Agency entries within
 seven days (two within 24 hours), with one clear completed-action candidate; NHS
 contained two entries within seven days and none within 24 hours. These feeds
 provide occasional material, not a daily guarantee. The seven-day window is an
-explicit proposed freshness tradeoff, not a claim old news was published today.
+explicit freshness tradeoff, not a claim old news was published today.
 Normal identity deduplication prevents repeated publication of the same item.
 
 The Lymington Atom title and summary support installed tidal flaps and refurbished
@@ -234,9 +269,10 @@ is access, not proof that the advertised population already received doses.
 
 Story availability, packet admission, selected relevance, faithful presentation
 and successful delivery are separate outcomes. The inherited #139 source turns
-and retry reservation do not reserve a closing slot. The current packet may
-contain no suitable story even when the wider feed has one. No new ranker or
-admission redesign is part of this draft.
+and retry reservation originally provided no closing-source opportunity. The
+bounded amendment above can admit one candidate without increasing the packet;
+it still cannot establish that the wider inventory or admitted excerpt contains
+a suitable story.
 
 ## Activation and acceptance still required
 

@@ -17,7 +17,7 @@ from digest.application.candidate_lifecycle import (
     index_candidate,
     persist_candidates,
 )
-from digest.application.review_request import build_evidence_bundle, build_review_messages
+from digest.application.review_request import build_evidence_bundle, build_review_messages, closing_source_bindings
 from digest.config import Config
 from digest.domain.catalog.articles import Article, article_hash
 from digest.domain.editorial.candidate_policy import (
@@ -124,6 +124,8 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
         progress, instant, max_evidence_articles=config.review.max_evidence_articles,
         max_excerpt_chars=config.review.max_excerpt_chars,
         max_technical_retry_articles=config.review.max_technical_retry_articles,
+        closing_sources=(closing_source_bindings(config.closing, config.sources)
+                         if config.closing.enabled else frozenset()),
     )
     if not selected:
         return None

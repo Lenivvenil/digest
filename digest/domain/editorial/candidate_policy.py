@@ -170,9 +170,39 @@ def _admit_candidate(
     return False
 
 
+def _closing_opportunity(
+    selected: list[CandidateArticle], candidates: list[Candidate], protected_count: int, *,
+    max_evidence_articles: int, max_excerpt_chars: int,
+) -> list[CandidateArticle]:
+    """Offer one approved occurrence before freezing, without changing candidate history."""
+    if not candidates or any(candidate.article in selected for candidate in candidates):
+        return selected
+    retained = selected
+    if len(selected) == max_evidence_articles:
+        if len(selected) <= protected_count:
+            return selected
+        # Only the final ordinary backfill admission can be deferred. Its
+        # original pending status and prior attempts remain untouched.
+        retained = selected[:-1]
+    for candidate in candidates:
+        proposed = [*retained, candidate.article]
+        articles: dict[str, list[Article]] = {}
+        for saved in proposed:
+            articles.setdefault(saved.category, []).append(saved.article())
+        bundle = build_evidence_bundle(
+            articles, max_evidence_articles=max_evidence_articles, max_excerpt_chars=max_excerpt_chars,
+        )
+        if (len(bundle.items) == len(proposed)
+                and {item.evidence_id for item in bundle.items}
+                == {article_hash(saved.title, saved.link) for saved in proposed}):
+            return proposed
+    return selected
+
+
 def plan_articles(
     progress: CandidateProgress, instant: datetime, *, max_evidence_articles: int,
     max_excerpt_chars: int, max_technical_retry_articles: int,
+    closing_sources: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> list[CandidateArticle]:
     """Bound fresh/age source turns and technical continuation in one request.
 
@@ -180,6 +210,8 @@ def plan_articles(
     only actual admitted evidence, then unused count/character capacity backfills.
     With a one-item limit, unseen work retains preference. No extra request or
     editorial decision is implied by a turn, a byte skip or a saved plan.
+    An absent approved closing source gets one bounded final opportunity, using
+    spare capacity or deferring only the last ordinary backfill admission.
     """
     unseen = [item for item in progress.candidates.values() if item.eligible and item.status == "not_presented"]
     retries = [item for item in progress.candidates.values() if item.eligible and item.status == "technical_pending"]
@@ -189,6 +221,11 @@ def plan_articles(
         retry_times[item.identity] = datetime.fromisoformat(packet.planned_at if packet else item.first_observed_at)
     unseen = _source_turns(unseen, instant)
     retries = _source_turns(retries, instant, retry_times)
+    # Filter the established queues so retry attempt-age ordering survives.
+    closing_candidates = [
+        item for item in [*unseen, *retries]
+        if (item.article.source, item.article.source_url, item.article.category) in closing_sources
+    ]
     limit = max_evidence_articles
     reserved = min(max_technical_retry_articles, max(0, limit - bool(unseen)))
     selected: list[CandidateArticle] = []
@@ -199,11 +236,15 @@ def plan_articles(
     used_retries = 0
     while retries and used_retries < reserved and len(selected) < limit:
         used_retries += _admit_candidate(selected, retries.pop(0), max_evidence_articles, max_excerpt_chars)
+    protected_count = len(selected)
     for candidate in [*unseen, *retries]:
         if len(selected) >= limit:
             break
         _admit_candidate(selected, candidate, max_evidence_articles, max_excerpt_chars)
-    return selected
+    return _closing_opportunity(
+        selected, closing_candidates, protected_count,
+        max_evidence_articles=max_evidence_articles, max_excerpt_chars=max_excerpt_chars,
+    )
 
 
 def _current_occurrences(candidate: Candidate) -> None:
