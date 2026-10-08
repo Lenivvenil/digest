@@ -151,6 +151,13 @@ of page count. This is an evidence-preservation correction, not semantic accepta
 the same generated prose still incorrectly generalized Citi's offering to the entire
 Swift network. Adding the correct footnote does not make that assertion correct.
 
+The corrected renderer is retained in Git history after the scoped
+[internal publication-protocol retirement](0010-group-source-points-with-qualifications.md#retire-the-unintegrated-reading-angle-publication-protocol--2026-10-08).
+Retained page evidence, full-source checkpoint builders/readers and reconciliation
+input preserve every nominated qualification. Fresh source preparation emits a
+technical handoff, not a full-source checkpoint extension. It does not call that
+renderer or mark a brief delivered; historical delivered-state readers remain supported.
+
 Multi-page completion remains a technical handoff. Neither concatenated page summaries
 nor appended quotations establish an accurate whole-article brief. A changed publication
 algorithm or source-unit selection prompt requires its own proposed decision and real-source

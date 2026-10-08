@@ -141,3 +141,42 @@ midpoint admission can process the two larger sources in complete ordered pages,
 but concatenating page briefs is not the final article-level reconciliation. Its
 output/input coverage contract, source fidelity, translation and useful sustainable
 throughput remain acceptance work within existing budgets.
+
+## Retire the unintegrated reading-angle publication protocol — 2026-10-08
+
+The scoped cleanup in [#183](https://github.com/Lenivvenil/digest/issues/183)
+retires `BriefRun`, `enrich_selected_cards`, `_render`, `_citation_note`,
+`mark_briefs_delivered` and `reconcile_briefs_delivered` from `reading_brief.py`.
+These formed a separate article-admission/backlog/render/acknowledgment path with no
+repository CLI, application, script or plugin caller. They were not the grouped-point
+prototype described above. Shipping the module made direct Python imports possible;
+this is an explicit internal-API retirement, not a claim that nobody could import it.
+
+The earlier instruction to preserve experimental code and evidence does not require
+this second live publication protocol. Its complete implementation, including the
+single-page qualification correction, remains in
+[the exact pre-retirement revision](https://github.com/Lenivvenil/digest/blob/82f012f1e6c52a1c0b53496040c5c41dbb2af4e5/digest/reading_brief.py).
+The original decisions, failed-result evidence and source fixtures remain. The current
+grouped-point experiment, reconciliation and their acceptance limits are unchanged.
+
+The supported experimental path remains candidate-bound preparation: verify the
+saved selection, acquire/process the complete source, retain request intent and page
+proof, then freeze a technical handoff for reconciliation. It does not publish the
+old concatenated page angles. All source/state/page/attempt schemas and hashes remain
+unchanged, including readers for historical `delivered` and `delivered_at` values.
+No state is rewritten or acknowledged by this retirement.
+
+Selected qualifications remain in page evidence and reconciliation input regardless
+of page count. Retained full-source checkpoint builders/readers also preserve exact
+qualification roles and excerpts; fresh preparation emits a technical handoff, not
+that checkpoint extension. The retained late-qualification checks exercise these
+evidence contracts. Removing the old presentation function
+does not erase a qualification, rehabilitate the failed Citi claim, or establish
+semantic completeness. Any future publication algorithm still needs its own factual
+and readability acceptance.
+
+Tests of admission, fallback, pacing, request uncertainty, source integrity and
+recovery move from the old wrapper to their live engine/application owner. Only
+assertions about the retired renderer, its global backlog scanner and its independent
+delivery acknowledgment are retired. No replacement scanner is introduced in test
+helpers, and the optional source-reading feature remains disabled by default.

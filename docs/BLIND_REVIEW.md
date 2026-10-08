@@ -597,6 +597,10 @@ Sparse supply is not a promise of a daily positive story.
 selection and an explicit model route. It runs only through `--prepare-edition`;
 unsupported preview/direct-publish modes stop before source/model work. Completed
 source pages are a technical evidence handoff, not an accepted or published edition.
+The former standalone reading-angle renderer and delivered-marking Python helpers
+have been retired; they were not a supported CLI path. Existing source snapshots and
+historical delivered records remain readable. See the
+[internal API compatibility note](../CHANGELOG.md#unreleased--reliability-rehabilitation).
 Unknown generation outcomes remain held across invocations and route changes.
 The [accounting guide](reading-brief-accounting.md) describes verified profiles,
 optional offline tokenizer preparation and the bounded configured fallback. Unknown
