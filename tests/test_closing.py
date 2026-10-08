@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
+from digest.application.preparation import CandidateWork, _preparation_closing, _review_candidates
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -170,8 +170,9 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
         return json.dumps(raw), {}
 
     monkeypatch.setattr("digest.application.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
         execution=execution)
+    cards, report = reviewed.cards, reviewed.report
     assert report is not None and count == 2
     main, decision = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert decision is not None and decision.status == "selected" and decision.provenance is not None
@@ -185,10 +186,11 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
     report_bytes = _canonical(asdict(report))
-    _, _, recovered, reused = await _analyze_candidate_articles(
-        articles, config, restored, restored.packets[0], report, str(tmp_path),
+    replayed = await _review_candidates(
+        CandidateWork(restored, restored.packets[0]), articles, config, str(tmp_path),
         execution=execution,
     )
+    recovered, reused = replayed.cards, replayed.report
     assert count == 2 and reused == report
     assert _preparation_closing(recovered, report, articles, config, str(tmp_path)) == (main, decision)
     assert _canonical(asdict(report)) == report_bytes
@@ -210,8 +212,9 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     monkeypatch.setattr("digest.application.review.complete", complete)
     if failure == "write":
         monkeypatch.setattr("digest.closing.save_closing", lambda *args: (_ for _ in ()).throw(OSError("disk")))
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
         execution=execution)
+    cards, report = reviewed.cards, reviewed.report
     assert report is not None
     for path in (tmp_path / "closing_decisions").glob("*.json"):
         if failure == "missing":
@@ -222,7 +225,7 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     assert main == cards and decision is not None and decision.status == "incomplete"
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
-    await _analyze_candidate_articles(articles, config, restored, restored.packets[0], report, str(tmp_path),
+    await _review_candidates(CandidateWork(restored, restored.packets[0]), articles, config, str(tmp_path),
         execution=execution)
     assert complete.await_count == 1
 
@@ -359,8 +362,9 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
     begin_packet(progress, packet, tmp_path)
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
         execution=execution)
+    cards, report = reviewed.cards, reviewed.report
     assert report is not None
     main, selected = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert selected is not None and selected.status == "selected"
@@ -420,8 +424,9 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     begin_packet(progress, packet, ".cache")
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, ".cache",
+    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, ".cache",
         execution=execution)
+    cards, report = reviewed.cards, reviewed.report
     assert report is not None
     main, decision = _preparation_closing(cards, report, articles, config, ".cache")
     assert main == cards and len(main) == 1

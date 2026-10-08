@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.preparation import _analyze_candidate_articles, _preparation_closing
+from digest.application.preparation import CandidateWork, _preparation_closing, _review_candidates
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -143,8 +143,9 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     begin_packet(progress, packet, tmp_path)
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", completion)
-    _, _, cards, report = await _analyze_candidate_articles(articles, config, progress, packet, None, str(tmp_path),
+    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
         execution=model_execution)
+    cards, report = reviewed.cards, reviewed.report
     assert report is not None and len(report.reviews[0].selections) == 6
     main_cards, closing = _preparation_closing(cards, report, articles, config, str(tmp_path))
     assert len(main_cards) == 5

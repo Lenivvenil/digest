@@ -16,7 +16,7 @@ import respx
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.analysis import analyze_articles as _analyze_articles
-from digest.application.preparation import _analyze_candidate_articles
+from digest.application.preparation import CandidateWork, _review_candidates
 from digest.candidate_review import (
     CandidateProgress,
     begin_packet,
@@ -131,7 +131,7 @@ async def test_eight_useful_five_confirmed_three_next_window(
     monkeypatch.setattr("digest.application.review.complete", model)
     with respx.mock(assert_all_mocked=True) as router:
         if snapshot_failure:
-            with patch("digest.edition_runtime.save_accepted_preparation", side_effect=OSError("snapshot failure")):
+            with patch("digest.preparation.save_preparation", side_effect=OSError("snapshot failure")):
                 with pytest.raises(OSError, match="snapshot failure"):
                     await _run("config.yaml", False, False, False, prepare_only=True)
             saved = load_candidate_progress()
@@ -265,9 +265,10 @@ async def test_fallback_preserves_duplicate_bound_to_overflow_selected_identity(
         "digest.application.review.complete",
         AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})])
     ) as complete:
-        _, _, cards, report = await _analyze_candidate_articles(
-            articles, config, progress, packet, None, str(tmp_path), execution=execution,
+        reviewed = await _review_candidates(
+            CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution,
         )
+        cards, report = reviewed.cards, reviewed.report
     assert complete.await_count == 2  # Existing primary/fallback budget, with no overflow repair call.
     assert report.reviews[0].status == "unavailable" and len(report.reviews[1].selections) == 8
     assert len(cards) == 5
@@ -312,9 +313,10 @@ async def test_unicode_selections_reconcile_with_original_character_budget(tmp_p
     raw = json.dumps(payload, ensure_ascii=False)
     assert len(raw) < 32000 < len(json.dumps(payload))
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        _, _, cards, report = await _analyze_candidate_articles(
-            articles, config, progress, packet, None, str(tmp_path), execution=execution,
+        reviewed = await _review_candidates(
+            CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution,
         )
+        cards, report = reviewed.cards, reviewed.report
     complete.assert_awaited_once()
     assert len(cards) == 5 and len(report.reviews[0].selections) == 8
     restored = load_candidate_progress(tmp_path)

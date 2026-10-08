@@ -113,16 +113,14 @@ async def test_budget_failure_does_not_block_accepted_presentation_cache(
 ) -> None:
     model_execution = ModelExecution()
     from digest.application.preparation import prepare_edition
-    from digest.application.results import RunStats
+    from digest.edition_runtime import ExistingEdition
     from scripts.review_fixture import fixture_config
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DIGEST_MODEL_BUDGET_REQUIRED", "1")
     config = fixture_config()
-    expected = RunStats(0, 0, 0, False, False, False, "", edition_status="ready")
-    from unittest.mock import AsyncMock
-
-    with patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)):
-        assert await prepare_edition(config, "config.yaml",
+    expected = ExistingEdition("ready", "fixture-ready-sha")
+    with patch("digest.edition_runtime.recover_preparation", return_value=expected):
+        assert (await prepare_edition(config, "config.yaml",
             execution=model_execution, verbose=False, feedback_precollected=True,
-                                     publication_date=None, started_at=0) is expected
+                                     publication_date=None, started_at=0)).ready_sha256 == expected.ready_sha256

@@ -42,6 +42,15 @@ class PreparationSnapshot:
     closing: ClosingDecision | None = None
 
 
+@dataclass(frozen=True)
+class AcceptedPreparation:
+    """Exact locally verified checkpoint, not proof of remote persistence."""
+
+    path: Path
+    sha256: str
+    snapshot: PreparationSnapshot
+
+
 def _target(publication_date: date | None, instant: datetime) -> str:
     if publication_date is not None and type(publication_date) is not date:
         raise ValueError("Publication date must be a date without a time component.")
@@ -59,9 +68,12 @@ def _snapshot(payload: object, version: int = LEGACY_SCHEMA_VERSION) -> Preparat
     elif version != SCHEMA_VERSION or set(payload) != legacy_fields | {"closing"} or payload["closing"] is None:
         raise ValueError("Invalid versioned preparation fields.")
     snapshot: PreparationSnapshot = _restore(payload, PreparationSnapshot)
-    if (snapshot.source_count < 0 or snapshot.article_count < 0
-            or len(set(snapshot.contributing_sources)) != len(snapshot.contributing_sources)
-            or any(summary.article_count < 0 for summary in snapshot.summaries)):
+    if (
+        snapshot.source_count < 0
+        or snapshot.article_count < 0
+        or len(set(snapshot.contributing_sources)) != len(snapshot.contributing_sources)
+        or any(summary.article_count < 0 for summary in snapshot.summaries)
+    ):
         raise ValueError("Invalid preparation checkpoint counts or sources.")
     if snapshot.review_report is not None:
         _validate_report(snapshot.review_report)
@@ -77,7 +89,9 @@ def _snapshot(payload: object, version: int = LEGACY_SCHEMA_VERSION) -> Preparat
 
 
 def save_preparation(
-    snapshot: PreparationSnapshot, cache_dir: str | Path = ".cache", now: datetime | None = None,
+    snapshot: PreparationSnapshot,
+    cache_dir: str | Path = ".cache",
+    now: datetime | None = None,
     publication_date: date | None = None,
 ) -> Path:
     """Atomically replace the one pending preparation with accepted canonical work."""
@@ -93,8 +107,13 @@ def save_preparation(
         raise ValueError("Cannot prepare an edition for a past publication date.")
     # Validate any existing active snapshot before replacing canonical accepted work.
     load_preparation(cache_dir, instant, publication_date)
-    body = {"schema_version": version, "utc_date": instant.date().isoformat(),
-            "created_at": instant.isoformat(), "publication_date": target, "snapshot": payload}
+    body = {
+        "schema_version": version,
+        "utc_date": instant.date().isoformat(),
+        "created_at": instant.isoformat(),
+        "publication_date": target,
+        "snapshot": payload,
+    }
     record = {**body, "sha256": hashlib.sha256(_canonical(body)).hexdigest()}
     if len(json.dumps(record, indent=2).encode("utf-8")) > _MAX_BYTES:
         raise ValueError("Preparation checkpoint exceeds its 4000000-byte budget.")
@@ -105,11 +124,12 @@ def save_preparation(
     return path
 
 
-def load_preparation(
-    cache_dir: str | Path = ".cache", now: datetime | None = None,
+def load_accepted_preparation(
+    cache_dir: str | Path = ".cache",
+    now: datetime | None = None,
     publication_date: date | None = None,
-) -> PreparationSnapshot | None:
-    """Restore matching work through its publication day; reject active mismatches."""
+) -> AcceptedPreparation | None:
+    """Verify saved canonical work without consulting current editorial settings."""
     instant = _instant(now)
     today = instant.date().isoformat()
     target = _target(publication_date, instant)
@@ -120,34 +140,49 @@ def load_preparation(
         if path.stat().st_size > _MAX_BYTES:
             raise ValueError("Checkpoint exceeds its size budget.")
         record = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-        if (not isinstance(record, dict)
-                or set(record) != {"schema_version", "utc_date", "created_at",
-                                   "publication_date", "snapshot", "sha256"}
-                or type(record["schema_version"]) is not int
-                or record["schema_version"] not in {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
-                or not isinstance(record["utc_date"], str)
-                or date.fromisoformat(record["utc_date"]).isoformat() != record["utc_date"]
-                or not isinstance(record["publication_date"], str)
-                or date.fromisoformat(record["publication_date"]).isoformat() != record["publication_date"]
-                or not isinstance(record["created_at"], str)):
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"schema_version", "utc_date", "created_at", "publication_date", "snapshot", "sha256"}
+            or type(record["schema_version"]) is not int
+            or record["schema_version"] not in {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
+            or not isinstance(record["utc_date"], str)
+            or date.fromisoformat(record["utc_date"]).isoformat() != record["utc_date"]
+            or not isinstance(record["publication_date"], str)
+            or date.fromisoformat(record["publication_date"]).isoformat() != record["publication_date"]
+            or not isinstance(record["created_at"], str)
+        ):
             raise ValueError("Invalid checkpoint envelope.")
         body = {key: value for key, value in record.items() if key != "sha256"}
         if record["sha256"] != hashlib.sha256(_canonical(body)).hexdigest():
             raise ValueError("Checkpoint hash mismatch.")
         snapshot = _snapshot(record["snapshot"], record["schema_version"])
         created_at = datetime.fromisoformat(record["created_at"])
-        if (created_at.tzinfo is None or created_at.utcoffset() != timedelta(0)
-                or created_at.isoformat() != record["created_at"]
-                or created_at.date().isoformat() != record["utc_date"]
-                or created_at > instant or record["publication_date"] < record["utc_date"]):
+        if (
+            created_at.tzinfo is None
+            or created_at.utcoffset() != timedelta(0)
+            or created_at.isoformat() != record["created_at"]
+            or created_at.date().isoformat() != record["utc_date"]
+            or created_at > instant
+            or record["publication_date"] < record["utc_date"]
+        ):
             raise ValueError("Invalid checkpoint creation or publication date.")
         if record["publication_date"] < today:
             return None
         if record["publication_date"] != target:
             raise ValueError("Active checkpoint publication date differs from the requested edition.")
-        return snapshot
+        return AcceptedPreparation(path, record["sha256"], snapshot)
     except (ValueError, TypeError, KeyError, UnicodeError) as exc:
         raise ValueError("Invalid preparation checkpoint; inspect or clear it before preparing again.") from exc
+
+
+def load_preparation(
+    cache_dir: str | Path = ".cache",
+    now: datetime | None = None,
+    publication_date: date | None = None,
+) -> PreparationSnapshot | None:
+    """Compatibility projection of the verified local checkpoint."""
+    accepted = load_accepted_preparation(cache_dir, now, publication_date)
+    return accepted.snapshot if accepted is not None else None
 
 
 def clear_preparation(cache_dir: str | Path = ".cache") -> None:

@@ -11,7 +11,13 @@ from typing import Any
 
 import pytest
 
-from digest.preparation import PreparationSnapshot, clear_preparation, load_preparation, save_preparation
+from digest.preparation import (
+    PreparationSnapshot,
+    clear_preparation,
+    load_accepted_preparation,
+    load_preparation,
+    save_preparation,
+)
 from digest.radar.summarizer import ArticleSummary, CategorySummary
 from digest.review import BlindReviewReport, EvidenceSelection, ModelReview, build_evidence_bundle
 from scripts.review_fixture import fixture_articles, fixture_config
@@ -43,7 +49,11 @@ def _rehash(record: dict[str, Any]) -> None:
 
 def test_roundtrip_restores_exact_dataclasses_and_canonical_report(tmp_path: Path) -> None:
     snapshot = _snapshot()
-    save_preparation(snapshot, tmp_path, NOW)
+    path = save_preparation(snapshot, tmp_path, NOW)
+    accepted = load_accepted_preparation(tmp_path, NOW)
+    assert accepted is not None and accepted.path == path
+    assert accepted.sha256 == json.loads(path.read_text())["sha256"]
+    assert accepted.snapshot == snapshot
     loaded = load_preparation(tmp_path, NOW)
     assert loaded == snapshot
     assert loaded is not None and loaded.review_report is not None

@@ -844,9 +844,9 @@ def test_occurrence_switch_clears_only_active_typed_decision(tmp_path: Path, sel
 
 @pytest.mark.parametrize("kind", ["deferred", "missing", "complete", "legacy"])
 def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferral(tmp_path: Path, kind: str) -> None:
-    from digest.application.preparation import _save_candidate_preparation
     from digest.candidate_dispositions import CandidateDispositionCapture, capture_review_dispositions
-    from digest.preparation import PreparationSnapshot, load_preparation
+    from digest.edition_runtime import IncompleteSelection, accept_preparation
+    from digest.preparation import AcceptedPreparation, PreparationSnapshot, load_preparation
 
     config, articles = population(2)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
@@ -867,7 +867,8 @@ def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferr
         capture_review_dispositions(packet.evidence, report.reviews[0], raw)]))
     reconcile_packet(progress, packet, report, config, tmp_path, disposition_capture=capture)
     snapshot = PreparationSnapshot([], [], "", report, 1, 2, ["A"])
-    _save_candidate_preparation(snapshot, packet, str(tmp_path), None)
+    outcome = accept_preparation(snapshot, packet, cache_dir=str(tmp_path))
+    assert isinstance(outcome, AcceptedPreparation if kind in {"complete", "legacy"} else IncompleteSelection)
     assert (load_preparation(tmp_path) is not None) == (kind in {"complete", "legacy"})
     assert (pending_completed_report(progress) is not None) == (kind in {"complete", "legacy"})
     if kind == "complete":
@@ -875,6 +876,33 @@ def test_candidate_empty_handoff_requires_resolved_metadata_not_technical_deferr
         merge_candidates(progress, {"tech": [changed]}, config, {}, now=NOW)
         assert pending_completed_report(progress) is None
         assert plan_packet(progress, config, NOW) is not None
+
+
+def test_accepted_readback_must_match_the_saved_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typing import Any
+
+    from digest.edition_runtime import accept_preparation
+    from digest.preparation import PreparationSnapshot, load_accepted_preparation
+
+    config, articles = population(2)
+    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
+    packet = plan_packet(progress, config, NOW)
+    assert packet is not None
+    report = report_for(packet, config, "abstained")
+    snapshot = PreparationSnapshot([], [], "Accepted canonical notice", report, 1, 2, ["A"])
+
+    def mismatched_readback(*args: Any, **kwargs: Any) -> Any:
+        accepted = load_accepted_preparation(*args, **kwargs)
+        if accepted is None:
+            return None
+        return replace(accepted, snapshot=replace(accepted.snapshot, combined="Unrelated canonical notice"))
+
+    monkeypatch.setattr("digest.preparation.load_accepted_preparation", mismatched_readback)
+    with pytest.raises(ValueError, match="readback differs"):
+        accept_preparation(snapshot, packet, cache_dir=str(tmp_path))
+    accepted = load_accepted_preparation(tmp_path)
+    assert accepted is not None and accepted.snapshot == snapshot
+    assert not packet.handed_to_preparation
 
 
 @pytest.mark.asyncio

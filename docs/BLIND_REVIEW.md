@@ -1,619 +1,358 @@
-# Blind evidence review (opt-in experiment)
+# Preparing, publishing and recovering a digest
 
-This runbook describes the RSS-review code available on main. Full-source enrichment
-in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93) is not installed by these
-instructions. Editorial quality remains open in [#55](https://github.com/Lenivvenil/digest/issues/55).
-Optional primary and supplementary presentation translation is documented in
-[README](../README.md#language-and-optional-post-translation) and
-[ADR-0005](decisions/0005-optional-presentation-translation.md). Its presentation acceptance
-is separate from #55's useful, faithful editorial-output requirement. Current work order is
-tracked in [#91](https://github.com/Lenivvenil/digest/issues/91).
+Use this guide from the runtime working directory that owns `config.yaml`, `.cache/`
+and the output archive. Start with the [safe quick start](../README.md#quick-start)
+for installation. The [domain model](domain/digest/overview.md) explains the terms;
+[Architecture](ARCHITECTURE.md) explains why the persistence boundaries exist.
 
-`review.enabled` adds provider-neutral independent selection to the existing RSS,
-Markdown and Telegram pipeline. It defaults to false for existing configurations.
+## Choose the scenario
 
-## Contract
+| Task | Entry | Important boundary |
+| --- | --- | --- |
+| Prepare the ordinary review-led edition | `python -m digest --prepare-edition` with review enabled, review-led-only mode and compact delivery | Does collection/model/presentation work as needed, but does not send. |
+| Inspect, claim or send a frozen edition | `python -m digest --edition-phase inspect\|claim\|send` | Sending consumes exact persisted ready/claim hashes and makes no model call. |
+| Preview Radar output | `python -m digest --dry-run --radar-only` | Can fetch sources and call models. It is not a no-network check. |
+| Run an independent report-only comparison | `python -m digest.review_trial` | Uses independently pinned review slots; it does not publish a primary edition. |
+| Resume an admitted supplementary comparison | `python -m digest.review_resume` | Uses a saved checkpoint and a separately persisted attempt marker. |
+| Propose sources | `python -m digest --discover` | Saves proposals and requests approval; it does not activate them. |
+| Run legacy direct/category delivery | Ordinary non-prepared invocation with its configured mode | Retains different transport, Markdown and guard rules. Do not mix it into the prepared protocol. |
 
-1. Freeze a version-1 `EvidenceBundle` before any review call. It contains stable
-   article IDs, sanitized RSS title/excerpt, canonical URL, source, category and
-   available publication time. The SHA-256 bundle ID changes with the evidence.
-2. Apply the same deterministic round-robin category sampling once, with bounded
-   article count, excerpt length and a 16,000-character evidence-item JSON budget.
-   The omission count is recorded. This is excerpt evidence, not full articles.
-3. Give primary and secondary slots exactly the same messages, language,
-   temperature, evidence packet bound and maximum output tokens. No category summary,
-   prior opinion, prior selection or other model identity enters the prompt.
-4. Pin each slot to its specified provider/model. There is no role/provider
-   fallback for review slots. A failed model remains unavailable rather than
-   silently being replaced by the other reviewer. Provider-reported model
-   versions are retained when available; otherwise the report says unknown.
-5. Validate every selection: known unique evidence ID, bounded reason text,
-   controlled confidence label, and a nonempty exact quote from supplied title
-   or excerpt. Once the complete response envelope passes validation, invalid
-   entries are rejected individually. Accepted entries may be delivered with
-   `partial` status; malformed envelopes, excessive counts or invalid limitations
-   still reject the whole response. An empty original selection needs an explicit
-   limitation, distinguishing abstention from malformed output.
-6. Compare selected IDs using Jaccard overlap. If both results are valid and
-   overlap is below the configured threshold, optionally call a third model on
-   the same complete evidence bundle and same prompt, still without prior answers.
-   At most one third-model task is requested. HTTP retries remain independently
-   bounded by the shared LLM retry policy.
+The `--check` command probes feeds. To validate configuration without external calls,
+use the disabled example and commands in the quick start. Model routes, credentials,
+source activation and schedules belong to the operator's runtime.
 
-## Configured interests and reason fidelity
+## Ordinary preparation
 
-The shared selection prompt retains the technology-architect audience and considers
-practical, operational and business relevance across operator-defined categories.
-Its `configured_category_interests` contains only distinct category labels already
-present in the exact RSS packet, with an unambiguous match to an enabled configured
-source. Matching follows the existing source sanitization and category truncation;
-collisions, including disabled look-alikes, convey no configured intent. Missing
-context never removes evidence or establishes irrelevance. There is no new reader
-profile, category quota or mandatory category coverage.
+<a id="review-led-delivery-without-legacy-enrichment"></a>
 
-No feed URLs, unrelated/disabled source list, personal profile, feedback or allocation
-priorities are added to the prompt. Priorities retain their allocation role and do
-not become editorial scores. The context is bounded by the existing packet count
-and 200-character category field. It adds input text without reducing the existing
-16,000-character evidence allowance or increasing requests, output limits or routes.
-Input headroom therefore decreases: the revised system text adds 970 UTF-8 bytes
-(166 content tokens with the existing local `o200k_base` tokenizer). With arbitrary
-JSON-escaped labels, the added context has a conservative ceiling of 24,115 UTF-8
-bytes at 20 evidence items, or 64,235 bytes across the supported 100-item setting
-and existing evidence-character bound. These are safety bounds, not typical usage;
-normal short category labels are much smaller. For byte-based `o200k_base`, standalone
-context token counts are at most those byte ceilings. These estimates exclude
-provider framing and do not establish Gemini or other provider token accounting,
-free-tier entitlement or guaranteed prompt fit. No counting call is added.
+The ordinary mode uses `review.enabled: true`, `review.review_led_only: true` and
+`telegram.delivery_mode: compact`. It does not generate legacy category summaries
+or wait for an independent comparison before preparing selected cards.
 
-Reasons must distinguish a supplied observation from conditional relevance inference,
-avoid attributing unstated mechanisms/results, and describe insufficient excerpt
-evidence without judging the unseen full article. The same restraint applies to
-non-selection and duplicate reasons. Existing strict quote/provenance checks remain;
-they cannot mechanically prove that every generated claim follows from its quotation.
-Capacity-only omissions still require `deferred`, never editorial rejection.
-
-All selection, planned-packet, reconciliation and resume paths hash the same complete
-messages. The changed prompt cannot silently reuse an older model-review result as a
-new-contract review. Historical reports, completed candidate judgments and accepted
-preparations stay readable and keep their original hashes; this change does not
-reopen prior editorial rejections. Technical-deferred work retains existing eligibility
-and scheduling rules and is not considered re-reviewed merely because a new packet
-can be planned. No persisted-state or YAML migration is introduced.
-
-Offline fixtures verify this wiring, privacy boundary and provenance only. Semantic
-acceptance for #121/#55 remains open: inspect supported facts, relevance inferences,
-inadequate evidence and dispositions in a subsequent ordinary authorized run or an
-explicitly admitted bounded replay, preserving the original failed evidence and the
-unchanged request/provider/Actions budgets. A new paid/private evaluation is not
-required by this change. Do not claim the prompt or synthetic responses prove better
-selection or factuality.
-
-## Output and integration
-
-Primary selection becomes canonical Telegram cards, labeled as model opinion.
-`max_selections` limits those publication cards in the review's order; it is not
-sent to the reviewer as a relevance quota. The full validated selection list stays
-in the report. `max_detailed_selections` separately bounds detailed entries in a new
-response (default 5); useful overflow must be explicitly deferred and stays pending.
-The full evidence packet is still considered, and publication capacity is never an
-editorial rejection reason. Old validated reports retain their original selections.
-A provider-reported unfinished response is rejected, including syntactically closed JSON.
-Secondary/third opinions do not generate extra Telegram card floods. All reviews,
-quotes, confidence, provider/model identities, token usage, prompt hashes,
-completeness and escalation decisions appear in Markdown and a sibling
-`YYYY-MM-DD.review.json` (or numbered retry filename).
-
-Blind selection runs before category prose to protect its quota budget. If prose
-fails but primary cards succeed, those cards can still be delivered. Even if all
-slots abstain or fail, the diagnostic report is preserved when Markdown is enabled.
-No category summary or prior output is recycled into another model's evidence.
-
-## Example configuration
-
-```yaml
-review:
-  enabled: true
-  review_led_only: false
-  primary: {provider: gemini, model: gemini-3.8-flash}
-  secondary: {provider: groq, model: openai/gpt-oss-120b}
-  tie_breaker: {provider: groq, model: qwen/qwen3.8-27b}
-  max_evidence_articles: 20
-  max_excerpt_chars: 500
-  max_selections: 5
-  max_detailed_selections: 5
-  editorial_context: ""  # Optional operator-owned relevance priorities, at most 1000 characters.
-  max_output_tokens: 4096
-  disagreement_threshold: 0.5
-```
-
-Qwen is a preview-model option, not an automatic replacement for a failed peer.
-These names express the reviewed experiment configuration, not a guarantee of
-account access or a free quota. Deployment must confirm free-tier account status;
-this implementation does not enable billing or add paid-provider fallback.
-
-## Offline verification
+The managed runtime first collects feedback, durably saves its batch and acknowledges
+those exact bytes. Pass `--feedback-precollected` only when that separate work has
+already happened. Without the flag, preparation uses its normal feedback path;
+local saving alone is not a remote persistence guarantee.
 
 ```sh
-python -m scripts.review_fixture --output /tmp/digest-review-fixture
+python -m digest --config config.yaml --feedback-precollected --prepare-edition
 ```
 
-This command uses synthetic fixture responses and never calls providers. It emits
-Markdown/JSON demonstrating different selections and bounded third-model
-escalation. It proves the contract wiring only, not the quality of those models.
-
-## Explicit limitations
-
-Selection overlap is not factual agreement or a majority-vote truth detector.
-Different opinions about the same selected item do not automatically trigger the
-third model. Exact excerpt quotes validate provenance, not claim truth. There is
-no live fact-checking or full-article retrieval in this module.
-
-Identical maximum output tokens do not equal identical reasoning effort across
-model families. Character caps are not exact tokenizer/RPM/TPM accounting. Quotas
-can still make a review incomplete; that state is surfaced, not counted as an
-opinion. Existing crash/retry delivery limitations still apply.
-
-## Rejected-response diagnostics
-
-Invalid successful model completions retain a specific validator reason, response
-SHA-256 and at most 32,000 characters of untrusted rejected text in the JSON
-sidecar, not rendered as Markdown. Control characters and common credential-like
-patterns are redacted without inspecting environment secrets. Raw HTTP error
-bodies and headers are never retained. This diagnoses future contract failures
-without silently retrying a model or guessing what its first response contained.
-
-### Resume a report-only comparison
-
-`python -m digest.review_trial --config config.yaml --resume previous/review.json --output fresh-output`
-
-Resume keeps the exact saved RSS evidence, verifies its content hash and budgets,
-and does not collect sources or touch production dedup state. Only successful
-`ok`/`partial`/`abstained` slots whose provider, model, evidence hash and current prompt hash
-match are reused. Their selection contract is revalidated before any request.
-Missing or failed slots are attempted once; changed prompts/models invalidate
-reuse. Output must be fresh and cannot replace the original checkpoint. Reports
-label reused versus newly attempted slots and preserve original generation times;
-legacy version-one reports with no timestamp explicitly show `not recorded`.
-Hashes detect accidental mismatch, not malicious editing: checkpoints are trusted
-local artifacts, not authenticated provider receipts. Model aliases may change
-behind a provider's API; the recorded resolved model is retained for inspection.
-
-When the primary is unavailable or invalid, a successful secondary selection can
-lead the digest. Cards identify the actual provider/model and explicitly mark an
-incomplete independent comparison. A primary's valid abstention is respected;
-it is not silently replaced. Reusing a result never creates another opinion.
-
-Partial cached reviews retain their rejected-item diagnostics and remain incomplete.
-Accepted entries are strictly revalidated, with no typography repair at resume
-time. A partial slot is reused rather than charged again; partial comparisons do
-not produce overlap/disagreement claims or trigger a third model.
-
-The trial CLI is a manual, report-only recovery boundary. The separate
-`digest.review_resume` production command provides prepare/execute phases for the
-existing runtime schedule. It keeps production evidence budgets, limits completion
-to two calls with no retries, and requires an immutable checkpoint attempt marker.
-The runtime must commit and push that marker before execute; if persistence fails,
-no inference is allowed. Newest incomplete reports under 24 hours old are eligible
-once; old reports without timestamps are skipped. Resumed Markdown/JSON are
-archival supplements only: no Telegram message or dedup mutation occurs.
-A later scheduled run may use a different resolved version behind a provider model
-alias; original and new timestamps/model versions are visible in the report.
-
-### Review-led delivery without legacy enrichment
-
-Set `review.review_led_only: true` together with `review.enabled: true` to
-deliver the evidence-bound selected article cards and archive the blind-review
-report immediately after review. This opt-in skips category summaries,
-cross-category trends, and Irritator counter-signal analysis. The selected cards
-remain model opinions grounded only in the supplied RSS excerpts. Normal
-Telegram delivery checks and dedup rules still apply. The skipped analysis is
-explicitly logged; the default `false` preserves the existing full pipeline.
-
-This flag changes orchestration only, not the evidence bundle, review prompt,
-prompt hash, or cached-review validity. It makes one primary request and at most
-one secondary fallback, with no retries, before delivering and archiving. It does
-not guarantee provider availability or a completed comparison.
-
-## Primary-first runtime with preserved Irritator
-
-The explicit `review.review_led_only: true` mode now delivers the primary
-selection first. It makes one primary request, or one secondary fallback only
-when the primary is unavailable/invalid. Partial validated selections are
-deliverable without fallback; a valid abstention is respected. The
-independent opinion is marked pending, not counted as complete. Original evidence
-and prompts remain the same. The primary command emits `review_checkpoint` to
-GitHub Actions only after confirmed required delivery and state saves succeed.
-
-The runtime commits that primary receipt/cache and immutable review archive
-before starting a separate follow-up job. A timeout in that job cannot cancel or
-roll back the already committed primary result. The follow-up job has two bounded
-parts:
-
-1. Irritator: original RSS evidence → one evidence-cited narrative → up to three
-   adversarial queries → real Hacker News/arXiv/Lobsters searches → validation and
-   evidence-cited ranking. It does not manufacture category summaries or consume
-   another model's selections as source facts. Up to three single-provider model
-   attempts, no retries/fallback, a 180-second stage deadline, bounded excerpts
-   and ranking candidates. This deliberately samples one narrative; it is not the
-   old exhaustive per-category analysis. Errors/partial sources remain explicit,
-   never silently relabeled as absence of counter-evidence.
-2. Independent review: reuse validated successful slots and attempt only missing
-   slots on the same original bundle, at most two model calls. This is an archive
-   supplement; no extra Telegram comparison message.
-
-The same configured Telegram receives one bounded Irritator supplement with
-coverage/completeness labeling and external URLs when available. An attempt
-marker is committed before any optional requests. Results are written before
-sending; the marker records the Telegram outcome. An uncertain send is not
-retried automatically. This is at-most-one workflow attempt, not a promise of
-exactly-once network delivery. Failed/aborted marked stages require explicit
-inspection; normal workflow reruns cannot resend them.
-
-Quota spacing is conservative: optional Groq calls are spaced at least 65 seconds
-and the runtime leaves a 65-second gap before each follow-up phase. Real free-tier
-limits remain account-specific; a quota failure produces an incomplete archive,
-not a paid fallback. Successful primary delivery does not imply successful
-optional analysis; inspect the separate follow-up job reports.
-
-## Partial selection recovery and narrow typography repair
-
-The live-response validator keeps independently valid items when their siblings
-fail. The JSON sidecar records `rejected_items` with the zero-based response index,
-a known evidence ID only when available, and a safe validator reason. A response
-with both accepted and rejected entries is `partial`; one with no accepted entries
-remains `invalid`. The original bounded, credential-redacted response and its
-original SHA-256 are retained for diagnosis. No citation is synthesized.
-
-Quotes remain literal excerpts from the supplied title or RSS text. The only
-allowed live-response alignment maps ASCII `-`, U+2010 HYPHEN and U+2011
-NON-BREAKING HYPHEN together, and ASCII space, U+00A0 NO-BREAK SPACE and
-U+202F NARROW NO-BREAK SPACE together. Every mapping is one character to one character. The validator retrieves the actual
-source substring at the same indices and stores that exact text, recording
-`typography_normalized: true` on the accepted selection. The 200-character limit
-is checked before any repair. Semantic minus U+2212, dashes, ellipses, case,
-other whitespace, whitespace runs, paraphrases and Unicode compatibility transformations
-are not normalized. The shared RSS Irritator citation path uses the same exact-source alignment. Checkpoint reuse requires the saved quote to match source text exactly.
-
-The captured public-RSS regression fixture in
-`tests/fixtures/partial_review.json` yields four accepted entries (three narrow
-hyphen repairs and one originally exact quote) and rejects one over-budget,
-paraphrased quote. These tests make no model or network calls.
-
-
-### Literal-quote failure diagnostics
-
-The bounded Irritator narrative stage keeps literal quotes in the source language;
-only generated claims, assumptions, explanation and limitations use the configured
-output language. A literal mismatch still stops that stage before external search.
-The matcher is not relaxed into paraphrase or semantic equivalence.
-
-For a known evidence ID and a quote within the existing 200-character allowance,
-the private Irritator archive can retain the rejected quote, evidence ID and immutable
-bundle ID alongside existing prompt/response hashes. This permits comparison against
-the original checkpoint to distinguish formatting from unsupported text. It does not
-retain a whole provider response, and the rejected text is not logged or delivered
-as a counter-signal. Unknown IDs and oversized fields do not enter this diagnostic.
-Keep these runtime artifacts private; public issue updates should summarize outcomes.
-A mismatch alone does not establish hallucination or a translation cause. Source
-adapter availability and useful external evidence remain separate #77 acceptance gates.
-
-
-### Source and ranking outcomes
-
-Bounded query generation and ranking retain the narrative claim, category,
-evidence IDs and validated literal quotes alongside cited evidence. Query generation
-also receives the extracted assumptions and reason to investigate in a separate
-`exploratory_hypotheses` block, explicitly unverified model interpretation. These may
-guide investigation angles and `intent`, never become source claims or required
-search conclusions. Ranking still excludes that block and assesses only the attributed
-target against external evidence. The original archived narrative stays unchanged.
-Legacy query generation uses claim and category only; legacy ranking remains claim-only.
-This corrects the earlier exclusion of hypotheses from both bounded requests. Added
-query input consumes existing request capacity; exact-wire full-source admission may
-hold without dropping context. Calls, configured budgets and response schemas do not
-increase. Input separation proves neither claim truth, search recall nor relation fidelity.
-
-The accepted [ADR0011 revision](decisions/0011-source-anchored-investigation-queries.md)
-asks for useful grounded queries in both bounded RSS and full-source investigation,
-without requiring a copied source phrase. It supersedes the earlier unaccepted
-mandatory-anchor proposal. Exploratory hypotheses stay in `intent`, distinct from
-source claims. A whole-query literal match, when available, remains exact derived
-provenance metadata. Its absence does not block an otherwise valid query set or mark
-it incomplete. Existing lexical/schema checks, source validation, exact cited/final-URL
-self-source exclusions, query/model/request limits and deadlines remain unchanged.
-This deployed revision does not establish semantic quality or useful live retrieval.
-
-Both rankers classify returned sources as `contradicts`, `complicates`, `supports`,
-`context` or `insufficient` against the supplied claim. Every entry must pass field,
-identity, score, relation and reasoning validation before filtering; bounded ranking
-also verifies its URL-bound quote ID. Only `contradicts` and `complicates` at the
-existing minimum score reach public results, even when another relation has a high
-score. Bounded results record fixed omission counts for the three non-counter
-relations in the existing limitations list. An all-non-counter response is `empty`,
-not a ranking failure; an unknown relation fails the response closed. The relation
-filter leaves existing public result fields, quote identity, request counts and
-ranking caps unchanged; the private audit extension below is separate.
-This filter enforces the declared classification; it cannot prove that the model
-assigned the semantically correct relation.
-
-Legacy synchronous Irritator processing retains its list-based source API but records
-successful, failed and unavailable source attempts separately. A valid empty response
-is a successful search; missing Reddit credentials or intentionally unsupported DEV.to
-or Lobsters search is unavailable, not evidence that no counter-signals exist. The bounded and
-legacy paths share response-envelope validation. No new credentials are provisioned.
-
-Partial source or ranking failures produce `incomplete` while retaining valid results.
-If no attempt in a failed stage succeeds, the outcome is `error`; valid searches and
-rankings yielding no usable evidence remain `empty`. Telegram and Markdown preserve
-the same outcome text. Diagnostics contain counts and exception classes, not raw
-provider error bodies. This classification does not prove live endpoint availability
-or semantic counter-evidence quality.
-
-arXiv queries are URL-encoded once by the HTTP client, without changing query grammar.
-Hacker News discussion links require a supplied usable story ID when no external URL
-exists; unidentifiable items are not manufactured into provenance links. An entirely
-unidentifiable response is a contract failure. Live query sensitivity, documented
-current external availability remain #77 acceptance work.
-
-
-### Verified protocol references (2026-10-02)
-
-The [arXiv API manual](https://info.arxiv.org/help/api/user-manual.html) defines
-`search_query`, Atom responses and error entries. Its [API terms](https://info.arxiv.org/help/api/tou.html)
-require a single connection and at least three seconds between requests. The adapter
-serializes requests and spaces starts in the owned event loop; the runtime's existing
-job concurrency coordinates its scheduled processes. Operators must also account for
-other clients/machines they control; this local gate does not coordinate unrelated
-processes. Waiting remains inside existing stage deadlines, without added retries.
-
-Both query-generation paths use the same lexical contract: 1–8 words, including
-words inside double-quoted exact phrases, within the existing 200-character bound.
-Explanations belong in `intent`. Invalid prose/operator syntax fails explicitly;
-queries are never silently shortened. This is a syntax contract, not a relevance
-classifier. arXiv receives an `all:` prefix for each term or phrase, joined with
-`AND`, as described in its [query grammar](https://info.arxiv.org/help/api/user-manual.html#51-details-of-query-construction).
-HN receives the lexical text with exact-phrase syntax enabled; Boolean/field
-operators and exclusions are not accepted in generated input. Request counts,
-source deadlines and ranking requirements are unchanged. This correction does
-not establish the cause of earlier read timeouts or prove counter-evidence recall.
-
-The [HN Algolia documentation](https://hn.algolia.com/api) defines full-text `query`,
-`tags=story`, `hitsPerPage`, and story `objectID`; its published limit is 10,000 requests
-per IP per hour. These references establish request semantics, not current reachability
-from a particular runner or independent quota entitlement on shared infrastructure.
-
-Lobsters remains a recognized configuration value but performs no HTTP request and
-reports `unavailable`. The maintained [search controller](https://github.com/lobsters/lobsters/blob/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/app/controllers/search_controller.rb),
-[HTML view](https://github.com/lobsters/lobsters/tree/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/app/views/search)
-and [request specifications](https://github.com/lobsters/lobsters/blob/dd8d8b792e37ffc577643c450af7b99dc7ae9d3b/spec/requests/search_spec.rb)
-do not establish a supported JSON search contract. This is a verified contract gap,
-not a claim about every historical endpoint response. No user configuration is
-removed and no undocumented replacement is attempted. Both execution paths preserve
-valid results from other sources with an incomplete coverage status; unavailable
-search is never counted as a successful empty search.
-
-Generated Irritator prose is constrained by the existing complete-response and provider
-output budgets, rather than separate cosmetic character caps on narrative, reasoning
-and limitations. Nonempty string types remain required. Query length, literal quote
-length and matching, source identity, score and relation validation remain strict.
-Text validation failures use fixed field/reason codes without recording rejected prose.
-This improves diagnosis and avoids a brittle failure class; it does not identify the
-cause of earlier responses whose bodies were not retained. Presentation translation
-also explicitly preserves technical data-flow direction; prompt-version cache binding
-keeps prior translations intact and distinct from new attempts. Neither change proves
-semantic fidelity without reviewing actual output.
-
-
-### Exact quote selection in bounded counter-evidence ranking
-
-The bounded rank request represents each supplied signal title/snippet once as ordered
-exact segments of at most 200 characters. Their IDs bind the signal URL, field, offsets
-and original text. The model selects a quote ID; code reconstructs the unchanged literal
-quote, including source typos. Unknown or cross-source IDs fail closed. The existing
-8,000-character ranking-packet budget includes these segments; omitted candidates remain
-visible in diagnostics. Archived ranked results retain their existing literal quote shape.
-This prevents transcription errors; it does not establish that a claimed counter-relation
-is semantically justified. Scores, relation criteria and request counts are unchanged.
-
-
-### Grounded Irritator targets and complete abstract evidence
-
-The extraction call selects one concrete source-attributed assertion or announced
-decision from its supplied evidence. Reported framing and inferred assumptions
-remain visible archive context, not the assertion challenged by search/ranking.
-Duplicate reports of one event do not establish independent consensus. The legacy
-summary path must abstain if its summary does not support an attributed target;
-its summaries are not full primary sources.
-
-A contradiction concerns what that assertion actually states. A complication may
-instead identify a sourced implementation cost, condition or tradeoff relevant to
-the announced decision. Its explanation distinguishes the external finding from
-the editorial relevance link and preserves favourable results and limitations.
-It must not invent a simplicity, necessity, primary-solution or sufficiency premise.
-An empty result is legitimate, but a source cohort is not predetermined negative:
-a faithfully stated material tradeoff can be useful without refuting an announcement.
-Previous controlled explanations that introduced unsupported premises remain failures.
-
-Available arXiv abstracts are retained whole and as exact source text. They are not
-full papers. Whole candidates are admitted within the existing ranking packet
-budget; omitted candidates remain visible in diagnostics rather than being turned
-into misleading prefixes. Exact quote IDs preserve source characters and do not
-certify semantic relevance. Source text remains untrusted data, with existing URL,
-network-response, request-count and deadline boundaries. No additional model pass
-is introduced, and offline checks do not establish live editorial quality.
-
-
-## Prepared editions and delivery recovery (#120)
-
-The managed compact path persists accepted canonical cards/review evidence before
-presentation, then freezes a versioned ready edition. Optional review resumes only
-from the checkpoint of a confirmed, durably persisted delivery. Sender eligibility
-uses the frozen manifest and does not re-run current review validation or generation.
-
-Preparation defaults to today's UTC publication window. An explicit
-`--prepare-edition --edition-date YYYY-MM-DD` can prepare a later day; the sender
-reports `pending_window` until that day begins. The canonical preparation checkpoint
-retains the same intended date across midnight. Future readiness never authorizes
-early delivery. See the [README commands](../README.md#compact-daily-presentation)
-and [ADR0007](decisions/0007-compact-issue-reservation.md) for the remote barriers.
-
-If preparation fails, inspect its accepted checkpoint and any existing ready edition.
-If delivery is held, retain the claim, exact ready payload and per-chunk receipt file;
-compare accepted Telegram message IDs before authorizing recovery. Unapplied coverage
-can mean transport succeeded but feedback/dedup persistence did not. Never reset the
-claim or interpret optional-stage failure as evidence that primary sending failed.
-On a rejected Git push, retained private diagnostics preserve the same three files;
-no automatic rebase or resend is allowed. This recovery contract does not certify
-full-source factual quality or independent counter-evidence.
-
-
-## Ordinary preparation candidate accounting
-
-`--prepare-edition` with review-led mode captures the collector inventory before
-source allocation and saves candidate progress before its existing primary call.
-One fresh preparation window retains the existing primary/fallback request ceiling. Later fresh
-preparations choose unseen eligible work before technical retries; presentation of
-already accepted work takes precedence and adds no selection request.
-
-The mutable progress file is `.cache/candidate_progress.json`. Frozen report-bound
-accounting is archived as `<edition>.md.candidates.json` and included in ready-edition
-archive hashes. Keep the existing runtime `.cache`/archive persistence step: local
-writes are not proof of remote durability. A planned record alone is not proof a
-request reached a provider. The same response now includes typed per-ID dispositions. A missing or invalid
-entry supplies no editorial rejection reason; capacity-only omission is deferred.
-Reasons are judgments over the supplied RSS occurrence, not full-source conclusions. Feed failures, parser limits, source changes and age exclusions are separate.
-
-Do not clear progress to claim complete coverage. Capacity overflow fails without
-truncation; retention and sustainable throughput require the #121/#55 acceptance
-review. Sender claims, receipts, feedback attribution and delivered caches remain
-under ADR0007. Candidate accounting grants no permission to replay a held edition.
-
-
-A valid primary abstention retains #120's accepted empty snapshot for its publication
-day. New candidate responses with only deferred/missing/invalid dispositions do not
-qualify as accepted empty decisions; existing legacy snapshots remain compatible. Repeating preparation in that window returns no ready edition; it does not
-advance another packet. Unseen work can advance in a later fresh preparation window.
-This inherited limit is part of the remaining throughput acceptance, not a claim
-that all observed candidates received an editorial decision.
-
-
-Disposition capture is bound to the exact delivery-used provider/model, evidence
-bundle, prompt and raw-response hash. It is separate from legacy ModelReview and
-accepted PreparationSnapshot fields. Old reports remain readable with unavailable
-per-item reasons; a changed prompt cannot claim same-prompt reuse. Selected reasons
-are not duplicated. Duplicate references must retain a validated selected identity
-from the same request; shared topic alone is insufficient and contrary accounts must
-remain eligible. Structural checks do not certify semantic correctness.
-
-The candidate working set uses direct verified source and packet references. Each
-report preserves only its own packet and current collection accounting; resolved
-historical bodies are not expanded for unrelated packet admission. Per-identity
-indexes retain exact decisions, while reversible policy exclusions remain enumerable
-for reapproval/unblocking. Current alternate occurrences are bounded by source binding;
-older revisions remain immutable evidence. Unknown or undelivered selected work stays
-recoverable. Missing/corrupt required objects fail explicitly; unrelated historical
-objects are not read. Unsupported undeployed prototype codecs fail explicitly, while
-deployed accepted preparation and ready-edition formats remain compatible. Do not
-delete evidence or delivery markers to bypass a recovery error.
-
-### Private ranking audit
-
-The accepted [ADR0012 decision](decisions/0012-private-ranking-evidence.md) adds a versioned
-`ranking_audit` to the companion private `.irritator.json`. It preserves exact admitted
-source records, explicitly truncated diagnostic previews of omitted candidates,
-original hashes/lengths, query lineage, admission causes and fully validated model
-dispositions. `not_returned` means absent from a valid bounded model response;
-`pending` means no wholly valid response was obtained. Neither means irrelevant.
-
-Only JSON retains this trace; Markdown gets a concise summary/reference, and Telegram
-and translation keep their existing selected-prose inputs. The omitted-text allocation
-uses the accepted 16,000-character archive allocation, not a ranking threshold.
-See the decision for serialization bounds and the limits of truncated evidence. Old
-archives lack this evidence and cannot be retrospectively audited from hashes alone.
-This private trace is deployed; semantic counter-evidence acceptance remains open.
-
-### Deployed Groq GPT-OSS metadata-review output controls
-
-For the explicitly configured `groq/openai/gpt-oss-120b` review slot only, the
-correction deployed through engine [#137](https://github.com/Lenivvenil/digest/pull/137)
-(`526b950c`) and runtime [#65](https://github.com/Lenivvenil/digest-prod/pull/65)
-(`a62f9f5a`) sends `reasoning_effort: low` and strict JSON Schema for the
-existing response shape. Other providers and models retain their existing request options; the clarified
-review prompt is shared by all review slots. Other roles retain their existing wire requests. There is no format-repair request, model switch or increased output
-allowance. The five-detail response cap, 4096 output tokens, ordinary fallback and
-all finish-reason, ID, quote and disposition checks remain in force.
-
-The schema uses required fields, closed objects and nested `anyOf` for selected,
-not-selected/deferred and duplicate disposition shapes. It forbids a per-selection
-`limitations` field; limitations belongs only at the top level. No unsupported
-`maxItems` or `maxLength` constraint is assumed: local validation still checks
-counts, text budgets, evidence membership and exact quotes. Strict structure does
-not verify relevance or factuality and does not prevent a length cutoff.
-
-The second Oct 7 failed response respected five detailed selections but added
-forbidden limitations inside each, then stopped during its sixteenth disposition.
-Its saved usage contains 4222 prompt and 4096 completion tokens; the historical
-reasoning breakdown is unknown. New diagnostics retain only a nonnegative integer
-`completion_tokens_details.reasoning_tokens`, when supplied, plus allowlisted
-numeric rate-limit values. Missing or invalid values stay absent. Reasoning text,
-arbitrary headers and credentials are never copied into review diagnostics.
-
-The compact strict-schema controls add 1327 serialized wire characters. This is
-not a token count or proof of quota headroom. Ordinary RSS selection currently has
-request-count/pacing guards, not the experimental source-reading token preflight.
-The public 8K TPM profile is not verified remaining account quota; actual server
-usage and rate-limit diagnostics must be inspected after any separately authorized
-run. Output allowance and provider quotas are not increased.
-
-Provider references: [reasoning controls](https://console.groq.com/docs/reasoning),
-[strict structured output](https://console.groq.com/docs/structured-outputs), and
-[completion usage fields](https://github.com/groq/groq-python/blob/main/src/groq/types/completion_usage.py).
-
-### Deployed editorial context and quantitative-qualifier correction
-
-Engine [#138](https://github.com/Lenivvenil/digest/pull/138) (`a605ecf7`) and runtime
-[#66](https://github.com/Lenivvenil/digest-prod/pull/66) (`32341547`) deployed this
-correction and the reviewed banking/fintech/banking-architecture priority context.
-Real editorial and translation acceptance remains open for subsequent output.
-
-`review.editorial_context` is an optional operator-owned string (maximum 1000
-characters, empty by default). A nonempty value enters the identical primary and
-fallback request and its prompt hash. It describes reader priorities, not source
-truth, automatic acceptance or a category quota. The empty setting adds no reader
-profile; configured category names and numerical source priorities are not inferred
-to encode the owner's professional priorities. No runtime profile is enabled by
-the engine change alone.
-
-The Oct 7 packet already contained four Banking & Fintech candidates. Their
-non-selection reasons required architecture detail despite the existing prompt's
-business/operational-relevance instructions. The finite scope-review cases are:
-
-- An intent-monitoring partnership: assess its stated fraud/control relevance
-- Payment-verification results: assess the reported operating-control outcome
-- A programmable-money event teaser: it may still lack a concrete new development
-- A generic future resilience event: its thin evidence may still justify non-selection
-
-The correction makes the operator's actual priorities explicit; it does not
-mechanically establish those items' usefulness or certify future model compliance.
-Changed context affects future planned reviews. It does not reset or reopen
-unchanged terminal not-selected/duplicate history, or rewrite previous prompts,
-responses, accepted preparation or delivered editions. Explicit reconsideration
-of prior decisions remains an open #121/#132 outcome.
-
-Primary instructions now require a quantitative claim to keep its comparator,
-value, unit, statistic/percentile and material conditions together, preferably as
-a short literal measurement quotation within concise generated prose. Translation
-v3 preserves that quotation and prohibits stronger alternative magnitude claims;
-it does not infer qualifiers missing from its canonical input. Existing quote
-invariants remain, and the changed prompt/version has a distinct translation cache
-binding. Older cache records and accepted delivery evidence are left untouched.
-
-The saved Cloudflare failure had two stages: primary prose dropped p99 from the
-source measurement, then Russian prose added a submillisecond assertion while
-retaining the digit 2. Offline tests explicitly show that digit equality still
-accepts this class of semantic error. A protected literal measurement quote catches
-changes inside that quote, not arbitrary invented wording elsewhere. Prompt
-assertions, exact quotations and numeric invariants are not semantic acceptance.
-Faithful output under the revised contract remains to be checked; no additional
-model call, blanket English fallback or mandatory full-article gate is introduced.
+Preparation processes feedback/approved source changes before recovery. It then
+prefers an existing ready/claimed edition, or a matching accepted preparation,
+before fresh collection. A completed candidate report is a different object: it
+is considered after collection and current eligibility reconciliation.
+
+A fresh packet uses one primary attempt and, only if primary output is invalid or
+unavailable, at most one configured secondary fallback. The resulting report can
+remain `incomplete` for independent comparison even when its cards are usable.
+
+| Editorial result | Preparation outcome |
+| --- | --- |
+| Valid selected cards, including a validated partial result | Save canonical work, then attempt presentation/archive/freeze. Rejected or unresolved items remain visible in review/candidate evidence. |
+| Valid primary abstention with complete required disposition evidence | Save an accepted empty preparation; return no ready edition. Repeating the same publication window does not select another packet. Older packets without disposition capture retain their existing compatibility behavior; fresh candidate packets record attempts. |
+| Primary invalid/unavailable; secondary supplies valid selected cards | The permitted fallback supplies cards with its actual provenance; independent comparison is still incomplete. |
+| Primary invalid/unavailable; secondary only abstains | Remains incomplete. It is not an accepted no-news result. |
+| No usable selection, unfinished output or unresolved empty metadata | Retain unfinished evidence; no ready edition. Ordinary candidate validation failure reports `selection_incomplete`. |
+| No eligible candidates | No edition is created. This is not evidence that all sources succeeded or every observed item received an editorial judgment. |
+
+`no_ready` is a publication outcome, not a universal no-news verdict. In particular,
+the supported category path also retains its existing `no_ready` result for empty
+or failed category analysis. Inspect the saved review/checkpoint and logs before
+assigning an editorial meaning to that status.
+
+### What preparation preserves
+
+- `.cache/pending_preparation.json` contains accepted canonical work for the intended
+  publication day. It is the recovery point after translation, attribution, archive
+  or render failure.
+- `.cache/prepared_edition.json` contains the final Telegram payloads and their
+  evidence/archive bindings. It is the only input the prepared sender may publish.
+- The review archive and candidate proof explain which occurrence and response
+  support the accepted cards. A source quote cannot validate unrelated generated claims.
+
+The accepted checkpoint is removed after successful readiness freeze. A valid empty
+accepted checkpoint remains until its publication day is past. Corrupt or mismatched
+active work raises a failure; it is not silently replaced by another selection.
+
+### Intended publication day
+
+Without `--edition-date`, preparation targets today in UTC. Use
+`--prepare-edition --edition-date YYYY-MM-DD` to prepare a later day explicitly.
+The ready edition remains `pending_window` until that day's 00:00 UTC and expires at
+the end of that day. A preparation made just before midnight does not receive another
+24 hours merely because it was created late.
+
+A confirmed/applied edition can permit preparation for a later day. An unresolved
+claimed edition blocks replacement, including on a later day. There is one active
+record set, not a queue of independently sendable editions.
+
+## Persist, claim and send
+
+The engine writes local files. The managed runtime must establish remote durability
+before the next irreversible step. Use its existing persistence workflow rather than
+inventing a resend path around a failed push.
+
+| Boundary | Required remote evidence | Next engine operation |
+| --- | --- | --- |
+| Readiness | Successfully persisted `.cache/prepared_edition.json` and its referenced archive/evidence, with the exact ready-file SHA-256 verified from the remote revision | Create the claim. |
+| Claim | Successfully persisted `.cache/prepared_edition_claim.json`, with ready and claim hashes verified from the same remote revision | First send in the continuing managed attempt. |
+| Outcome | Persisted receipts and resulting feedback, delivered cache and accounting, including partial/failure states | Inspect completion; optional work must not discard this evidence. |
+
+The workflow-provided `READY_SHA` and `CLAIM_SHA` below are SHA-256 hashes of whole
+file bytes. They are not the edition ID or the manifest's internal content hash.
+An existing local Git object or locally calculated hash alone does not prove a
+successful remote push.
+
+```sh
+python -m digest --config config.yaml --edition-phase claim --ready-sha "$READY_SHA"
+# Persist the claim and verify both hashes from the successful remote revision.
+python -m digest --config config.yaml --edition-phase send --ready-sha "$READY_SHA" --claim-sha "$CLAIM_SHA"
+# Persist receipts and resulting operational state, including on partial failure.
+```
+
+Claiming validates the edition window and referenced evidence before creating an
+immutable claim. Sending validates the exact ready/claim bindings, owner, bot and
+checkpoint bytes. It creates `sending` receipts before POST, records attempted count
+before each chunk, and records each known positive matching-chat confirmation afterward.
+The prepared transport does not retry or switch to plaintext.
+
+Complete article coverage and complete edition transport are different. Every chunk
+covering an article must be confirmed before its identity is attributed. A final
+notice can fail after all article cards were delivered. After transport, the caller
+applies known coverage and only then marks receipts `applied`.
+
+## Inspect without publishing
+
+Inspection performs no collection, model request or Telegram POST. The command
+publishes `edition_status` and `ready_sha256` through `GITHUB_OUTPUT`; its exit code
+alone distinguishes neither all normal states nor all failure causes. Outside a
+managed job, capture those outputs in a temporary file:
+
+```sh
+digest_inspection_output=$(mktemp)
+GITHUB_OUTPUT="$digest_inspection_output" python -m digest --config config.yaml --edition-phase inspect
+cat "$digest_inspection_output"
+rm -f "$digest_inspection_output"
+```
+
+A held inspection returns exit code 1; ordinary `missing`, `ready`, `pending_window`,
+`confirmed` and `expired` inspection returns 0. Malformed/binding errors fail rather
+than inventing a valid state. In a shell using automatic exit-on-error, retain the
+inspection output even when the command reports a hold.
+
+## Delivery states and recovery
+
+<a id="prepared-editions-and-delivery-recovery-120"></a>
+
+The inspector reports a conservative summary. `held` is not a diagnosis: inspect
+the underlying files, their ready/claim bindings and the workflow attempt that wrote
+them. Never infer that a message was not sent merely because a later file is absent.
+
+| Observed evidence | Meaning | Safe next action |
+| --- | --- | --- |
+| No ready file, claim or receipts; no active accepted checkpoint | No recoverable prepared edition is present. | Use the normal preparation path within its existing budget. Inspect collection/review outcomes if it again returns no ready edition. |
+| Valid matching `pending_preparation.json`; no active ready/claimed edition | Canonical work was accepted but presentation/freeze is unfinished, or it is an accepted empty result. | Run preparation for the same intended day. It resumes accepted work; empty acceptance remains no-ready for that day. Do not rerun selection to replace it. |
+| `selection_incomplete`, without accepted preparation | A usable editorial result was not accepted. | Retain candidate/review evidence and diagnose the recorded failure. A later admitted preparation may continue; the result must not be reported as editorial rejection or accepted no-news. |
+| Unclaimed `pending_window` edition | Frozen content targets a future UTC day. | Preserve it and wait for the publication window. Do not claim or send early. |
+| Unclaimed eligible `ready` edition | Content is frozen but not yet reserved. | Verify the remote ready/evidence revision, then use the normal claim/persist/send sequence. Claim validation still checks referenced bytes. |
+| A new claim created and persisted by the current uninterrupted managed attempt; no receipts yet | The workflow is between its claim barrier and first send. | Continue that same attempt with the verified ready and claim hashes. This is not recovery of an old unknown attempt. |
+| A claim rediscovered after interruption; absent receipts | The earlier process may have sent before its local outcome was retained remotely. Inspection reports held. | Preserve the records and inspect workflow/Telegram evidence. Do not reclaim, regenerate or treat absent receipts as proof of no delivery. |
+| Receipts `sending`, `unknown`, `partial` or `failed` | Some or all transport is unfinished, failed or uncertain. Known confirmations remain evidence; later automatic publication is held. | Preserve attempted/confirmed prefixes and matching message IDs. Inspect before any targeted recovery; never rerun the sender blindly, including for a later day. |
+| Receipts `confirmed` with `applied: false` | Telegram transport completed, but operational-state writes or the final applied marker did not finish. | Preserve receipts and compare current feedback, statistics, lifecycle and delivered-cache records with the saved write order. There is no general automatic reconciliation command; blind reapplication can double-count a persisted prefix. |
+| Matching prepared receipts `confirmed` and `applied: true` within the publication window | The edition and its application completed. | Treat inspection as a no-op. Do not send again. Preparation for a later intended day can proceed through the normal guard. |
+| Expired unclaimed edition, or expired confirmed/applied edition | It is no longer eligible for sending. | Prepare a later/current permitted day normally. Do not reset unresolved claims: they remain held rather than becoming safe through expiry. |
+| Corrupt/unsupported JSON, wrong owner, orphan claim/receipts, or mismatched hashes/references | The saved objects cannot establish a coherent publication attempt. | Retain the files and restore/repair only from verified matching evidence after checking possible external sends. Do not delete a marker or substitute unrelated older state to bypass validation. |
+| Legacy `.cache/compact_issue.json` is reserved/sending/partial/unknown, or already confirmed for the relevant day | A legacy direct-compact attempt also constrains publication. | Inspect that legacy attempt. Switching to prepared mode or deleting the old marker is not a recovery procedure. |
+
+A confirmed legacy marker may also produce the inspector's `confirmed` result;
+verify which record supplied it before expecting prepared receipts or a manifest.
+
+### Why an unapplied receipt needs inspection
+
+Prepared application writes feedback, source statistics, optional lifecycle state,
+and the delivered cache in that order, then marks receipts applied. If the third
+write fails, the first two may already be present. A subsequent unconditional repeat
+is not a transaction rollback and can count the same delivery again. The held state
+exists to make that uncertainty visible.
+
+Use the [current effect matrix](ARCHITECTURE.md#applying-confirmed-outcomes) and
+retained Git/run evidence to establish what actually persisted. Recovery requires a
+reviewed resolution of that specific prefix; this guide supplies no marker-reset or
+blind resend command.
+
+## Walk through the boundaries
+
+These are behavioral examples of the existing contract, not new live-run instructions.
+
+1. **Selection succeeds, presentation fails.** Canonical work is saved in
+   `pending_preparation.json`. The same-day next preparation uses that snapshot,
+   possibly retries missing presentation work within its rules, and does not select again.
+2. **Primary genuinely abstains.** Complete required metadata allows an accepted empty
+   checkpoint. No ready file appears; repeated same-window preparation does not consume
+   another candidate packet. An abstaining fallback after unavailable primary instead
+   leaves selection incomplete.
+3. **An article spans two chunks; the second is uncertain.** Its complete coverage is
+   unconfirmed, so that article receives no delivered attribution. Earlier complete
+   articles may have known coverage. The edition remains held.
+4. **Telegram confirms all chunks; a state write fails.** The receipt can be confirmed
+   but unapplied. A later inspector reports held and the sender does not replay it.
+5. **A fully applied edition is inspected again.** The normal path reports completion
+   without collection, generation, rendering, transport or repeated accounting.
+
+## Candidate continuation
+
+<a id="ordinary-preparation-candidate-accounting"></a>
+
+Candidate progress is saved before a review call. Admission works within the configured
+count, character, retry-opportunity and storage bounds; it does not promise to drain
+an entire feed cohort in one run. Missing/invalid dispositions and capacity-only
+omissions remain unfinished. Policy exclusions, duplicates and editorial not-selection
+retain distinct evidence.
+
+Keep `.cache/candidate_progress.json` with its immutable source/report objects and
+indexed decisions. The archive's `.candidates.json` file is a bounded as-of account
+of one report, not a continuously rewritten inventory of every historical body.
+Missing required objects fail explicitly. Do not clear progress or rewrite old
+rejections to claim complete coverage.
+
+## Independent comparison and resume
+
+<a id="contract"></a>
+<a id="resume-a-report-only-comparison"></a>
+
+Independent comparison differs from ordinary primary/fallback preparation. Primary
+and secondary slots receive the same frozen evidence and messages and keep their
+configured provider/model identities. A failed slot stays failed; another review is
+not relabelled as its opinion. Valid complete results may trigger one configured third
+review according to overlap. Partial results remain incomplete and do not establish
+comparison agreement.
+
+```sh
+python -m digest.review_trial --config config.yaml --resume previous/review.json --output fresh-output
+```
+
+This manual command can call configured providers. It requires a fresh output path
+and leaves the original report intact. Reuse requires matching slot/provider/model,
+bundle and current prompt identity plus valid retained selections. Accepted canonical
+preparation and frozen editions are not reinterpreted under this new-request policy.
+
+The scheduled `digest.review_resume` path has separate prepare/execute phases and a
+separately persisted one-attempt marker. The managed runtime persists the marker
+before execution; execution records its start in that marker before provider work.
+Its bounded results are archived as supplements; they do not create another primary
+Telegram edition or alter its deduplication outcome. Follow the current configured
+request allowance rather than assuming comparison is free.
+
+## Supplementary investigation
+
+<a id="primary-first-runtime-with-preserved-irritator"></a>
+
+After confirmed, durably persisted primary delivery, supplementary work can use the
+saved evidence checkpoint under a separate reservation. Irritator extracts an attributed
+target, plans queries, searches external sources, validates results and ranks their
+relationship to the target. Query hypotheses remain labelled hypotheses; they do not
+become source facts for ranking.
+
+Empty search results, unavailable/unsupported adapters, rejected evidence and failed
+model stages are different outcomes. Optional translation failure retains canonical
+fallback according to its existing contract. In compact mode the supplement is
+`archive_only`: it does not send another Telegram message. The legacy/post-delivery
+transport retains its separately documented behavior.
+
+Independent comparison and genuine external counter-evidence are separate operations.
+Neither a matching quotation nor successful transport establishes factual usefulness.
+The [Irritator model](domain/irritator/overview.md#current-domain-model) describes the
+source/evidence relationship; [transport compatibility](ARCHITECTURE.md#supported-application-scenarios)
+describes the different sending protocols.
+
+## Where to look in code
+
+| Question | Entry point or contract |
+| --- | --- |
+| Which scenario runs? | `main.main`, `application/execution.py` |
+| What is recovered before collection? | `application/preparation.py`, `edition_runtime.recover_preparation` |
+| Which primary/fallback result is usable? | `application/review.py:run_primary_review`, `domain/editorial/reviews.py:delivery_review` |
+| What does accepted storage validate? | `edition_runtime.accept_preparation`, `preparation.py:load_accepted_preparation` |
+| What does presentation preserve or hold? | `edition_runtime.present_preparation` (legacy callers retain `finish_preparation`) |
+| What can claim/send/inspect do? | `application/prepared_delivery.py` |
+| Which bytes and references are checked? | `adapters/storage/edition.py`, `domain/delivery/edition.py` |
+| What does confirmed coverage change? | `application/delivery.py`, then `application/prepared_delivery.py:mark_applied` |
+
+## Decisions and prior operational records
+
+[ADR0007](decisions/0007-compact-issue-reservation.md) owns the prepared publication
+boundary; [ADR0008](decisions/0008-candidate-selection-progress.md) owns candidate
+continuation. The [historical review/operations record](history/review-operations-2026-10-08.md)
+preserves earlier experiment settings, diagnostics, measurements and release evidence.
+Optional full-source reading remains outside the ordinary path; its separate
+[accounting guide](reading-brief-accounting.md) records that experimental contract.
+
+<details>
+<summary>Links to prior sections</summary>
+
+<a id="blind-evidence-review-opt-in-experiment"></a>
+
+- [Blind evidence review (opt-in experiment)](history/review-operations-2026-10-08.md#blind-evidence-review-opt-in-experiment)
+
+<a id="configured-interests-and-reason-fidelity"></a>
+
+- [Configured interests and reason fidelity](history/review-operations-2026-10-08.md#configured-interests-and-reason-fidelity)
+
+<a id="output-and-integration"></a>
+
+- [Output and integration](history/review-operations-2026-10-08.md#output-and-integration)
+
+<a id="example-configuration"></a>
+
+- [Example configuration](history/review-operations-2026-10-08.md#example-configuration)
+
+<a id="offline-verification"></a>
+
+- [Offline verification](history/review-operations-2026-10-08.md#offline-verification)
+
+<a id="explicit-limitations"></a>
+
+- [Explicit limitations](history/review-operations-2026-10-08.md#explicit-limitations)
+
+<a id="rejected-response-diagnostics"></a>
+
+- [Rejected-response diagnostics](history/review-operations-2026-10-08.md#rejected-response-diagnostics)
+
+<a id="partial-selection-recovery-and-narrow-typography-repair"></a>
+
+- [Partial selection recovery and narrow typography repair](history/review-operations-2026-10-08.md#partial-selection-recovery-and-narrow-typography-repair)
+
+<a id="literal-quote-failure-diagnostics"></a>
+
+- [Literal-quote failure diagnostics](history/review-operations-2026-10-08.md#literal-quote-failure-diagnostics)
+
+<a id="source-and-ranking-outcomes"></a>
+
+- [Source and ranking outcomes](history/review-operations-2026-10-08.md#source-and-ranking-outcomes)
+
+<a id="verified-protocol-references-2026-10-02"></a>
+
+- [Verified protocol references (2026-10-02)](history/review-operations-2026-10-08.md#verified-protocol-references-2026-10-02)
+
+<a id="exact-quote-selection-in-bounded-counter-evidence-ranking"></a>
+
+- [Exact quote selection in bounded counter-evidence ranking](history/review-operations-2026-10-08.md#exact-quote-selection-in-bounded-counter-evidence-ranking)
+
+<a id="grounded-irritator-targets-and-complete-abstract-evidence"></a>
+
+- [Grounded Irritator targets and complete abstract evidence](history/review-operations-2026-10-08.md#grounded-irritator-targets-and-complete-abstract-evidence)
+
+<a id="private-ranking-audit"></a>
+
+- [Private ranking audit](history/review-operations-2026-10-08.md#private-ranking-audit)
+
+<a id="deployed-groq-gpt-oss-metadata-review-output-controls"></a>
+
+- [Deployed Groq GPT-OSS metadata-review output controls](history/review-operations-2026-10-08.md#deployed-groq-gpt-oss-metadata-review-output-controls)
+
+<a id="deployed-editorial-context-and-quantitative-qualifier-correction"></a>
+
+- [Deployed editorial context and quantitative-qualifier correction](history/review-operations-2026-10-08.md#deployed-editorial-context-and-quantitative-qualifier-correction)
+
+</details>
