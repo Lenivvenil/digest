@@ -165,7 +165,7 @@ imports usable; their locations do not identify the current owner.
 | `domain/editorial/candidate_policy.py` (#165) | Pure occurrence/eligibility, freshness/source-turn/retry admission, report reconciliation and recovery rules with explicit sources, limits and time |
 | `application/candidate_review.py` (#165) | Configured packet/prompt assembly, history restoration and source writes; ordered begin/reconcile/handoff through `candidate_lifecycle` |
 | `candidate_review.py` | Compatible candidate values and operations; legacy save dispatch retains its retirement semantics |
-| `adapters/storage/review_checkpoints.py` (#165) | Bounded RSS checkpoint decoding and configured evidence validation |
+| `adapters/storage/review_checkpoints.py` (#165) | Bounded RSS checkpoint decoding, configured evidence validation and distinct delivery/resume/trial report writes |
 | `review_checkpoint.py`, `review_resume.py` | Compatible RSS codec exports and transitional optional full-source extension; bounded missing-review resume |
 | `irritator/` | Narrative extraction, external queries, candidate validation and counter-signal ranking |
 | `post_delivery.py`, `irritator/evidence_stage.py` | Separately reserved post-delivery processing from saved evidence |
@@ -175,7 +175,7 @@ imports usable; their locations do not identify the current owner.
 | `presentation/telegram.py`, `presentation/supplement.py` | Pure Telegram rendering, vote keyboards, canonical supplement text and lossless chunking; transitional type-only investigation result/status coupling |
 | `adapters/telegram/delivery.py` | Separate legacy, direct-compact and post-delivery Telegram protocols |
 | `delivery/telegram.py`, `delivery/supplement.py` | Compatibility exports for presentation, transport and delivery result values |
-| `delivery/markdown.py` | Markdown archive and review checkpoint output |
+| `delivery/markdown.py` | Markdown archive and ordering of its review sidecar write |
 | `preparation.py`, `edition_runtime.py`, `application/prepared_delivery.py` | Resumable canonical preparation and ordered ready/claim/receipt effects through explicit domain/storage/transport owners |
 | `feedback.py` | Compatibility exports for feedback values, rules, storage and application operations |
 | `source_scorer.py` | Compatibility exports for catalog values/rules, source-scoring application composition, storage and bubble presentation |
@@ -684,7 +684,7 @@ file writes are not an atomic transaction or a remote-persistence guarantee.
 API still dispatches to the same retirement or persistence behavior. Existing
 collector/review/disposition imports retain the moved value identities. The #144
 slice left scheduling, eligibility reconciliation and prompt orchestration mixed;
-the later local #165 slice below separates those owners. Collection accounting,
+the later #165 slice below separates those owners. Collection accounting,
 optional source work and legacy isolation retain their explicitly staged boundaries.
 
 ### Stage 3: confirmed-delivery application
@@ -1036,7 +1036,7 @@ shared by trial, resume and post-delivery work; `review_trial._ALLOWED_MODELS` a
 that same set. Production consumers no longer import the trial command for policy.
 No route, prompt, call/budget policy or serialized content changes.
 
-### Stage 5: bounded RSS review ownership (#165, local slice)
+### Stage 5: bounded RSS review ownership (#165)
 
 `domain/editorial/evidence.py` owns deterministic ordering, sanitization and bounded
 bundle construction from explicit count/excerpt limits. The existing configured
@@ -1069,18 +1069,28 @@ still persists without retirement before freezing report accounting. Preparation
 handoff checkpoints with the existing verified retirement order. No additional
 queue, scheduling policy or persistence transaction is introduced.
 
-`adapters/storage/review_checkpoints.py` owns only the unchanged bounded RSS decoder
-and configured evidence-validation adapter. Root `review_checkpoint.py` preserves
-those callable exports and keeps optional full-source values, assembly, validation
-and extension loading explicitly transitional. Full-source assembly is not storage
-codec work. Root candidate exports retain signatures, type/value identities and the
-legacy save operation; production callers use their actual owners.
+`adapters/storage/review_checkpoints.py` owns the unchanged bounded RSS decoder,
+configured evidence-validation adapter and three distinct report-write operations.
+Delivery sidecars retain atomic ASCII-escaped JSON without a trailing newline;
+resumed reports retain exclusive UTF-8 JSON with a newline and the four existing
+opaque source-provenance fields; trials retain direct pretty JSON with a newline
+and default text encoding. Callers retain path selection, directory creation,
+Markdown writes, marker persistence, error handling and side-effect order. These
+writes do not become one format or a multi-file transaction.
 
-This remains local #165 progress. Candidate collection accounting retains the eager
+Root `review_checkpoint.py` preserves its callable codec exports and keeps optional
+full-source values, assembly, validation and extension loading explicitly
+transitional. Full-source assembly is not storage codec work. Root candidate
+exports retain signatures, type/value identities and the legacy save operation;
+production callers use their actual owners.
+
+Implementation and release evidence is tracked in [#165](https://github.com/Lenivvenil/digest/issues/165).
+Candidate collection accounting retains the eager
 radar package dependency. Translation, optional full-source work, closing sidecar
 storage and trial/resume marker persistence are outside this slice. No runtime
-state, wire format or deployment changes; local verification is separate from
-release and editorial acceptance. Rollback retains existing evidence/state.
+state or wire format changes are introduced by this ownership migration. Deployment
+and editorial acceptance are recorded separately from code verification. Rollback
+retains existing evidence/state.
 
 ### Target responsibility map
 

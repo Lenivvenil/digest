@@ -12,14 +12,13 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
-from digest.adapters.storage.review_checkpoints import load_review_checkpoint
+from digest.adapters.storage.review_checkpoints import load_review_checkpoint, save_resumed_review_archive
 from digest.application.review import run_evidence_review
 from digest.application.review_request import build_review_messages
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS
@@ -200,16 +199,7 @@ async def execute_resume(
     if limited_third and report.third_model_reason == "third_model_not_configured":
         report.third_model_reason = "resume_request_budget_exhausted"
         report.status = "incomplete"
-    payload = asdict(report)
-    previous = json.loads(content)
-    # Independent RSS review never upgrades source provenance. Preserve the
-    # separately bound passages and any explicit missing-evidence marker as-is.
-    for key in ("full_source_required", "full_source_evidence", "full_source_error", "reading_brief_status"):
-        if key in previous:
-            payload[key] = previous[key]
-    with output.open("x", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
+    save_resumed_review_archive(output, report, content)
     with markdown.open("x", encoding="utf-8") as handle:
         handle.write("# Report-only resumed review\n" + render_review(report) + "\n")
     return 0 if report.status == "complete" else 2

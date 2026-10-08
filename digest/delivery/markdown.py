@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from digest._util import atomic_json_write
+from digest.adapters.storage.review_checkpoints import save_review_archive
 from digest.presentation.supplement import signal_text
 
 if TYPE_CHECKING:
@@ -150,7 +149,7 @@ def write_digest(
                 file_path.unlink(missing_ok=True)
                 raise
             if review_report is not None:
-                atomic_json_write(file_path.with_suffix(".review.json"), asdict(review_report))
+                save_review_archive(file_path.with_suffix(".review.json"), review_report)
             logger.info("Digest written to %s", file_path)
             return file_path
     except OSError as exc:
