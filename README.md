@@ -48,7 +48,11 @@ The [example configuration](examples/config.example.yaml) has English output,
 no enabled feeds and delivery disabled:
 
 ```sh
-python -c "from digest.config import load_config; c = load_config('examples/config.example.yaml'); print('Configuration valid:', c.radar.language)"
+python - <<'PY'
+from digest.config import load_config
+c = load_config('examples/config.example.yaml')
+print('Configuration valid:', c.radar.language)
+PY
 python -m digest --config examples/config.example.yaml --dry-run --radar-only
 ```
 
@@ -132,8 +136,7 @@ rollback; follow the [upgrade and recovery guidance](docs/BLIND_REVIEW.md#upgrad
 **No software license grant is currently supplied.** There is no LICENSE file or
 declared package license. A future grant requires an explicit owner decision.
 
-<details>
-<summary>Earlier README section links</summary>
+## Earlier README section links
 
 <a id="architecture"></a>
 
@@ -203,5 +206,3 @@ declared package license. A future grant requires an explicit owner decision.
 <a id="environment-variables"></a>
 
 - [Environment variables](docs/BLIND_REVIEW.md#environment-variables)
-
-</details>
