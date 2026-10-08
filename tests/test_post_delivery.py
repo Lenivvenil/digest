@@ -739,7 +739,7 @@ async def test_required_source_provenance_never_falls_back_to_rss(tmp_path: Path
 @pytest.mark.asyncio
 async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.irritator.evidence_stage import _ranking_audit
+    from digest.irritator.evidence_stage import _admit_ranking
     from tests.factories import make_signal
 
     checkpoint = tmp_path / "digests/day.review.json"
@@ -747,7 +747,7 @@ async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: P
     prepare_post_delivery(Path("config.yaml"), checkpoint)
     result = _stage_result(payload["evidence"]["bundle_id"], "incomplete")
     private = make_signal(title="PRIVATE AUDIT SENTINEL", snippet="Confined to the private JSON trace.")
-    result.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
+    result.ranking_audit = _admit_ranking([private], 5, 3, {}).audit
     client = _client_context()
 
     async def send(actual: Any, config: Any) -> str:
@@ -769,7 +769,7 @@ async def test_private_audit_is_json_only_and_never_sent_or_replayed(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
-    from digest.irritator.evidence_stage import RankingDecision, _ranking_audit
+    from digest.irritator.evidence_stage import RankingDecision, _admit_ranking
     from tests.factories import make_signal
 
     config = fixture_config()
@@ -778,7 +778,7 @@ async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
     result = _stage_result("bundle", "empty")
     private = make_signal(title="PRIVATE TITLE SENTINEL", snippet="PRIVATE ABSTRACT SENTINEL")
-    result.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
+    result.ranking_audit = _admit_ranking([private], 5, 3, {}).audit
     result.ranking_audit.candidates[0].decision = RankingDecision(
         "context", 10, "PRIVATE REASON SENTINEL", "private-quote", "PRIVATE QUOTE SENTINEL",
     )

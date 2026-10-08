@@ -19,6 +19,7 @@ from digest.irritator.evidence_stage import (
     MAX_RANKING_CANDIDATES,
     MAX_RANKING_JSON_CHARS,
     MAX_SOURCE_RESULTS,
+    _admit_ranking,
     _bounded_signals,
     _parse_narrative,
     _parse_rankings,
@@ -368,10 +369,11 @@ def test_high_scoring_non_counter_relations_excluded(relation: str) -> None:
     signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
     ranking = _ranking()
     ranking["rankings"][0].update(relation=relation, score=10)
-    ranked, limitations = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 1)
-    assert ranked == []
+    admission = _admit_ranking([signal], 1, 3, {})
+    response = _parse_rankings(json.dumps(ranking), admission, narrative)
+    assert response.ranked_signals == []
     counts = ", ".join(f"{label}={int(label == relation)}" for label in ("supports", "context", "insufficient"))
-    assert limitations == [f"Ranking omitted non-counter signals: {counts}."]
+    assert response.limitations == [f"Ranking omitted non-counter signals: {counts}."]
 
 
 def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None:
@@ -389,16 +391,19 @@ def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None
     ]:
         entries.append({"url": signal.url, "relation": relation, "score": score, "reasoning": reason,
                         "quote_id": _ranking_signal_payload(signal)["title"][0]["id"]})
-    ranked, limitations = _parse_rankings(json.dumps({"rankings": entries, "limitations": ["Search is limited."]}),
-                                          [supportive, complication, low_score], narrative, 3, 5)
+    admission = _admit_ranking([supportive, complication, low_score], 5, 3, {})
+    response = _parse_rankings(
+        json.dumps({"rankings": entries, "limitations": ["Search is limited."]}), admission, narrative,
+    )
+    ranked = response.ranked_signals
     assert len(ranked) == 1
     assert ranked[0].signal == complication and ranked[0].relation == "complicates"
     assert ranked[0].quote == complication.title and ranked[0].score == 5
     assert set(asdict(ranked[0])) == {
         "signal", "score", "reasoning", "narrative_claim", "relation", "quote", "typography_normalized",
     }
-    assert limitations == ["Search is limited.",
-                           "Ranking omitted non-counter signals: supports=1, context=0, insufficient=0."]
+    assert response.limitations == ["Search is limited.",
+                                    "Ranking omitted non-counter signals: supports=1, context=0, insufficient=0."]
 
 
 @pytest.mark.asyncio
@@ -743,7 +748,8 @@ def test_ranking_selected_id_preserves_exact_source_text(text: str) -> None:
     original = asdict(signal)
     ranking = _ranking(signal.url)
     ranking["rankings"][0]["quote_id"] = _ranking_signal_payload(signal)["title"][0]["id"]
-    ranked, _ = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+    admission = _admit_ranking([signal], 5, 3, {})
+    ranked = _parse_rankings(json.dumps(ranking), admission, narrative).ranked_signals
     assert ranked[0].quote == text and not ranked[0].typography_normalized
     assert asdict(signal) == original
     # Archive shape remains literal text; no new ID is needed to read old outcomes.
@@ -751,7 +757,7 @@ def test_ranking_selected_id_preserves_exact_source_text(text: str) -> None:
     other = replace(signal, url="https://other.example/same-text")
     ranking["rankings"][0]["url"] = other.url
     with pytest.raises(ValueError, match="not bound"):
-        _parse_rankings(json.dumps(ranking), [other], narrative, 3, 5)
+        _parse_rankings(json.dumps(ranking), _admit_ranking([other], 5, 3, {}), narrative)
 
 
 @pytest.mark.parametrize("bad_quote", [
@@ -842,16 +848,17 @@ def test_generated_prose_uses_whole_response_budget_and_safe_field_diagnostics()
     reasoning = "Relevant qualification. " * 40
     ranking["rankings"][0]["reasoning"] = reasoning
     ranking["limitations"] = ["Incomplete external evidence. " * 20]
-    parsed, limitations = _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
-    assert parsed[0].reasoning == reasoning.strip() and len(limitations[0]) > 400
+    admission = _admit_ranking([signal], 5, 3, {})
+    parsed = _parse_rankings(json.dumps(ranking), admission, narrative)
+    assert parsed.ranked_signals[0].reasoning == reasoning.strip() and len(parsed.limitations[0]) > 400
     for value, code in [(None, "invalid_type"), ("  ", "empty")]:
         ranking["rankings"][0]["reasoning"] = value
         with pytest.raises(ValueError) as error:
-            _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+            _parse_rankings(json.dumps(ranking), admission, narrative)
         assert _safe_error_detail(error.value) == f"reasoning:{code}"
     ranking["rankings"][0]["reasoning"] = "x" * MAX_RESPONSE_CHARS
     with pytest.raises(ValueError, match="Response exceeds"):
-        _parse_rankings(json.dumps(ranking), [signal], narrative, 3, 5)
+        _parse_rankings(json.dumps(ranking), admission, narrative)
 
 
 @pytest.mark.asyncio
@@ -992,8 +999,6 @@ def test_rank_segments_preserve_whole_fields_and_bind_changed_evidence() -> None
 
 
 def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission() -> None:
-    from digest.irritator.evidence_stage import _ranking_candidates
-
     abstract = ("Background  with exact spacing. " * 30
                 + "Our evaluation preserves utility while reducing the measured attacks. "
                 + "Only the tested deployment was evaluated; tradeofff remains workload dependent.")
@@ -1001,13 +1006,13 @@ def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission
     validated = _bounded_signals([signal], "arxiv")
     assert validated[0].title == signal.title
     assert validated[0].snippet == abstract
-    candidates = _ranking_candidates(validated)
+    candidates = _admit_ranking(validated, 5, 3, {}).signals
     assert len(candidates) == 1
     payload = _ranking_signal_payload(candidates[0])
     assert "".join(part["text"] for part in payload["snippet"]) == abstract
     assert len(json.dumps([payload], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
     oversized = make_signal(url="https://example.org/too-large", snippet="x" * 9000)
-    assert _ranking_candidates(_bounded_signals([oversized, signal], "arxiv")) == validated
+    assert _admit_ranking(_bounded_signals([oversized, signal], "arxiv"), 5, 3, {}).signals == tuple(validated)
 
 
 @pytest.mark.asyncio

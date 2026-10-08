@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Bounded Irritator ranking now owns admission and response evidence together (#187).
+  The private `_ranking_candidates` and `_ranking_audit` helpers are removed;
+  `_admit_ranking` supplies one packet/pending-audit result, and `_parse_rankings`
+  returns ranked output with its completed audit instead of mutating an optional
+  caller-supplied audit. Direct internal imports require adaptation. Saved JSON,
+  request bytes, ranking policy, limits and supported CLI behavior are unchanged.
+
 - Retired the unused internal reading-angle publication protocol (#183):
   `reading_brief.BriefRun`, `enrich_selected_cards`, `_render`, `_citation_note`,
   `mark_briefs_delivered` and `reconcile_briefs_delivered`. Direct Python imports of
