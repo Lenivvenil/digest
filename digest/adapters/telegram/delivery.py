@@ -16,6 +16,7 @@ from digest.domain.delivery.outcomes import (
     ArticleCoverage,
     ArticleDeliveryResult,
     IssueDeliveryResult,
+    article_vote_token,
     project_issue_coverage,
 )
 from digest.presentation.telegram import (
@@ -149,7 +150,7 @@ async def send_article_cards(
     async with httpx.AsyncClient() as client:
         for title, link, source, category, summary in cards:
             full_hash = article_hash(title, link)
-            hash8 = full_hash[:8]
+            vote_token = article_vote_token(full_hash, "full32")
 
             card = render_article_card(title, link, source, category, summary, config)
 
@@ -163,7 +164,7 @@ async def send_article_cards(
                     reply_markup=card.reply_markup,
                 )
                 result.sent += 1
-                result.article_source_map[hash8] = source_by_hash.get(full_hash, source)
+                result.article_source_map[vote_token] = source_by_hash.get(full_hash, source)
                 result.delivered_hashes.add(full_hash)
             except Exception as exc:
                 result.failed += 1
@@ -258,7 +259,7 @@ async def send_compact_issue(
 
     result = project_issue_coverage(
         (ArticleCoverage(article.full_hash, article.source, article.covering_chunks) for article in ranges),
-        vote_protocol="legacy8",
+        vote_protocol="full32",
         outcome=result.outcome,
         total_chunks=result.total_chunks,
         attempted_chunks=result.attempted_chunks,

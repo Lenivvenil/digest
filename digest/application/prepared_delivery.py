@@ -21,6 +21,7 @@ from digest.adapters.storage.edition import CLAIM_FILE, READY_FILE, RECEIPTS_FIL
 from digest.adapters.storage.issue_paths import safe_issue_path
 from digest.adapters.telegram.prepared import send_prepared_chunk
 from digest.domain.delivery.edition import (
+    READY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ChunkReceipt,
     Claim,
@@ -116,7 +117,7 @@ def prepare_edition(
             payload["reply_markup"] = chunk.reply_markup
         payloads.append(payload)
     data = Edition(
-        schema=SCHEMA_VERSION,
+        schema=READY_SCHEMA_VERSION,
         edition_id=uuid.uuid4().hex,
         owner_sha256=owner_sha,
         bot_username=getattr(config.telegram, "bot_username", ""),

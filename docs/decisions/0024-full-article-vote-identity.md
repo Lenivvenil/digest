@@ -90,6 +90,11 @@ at deployment. After publication, rollback requires a compatible-reader build or
 backport for both sending and polling, not an arbitrary previous engine pin.
 This is an operator compatibility constraint, not a new hidden enforcement service.
 
+The [compatible-reader commit](https://github.com/Lenivvenil/digest/commit/d9109a61c8b2e752a39f9f18ed38f18588e5ad08)
+precedes full-token emission in the implementing change. It accepts ready v2 and
+full-token votes while still producing the old publication format. A rollback or
+backport must retain these reader capabilities in every sender and collector.
+
 ## Verification
 
 Retain the existing owner, replay, strict persistence, partial/unknown delivery and
