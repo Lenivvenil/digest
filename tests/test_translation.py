@@ -355,7 +355,7 @@ async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadli
         EvidenceIrritatorResult,
         EvidenceNarrative,
         EvidenceRankedSignal,
-        _ranking_audit,
+        _admit_ranking,
     )
     from digest.irritator.sources import Signal
     from digest.llm import _request_state
@@ -369,7 +369,7 @@ async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadli
                                   "complicates", "Literal evidence.")
     canonical = EvidenceIrritatorResult(1, "bundle", "complete", narratives=[narrative], ranked_signals=[ranked])
     private = replace(source, title="PRIVATE AUDIT SENTINEL", snippet="Private diagnostic evidence.")
-    canonical.ranking_audit = _ranking_audit([private], [private], 5, 3, {})
+    canonical.ranking_audit = _admit_ranking([private], 5, 3, {}).audit
     original = asdict(canonical)
 
     async def answer(_role, messages, _config, **_kwargs):

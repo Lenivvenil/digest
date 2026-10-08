@@ -54,6 +54,22 @@ change to external cancellation behavior.
 
 ## Accepted retention policy
 
+### Ranking ownership clarification — 2026-10-08
+
+[#187](https://github.com/Lenivvenil/digest/issues/187) replaces the internal
+candidate-list-to-audit reconstruction and optional mutable parser output with one
+admission result and one fully validated response result. Admission records the
+greedy decision once, then allocates omitted previews after the total omission count
+is known. The pending audit is attached before model dispatch; successful parsing
+returns a new completed audit alongside ranked output, using one classification per
+returned judgment. Failure leaves the pending evidence unchanged.
+
+This changes internal ownership, not this ADR's persisted fields, serialization,
+limits, selection policy or privacy contract. Existing archives remain readable.
+Semantic counter-evidence acceptance is still separate from structural validation.
+
+### Retained bounds
+
 Admitted evidence remains exact under the unchanged 8,000-JSON-character model packet
 bound. For omitted candidates only, reuse the existing `MAX_RESPONSE_CHARS` value
 (16,000) as the archive allocation accepted in the engine-only release.

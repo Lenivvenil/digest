@@ -20,10 +20,9 @@ from digest.irritator.evidence_stage import (
     MAX_SOURCE_RESULTS,
     SAFE_SOURCES,
     EvidenceIrritatorResult,
+    _admit_ranking,
     _parse_narrative,
     _parse_rankings,
-    _ranking_audit,
-    _ranking_candidates,
     _ranking_signal_payload,
     run_evidence_irritator,
 )
@@ -60,9 +59,9 @@ def test_admission_trace_preserves_greedy_skips_order_and_candidate_cap() -> Non
     small = _signals(14, snippet="")
     huge = replace(huge, url="https://external.example/oversized")
     signals = [huge, *small]
-    selected = _ranking_candidates(signals)
-    audit = _ranking_audit(signals, selected, 5, 3, {})
-    assert selected == small[:MAX_RANKING_CANDIDATES]
+    admission = _admit_ranking(signals, 5, 3, {})
+    selected, audit = admission.signals, admission.audit
+    assert selected == tuple(small[:MAX_RANKING_CANDIDATES])
     assert [item.signal.url for item in audit.candidates] == [signal.url for signal in signals]
     assert [item.admission for item in audit.candidates] == [
         "evidence_budget",
@@ -88,10 +87,10 @@ def test_exact_packet_boundary_and_utf8_evidence_remain_unchanged() -> None:
     original_size = len(json.dumps([_ranking_signal_payload(signal)], ensure_ascii=False))
     exact = replace(signal, published="x" * (MAX_RANKING_JSON_CHARS - original_size + len(signal.published)))
     assert len(json.dumps([_ranking_signal_payload(exact)], ensure_ascii=False)) == MAX_RANKING_JSON_CHARS
-    assert _ranking_candidates([exact]) == [exact]
+    assert _admit_ranking([exact], 5, 3, {}).signals == (exact,)
     over = replace(exact, published=exact.published + "x")
-    assert _ranking_candidates([over]) == []
-    audit = _ranking_audit([signal], [signal], 5, 3, {})
+    assert _admit_ranking([over], 5, 3, {}).signals == ()
+    audit = _admit_ranking([signal], 5, 3, {}).audit
     assert audit.candidates[0].signal is signal
     assert not audit.candidates[0].title_truncated and not audit.candidates[0].snippet_truncated
     assert audit.candidates[0].ranking_payload_chars == len(
@@ -114,12 +113,13 @@ def test_every_valid_returned_judgment_is_auditable(relation: str, score: int, d
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
     signals = _signals(2)
-    audit = _ranking_audit(signals, signals, 5, 3, {})
+    admission = _admit_ranking(signals, 5, 3, {})
+    pending = asdict(admission.audit)
     response = json.dumps({"rankings": [_entry(signals[0], relation, score)], "limitations": []})
-    expected = _parse_rankings(response, signals, narrative, 3, 5)
-    actual = _parse_rankings(response, signals, narrative, 3, 5, audit=audit)
-    assert actual == expected
-    assert bool(actual[0]) == (disposition == "accepted")
+    actual = _parse_rankings(response, admission, narrative)
+    audit = actual.audit
+    assert bool(actual.ranked_signals) == (disposition == "accepted")
+    assert audit is not admission.audit and asdict(admission.audit) == pending
     assert audit.response_validated
     first, missing = audit.candidates
     assert first.disposition == disposition and first.decision is not None
@@ -143,7 +143,8 @@ def test_invalid_ranking_is_atomic_even_below_the_editorial_threshold(mutation: 
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
     signals = _signals(2)
-    audit = _ranking_audit(signals, signals, 5, 3, {})
+    admission = _admit_ranking(signals, 5, 3, {})
+    audit = admission.audit
     first, invalid = _entry(signals[0], "complicates"), _entry(signals[1], "supports", 1)
     invalid["reasoning"] = "INVALID PRIVATE SENTINEL"
     changes = {
@@ -174,7 +175,7 @@ def test_invalid_ranking_is_atomic_even_below_the_editorial_threshold(mutation: 
     if mutation == "too_long":
         text = "x" * (MAX_RESPONSE_CHARS + 1)
     with pytest.raises(ValueError):
-        _parse_rankings(text, signals, narrative, 3, 5, audit=audit)
+        _parse_rankings(text, admission, narrative)
     assert not audit.response_validated
     assert all(item.disposition == "pending" and item.decision is None for item in audit.candidates)
     assert "INVALID PRIVATE SENTINEL" not in json.dumps(asdict(audit))
@@ -282,9 +283,9 @@ def test_whole_omitted_text_allocation_and_serialized_growth_are_bounded() -> No
         )
         for index in range(count)
     ]
-    selected = _ranking_candidates(signals)
-    assert selected == []
-    audit = _ranking_audit(signals, selected, 5, 3, {})
+    admission = _admit_ranking(signals, 5, 3, {})
+    assert admission.signals == ()
+    audit = admission.audit
     assert sum(len(item.signal.title) + len(item.signal.snippet) for item in audit.candidates) <= MAX_RESPONSE_CHARS
     assert all(item.title_truncated and item.snippet_truncated for item in audit.candidates)
     # This includes identifiers, metadata, indentation and escaping, not merely
@@ -372,12 +373,13 @@ def test_serialized_growth_includes_returned_reasoning_and_quote() -> None:
         replace(item, url=(f"https://e.example/{index}/" + "\x00" * 2048)[:2048], published="\x00" * 80)
         for index, item in enumerate(_signals(89, snippet="\x00" * 20000))
     ]
-    audit = _ranking_audit([signal, *omitted], [signal], 5, 3, {})
+    admission = _admit_ranking([signal, *omitted], 5, 3, {})
+    assert admission.signals == (signal,)
     entry = _entry(signal)
     entry["reasoning"] = "𐀀" * 15000
     response = json.dumps({"rankings": [entry], "limitations": []}, ensure_ascii=False)
     assert len(response) <= MAX_RESPONSE_CHARS
-    _parse_rankings(response, [signal], narrative, 3, 5, audit=audit)
+    audit = _parse_rankings(response, admission, narrative).audit
     assert audit.candidates[0].decision is not None
     assert audit.candidates[0].decision.reasoning == entry["reasoning"]
     assert len(json.dumps(asdict(audit), indent=2).encode()) < 1_500_000
@@ -464,8 +466,9 @@ def test_audit_does_not_evaluate_payloads_beyond_existing_candidate_cap(tmp_path
     admitted = _signals(MAX_RANKING_CANDIDATES, snippet="")
     unexamined = make_signal(url="https://later.example", title="Unexamined \ud800", snippet="Original abstract.")
     signals = [*admitted, unexamined]
-    assert _ranking_candidates(signals) == admitted
-    audit = _ranking_audit(signals, admitted, 5, 3, {})
+    admission = _admit_ranking(signals, 5, 3, {})
+    assert admission.signals == tuple(admitted)
+    audit = admission.audit
     record = audit.candidates[-1]
     assert record.admission == "candidate_limit" and record.ranking_payload_chars is None
     assert record.signal == unexamined and not record.title_truncated

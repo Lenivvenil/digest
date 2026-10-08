@@ -176,6 +176,23 @@ class RankingAudit:
     response_validated: bool = False
 
 
+@dataclass(frozen=True)
+class RankingAdmission:
+    """One bounded ranking packet and the pending evidence of its admission."""
+
+    signals: tuple[Signal, ...]
+    audit: RankingAudit
+
+
+@dataclass(frozen=True)
+class RankingResponse:
+    """A fully validated response and its matching private audit projection."""
+
+    ranked_signals: list[EvidenceRankedSignal]
+    limitations: list[str]
+    audit: RankingAudit
+
+
 @dataclass
 class EvidenceIrritatorResult:
     schema_version: int
@@ -354,12 +371,11 @@ def _ranking_signal_payload(signal: Signal) -> dict[str, Any]:
 
 
 def _parse_rankings(
-    text: str, signals: list[Signal], narrative: EvidenceNarrative, maximum: int, min_score: int,
-    *, audit: RankingAudit | None = None,
-) -> tuple[list[EvidenceRankedSignal], list[str]]:
-    entries, limitations = _response(text, "rankings", maximum)
-    known = {signal.url: signal for signal in signals}
-    validated = []
+    text: str, admission: RankingAdmission, narrative: EvidenceNarrative,
+) -> RankingResponse:
+    """Validate atomically, then project each judgment once into output and audit."""
+    entries, limitations = _response(text, "rankings", admission.audit.max_ranked)
+    known = {signal.url: signal for signal in admission.signals}
     decisions: dict[str, RankingDecision] = {}
     seen: set[str] = set()
     for entry in entries:
@@ -381,42 +397,40 @@ def _parse_rankings(
         _bounded_text(quote, 200, field="source_quote")
         reasoning = _bounded_text(entry["reasoning"], field="reasoning")
         seen.add(url)
-        validated.append((signal, score, reasoning, relation, quote))
         decisions[url] = RankingDecision(relation, score, reasoning, quote_id, quote)
 
     ranked = []
     omitted = dict.fromkeys(("supports", "context", "insufficient"), 0)
-    for signal, score, reasoning, relation, quote in validated:
-        if relation in omitted:
-            omitted[relation] += 1
-        elif relation in ("contradicts", "complicates") and score >= min_score:
+    completed = []
+    for candidate in admission.audit.candidates:
+        if candidate.admission != "admitted":
+            completed.append(candidate)
+            continue
+        decision = decisions.get(candidate.signal.url)
+        disposition: Literal["not_returned", "non_counter", "below_min_score", "accepted"]
+        if decision is None:
+            disposition = "not_returned"
+        elif decision.relation in omitted:
+            disposition = "non_counter"
+            omitted[decision.relation] += 1
+        elif decision.score < admission.audit.min_score:
+            disposition = "below_min_score"
+        else:
+            disposition = "accepted"
             ranked.append(EvidenceRankedSignal(
-                signal, score, reasoning, narrative.claim,
-                cast(Literal["contradicts", "complicates"], relation), quote, False,
+                candidate.signal, decision.score, decision.reasoning, narrative.claim,
+                cast(Literal["contradicts", "complicates"], decision.relation), decision.quote, False,
             ))
+        completed.append(replace(candidate, decision=decision, disposition=disposition))
     if any(omitted.values()):
         limitations.append(
             "Ranking omitted non-counter signals: "
             + ", ".join(f"{relation}={count}" for relation, count in omitted.items()) + "."
         )
     ranked.sort(key=lambda item: (-item.score, item.signal.url))
-    if audit is not None:
-        # Do not retain a valid prefix of an invalid response. Existing validation
-        # above still rejects the entire response, including invalid extra rows.
-        for candidate in audit.candidates:
-            if candidate.admission != "admitted":
-                continue
-            candidate.decision = decisions.get(candidate.signal.url)
-            if candidate.decision is None:
-                candidate.disposition = "not_returned"
-            elif candidate.decision.relation not in ("contradicts", "complicates"):
-                candidate.disposition = "non_counter"
-            elif candidate.decision.score < min_score:
-                candidate.disposition = "below_min_score"
-            else:
-                candidate.disposition = "accepted"
-        audit.response_validated = True
-    return ranked, limitations
+    return RankingResponse(
+        ranked, limitations, replace(admission.audit, candidates=completed, response_validated=True),
+    )
 
 
 async def _model_text(
@@ -484,55 +498,49 @@ def _bounded_signals(signals: list[Signal], source: str) -> list[Signal]:
     return bounded
 
 
-def _ranking_candidates(signals: list[Signal]) -> list[Signal]:
+def _admit_ranking(
+    signals: list[Signal], min_score: int, max_ranked: int, lineage: dict[str, set[int]],
+) -> RankingAdmission:
+    """Choose the greedy packet once and retain the reason for every omission.
+
+    Only diagnostic previews are shortened. The request keeps complete admitted
+    signals, and candidates beyond the count cap never have quote payloads evaluated.
+    """
     candidates: list[Signal] = []
+    admissions: list[tuple[Signal, Literal["admitted", "evidence_budget", "candidate_limit"], int | None]] = []
     for signal in signals:
         if len(candidates) >= MAX_RANKING_CANDIDATES:
-            break
+            admissions.append((signal, "candidate_limit", None))
+            continue
         trial = [*candidates, signal]
         payload_size = len(json.dumps([_ranking_signal_payload(item) for item in trial], ensure_ascii=False))
+        reason: Literal["admitted", "evidence_budget"]
         if payload_size <= MAX_RANKING_JSON_CHARS:
             candidates = trial
-    return candidates
+            reason = "admitted"
+        else:
+            reason = "evidence_budget"
+        admissions.append((signal, reason, len(json.dumps(_ranking_signal_payload(signal), ensure_ascii=False))))
 
-
-def _ranking_audit(
-    signals: list[Signal], candidates: list[Signal], min_score: int, max_ranked: int,
-    lineage: dict[str, set[int]],
-) -> RankingAudit:
-    """Observe the unchanged greedy admission; never shorten its model evidence.
-
-    Omitted title/snippet previews share the existing response-character bound,
-    equally per omitted candidate, title first. Lengths/flags expose every loss.
-    Hashes use sorted ASCII-escaped JSON, including legal JSON lone surrogates.
-    """
-    admitted_urls = {signal.url for signal in candidates}
+    # The preview allocation depends on the total omissions, not an admission decision.
     omitted_count = len(signals) - len(candidates)
     preview_chars = MAX_RESPONSE_CHARS // omitted_count if omitted_count else 0
     audit = RankingAudit(min_score, max_ranked)
-    admitted_count = 0
-    for signal in signals:
+    for signal, admission, chars in admissions:
         original = json.dumps(asdict(signal), ensure_ascii=True, sort_keys=True)
         signal_sha256 = hashlib.sha256(original.encode()).hexdigest()
-        admitted = signal.url in admitted_urls
-        snapshot = signal if admitted else replace(
+        snapshot = signal if admission == "admitted" else replace(
             signal, title=signal.title[:preview_chars],
             snippet=signal.snippet[:max(0, preview_chars - len(signal.title))],
-        )
-        admission: Literal["admitted", "evidence_budget", "candidate_limit"] = (
-            "admitted" if admitted else "candidate_limit" if admitted_count >= MAX_RANKING_CANDIDATES
-            else "evidence_budget"
         )
         audit.candidates.append(RankingCandidateAudit(
             snapshot, signal_sha256, len(original),
             len(signal.title), len(signal.snippet), snapshot.title != signal.title, snapshot.snippet != signal.snippet,
-            (None if admission == "candidate_limit"
-             else len(json.dumps(_ranking_signal_payload(signal), ensure_ascii=False))),
+            chars,
             sorted(lineage.get(signal_sha256, set())),
-            admission, "pending" if admitted else "not_admitted",
+            admission, "pending" if admission == "admitted" else "not_admitted",
         ))
-        admitted_count += int(admitted)
-    return audit
+    return RankingAdmission(tuple(candidates), audit)
 
 
 async def _check_source_response(response: httpx.Response) -> None:
@@ -789,11 +797,10 @@ async def _run_stages(
         result.status = "incomplete" if failed else "empty"
         return
 
-    candidates = _ranking_candidates(signals)
     maximum_ranked = min(MAX_RANKED_SIGNALS, config.irritator.top_signals)
-    result.ranking_audit = _ranking_audit(
-        signals, candidates, config.irritator.min_signal_score, maximum_ranked, lineage,
-    )
+    admission = _admit_ranking(signals, config.irritator.min_signal_score, maximum_ranked, lineage)
+    candidates = admission.signals
+    result.ranking_audit = admission.audit
     diagnostic = _stage(result, "ranking", len(candidates))
     diagnostic.omitted_count = len(signals) - len(candidates)
     if diagnostic.omitted_count:
@@ -818,10 +825,10 @@ async def _run_stages(
         "signals": [_ranking_signal_payload(s) for s in candidates],
         "max_ranked": maximum_ranked, "language": config.radar.language}, config,
         execution=execution, admission_deadline=admission_deadline)
-    result.ranked_signals, limitations = _parse_rankings(
-        text, candidates, narrative, maximum_ranked, config.irritator.min_signal_score, audit=result.ranking_audit,
-    )
-    result.limitations.extend(limitations)
+    ranking = _parse_rankings(text, admission, narrative)
+    result.ranked_signals = ranking.ranked_signals
+    result.ranking_audit = ranking.audit
+    result.limitations.extend(ranking.limitations)
     _finish_stage(diagnostic, len(result.ranked_signals))
     result.status = ("incomplete" if failed or diagnostic.omitted_count
                      else "complete" if result.ranked_signals else "empty")

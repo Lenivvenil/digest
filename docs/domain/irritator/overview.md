@@ -130,6 +130,14 @@ validated ranking dispositions. Omitted-source previews explicitly record trunca
 unknown or unreturned relevance is never relabeled as rejection. This deployed private archive
 trace does not change ranking behavior or establish semantic counter-evidence quality.
 
+The bounded stage has one admission owner: `_admit_ranking` returns the ordered
+model candidates and their pending audit together. It records each greedy admission
+decision once; a second pass only allocates diagnostic previews across omissions.
+The response parser validates every returned row before producing ranked signals,
+limitations and a fresh completed audit. A failed request or invalid response leaves
+the pending audit unchanged. Neither callers nor a separate audit builder reselect
+the packet or independently classify the returned judgments.
+
 ### Versioned bounded search policy
 
 [ADR0022](../../decisions/0022-versioned-bounded-search-policy.md) repairs the existing
