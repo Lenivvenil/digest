@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -14,8 +14,19 @@ from digest import llm
 from digest.adapters.models.execution import ModelExecution
 from digest.article_source import FetchedArticle
 from digest.config import Config, ReadingBriefConfig
-from digest.reading_brief import enrich_selected_cards, mark_briefs_delivered, ready_brief_evidence
-from digest.reading_brief_state import checksum, load_state, state_root
+from digest.radar.collector import Article
+from digest.reading_brief import _advance, _routes, _validate_progress, ready_brief_evidence
+from digest.reading_brief_state import (
+    BriefState,
+    Selection,
+    checksum,
+    load_source,
+    load_state,
+    now,
+    save_state,
+    state_root,
+)
+from digest.reading_reconciliation import build_reconciliation_input
 from scripts.review_fixture import fixture_config
 from tests.factories import make_article
 
@@ -51,10 +62,21 @@ def response(messages: list[dict[str, str]], *, abstain: bool = False) -> tuple[
     return json.dumps(result), {"finish_reason": "STOP"}
 
 
+def saved_brief_state(tmp_path: Path, cfg: Config, article: Article | None = None) -> BriefState:
+    """Persist a caller-owned supported-route fixture; admission belongs to preparation."""
+    state = BriefState(Selection.from_article(article or make_article()), _routes(cfg)[0], now(), now())
+    save_state(tmp_path, state)
+    return state
+
+
 @pytest.mark.asyncio
-async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
-    article = make_article()
+async def test_direct_full_body_and_late_qualification_reach_checked_evidence(tmp_path: Path) -> None:
+    from digest.reading_preparation import prepare_selected_sources
+    from tests.test_main_reading_brief import saved_selection
+
+    execution = ModelExecution()
+    cfg, progress, packet, report = await saved_selection(tmp_path, execution=execution)
+    identity = report.reviews[0].selections[0].evidence_id
     text = "OPENING CLAIM\n\n" + "\n\n".join(f"Section {i}: " + "context " * 50 for i in range(150))
     text += "\n\nFINAL QUALIFICATION: failed deployments are excluded."
     requests: list[list[dict[str, str]]] = []
@@ -63,43 +85,48 @@ async def test_direct_full_body_and_late_qualification_are_quoted_after_angle(tm
         requests.append(messages)
         assert kwargs["provider_override"].model == "gemini-3.8-flash"
         assert kwargs["max_output_tokens"] == 2048
-        return response(messages)
+        raw, usage = response(messages)
+        usage.update(prompt_tokens=100, completion_tokens=80, total_tokens=180)
+        return raw, usage
 
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=150_000)) as count,
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-        assert len(run.cards) == 1 and run.pending == 0 and run.abstained == 0
-        identity = next(iter(run.quotations))
-        assert run.cards[0].summary.startswith("Reading brief: ")
+        prepared = await prepare_selected_sources(progress, packet, report, cfg, tmp_path,
+                                                  time.monotonic() + 1000, execution=execution)
+        assert prepared.technical_complete == 1 and prepared.pending == 0
+        state, source = ready_brief_evidence(tmp_path, identity)
+        assert state.status == "ready" and len(state.pages) == 1
         assert "".join(span["text"] for span in payload(requests[0])["spans"]) == text
-        assert "FINAL QUALIFICATION" not in run.cards[0].summary
-        assert "FINAL QUALIFICATION" in run.quotations[identity]
-        assert "Uninspected images." in run.quotations[identity]
-        assert "2026-09-20T09:00:00+00:00" in run.quotations[identity]
-        assert "source metadata" in run.quotations[identity]
-        assert "Conditions/limitations from the source" in run.quotations[identity]
-        assert "FINAL QUALIFICATION" in run.provenance[identity]
-        assert "Published: 2026-09-20 (source)" in run.provenance[identity]
-        assert "Images not assessed." in run.provenance[identity]
+        result = state.pages[0].result
+        assert result is not None
+        assert result.covered_span_ids == [span.id for span in source.spans]
+        assert result.qualification_span_ids == [source.spans[-1].id]
+        handoff = json.loads(Path(prepared.handoff_paths[0]).read_text())
+        assert handoff["state"] == asdict(state)
+        assert handoff["source_sha256"] == state.source_sha256
+        assert handoff["source_body_sha256"] == source.body_sha256
+        assert handoff["state"]["pages"][0]["result"]["qualification_span_ids"] == [source.spans[-1].id]
+        assert Path(handoff["source_path"]).read_bytes() == (
+            state_root(tmp_path) / "sources" / f"{state.source_sha256}.json"
+        ).read_bytes()
+        evidence = build_reconciliation_input(source, state)
+        assert evidence.pages[0].qualification_span_ids == (source.spans[-1].id,)
+        assert evidence.evidence[-1].text == source.text[source.spans[-1].start:source.spans[-1].end]
+        assert "FINAL QUALIFICATION" in evidence.evidence[-1].text
+        assert evidence.source_published == "2026-09-20T09:00:00+00:00"
+        assert "Uninspected images." in evidence.source_coverage_notes
+        assert state.pages[0].usage == {"prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180}
+        state_bytes = (state_root(tmp_path) / f"{identity}.json").read_bytes()
+        assert ready_brief_evidence(tmp_path, identity) == (state, source)
+        assert (state_root(tmp_path) / f"{identity}.json").read_bytes() == state_bytes
         assert fetch.call_count == count.call_count == call.call_count == 1
-        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-        assert again.quotations == run.quotations and call.call_count == 1
-        with pytest.raises(ValueError):
-            mark_briefs_delivered(tmp_path, {"0" * 32})
-        assert load_state(tmp_path, identity).status == "ready"
-        mark_briefs_delivered(tmp_path, {identity})
-        assert load_state(tmp_path, identity).status == "delivered"
-        assert not (await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                                execution=model_execution)).cards
-        assert call.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dropping(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
     text = "\n\n".join(f"QUALIFICATION {index}: condition {index}." for index in range(8))
     counted: list[list[int]] = []
     generated: list[list[int]] = []
@@ -123,32 +150,37 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
-        first = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-        assert first.pending == 1 and not first.cards and first.abstained == 0
-        identity = next(state_root(tmp_path).glob("*.json")).stem
+        state = saved_brief_state(tmp_path, cfg)
+        identity = state.selection.identity
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         state = load_state(tmp_path, identity)
-        assert state.error_class == "technical_quota_or_budget" and state.attempts == 1
+        assert state.status == "pending" and state.error_class == "technical_quota_or_budget" and state.attempts == 1
         assert state.pages[0].result is not None
+        completed_page = asdict(state.pages[0])
+        source_hash = state.source_sha256
         assert generated == [[1, 2], [3, 4]]
-        second = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                             execution=model_execution)
-        assert second.pending == 0 and len(second.cards) == 1
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+        state, source = ready_brief_evidence(tmp_path, identity)
+        assert state.status == "ready" and state.attempts == 2
+        assert asdict(state.pages[0]) == completed_page and state.source_sha256 == source_hash
         assert counted[0] == list(range(1, 9))
         assert generated == [[1, 2], [3, 4], [3, 4], [5, 6], [7, 8]]
         assert counted.count([3, 4]) == 1 and fetch.call_count == 1
-        assert all(f"QUALIFICATION {i}: condition {i}." in second.quotations[identity] for i in range(8))
-        assert load_state(tmp_path, identity).attempts == 2
-        state, source = ready_brief_evidence(tmp_path, identity)
         assert [span for page in state.pages for span in page.result.covered_span_ids] == list(range(1, 9))
         assert "".join(source.text[s.start:s.end] for s in source.spans) == text
+        evidence = build_reconciliation_input(source, state)
+        assert [span for page in evidence.pages for span in page.qualification_span_ids] == list(range(1, 9))
+        assert "".join(span.text for span in evidence.evidence) == text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("damage", ["truncated", "unknown_id", "partial_coverage", "no_angle_citations",
                                     "missing_brief", "bad_type"])
 async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path: Path, damage: str) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
+
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         text, usage = response(messages)
         data = json.loads(text)
@@ -169,43 +201,63 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Claim.\n\nQualification."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-    assert not run.cards and run.pending == 1 and run.abstained == 0 and call.call_count == 1
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state = load_state(tmp_path, state.selection.identity)
+    assert state.status == "pending" and state.pages[0].result is None and call.call_count == 1
+    assert state.pages[0].request_attempts[-1].status == "accepted"
+    with pytest.raises(ValueError, match="brief_not_ready"):
+        ready_brief_evidence(tmp_path, state.selection.identity)
 
 
 @pytest.mark.asyncio
 async def test_abstention_is_semantic_only_after_every_page_completes(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
+    generated: list[list[int]] = []
+
+    async def count(messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> int:
+        return 100 + len(payload(messages)["spans"]) * 10
+
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        generated.append(payload(messages)["span_range"])
+        persisted = load_state(tmp_path, state.selection.identity)
+        assert persisted.status == "pending"
         return response(messages, abstain=True)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Public routine announcement."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+          patch("digest.reading_brief.fetch_article",
+                AsyncMock(return_value=fetched("Routine notice.\n\nNo finding."))),
+          patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-        again = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-    assert not run.cards and run.pending == 0 and run.abstained == again.abstained == 1
-    assert call.call_count == 1
+        state = saved_brief_state(tmp_path, cfg)
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+        state = load_state(tmp_path, state.selection.identity)
+        _validate_progress(state, load_source(tmp_path, state))
+        assert state.status == "abstained" and generated == [[1, 1], [2, 2]]
+        assert all(page.result is not None and page.result.abstain for page in state.pages)
+        with pytest.raises(ValueError, match="brief_not_ready"):
+            ready_brief_evidence(tmp_path, state.selection.identity)
+    assert call.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_rejections(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
     cfg = config()
-    llm.set_request_limit(cfg, model_execution, 0)
+    state = saved_brief_state(tmp_path, cfg)
+    llm.set_request_limit(cfg, execution, 0)
     with (patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=ValueError("coverage_incomplete"))),
           patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
-        first = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-    assert first.pending == 1 and first.abstained == 0 and first.oldest_pending
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state = load_state(tmp_path, state.selection.identity)
+    assert state.status == "pending" and state.error_class == "technical_fetch_incomplete"
+    assert state.source_sha256 is None and count.call_count == 0
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
-        second = await enrich_selected_cards([], cfg, tmp_path, time.monotonic() + 1000,
-                                             execution=model_execution)
-    assert second.pending == 1 and second.abstained == 0 and count.call_count == 0
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state = load_state(tmp_path, state.selection.identity)
+    assert state.status == "pending" and state.error_class == "technical_quota_or_budget"
+    assert state.source_sha256 is not None and state.pages[0].result is None and count.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -213,7 +265,10 @@ async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_reje
 async def test_deadline_admits_a_clipped_useful_window_after_pacing(
     tmp_path: Path, remaining: float, expected_calls: int,
 ) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
+
     async def generate_response(_role: Any, messages: list[dict[str, str]], *_args: Any, **kwargs: Any) -> Any:
         assert 30 <= kwargs["request_timeout_seconds"] <= remaining - 5 - 0.25
         assert kwargs["request_timeout_seconds"] < 120
@@ -223,25 +278,29 @@ async def test_deadline_admits_a_clipped_useful_window_after_pacing(
           patch("digest.llm.request_wait_seconds", return_value=5),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate_response) as generate):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + remaining,
-                                          execution=model_execution)
-    assert run.pending == 1 - expected_calls and count.call_count == 1 and generate.call_count == expected_calls
+        await _advance(state, cfg, tmp_path, time.monotonic() + remaining, execution=execution)
+    state = load_state(tmp_path, state.selection.identity)
+    assert state.status == ("ready" if expected_calls else "pending")
+    assert count.call_count == 1 and generate.call_count == expected_calls
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("damage", ["result_id", "angle", "ready_before_coverage", "route", "source"])
-async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(tmp_path: Path, damage: str) -> None:
-    model_execution = ModelExecution()
+async def test_completed_state_cannot_validate_after_evidence_or_result_tampering(tmp_path: Path, damage: str) -> None:
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
+    identity = state.selection.identity
+
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    full_source = fetched("First source.\n\nSecond source.")
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=full_source)),
+    with (patch("digest.reading_brief.fetch_article",
+                AsyncMock(return_value=fetched("First source.\n\nSecond source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-        identity = next(iter(run.quotations))
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+        ready_brief_evidence(tmp_path, identity)
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
         data = envelope["payload"]
@@ -260,59 +319,38 @@ async def test_completed_state_cannot_reemit_after_evidence_or_result_tampering(
             source_path.write_text(json.dumps(source))
         envelope["sha256"] = checksum(data)
         path.write_text(json.dumps(envelope))
-        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                           execution=model_execution)
-        assert not held.cards and held.pending == 1 and call.call_count == 1
+        saved_bytes = {p: p.read_bytes() for p in state_root(tmp_path).rglob("*.json")}
         with pytest.raises(ValueError):
-            mark_briefs_delivered(tmp_path, {identity})
-        assert load_state(tmp_path, identity).status != "delivered"
+            ready_brief_evidence(tmp_path, identity)
+        assert saved_bytes == {p: p.read_bytes() for p in state_root(tmp_path).rglob("*.json")}
+        assert call.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_unknown_profile_holds_admitted_selection_without_fetch_or_fallback(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
-    cfg = config()
+    from digest.reading_preparation import prepare_selected_sources
+    from tests.test_main_reading_brief import saved_selection
+
+    execution = ModelExecution()
+    cfg, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     cfg.reading_brief = replace(cfg.reading_brief, model="unprofiled-model")
-    with patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch:
-        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-    assert run.pending == 1 and not run.cards and fetch.call_count == 0
+    with (patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch,
+          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+          patch("digest.llm.complete", AsyncMock()) as generate):
+        result = await prepare_selected_sources(progress, packet, report, cfg, tmp_path,
+                                                time.monotonic() + 1000, execution=execution)
+    assert result.pending == 1 and result.technical_complete == 0
+    assert fetch.call_count == count.call_count == generate.call_count == 0
+    state = load_state(tmp_path, result.outcomes[0].identity)
+    assert state.status == "pending" and state.source_sha256 is None
 
 
 @pytest.mark.asyncio
-async def test_acknowledgment_persistence_failure_propagates_and_reconciliation_is_exact(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
-    from digest.reading_brief import reconcile_briefs_delivered
-
-    async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
-        text, usage = response(messages)
-        usage.update(prompt_tokens=100, completion_tokens=80, total_tokens=180)
-        return text, usage
-
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate)):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-    identity = next(iter(run.quotations))
-    assert load_state(tmp_path, identity).pages[0].usage == {
-        "prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180,
-    }
-    with patch("digest.reading_brief.save_state", side_effect=OSError("disk full")):
-        with pytest.raises(OSError, match="disk full"):
-            mark_briefs_delivered(tmp_path, {identity})
-    assert load_state(tmp_path, identity).status == "ready"
-    reconcile_briefs_delivered(tmp_path, {"0" * 32})
-    assert load_state(tmp_path, identity).status == "ready"
-    reconcile_briefs_delivered(tmp_path, {"0" * 32, identity})
-    assert load_state(tmp_path, identity).status == "delivered"
-    mark_briefs_delivered(tmp_path, {identity})
-
-
-@pytest.mark.asyncio
-async def test_original_rss_context_survives_metadata_drift_but_does_not_enter_reader_prompt(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
+async def test_rss_description_does_not_enter_reader_prompt(tmp_path: Path) -> None:
+    execution = ModelExecution()
+    cfg = config()
     original = make_article(description="UNVERIFIED RSS ANNOUNCEMENT", category="Original category")
+    state = saved_brief_state(tmp_path, cfg, original)
     messages_seen = []
 
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
@@ -322,45 +360,34 @@ async def test_original_rss_context_survives_metadata_drift_but_does_not_enter_r
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete actual source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        first = await enrich_selected_cards([original], config(), tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-        later = replace(original, description="Changed RSS teaser", category="Changed category", pub_date=None)
-        second = await enrich_selected_cards([later], config(), tmp_path, time.monotonic() + 1000,
-                                             execution=model_execution)
-    assert second.cards == first.cards and second.articles[0] == original and call.call_count == 1
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state, _ = ready_brief_evidence(tmp_path, state.selection.identity)
+    assert state.selection.article() == original and call.call_count == 1
+    assert "description" not in payload(messages_seen[0])["article"]
     assert "UNVERIFIED RSS ANNOUNCEMENT" not in json.dumps(messages_seen)
 
 
 @pytest.mark.asyncio
-async def test_corrupt_backlog_has_unknown_age_and_cannot_be_readmitted(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
-    from digest.radar.collector import article_hash
-
-    article = make_article()
-    identity = article_hash(article.title, article.link)
-    (state_root(tmp_path) / f"{identity}.json").write_text("damaged file")
-    with patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch:
-        result = await enrich_selected_cards([article], config(), tmp_path, time.monotonic() + 1000,
-                                             execution=model_execution)
-    assert result.pending == 1 and result.oldest_pending is None and fetch.call_count == 0
-
-
-@pytest.mark.asyncio
 async def test_fetch_transport_failure_is_persisted_as_technical_pending(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
     import httpx
 
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
     with patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=httpx.ConnectError("offline"))):
-        result = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                             execution=model_execution)
-    assert result.pending == 1 and not result.cards and result.abstained == 0
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state = load_state(tmp_path, state.selection.identity)
+    assert state.status == "pending" and state.error_class == "technical_fetch_failed"
+    assert state.source_sha256 is None
 
 
 @pytest.mark.asyncio
-async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separate_from_quote_archive(
+async def test_substantive_brief_retains_conditions_and_unresolved_conflict_in_source_evidence(
     tmp_path: Path,
 ) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
     text = (
         "The cache places hot keys in memory to reduce lookup latency.\n\n"
         "The overview says cached values persist across a process restart.\n\n"
@@ -401,14 +428,13 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as call):
-        run = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-    identity = next(iter(run.quotations))
-    assert run.cards[0].summary == f"Reading brief: {brief}"
-    assert all(part in run.quotations[identity] for part in text.split("\n\n"))
-    assert "Citations: [S1-S4]" in run.provenance[identity]
-    assert all(part in run.provenance[identity] for part in text.split("\n\n")[1:])
-    assert text.split("\n\n")[0] not in run.provenance[identity]
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state, source = ready_brief_evidence(tmp_path, state.selection.identity)
+    evidence = build_reconciliation_input(source, state)
+    assert evidence.pages[0].reading_angle == brief
+    assert evidence.pages[0].angle_span_ids == (1, 2, 3, 4)
+    assert evidence.pages[0].qualification_span_ids == (2, 3, 4)
+    assert "".join(span.text for span in evidence.evidence) == text
     assert count.call_count == call.call_count == 1
 
 
@@ -417,16 +443,19 @@ async def test_substantive_brief_keeps_conditions_and_unresolved_conflict_separa
 async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
     tmp_path: Path, previous_version: str,
 ) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
+    identity = state.selection.identity
+
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
     with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate) as call):
-        ready = await enrich_selected_cards([make_article()], config(), tmp_path, time.monotonic() + 1000,
-                                            execution=model_execution)
-        identity = next(iter(ready.quotations))
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+        ready_brief_evidence(tmp_path, identity)
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
         assert envelope["payload"]["route"]["prompt_version"] == "source-passages-v4"
@@ -434,15 +463,15 @@ async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
         envelope["sha256"] = checksum(envelope["payload"])
         legacy_bytes = json.dumps(envelope).encode()
         path.write_bytes(legacy_bytes)
-        held = await enrich_selected_cards([], config(), tmp_path, time.monotonic() + 1000,
-                                           execution=model_execution)
-    assert held.pending == 1 and not held.cards and not held.provenance and call.call_count == 1
-    assert path.read_bytes() == legacy_bytes
+        with pytest.raises(ValueError):
+            ready_brief_evidence(tmp_path, identity)
+    assert call.call_count == 1 and path.read_bytes() == legacy_bytes
 
 
 @pytest.mark.asyncio
 async def test_abstaining_later_page_qualification_remains_literal_in_retained_evidence(tmp_path: Path) -> None:
-    model_execution = ModelExecution()
+    execution = ModelExecution()
+    cfg = config()
     claim = "The cache accelerates every read."
     condition = "The result applies only to the pilot deployment; production traffic was not evaluated."
     text = claim + "\n\n" + condition
@@ -463,16 +492,51 @@ async def test_abstaining_later_page_qualification_remains_literal_in_retained_e
             "abstain": is_qualification,
         }), {"finish_reason": "STOP"}
 
-    cfg = config()
     with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
           patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
           patch("digest.llm.count_gemini_tokens", side_effect=count),
           patch("digest.llm.complete", side_effect=generate)):
-        run = await enrich_selected_cards([make_article()], cfg, tmp_path, time.monotonic() + 1000,
-                                          execution=model_execution)
-    identity = next(iter(run.quotations))
-    assert generated_pages == [[1], [2]] and run.pending == 0 and len(run.cards) == 1
-    assert load_state(tmp_path, identity).pages[1].result.abstain is True
-    assert "Conditions/limitations from the source (original text)" in run.provenance[identity]
-    assert f"[S2]\n{condition}" in run.provenance[identity]
-    assert claim in run.quotations[identity] and condition in run.quotations[identity]
+        state = saved_brief_state(tmp_path, cfg)
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state, source = ready_brief_evidence(tmp_path, state.selection.identity)
+    assert generated_pages == [[1], [2]] and state.status == "ready"
+    assert state.pages[1].result is not None and state.pages[1].result.abstain is True
+    evidence = build_reconciliation_input(source, state)
+    assert evidence.pages[1].abstain and evidence.pages[1].qualification_span_ids == (2,)
+    assert evidence.pages[1].route == state.route
+    assert evidence.pages[1].request_sha256 == state.pages[1].prompt_sha256
+    assert evidence.evidence[1].id == 2 and evidence.evidence[1].text == condition
+    assert "".join(span.text for span in evidence.evidence) == text
+
+
+@pytest.mark.asyncio
+async def test_historical_delivered_record_remains_readable_without_writes(tmp_path: Path) -> None:
+    execution = ModelExecution()
+    cfg = config()
+    state = saved_brief_state(tmp_path, cfg)
+    identity = state.selection.identity
+
+    async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
+        return response(messages)
+
+    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Retained original source."))),
+          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+          patch("digest.llm.complete", side_effect=generate)):
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
+    state_path = state_root(tmp_path) / f"{identity}.json"
+    envelope = json.loads(state_path.read_text())
+    envelope["payload"].update(status="delivered", delivered_at="2026-10-02T13:00:00+00:00")
+    envelope["sha256"] = checksum(envelope["payload"])
+    state_path.write_text(json.dumps(envelope))
+    original = {path: path.read_bytes() for path in state_root(tmp_path).rglob("*.json")}
+    with (patch("digest.reading_brief.save_state", side_effect=AssertionError("No delivery-state writes")),
+          patch("digest.llm.complete", side_effect=AssertionError("No repeated generation")),
+          patch("digest.llm.count_gemini_tokens", side_effect=AssertionError("No repeated count")),
+          patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No repeated fetch"))):
+        restored = load_state(tmp_path, identity)
+        checked, source = ready_brief_evidence(tmp_path, identity)
+        evidence = build_reconciliation_input(source, checked)
+    assert checked == restored and restored.status == "delivered"
+    assert restored.delivered_at == "2026-10-02T13:00:00+00:00"
+    assert evidence.source_sha256 == restored.source_sha256 and evidence.evidence[0].text == source.text
+    assert original == {path: path.read_bytes() for path in state_root(tmp_path).rglob("*.json")}

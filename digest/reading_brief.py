@@ -1,4 +1,4 @@
-"""Full-source, source-attributed briefs; technical holds are resumable work.
+"""Full-source reading and checked evidence; technical holds are resumable work.
 
 The complete request needs exact or conservative admission before generating.
 An admission overflow permits a contiguous page sweep without source omission.
@@ -12,8 +12,7 @@ import copy
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,15 +23,12 @@ from digest.adapters.models.execution import ModelExecution
 from digest.article_source import FETCH_SECONDS, fetch_article
 from digest.config import Config, ProviderConfig
 from digest.model_budget import ModelBudgetError
-from digest.radar.collector import Article
-from digest.radar.summarizer import ArticleSummary
 from digest.reading_brief_state import (
     BriefState,
     Page,
     PageResult,
     RequestAttempt,
     Route,
-    Selection,
     Source,
     checksum,
     has_unresolved_generation,
@@ -41,7 +37,6 @@ from digest.reading_brief_state import (
     now,
     save_source,
     save_state,
-    state_root,
 )
 from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable
 from digest.source_admission import (
@@ -100,17 +95,6 @@ or brief on this page; still nominate any qualifications. abstain=false requires
 and a nonempty source-cited reading_angle brief. Abstain if the source cannot support a useful brief;
 article length by itself is not a reason to abstain.
 No extra fields, markdown fences, or text outside JSON."""
-
-
-@dataclass
-class BriefRun:
-    cards: list[ArticleSummary]
-    quotations: dict[str, str]
-    articles: list[Article]
-    pending: int
-    abstained: int
-    oldest_pending: str | None
-    provenance: dict[str, str] = field(default_factory=dict)
 
 
 def _messages(state: BriefState, source: Source, page: Page) -> list[dict[str, str]]:
@@ -561,152 +545,3 @@ async def _advance(
         state.error_class = _error_class(exc, phase)
         save_state(state_dir, state)
         logger.info("Reading brief %s remains pending: %s", state.selection.identity, state.error_class)
-
-
-def _citation_note(identities: set[int]) -> str:
-    """Represent every reference; consecutive IDs are compacted without omission."""
-    ranges: list[list[int]] = []
-    for identity in sorted(identities):
-        if ranges and identity == ranges[-1][1] + 1:
-            ranges[-1][1] = identity
-        else:
-            ranges.append([identity, identity])
-    return ", ".join(f"[S{start}]" if start == end else f"[S{start}-S{end}]" for start, end in ranges)
-
-
-def _render(state: BriefState, source: Source) -> tuple[ArticleSummary, str, str]:
-    angles: list[str] = []
-    selected: set[int] = set()
-    qualifications: set[int] = set()
-    cited: set[int] = set()
-    citations: list[str] = []
-    for page in state.pages:
-        result = page.result
-        if result is None:
-            raise ValueError("unfinished_source_result")
-        selected.update(result.selected_span_ids)
-        qualifications.update(result.qualification_span_ids)
-        cited.update(result.angle_span_ids)
-        if result.reading_angle is not None:
-            angles.append(result.reading_angle)
-            citations.append(f"Reading brief {len(angles)} citations: "
-                             + ", ".join(f"[S{identity}]" for identity in sorted(result.angle_span_ids)))
-    date = (f"{source.source_published} (source metadata)" if source.source_published
-            else f"{state.selection.pub_date} (RSS date)" if state.selection.pub_date else "Date not supplied")
-    lines = [f"Passages from {state.selection.source}. Published: {date}"]
-    lines.extend(note for note in source.coverage_notes if "uninspected" in note.lower())
-    lines.extend(citations)
-    for label, identities in (("Source passages", (selected | cited) - qualifications),
-                              ("Conditions/limitations from the source", qualifications)):
-        if identities:
-            lines.append(label)
-        for identity in sorted(identities):
-            span = source.spans[identity - 1]
-            lines.append(f"[S{identity}]\n" + source.text[span.start:span.end])
-    selection = state.selection
-    card = ArticleSummary(selection.title, selection.link, selection.source, selection.category,
-                          "\n\n".join(f"Reading brief: {angle}" for angle in angles))
-    raw_date = source.source_published or selection.pub_date
-    compact_date = datetime.fromisoformat(raw_date).date().isoformat() if raw_date else "not supplied"
-    date_origin = "source" if source.source_published else "RSS" if selection.pub_date else ""
-    provenance = (f"Source: {selection.source}. Published: {compact_date}"
-                  + (f" ({date_origin})" if date_origin else "")
-                  + f". Citations: {_citation_note(selected | qualifications | cited)}")
-    if any("uninspected" in note.lower() for note in source.coverage_notes):
-        provenance += ". Images not assessed."
-    if qualifications:
-        # Selected conditions remain visible for one page and across page boundaries.
-        # These original passages are appended after translation, without reduction.
-        conditions = ["Conditions/limitations from the source (original text)"]
-        for identity in sorted(qualifications):
-            span = source.spans[identity - 1]
-            conditions.append(f"[S{identity}]\n" + source.text[span.start:span.end])
-        provenance += "\n\n" + "\n\n".join(conditions)
-    return card, "\n\n".join(lines), provenance
-
-
-async def enrich_selected_cards(
-    selected: list[Article], config: Config, state_dir: Path, deadline: float, *, execution: ModelExecution,
-) -> BriefRun:
-    """Admit only upstream selections; resume older admitted work even without new RSS."""
-    settings = config.reading_brief
-    if not settings.enabled:
-        return BriefRun([], {}, [], 0, 0, None)
-    routes = _routes(config)
-    route = routes[0] if routes else Route(settings.provider, settings.model, 1, settings.max_output_tokens)
-    states: dict[str, BriefState] = {}
-    invalid: set[str] = set()
-    for path in sorted(state_root(state_dir).glob("*.json")):
-        try:
-            state = load_state(state_dir, path.stem)
-            states[state.selection.identity] = state
-        except (OSError, ValueError, TypeError, KeyError):
-            invalid.add(path.stem)
-            logger.warning("Reading brief state held for integrity failure: %s", path.name)
-    for article in selected:
-        selection = Selection.from_article(article)
-        identity = selection.identity
-        if identity in invalid:
-            continue
-        if identity not in states:
-            states[identity] = BriefState(selection, route, now(), now())
-            save_state(state_dir, states[identity])
-        elif states[identity].selection != selection:
-            logger.info("Reading brief %s retains its original admission metadata", identity)
-    cards: list[ArticleSummary] = []
-    quotations: dict[str, str] = {}
-    provenance: dict[str, str] = {}
-    articles: list[Article] = []
-    pending_dates: list[str] = []
-    abstained = 0
-    for state in sorted(states.values(), key=lambda item: (item.created_at, item.selection.identity)):
-        identity = state.selection.identity
-        if identity in invalid or state.status == "delivered":
-            continue
-        if not routes:
-            state.status = "pending"
-            state.error_class = "technical_profile_mismatch"
-            save_state(state_dir, state)
-        elif state.status == "pending":
-            await _advance(state, config, state_dir, deadline, execution=execution)
-        if state.status in {"ready", "abstained"}:
-            try:
-                source = load_source(state_dir, state)
-                _validate_progress(state, source)
-                if state.status == "abstained":
-                    abstained += 1
-                    continue
-                card, quotation, source_note = _render(state, source)
-                cards.append(card)
-                quotations[identity] = quotation
-                provenance[identity] = source_note
-                articles.append(state.selection.article())
-                continue
-            except (OSError, ValueError, TypeError, KeyError):
-                state.status = "pending"
-                state.error_class = "technical_state_integrity"
-                save_state(state_dir, state)
-        pending_dates.append(state.created_at)
-    return BriefRun(cards, quotations, articles, len(pending_dates) + len(invalid),
-                    abstained, min(pending_dates) if pending_dates else None, provenance)
-
-
-def mark_briefs_delivered(state_dir: Path, hashes: set[str]) -> None:
-    """Acknowledge only the article hashes confirmed by the delivery adapter."""
-    for identity in sorted(hashes):
-        state, _ = ready_brief_evidence(state_dir, identity)
-        if state.status == "delivered":
-            continue
-        state.status = "delivered"
-        state.delivered_at = now()
-        save_state(state_dir, state)
-
-
-def reconcile_briefs_delivered(state_dir: Path, confirmed_hashes: set[str]) -> None:
-    """Recover a confirmed delivery after a local acknowledgment interruption."""
-    root = state_root(state_dir)
-    existing = {path.stem for path in root.glob("*.json")}
-    for identity in sorted(confirmed_hashes & existing):
-        state = load_state(state_dir, identity)
-        if state.status in {"ready", "delivered"}:
-            mark_briefs_delivered(state_dir, {identity})

@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Retired the unused internal reading-angle publication protocol (#183):
+  `reading_brief.BriefRun`, `enrich_selected_cards`, `_render`, `_citation_note`,
+  `mark_briefs_delivered` and `reconcile_briefs_delivered`. Direct Python imports of
+  these names now require migration; no supported CLI command is removed or silently
+  redirected. Candidate-bound source preparation, its acquisition/request engine,
+  reconciliation and historical state readers remain unchanged. Source fixtures and
+  qualification evidence are preserved; [ADR0010](docs/decisions/0010-group-source-points-with-qualifications.md#retire-the-unintegrated-reading-angle-publication-protocol--2026-10-08)
+  records the precise retirement and historical implementation reference.
+
 - Explicit model execution ownership (#147-B): `ModelExecution` owns lazy per-loop
   concurrency, pacing, cooldowns and local request counts outside `LLMConfig`.
   Internal model-consuming Python helpers now require an explicit execution argument;
