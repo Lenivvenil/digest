@@ -6,19 +6,22 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timezone
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from digest.application.results import RunStats
 
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
     from digest.domain.delivery.outcomes import IssueDeliveryResult
-    from digest.preparation import PreparationSnapshot
+    from digest.domain.editorial.candidates import CandidatePacket
+    from digest.preparation import AcceptedPreparation, PreparationSnapshot
 
 logger = logging.getLogger(__name__)
+EditionStatus = Literal["held", "ready", "pending_window", "confirmed"]
 
 
 def publish_outputs(**values: str) -> None:
@@ -32,29 +35,144 @@ def publish_outputs(**values: str) -> None:
 
 
 def _stats(status: str, *, feedback: int = 0, ready_sha: str = "") -> RunStats:
-    return RunStats(0, 0, 0, False, False, False, "", feedback_collected=feedback,
-                    edition_status=status, ready_sha256=ready_sha)
+    return RunStats(
+        0, 0, 0, False, False, False, "", feedback_collected=feedback, edition_status=status, ready_sha256=ready_sha
+    )
 
 
-def existing_preparation(
-    config: Any, feedback: int = 0, publication_date: date | None = None,
-) -> RunStats | None:
+@dataclass(frozen=True)
+class ExistingEdition:
+    """An inspected edition blocks fresh work, including conservative dispatch holds."""
+
+    status: EditionStatus
+    ready_sha256: str
+
+
+class FreshPreparation(Enum):
+    REQUIRED = "fresh_work_required"
+
+
+@dataclass(frozen=True)
+class IncompleteSelection:
+    review_status: str
+
+
+@dataclass(frozen=True)
+class NoEdition:
+    status: Literal["no_ready", "selection_incomplete"]
+    review_status: str
+
+
+@dataclass(frozen=True)
+class FrozenPreparation:
+    status: Literal["ready", "pending_window"]
+    ready_sha256: str
+    review_status: str
+    digest_length: int
+    archive: Path | None
+    review_checkpoint: str
+
+
+def preparation_stats(outcome: ExistingEdition | FrozenPreparation | NoEdition, feedback: int = 0) -> RunStats:
+    """Project preparation evidence into the stable public reporting contract."""
+    stats = _stats(
+        outcome.status, feedback=feedback, ready_sha=outcome.ready_sha256 if not isinstance(outcome, NoEdition) else ""
+    )
+    if not isinstance(outcome, ExistingEdition):
+        stats.review_status = outcome.review_status
+    if isinstance(outcome, FrozenPreparation):
+        stats.digest_length = outcome.digest_length
+        stats.markdown_saved = outcome.archive is not None
+        stats.markdown_path = str(outcome.archive) if outcome.archive is not None else ""
+        stats.review_checkpoint = outcome.review_checkpoint
+    return stats
+
+
+def inspect_preparation(publication_date: date | None = None) -> ExistingEdition | FreshPreparation:
     from digest.application.prepared_delivery import inspect_edition
 
     _, digest, status = inspect_edition()
     if status == "confirmed" and publication_date and publication_date > datetime.now(timezone.utc).date():
-        return None
+        return FreshPreparation.REQUIRED
     if status in {"ready", "confirmed", "held", "pending_window"}:
         logger.info("Edition preparation: %s", status)
-        return _stats(status, feedback=feedback, ready_sha=digest)
-    return None
+        return ExistingEdition(cast(EditionStatus, status), digest)
+    return FreshPreparation.REQUIRED
+
+
+def recover_preparation(
+    publication_date: date | None = None,
+) -> ExistingEdition | AcceptedPreparation | FreshPreparation:
+    """Inspect frozen/held work before restoring canonical work; never collect or present."""
+    from digest.preparation import load_accepted_preparation
+
+    existing = inspect_preparation(publication_date)
+    if isinstance(existing, ExistingEdition):
+        return existing
+    accepted = load_accepted_preparation(publication_date=publication_date)
+    return accepted if accepted is not None else FreshPreparation.REQUIRED
+
+
+def existing_preparation(
+    config: Any,
+    feedback: int = 0,
+    publication_date: date | None = None,
+) -> RunStats | None:
+    """Compatibility projection of edition inspection."""
+    existing = inspect_preparation(publication_date)
+    return preparation_stats(existing, feedback) if isinstance(existing, ExistingEdition) else None
+
+
+async def present_preparation(
+    accepted: AcceptedPreparation,
+    config: Any,
+    *,
+    execution: ModelExecution,
+    verbose: bool = False,
+    publication_date: date | None = None,
+) -> FrozenPreparation | NoEdition:
+    """Present exactly the canonical work verified at acceptance or recovery."""
+    return await _present_snapshot(
+        accepted.snapshot,
+        config,
+        execution=execution,
+        verbose=verbose,
+        publication_date=publication_date,
+    )
 
 
 async def finish_preparation(
-    snapshot: PreparationSnapshot, config: Any, feedback: int = 0, *, execution: ModelExecution, verbose: bool = False,
-    publication_date: date | None = None, selection_complete: bool = True,
+    snapshot: PreparationSnapshot,
+    config: Any,
+    feedback: int = 0,
+    *,
+    execution: ModelExecution,
+    verbose: bool = False,
+    publication_date: date | None = None,
+    selection_complete: bool = True,
 ) -> RunStats:
-    """Resume only presentation; accepted canonical work is already saved."""
+    """Legacy snapshot API; ordinary preparation uses a verified accepted reference."""
+    outcome = await _present_snapshot(
+        snapshot,
+        config,
+        execution=execution,
+        verbose=verbose,
+        publication_date=publication_date,
+        selection_complete=selection_complete,
+    )
+    return preparation_stats(outcome, feedback)
+
+
+async def _present_snapshot(
+    snapshot: PreparationSnapshot,
+    config: Any,
+    *,
+    execution: ModelExecution,
+    verbose: bool = False,
+    publication_date: date | None = None,
+    selection_complete: bool = True,
+) -> FrozenPreparation | NoEdition:
+    """Shared presentation implementation; editorial acceptance belongs to the caller."""
     from digest.application.investigation import run_irritator
     from digest.application.prepared_delivery import prepare_edition
     from digest.application.presentation import deferred_review_status, publication_presentation
@@ -68,16 +186,17 @@ async def finish_preparation(
     from digest.presentation.telegram import render_compact_issue
     from digest.translation import ClosingPresentation, translate_publication_with_closing
 
-    stats = _stats("no_ready" if selection_complete else "selection_incomplete", feedback=feedback)
-    stats.review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
+    review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
         if not selection_complete:
             logger.error("Selection did not complete; candidate evidence remains pending and no edition is ready.")
         else:
             logger.info("Edition preparation: no selected articles; no ready edition created")
-        return stats
+        return NoEdition("no_ready" if selection_complete else "selection_incomplete", review_status)
     main_attribution = main_attribution_occurrences(
-        snapshot.review_report, snapshot.top_articles, getattr(config, "sources", ()),
+        snapshot.review_report,
+        snapshot.top_articles,
+        getattr(config, "sources", ()),
         closing_snapshot=getattr(snapshot, "closing", None) is not None,
     )
     ranked: list[Any] = []
@@ -91,12 +210,23 @@ async def finish_preparation(
         if closing.card is None:
             raise ValueError("Selected closing decision is missing its canonical card.")
         text, cards, ranked, closing_presentation = await translate_publication_with_closing(
-            snapshot.combined, snapshot.top_articles, ranked, closing.card, config, Path(".cache/translations"),
-            selection_binding=asdict(closing), execution=execution,
+            snapshot.combined,
+            snapshot.top_articles,
+            ranked,
+            closing.card,
+            config,
+            Path(".cache/translations"),
+            selection_binding=asdict(closing),
+            execution=execution,
         )
     else:
         text, cards, ranked = await publication_presentation(
-            snapshot.combined, snapshot.top_articles, ranked, config, Path(".cache/translations"), False,
+            snapshot.combined,
+            snapshot.top_articles,
+            ranked,
+            config,
+            Path(".cache/translations"),
+            False,
             execution=execution,
         )
         if closing is not None:
@@ -105,20 +235,28 @@ async def finish_preparation(
     # archive and frozen delivery. Missing provenance was checked before calls.
     from digest.radar.collector import article_hash
 
-    cards = [attribute_source_card(card, occurrence, occurrence_sha256(occurrence))[0]
-             if (occurrence := main_attribution.get(article_hash(card.title, card.link))) is not None else card
-             for card in cards]
+    cards = [
+        attribute_source_card(card, occurrence, occurrence_sha256(occurrence))[0]
+        if (occurrence := main_attribution.get(article_hash(card.title, card.link))) is not None
+        else card
+        for card in cards
+    ]
     # Never discard a required main card to satisfy optional placement. Hold the
     # accepted preparation before archive/freeze/send when its credit would split.
     _, main_ranges = render_compact_issue(cards, config, text)
     if any(item.full_hash in main_attribution and len(item.covering_chunks) != 1 for item in main_ranges):
-        raise ValueError("Main source attribution spans delivery chunks; accepted preparation retained. "
-                         "Review its presentation before resuming; no article was sent or discarded.")
+        raise ValueError(
+            "Main source attribution spans delivery chunks; accepted preparation retained. "
+            "Review its presentation before resuming; no article was sent or discarded."
+        )
     if closing_presentation is not None and closing_presentation.card is not None:
         attributed = attribute_closing_card(closing, closing_presentation.card) if closing is not None else None
         if attributed is None:
             closing_presentation = replace(
-                closing_presentation, status="incomplete", reason="attribution_unavailable", card=None,
+                closing_presentation,
+                status="incomplete",
+                reason="attribution_unavailable",
+                card=None,
             )
         else:
             assembled = [*cards, attributed]
@@ -127,23 +265,36 @@ async def finish_preparation(
             except ValueError as exc:
                 logger.warning("Closing presentation omitted after render preflight: %s", exc)
                 closing_presentation = replace(
-                    closing_presentation, status="incomplete", reason="rendering_failed", card=None,
+                    closing_presentation,
+                    status="incomplete",
+                    reason="rendering_failed",
+                    card=None,
                 )
             else:
                 # A visible partial article cannot lose its required credit if
                 # a later chunk fails. Omit optional content; leave main intact.
-                if any((item.full_hash in main_attribution or item is ranges[-1])
-                       and len(item.covering_chunks) != 1 for item in ranges):
+                if any(
+                    (item.full_hash in main_attribution or item is ranges[-1]) and len(item.covering_chunks) != 1
+                    for item in ranges
+                ):
                     closing_presentation = replace(
-                        closing_presentation, status="incomplete", reason="attribution_split", card=None,
+                        closing_presentation,
+                        status="incomplete",
+                        reason="attribution_split",
+                        card=None,
                     )
                 else:
                     closing_presentation = replace(closing_presentation, card=attributed)
                     cards = assembled
     archive = write_digest(
-        text, config, top_articles=cards, ranked_signals=ranked or None,
-        review_report=snapshot.review_report, irritator_status=status,
-        sources_count=snapshot.source_count, articles_count=snapshot.article_count,
+        text,
+        config,
+        top_articles=cards,
+        ranked_signals=ranked or None,
+        review_report=snapshot.review_report,
+        irritator_status=status,
+        sources_count=snapshot.source_count,
+        articles_count=snapshot.article_count,
         date=datetime.combine(publication_date, datetime.min.time(), timezone.utc) if publication_date else None,
     )
     # An enabled but failed archive is a preparation failure, never sender eligibility.
@@ -178,21 +329,25 @@ async def finish_preparation(
         canonical["closing"] = asdict(closing)
         presentation["closing"] = asdict(closing_presentation)
     _, digest = prepare_edition(
-        cards, config, notice=text, canonical_metadata=canonical,
+        cards,
+        config,
+        notice=text,
+        canonical_metadata=canonical,
         presentation_metadata=presentation,
-        checkpoint_refs=references, producing_engine=_engine_provenance(), publication_date=publication_date,
+        checkpoint_refs=references,
+        producing_engine=_engine_provenance(),
+        publication_date=publication_date,
     )
     clear_preparation()
     future_window = publication_date and publication_date > datetime.now(timezone.utc).date()
-    status_name = "pending_window" if future_window else "ready"
-    stats.edition_status = status_name
-    stats.ready_sha256 = digest
-    stats.digest_length = len(text)
-    stats.markdown_saved = archive is not None
-    stats.markdown_path = str(archive) if archive is not None else ""
-    stats.review_checkpoint = (str(archive.with_suffix(".review.json"))
-                               if archive is not None and snapshot.review_report is not None else "")
-    return stats
+    return FrozenPreparation(
+        "pending_window" if future_window else "ready",
+        digest,
+        review_status,
+        len(text),
+        archive,
+        str(archive.with_suffix(".review.json")) if archive is not None and snapshot.review_report is not None else "",
+    )
 
 
 def _strict_cache(path: Path) -> dict[str, str]:
@@ -208,14 +363,16 @@ def _merge_delivery(result: IssueDeliveryResult, manifest: dict[str, Any], confi
     if not result.delivered_hashes:
         return
     adaptive_enabled = getattr(getattr(config, "adaptive", None), "enabled", False)
-    apply_confirmed_outcome(PreparedOutcomePolicy(
-        outcome=result,
-        cache_dir=".cache",
-        publication_day=datetime.fromisoformat(manifest["window_start"]).date(),
-        contributing_sources=manifest["canonical_metadata"]["contributing_sources"],
-        adaptive_enabled=adaptive_enabled,
-        enabled_sources=config.enabled_sources if adaptive_enabled else [],
-    ))
+    apply_confirmed_outcome(
+        PreparedOutcomePolicy(
+            outcome=result,
+            cache_dir=".cache",
+            publication_day=datetime.fromisoformat(manifest["window_start"]).date(),
+            contributing_sources=manifest["canonical_metadata"]["contributing_sources"],
+            adaptive_enabled=adaptive_enabled,
+            enabled_sources=config.enabled_sources if adaptive_enabled else [],
+        )
+    )
 
 
 async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, claim_sha: str | None) -> int:
@@ -244,31 +401,42 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
     if not claim_sha:
         raise ValueError("Sender requires the exact remotely persisted claim.")
     result = await send_prepared_edition(
-        ready_sha, claim_sha, enabled=config.telegram.enabled, bot_username=config.telegram.bot_username,
+        ready_sha,
+        claim_sha,
+        enabled=config.telegram.enabled,
+        bot_username=config.telegram.bot_username,
     )
     _merge_delivery(result, manifest, config)
     mark_applied(ready_sha)
     checkpoint = ""
     if result.complete:
         checkpoint = next((name for name in manifest["checkpoint_refs"] if name.endswith(".review.json")), "")
-    publish_outputs(edition_status="confirmed" if result.complete else result.outcome,
-                    review_checkpoint=checkpoint)
+    publish_outputs(edition_status="confirmed" if result.complete else result.outcome, review_checkpoint=checkpoint)
     return 0 if result.complete else 1
 
 
 async def resume_preparation(
-    config: Any, feedback: int, *, execution: ModelExecution, verbose: bool, publication_date: date | None = None,
+    config: Any,
+    feedback: int,
+    *,
+    execution: ModelExecution,
+    verbose: bool,
+    publication_date: date | None = None,
 ) -> RunStats | None:
-    from digest.preparation import load_preparation
+    from digest.preparation import AcceptedPreparation
 
-    existing = existing_preparation(config, feedback, publication_date)
-    if existing is not None:
-        return existing
-    snapshot = load_preparation(publication_date=publication_date)
-    if snapshot is not None:
-        return await finish_preparation(
-            snapshot, config, feedback, verbose=verbose, publication_date=publication_date, execution=execution,
+    recovered = recover_preparation(publication_date)
+    if isinstance(recovered, ExistingEdition):
+        return preparation_stats(recovered, feedback)
+    if isinstance(recovered, AcceptedPreparation):
+        outcome = await present_preparation(
+            recovered,
+            config,
+            verbose=verbose,
+            publication_date=publication_date,
+            execution=execution,
         )
+        return preparation_stats(outcome, feedback)
     return None
 
 
@@ -279,10 +447,19 @@ def validate_cli(args: Any) -> None:
         if date.fromisoformat(args.edition_date) < datetime.now(timezone.utc).date():
             raise ValueError("Cannot prepare an edition for an elapsed UTC publication day.")
     if args.prepare_edition or args.edition_phase:
-        if (args.check or args.discover or args.dry_run or args.radar_only or args.reserve_issue
-                or args.issue_reservation_sha or args.prepare_edition and args.edition_phase):
+        if (
+            args.check
+            or args.discover
+            or args.dry_run
+            or args.radar_only
+            or args.reserve_issue
+            or args.issue_reservation_sha
+            or args.prepare_edition
+            and args.edition_phase
+        ):
             raise ValueError("Edition phases cannot be combined with legacy dispatch or preview modes.")
         from digest.config import load_config
+
         if load_config(args.config).telegram.delivery_mode != "compact":
             raise ValueError("Prepared editions require compact delivery mode.")
     if (args.ready_sha or args.claim_sha) and not args.edition_phase:
@@ -306,15 +483,69 @@ def _engine_provenance() -> dict[str, Any]:
     return provenance
 
 
+def _acceptance(
+    snapshot: PreparationSnapshot,
+    packet: CandidatePacket,
+) -> Literal["selection", "abstention", "selection_incomplete"]:
+    """One editorial policy, independent of report-wide comparison completion."""
+    from digest.domain.editorial.reviews import delivery_review
+
+    if snapshot.top_articles:
+        return "selection"
+    report = snapshot.review_report
+    if report is None:
+        return "selection_incomplete"
+    delivery = delivery_review(report)
+    if delivery.status != "abstained":
+        return "selection_incomplete"
+    if packet.disposition_attempts:
+        capture = next((item for item in packet.disposition_attempts if item.slot == delivery.slot), None)
+        if capture is None or capture.status != "complete":
+            return "selection_incomplete"
+    # Fallback abstention does not replace an unavailable primary. Keep the
+    # explicit primary requirement shared with the legacy snapshot save API.
+    if not any(review.slot == "primary" and review.status == "abstained" for review in report.reviews):
+        return "selection_incomplete"
+    return "abstention"
+
+
+def accept_preparation(
+    snapshot: PreparationSnapshot,
+    packet: CandidatePacket,
+    *,
+    cache_dir: str,
+    publication_date: date | None = None,
+) -> AcceptedPreparation | IncompleteSelection:
+    """Decide, save and verify the exact canonical work before any candidate handoff."""
+    from digest.preparation import load_accepted_preparation, save_preparation
+
+    decision = _acceptance(snapshot, packet)
+    if decision == "selection_incomplete":
+        review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
+        # Retain the existing validation read and clock boundary before fetch
+        # statistics, including incomplete work. Presence never proves acceptance.
+        load_accepted_preparation(cache_dir, publication_date=publication_date)
+        return IncompleteSelection(review_status)
+    path = save_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+    accepted = load_accepted_preparation(cache_dir, publication_date=publication_date)
+    if accepted is None or accepted.path != path or accepted.snapshot != snapshot:
+        raise ValueError("Accepted preparation readback differs from the saved canonical work; handoff blocked.")
+    return accepted
+
+
 def save_accepted_preparation(
-    snapshot: PreparationSnapshot, *, cache_dir: str, publication_date: date | None = None,
+    snapshot: PreparationSnapshot,
+    *,
+    cache_dir: str,
+    publication_date: date | None = None,
 ) -> None:
+    """Legacy/category save boundary, retaining its original clock and I/O behavior."""
     from digest.preparation import save_preparation
 
-    # A failed primary is missing work, not a reusable empty editorial decision.
+    # This compatibility API predates candidate disposition enforcement and
+    # permits a primary abstention anywhere in the stored review sequence.
     report = snapshot.review_report
-    accepted = bool(snapshot.top_articles) or bool(
+    if snapshot.top_articles or (
         report and any(review.slot == "primary" and review.status == "abstained" for review in report.reviews)
-    )
-    if accepted:
+    ):
         save_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)

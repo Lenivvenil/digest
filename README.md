@@ -52,6 +52,10 @@ article was understood. Read the [Digest domain overview](docs/domain/digest/ove
 [Irritator domain overview](docs/domain/irritator/overview.md) and
 [current architecture](docs/ARCHITECTURE.md) for contracts and known gaps.
 
+For one ordinary edition, follow the [prepare → deliver lifecycle](docs/ARCHITECTURE.md#prepared-edition-data-flow)
+and the [observed-state recovery guide](docs/BLIND_REVIEW.md#delivery-states-and-recovery).
+They explain what accepted work, frozen messages, claims and receipts each establish.
+
 ## Quick start
 
 This is the engine repository. A separate runtime owns configuration, credentials,

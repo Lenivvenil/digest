@@ -92,17 +92,17 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         assert len(load_candidate_progress().candidates) == 47
         return
     if fail_snapshot:
-        from digest.edition_runtime import save_accepted_preparation
+        from digest.preparation import save_preparation
 
         def fail_save(*args: Any, **kwargs: Any) -> None:
             raise OSError("fixture snapshot write failure")
 
-        monkeypatch.setattr('digest.edition_runtime.save_accepted_preparation', fail_save)
+        monkeypatch.setattr('digest.preparation.save_preparation', fail_save)
         with pytest.raises(OSError, match="snapshot write"):
             await _run('config.yaml', False, False, False, prepare_only=True)
         assert len(calls) == 1
         assert load_candidate_progress().packets[0].report is not None
-        monkeypatch.setattr('digest.edition_runtime.save_accepted_preparation', save_accepted_preparation)
+        monkeypatch.setattr('digest.preparation.save_preparation', save_preparation)
     first = await _run('config.yaml', False, False, False, prepare_only=True)
     assert len(calls) == 1
     assert first.edition_status == 'ready'

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.preparation import _candidate_inputs
+from digest.application.preparation import CandidatePool, CandidateWork, _candidate_inputs
 from digest.config import ProviderConfig
 from digest.radar.collector import CollectionInventory, SourceCollectionOutcome, _capture_candidates, article_hash
 from digest.reading_brief_state import load_state, save_state
@@ -54,9 +54,10 @@ async def test_count_held_packet_releases_planning_only_without_a_configured_fal
         new_identity = article_hash(articles["tech"][2].title, articles["tech"][2].link)
         for _ in range(2):
             with patch("digest.application.candidate_review._instant", return_value=NOW):
-                next_packet, next_report, _ = _candidate_inputs(
-                    progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
-            assert next_packet is not None
+                next_work, _ = _candidate_inputs(
+                    CandidatePool(progress, inventory, {}), config, config, {}, str(tmp_path), False)
+            assert isinstance(next_work, CandidateWork)
+            next_packet, next_report = next_work.packet, next_work.packet.report
             if fallback:
                 assert next_packet == packet and next_report == report
             else:
@@ -171,9 +172,11 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
         for _ in range(2):
             assert deferred_source_reports(progress, tmp_path, config)
             with patch("digest.application.candidate_review._instant", return_value=NOW):
-                next_packet, next_report, _ = _candidate_inputs(
-                    progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
-            assert next_packet is not None and next_report is None
+                next_work, _ = _candidate_inputs(
+                    CandidatePool(progress, inventory, {}), config, config, {}, str(tmp_path), False)
+            assert isinstance(next_work, CandidateWork)
+            next_packet = next_work.packet
+            assert next_packet.report is None
             assert new_identity in {item.evidence_id for item in next_packet.evidence.items}
             assert identity not in {item.evidence_id for item in next_packet.evidence.items}
         assert retained == {path: path.read_bytes() for path in retained}
@@ -183,8 +186,10 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
         local_count.return_value = 1000
         assert not deferred_source_reports(progress, tmp_path, config)
         with patch("digest.application.candidate_review._instant", return_value=NOW):
-            recovered_packet, recovered_report, _ = _candidate_inputs(
-                progress, inventory, config, config, {}, {}, str(tmp_path), False, {})
+            recovered_work, _ = _candidate_inputs(
+                CandidatePool(progress, inventory, {}), config, config, {}, str(tmp_path), False)
+        assert isinstance(recovered_work, CandidateWork)
+        recovered_packet, recovered_report = recovered_work.packet, recovered_work.packet.report
         assert recovered_packet == packet and recovered_report == report
         resumed = await prepare_selected_sources(
             progress, recovered_packet, recovered_report, config, tmp_path, time.monotonic() + 1000,

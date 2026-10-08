@@ -12,7 +12,6 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import prepare_sources
-from digest.application.results import RunStats
 from digest.candidate_review import CandidateProgress, begin_packet, merge_candidates, plan_packet, reconcile_packet
 from digest.config import ReadingBriefConfig
 from digest.reading_preparation import prepare_selected_sources, reading_deadline, setup_reading_budget
@@ -107,14 +106,16 @@ async def test_accepted_preparation_resume_never_reenters_reading(
     execution = ModelExecution()
     config, _, _, _ = await saved_selection(tmp_path, execution=execution)
     monkeypatch.chdir(tmp_path)
-    expected = RunStats(0, 0, 0, False, False, False, "", edition_status="ready")
-    with (patch("digest.edition_runtime.resume_preparation", AsyncMock(return_value=expected)) as resume,
+    from digest.edition_runtime import ExistingEdition
+
+    expected = ExistingEdition("ready", "fixture-ready-sha")
+    with (patch("digest.edition_runtime.recover_preparation", return_value=expected) as resume,
           patch("digest.reading_preparation.prepare_selected_sources", side_effect=AssertionError("No source work"))):
-        assert await prepare_sources(
+        assert (await prepare_sources(
             config, "config.yaml", verbose=False, feedback_precollected=True, publication_date=None,
             started_at=time.monotonic(), execution=execution,
-        ) is expected
-    resume.assert_awaited_once()
+        )).ready_sha256 == expected.ready_sha256
+    resume.assert_called_once()
 
 
 @pytest.mark.asyncio

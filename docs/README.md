@@ -27,19 +27,25 @@ configuration, delivery destinations, the engine pin and durable state.
 
 ## Understand the architecture
 
-1. [Runtime boundary and scenarios](ARCHITECTURE.md#overview)
-2. [Entities and invariants](ARCHITECTURE.md#entities-contracts-and-enforcement), then
-   [current ownership](ARCHITECTURE.md#modules-and-responsibilities)
-3. [Digest current model](domain/digest/overview.md#current-domain-model) and
-   [Irritator current model](domain/irritator/overview.md#current-domain-model), followed
-   by their requirement, acceptance and historical records
-4. [Migration and release appendix](ARCHITECTURE.md#appendix-migration-and-release-history)
-   for why the boundaries changed and what has actually been deployed
+1. [Digest domain story and identities](domain/digest/overview.md): explain what a
+   candidate, accepted preparation, ready edition and receipt actually establish
+2. [Ordinary prepare → deliver lifecycle](ARCHITECTURE.md#prepared-edition-data-flow),
+   [persisted records](ARCHITECTURE.md#cache-architecture) and
+   [code entrypoints](ARCHITECTURE.md#modules-and-responsibilities)
+3. [Observed state → safe action](BLIND_REVIEW.md#delivery-states-and-recovery):
+   distinguish a ready edition, uncertain send and unapplied confirmation
+4. [Irritator current model](domain/irritator/overview.md#current-domain-model):
+   independent external evidence has a different purpose from model comparison
 
 ## Historical material
 
 The following retain their original language, date and decision context. They are not
 current onboarding instructions or newly ratified operating contracts:
+
+- [Prior Digest domain/acceptance record](history/digest-domain-2026-10-08.md),
+  [architecture/migration record](history/architecture-2026-10-08.md) and
+  [review/operations record](history/review-operations-2026-10-08.md): preserved before
+  the current maintainer guides were rewritten. Their dated release claims are history.
 
 - `decisions/0001-*.md`, `0002-*.md`, `0003-*.md`: original ADR records; their decisions
   remain relevant, while implementation must be checked against current source.
