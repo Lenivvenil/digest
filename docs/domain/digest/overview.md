@@ -179,6 +179,13 @@ share the configured resource constraints; none makes account quota unlimited.
 Retained candidate evidence can grow, and sustainable throughput remains an
 operational property to measure.
 
+Within new candidate work, the oldest fitting eligible unseen identity gets the
+existing protected opportunity before technical retries and fresh/age backfill.
+This limits one source of starvation without guaranteeing that arrivals above
+capacity can be drained. The [admission decision](../../decisions/0008-candidate-selection-progress.md#oldest-unseen-opportunity-amendment-196)
+records freshness, source-diversity and character-budget tradeoffs; admission is
+not an editorial judgment or a delivery claim.
+
 The [operational guide](../../BLIND_REVIEW.md) explains publication and recovery.
 The [historical operating record](../../history/digest-domain-2026-10-08.md#operating-envelope-and-daily-edition-decision--2026-10-02)
 retains measured costs and dated allocation decisions.

@@ -251,6 +251,13 @@ an entire feed cohort in one run. Missing/invalid dispositions and capacity-only
 omissions remain unfinished. Policy exclusions, duplicates and editorial not-selection
 retain distinct evidence.
 
+The protected first-unseen opportunity uses original identity observation age,
+then existing priority/source/identity ties, and skips evidence that cannot fit.
+Technical retries and the remaining fresh/age source turns follow within the same
+packet. At a one-item cap this deliberately favors age over freshness; a larger
+old excerpt can leave less room for later items. Planning is only an opportunity,
+not a completed review. See the [oldest-unseen amendment](decisions/0008-candidate-selection-progress.md#oldest-unseen-opportunity-amendment-196).
+
 With optional closing enabled, an otherwise absent approved source can receive
 one fitting review opportunity. Spare capacity is used first; a full packet may
 defer only its final ordinary backfill item while preserving the first unseen
