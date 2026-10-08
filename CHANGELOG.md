@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Category preparation now owns its save and empty-completion decisions (#189).
+  The single-caller internal `edition_runtime.save_accepted_preparation` helper and
+  undocumented `selection_complete` keyword are retired. Internal callers must use
+  the category coordinator or the appropriate canonical acceptance boundary.
+  `finish_preparation` retains its default snapshot presentation behavior. CLI,
+  historical category outcomes, persistence formats and effect ordering are unchanged.
+
 - Bounded Irritator ranking now owns admission and response evidence together (#187).
   The private `_ranking_candidates` and `_ranking_audit` helpers are removed;
   `_admit_ranking` supplies one packet/pending-audit result, and `_parse_rankings`

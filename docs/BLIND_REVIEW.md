@@ -643,7 +643,8 @@ Optional supplementary failures must remain visible without erasing primary rece
 | What is recovered before collection? | `application/preparation.py`, `edition_runtime.recover_preparation` |
 | Which primary/fallback result is usable? | `application/review.py:run_primary_review`, `domain/editorial/attempts.py:resolve_review`; saved records enter through `restore_review` |
 | What does accepted storage validate? | `edition_runtime.accept_preparation`, `preparation.py:load_accepted_preparation` |
-| What does presentation preserve or hold? | `edition_runtime.present_preparation` (legacy callers retain `finish_preparation`) |
+| Who completes category preparation? | `application.preparation._prepare_category_edition` owns its historical save/empty decisions; see the [category contract](ARCHITECTURE.md#preparing-an-edition). |
+| What does presentation preserve or hold? | `edition_runtime.present_preparation`; legacy callers retain the default snapshot entrypoint `finish_preparation`, without an editorial-completion flag. |
 | What can claim/send/inspect do? | `application/prepared_delivery.py` |
 | Which bytes and references are checked? | `adapters/storage/edition.py`, `domain/delivery/edition.py` |
 | What does confirmed coverage change? | `application/delivery.py`, then `application/prepared_delivery.py:mark_applied` |

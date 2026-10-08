@@ -228,22 +228,56 @@ async def test_empty_or_corrupt_attribution_never_sends(setup: tuple[SimpleNames
     assert not Path(".cache", CLAIM_FILE).exists()
 
 
-def test_unavailable_primary_is_not_a_reusable_empty_preparation(
-    setup: tuple[SimpleNamespace, PreparationSnapshot],
+@pytest.mark.asyncio
+async def test_unavailable_primary_is_not_a_reusable_empty_preparation(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from digest.edition_runtime import save_accepted_preparation
+    from digest.application.preparation import (
+        CategoryAnalysis,
+        CollectedArticles,
+        PreparationRun,
+        _prepare_category_edition,
+    )
+    from digest.domain.catalog.sources import SourceStateStore
+    from digest.irritator import IrritatorStatus
+    from scripts.review_fixture import fixture_articles
     from tests.test_preparation import _snapshot
 
+    execution = ModelExecution()
+    config = fixture_config()
+    config.telegram.delivery_mode = "compact"
     snapshot = _snapshot()
-    snapshot.top_articles.clear()
+    assert snapshot.review_report is not None
     snapshot.review_report.reviews[0].status = "unavailable"
     snapshot.review_report.reviews[0].selections.clear()
-    save_accepted_preparation(snapshot, cache_dir=".cache")
+    work = CategoryAnalysis([], None, [], snapshot.review_report)
+    collected = CollectedArticles(config, fixture_articles(), {}, False, snapshot.article_count)
+    run = PreparationRun(config, execution, SourceStateStore(), {}, FeedbackStore(), True, 0)
+    monkeypatch.setattr("digest.application.investigation.run_irritator", AsyncMock(
+        return_value=([], [], IrritatorStatus("Offline fixture", "empty"))))
+    presentation = AsyncMock(side_effect=RuntimeError("late presentation failure"))
+    monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
+
+    stats = await _prepare_category_edition(work, collected, run, verbose=False, publication_date=None)
+    assert stats.edition_status == "selection_incomplete"
     assert load_preparation() is None
-    # A later accepted response is persisted, rather than stuck behind failed work.
-    accepted = _snapshot()
-    save_accepted_preparation(accepted, cache_dir=".cache")
-    assert load_preparation().top_articles == accepted.top_articles
+    assert not Path(".cache", READY_FILE).exists()
+    presentation.assert_not_awaited()
+
+    # Category projections remain resumable even when their optional review failed.
+    work.cards = snapshot.top_articles
+    with pytest.raises(RuntimeError, match="late presentation failure"):
+        await _prepare_category_edition(work, collected, run, verbose=False, publication_date=None)
+    accepted = load_preparation()
+    assert accepted is not None and accepted.top_articles == work.cards
+    assert accepted.review_report == snapshot.review_report
+    presentation.side_effect = None
+    presentation.return_value = ("Notice", work.cards, [])
+    stats = await resume_preparation(config, 0, verbose=False, execution=execution)
+    assert stats.edition_status == "ready"
+    manifest = json.loads(Path(".cache", READY_FILE).read_text())
+    assert manifest["canonical_metadata"]["cards"] == [asdict(card) for card in work.cards]
+    assert load_preparation() is None
 
 
 @pytest.mark.asyncio

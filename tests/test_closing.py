@@ -412,7 +412,8 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
 ) -> None:
     execution = ModelExecution()
     from digest.delivery.edition import READY_FILE
-    from digest.edition_runtime import finish_preparation, save_accepted_preparation
+    from digest.edition_runtime import accept_preparation, preparation_stats, present_preparation
+    from digest.preparation import AcceptedPreparation
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
@@ -432,8 +433,9 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     assert main == cards and len(main) == 1
     assert decision == ClosingDecision("unavailable", "closing_would_empty_main_selection")
     snapshot = PreparationSnapshot(main, [], "Notice", report, 1, 1, ["Community"], decision)
-    save_accepted_preparation(snapshot, cache_dir=".cache")
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = accept_preparation(snapshot, reviewed.result, cache_dir=".cache")
+    assert isinstance(accepted, AcceptedPreparation) and accepted.snapshot == snapshot
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     assert stats.edition_status == "ready"
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert len(manifest["presentation_metadata"]["cards"]) == 1
