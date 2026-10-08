@@ -482,7 +482,7 @@ class TestMain:
     ],
 )
 @pytest.mark.parametrize("required", [False, True])
-async def test_delivery_commits_only_confirmed_articles(
+async def test_direct_delivery_accounts_for_confirmed_and_eligible_archive_articles(
     sent: int, failed: int, markdown: bool, expected_titles: set[str], required: bool,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

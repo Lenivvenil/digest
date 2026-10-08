@@ -209,12 +209,23 @@ exists yet. Rediscovering a claim in a later run is different: missing remote re
 do not prove the earlier process never sent. The [recovery guide](BLIND_REVIEW.md#delivery-states-and-recovery)
 uses the observed records and execution history together.
 
-## Applying confirmed outcomes
+<a id="applying-confirmed-outcomes"></a>
+
+## Applying output outcomes
 
 <a id="stage-3-confirmed-delivery-application"></a>
 
 Prepared and legacy applications share coverage values while preserving distinct
 accounting rules. The following matrix is the current compatibility contract.
+
+The direct-run accounting decision distinguishes confirmed Telegram coverage from
+eligible Markdown consumption. Their union determines which collected identities
+qualify for deduplication and inclusion statistics. Feedback attribution continues
+to use the transport result alone. Separately, an article sent or an archive saved
+means that output occurred; this remains true even when the qualifying identity
+set is empty. That fact controls cache persistence and adaptive evaluation, not
+Telegram success. The decision is an in-memory application value, not a new saved
+record or a change to the prepared-edition policy.
 
 | Effect | Prepared edition | Legacy direct run, including direct compact |
 | --- | --- | --- |
