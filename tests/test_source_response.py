@@ -11,10 +11,11 @@ import feedparser
 import httpx
 import pytest
 
-from digest.irritator.evidence_stage import EvidenceIrritatorResult, _check_source_response, _search
+from digest.irritator.evidence_stage import EvidenceIrritatorResult, _search
 from digest.irritator.query_generator import SearchQuery
 from digest.irritator.sources._response import MAX_SOURCE_RESPONSE_BYTES, read_bounded_response
 from digest.irritator.sources.arxiv import search_arxiv
+from digest.irritator.sources.hackernews import search_hackernews
 from scripts.review_fixture import fixture_config
 
 
@@ -23,6 +24,7 @@ class _Stream(httpx.AsyncByteStream):
         self.chunks = chunks
         self.block = block
         self.waiting = asyncio.Event()
+        self.release = asyncio.Event()
         self.consumed = 0
         self.closed = False
 
@@ -32,32 +34,30 @@ class _Stream(httpx.AsyncByteStream):
             yield chunk
         if self.block:
             self.waiting.set()
-            await asyncio.Event().wait()
+            await self.release.wait()
 
     async def aclose(self) -> None:
         self.closed = True
 
 
 @pytest.mark.asyncio
-async def test_hook_accepts_exact_limit_and_keeps_complete_json_body() -> None:
+async def test_hackernews_accepts_exact_limit_and_keeps_complete_json_body() -> None:
     body = b'{"hits": []}' + b" " * (MAX_SOURCE_RESPONSE_BYTES - len(b'{"hits": []}'))
     stream = _Stream([body[:100], body[100:]])
     response = httpx.Response(200, stream=stream)
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: response),
-        event_hooks={"response": [_check_source_response]},
     ) as client:
-        received = await client.get("https://hn.algolia.com/api/v1/search")
-    assert received is response
-    assert received.content == body
-    assert await received.aread() == body
-    assert received.json() == {"hits": []}
+        assert await search_hackernews("test", None, client) == []
+    assert response.content == body
+    assert await response.aread() == body
+    assert response.json() == {"hits": []}
     assert stream.closed and stream.consumed == 2
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compressed", [False, True])
-async def test_hook_rejects_decoded_oversize_before_next_chunk_without_prefix_parsing(compressed: bool) -> None:
+async def test_hackernews_rejects_decoded_oversize_before_next_chunk_without_prefix_parsing(compressed: bool) -> None:
     prefix = b'{"hits": []}' + b" " * (MAX_SOURCE_RESPONSE_BYTES - len(b'{"hits": []}'))
     chunks = [gzip.compress(prefix + b" ")] if compressed else [prefix, b" "]
     stream = _Stream([*chunks, b"must not be consumed"])
@@ -70,7 +70,7 @@ async def test_hook_rejects_decoded_oversize_before_next_chunk_without_prefix_pa
     async def existing_hook(response: httpx.Response) -> None:
         pass
 
-    with patch("digest.irritator.evidence_stage.validate_search_response") as validate:
+    with patch("digest.irritator.sources.hackernews.validate_search_response") as validate:
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: response),
             event_hooks={"response": [existing_hook]},
@@ -86,7 +86,7 @@ async def test_hook_rejects_decoded_oversize_before_next_chunk_without_prefix_pa
 
 
 @pytest.mark.asyncio
-async def test_hook_cancellation_closes_body_and_restores_existing_hooks() -> None:
+async def test_hackernews_cancellation_closes_body_and_preserves_existing_hooks() -> None:
     stream = _Stream([b'{"hits": ['], block=True)
     config = fixture_config()
     config.irritator.sources = ["hackernews"]
@@ -110,6 +110,42 @@ async def test_hook_cancellation_closes_body_and_restores_existing_hooks() -> No
 
 
 @pytest.mark.asyncio
+async def test_suspended_search_leaves_unrelated_same_host_request_and_caller_hooks_unchanged() -> None:
+    stream = _Stream([b'{"hits": []}'], block=True)
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    result = EvidenceIrritatorResult(1, "bundle", queries=[SearchQuery("test", "test")])
+    seen_paths: list[str] = []
+
+    async def existing_hook(response: httpx.Response) -> None:
+        seen_paths.append(response.request.url.path)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/search":
+            return httpx.Response(200, stream=stream)
+        assert request.url.path == "/api/v1/items/123"
+        return httpx.Response(200, json={"id": 123, "title": "Unrelated item response"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), event_hooks={"response": [existing_hook]},
+    ) as client:
+        task = asyncio.create_task(_search(result, config, client))
+        try:
+            await asyncio.wait_for(stream.waiting.wait(), timeout=1)
+            unrelated = await client.get("https://hn.algolia.com/api/v1/items/123")
+            assert unrelated.json() == {"id": 123, "title": "Unrelated item response"}
+            assert not task.done()
+            assert seen_paths == ["/api/v1/search", "/api/v1/items/123"]
+            assert client.event_hooks["response"] == [existing_hook]
+        finally:
+            stream.release.set()
+            signals = await asyncio.wait_for(task, timeout=1)
+        assert client.event_hooks["response"] == [existing_hook]
+    assert signals == [] and result.source_attempts[0].status == "empty"
+    assert stream.closed
+
+
+@pytest.mark.asyncio
 async def test_bounded_read_preserves_cached_compression_and_default_charset() -> None:
     body = "café résumé".encode("iso-8859-1")
     compressed = gzip.compress(body)
@@ -130,8 +166,7 @@ async def test_bounded_read_preserves_cached_compression_and_default_charset() -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("encoding", ["utf-8", "iso-8859-1", "utf-16"])
-@pytest.mark.parametrize("hook_enabled", [False, True])
-async def test_arxiv_preserves_httpx_charset_and_feedparser_input(encoding: str, hook_enabled: bool) -> None:
+async def test_arxiv_preserves_httpx_charset_and_feedparser_input(encoding: str) -> None:
     text = (
         f'<?xml version="1.0" encoding="{encoding}"?>'
         '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
@@ -148,7 +183,6 @@ async def test_arxiv_preserves_httpx_charset_and_feedparser_input(encoding: str,
     with patch("digest.irritator.sources.arxiv.feedparser.parse", wraps=feedparser.parse) as parse:
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: response),
-            event_hooks={"response": [_check_source_response] if hook_enabled else []},
         ) as client:
             signals = await search_arxiv("evidence", None, client)
     parse.assert_called_once_with(reference.text)

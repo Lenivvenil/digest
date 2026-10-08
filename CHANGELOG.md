@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Search adapters now own response validation and bounded buffering (#190).
+  The bounded Irritator no longer installs or removes response hooks on a caller's
+  HTTP client. Direct/legacy Hacker News requests now reject bodies over 512,000
+  decoded bytes, refuse redirects and check status before reading the body.
+  Bounded search already enforced those rules; its request/policy identity, limits,
+  saved results and source pacing remain unchanged.
+
 - Category preparation now owns its save and empty-completion decisions (#189).
   The single-caller internal `edition_runtime.save_accepted_preparation` helper and
   undocumented `selection_complete` keyword are retired. Internal callers must use

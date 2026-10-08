@@ -34,6 +34,26 @@ absolute HTTP(S) URL. Treat valid `[]` as empty, and malformed/HTML/error/rate-l
 responses as failed attempts. Disable redirects and retain the bounded response
 stream and HTTP timeout.
 
+### Response ownership — 2026-10-08
+
+[#190](https://github.com/Lenivvenil/digest/issues/190) makes each search adapter
+own its response status, complete bounded buffering, closure and envelope validation.
+The bounded stage no longer attaches a hostname-wide hook to the caller's HTTP
+client. Unrelated requests and existing caller hooks remain outside search policy.
+
+Hacker News now uses the same 512,000-decoded-byte ceiling and explicit no-redirect
+rule already applied to it by the bounded stage. This deliberately tightens direct
+and legacy HN calls: oversized bodies are rejected, redirects are refused even on a
+redirect-enabled client, and error statuses are rejected before reading their bodies.
+Successful extraction, valid-empty results, endpoint, query parameters and timeout
+stay unchanged. arXiv and DEV retain their existing adapter guards and pacing.
+
+The bounded retrieval behavior and request content are unchanged, so this ownership
+change does not alter the policy identity below or reinterpret saved reservations.
+It introduces no new source, retry, pagination, model call or result-quality claim.
+
+### Configured sources and limits
+
 The reviewed source policy is Hacker News, arXiv and DEV, in that fixed order,
 filtered by the configured source names. It permits at most three queries and
 three sources, with ten records per attempt. Repeated source names do not create

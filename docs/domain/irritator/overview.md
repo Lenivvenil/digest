@@ -154,6 +154,13 @@ DEV descriptions are snippets, not verified full articles. This repair changes
 neither neutral-query intent nor ranking acceptance, and does not establish useful
 counter-evidence merely by making another source reachable.
 
+Each adapter owns response safety and decoding; the stage does not modify a
+caller-owned HTTP client's response hooks. HN, arXiv and DEV reject redirects and
+buffer a complete response within the existing decoded-byte limit before parsing.
+Direct/legacy HN calls now receive those guards too; this intentionally rejects
+oversized responses and caller-enabled redirects that could previously be consumed.
+The bounded policy identity, saved results and existing pacing remain unchanged.
+
 ## Historical domain snapshot — April 2026
 
 The following interview/code-derived model preserves its original headings, terms
