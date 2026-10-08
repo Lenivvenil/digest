@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
     from digest.config import Config
+    from digest.domain.editorial.reviews import BlindReviewReport
     from digest.radar.collector import Article
     from digest.radar.summarizer import ArticleSummary, CategorySummary
-    from digest.review import BlindReviewReport
 
 
 async def analyze_articles(
@@ -23,7 +23,8 @@ async def analyze_articles(
     from digest.radar import pick_top_articles, summarize_all
 
     if getattr(getattr(config, "review", None), "enabled", False):
-        from digest.review import primary_cards, run_blind_review, run_primary_review
+        from digest.application.review import run_blind_review, run_primary_review
+        from digest.presentation.review import primary_cards
 
         report = await (
             run_primary_review(articles, config, execution=execution)

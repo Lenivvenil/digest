@@ -26,10 +26,7 @@ from digest.application.candidate_lifecycle import (
     persist_candidates,
 )
 from digest.application.candidate_lifecycle import ensure_report_accounting as ensure_report_accounting
-from digest.candidate_dispositions import (
-    CandidateDispositionCapture,
-    validate_disposition_attempt,
-)
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import Config
 from digest.domain.editorial.candidates import Candidate as Candidate
 from digest.domain.editorial.candidates import CandidateArticle as CandidateArticle
@@ -38,6 +35,7 @@ from digest.domain.editorial.candidates import CandidateProgress as CandidatePro
 from digest.domain.editorial.candidates import CandidateStatus as CandidateStatus
 from digest.domain.editorial.candidates import latest_occurrence_packet as _latest_occurrence_packet
 from digest.domain.editorial.candidates import validate_progress as _validate
+from digest.domain.editorial.dispositions import CandidateDispositionCapture, validate_disposition_attempt
 from digest.domain.editorial.reviews import (
     BlindReviewReport,
     delivery_review,
@@ -48,10 +46,6 @@ from digest.domain.editorial.reviews import (
 from digest.domain.editorial.reviews import validate_canonical_report as _validate_report
 from digest.filters import is_blocked
 from digest.radar.collector import Article, CollectionInventory, article_hash
-from digest.review import (
-    build_evidence_bundle,
-    build_review_messages,
-)
 
 # Candidate-only current-work capacity: source bodies and resolved history live
 # in independently verified objects. Accepted preparation keeps its 4 MB bound.

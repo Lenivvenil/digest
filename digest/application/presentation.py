@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
     from digest.config import Config
+    from digest.domain.editorial.reviews import BlindReviewReport
     from digest.irritator.ranker import RankedSignal
     from digest.radar.summarizer import ArticleSummary, CategorySummary
-    from digest.review import BlindReviewReport
 
 
 def clean_summary(text: str) -> str:
@@ -64,7 +64,7 @@ def combined_summary(
 
 def publication_intro(combined: str, report: BlindReviewReport | None, config: Config) -> str:
     if getattr(config.telegram, "delivery_mode", "cards") == "compact" and report is not None:
-        from digest.review import primary_notice
+        from digest.presentation.review import primary_notice
 
         return primary_notice(report, config.radar.language) + "\n\n" + combined
     return combined

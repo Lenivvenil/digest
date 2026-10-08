@@ -20,6 +20,7 @@ import httpx
 from digest._serialization import extract_json as _extract_json
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
+from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.domain.investigation.coverage import COVERAGE as COVERAGE
 from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE as FULL_SOURCE_COVERAGE
 from digest.domain.investigation.queries import SearchQuery
@@ -46,7 +47,6 @@ from digest.irritator.sources.arxiv import search_arxiv
 from digest.irritator.sources.hackernews import search_hackernews
 from digest.irritator.sources.lobsters import UNAVAILABLE_REASON, search_lobsters
 from digest.llm import LLMRole, complete
-from digest.review import MAX_EVIDENCE_JSON_CHARS, EvidenceBundle, canonical_evidence_quote
 from digest.review_checkpoint import FullSourceEvidence, validate_evidence_bundle, validate_full_source_evidence
 from digest.source_admission import (
     RequestAdmission,

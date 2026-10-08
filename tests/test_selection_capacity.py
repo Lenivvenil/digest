@@ -128,7 +128,7 @@ async def test_eight_useful_five_confirmed_three_next_window(
         return _response(evidence), {}
 
     monkeypatch.setattr("digest.radar.collect", collect)
-    monkeypatch.setattr("digest.review.complete", model)
+    monkeypatch.setattr("digest.application.review.complete", model)
     with respx.mock(assert_all_mocked=True) as router:
         if snapshot_failure:
             with patch("digest.edition_runtime.save_accepted_preparation", side_effect=OSError("snapshot failure")):
@@ -172,7 +172,7 @@ async def test_eight_useful_five_confirmed_three_next_window(
             assert all(item.eligible for item in pending.candidates.values())
             return await model(role, messages, c, **kwargs)
 
-        monkeypatch.setattr("digest.review.complete", next_model)
+        monkeypatch.setattr("digest.application.review.complete", next_model)
         tomorrow = await _run(
             "config.yaml", False, False, False, prepare_only=True, edition_date=now.date() + timedelta(days=1)
         )
@@ -198,7 +198,7 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     if partial:
         payload["selections"][-1]["quote"] = "Not in the supplied evidence"
     raw = json.dumps(payload)
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
+    with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         original = await run_evidence_review(bundle, config, execution=execution)
     assert complete.await_count == 2  # Only the existing independent primary and secondary slots.
     count = 7 if partial else 8
@@ -209,7 +209,9 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     config.review.max_selections = 2
     restored_bundle, cached = load_review_checkpoint(path, config)
     assert _reusable_slots(restored_bundle, cached, config) == {"primary", "secondary"}
-    with patch("digest.review.complete", AsyncMock(side_effect=AssertionError("No new relevance request"))) as complete:
+    with patch(
+        "digest.application.review.complete",
+        AsyncMock(side_effect=AssertionError("No new relevance request"))) as complete:
         reused = await run_evidence_review(restored_bundle, config, cached, execution=execution)
     complete.assert_not_called()
     assert path.read_bytes() == original_bytes
@@ -231,7 +233,7 @@ async def test_non_candidate_publication_also_caps_cards_after_full_relevance_re
     config, articles = _inputs(datetime.now(UTC))
     bundle = build_evidence_bundle(articles, config.review)
     raw = _response([asdict(item) for item in bundle.items])
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
+    with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         _, _, cards, report = await _analyze_articles(articles, config, execution=execution)
     complete.assert_awaited_once()
     assert len(cards) == 5 and len(report.reviews[0].selections) == 8
@@ -260,7 +262,8 @@ async def test_fallback_preserves_duplicate_bound_to_overflow_selected_identity(
         }
     )
     with patch(
-        "digest.review.complete", AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})])
+        "digest.application.review.complete",
+        AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})])
     ) as complete:
         _, _, cards, report = await _analyze_candidate_articles(
             articles, config, progress, packet, None, str(tmp_path), execution=execution,
@@ -308,7 +311,7 @@ async def test_unicode_selections_reconcile_with_original_character_budget(tmp_p
         selection.update(reason="Я" * 600, quote="Ж" * 200)
     raw = json.dumps(payload, ensure_ascii=False)
     assert len(raw) < 32000 < len(json.dumps(payload))
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
+    with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         _, _, cards, report = await _analyze_candidate_articles(
             articles, config, progress, packet, None, str(tmp_path), execution=execution,
         )

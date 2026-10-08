@@ -13,8 +13,8 @@ from digest._util import atomic_json_write
 from digest.presentation.supplement import signal_text
 
 if TYPE_CHECKING:
+    from digest.domain.editorial.reviews import BlindReviewReport
     from digest.irritator import IrritatorStatus
-    from digest.review import BlindReviewReport
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def write_digest(
         content += f"\n\nIrritator status: {irritator_status.level} — {irritator_status.text}\n"
 
     if review_report is not None:
-        from digest.review import render_review
+        from digest.presentation.review import render_review
 
         content += render_review(review_report) + "\n"
 

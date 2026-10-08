@@ -83,7 +83,7 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
                            'dispositions': dispositions}), {}
 
     monkeypatch.setattr('digest.radar.collect', collect)
-    monkeypatch.setattr('digest.review.complete', model)
+    monkeypatch.setattr('digest.application.review.complete', model)
     if precall_capacity:
         monkeypatch.setattr('digest.candidate_review.MAX_BYTES', 200000)
         with pytest.raises(ValueError, match='capacity before model'):
@@ -191,7 +191,7 @@ async def test_preparation_reports_technical_empty_without_failing_editorial_abs
 
     monkeypatch.setattr("digest.radar.collect", collect)
     completion = AsyncMock(side_effect=model)
-    monkeypatch.setattr("digest.review.complete", completion)
+    monkeypatch.setattr("digest.application.review.complete", completion)
     stats = await _run("config.yaml", False, False, False, prepare_only=True)
     incomplete = outcome in {"truncated", "deferred"}
     assert (stats.edition_status == "selection_incomplete") is incomplete

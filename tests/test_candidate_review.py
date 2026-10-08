@@ -910,7 +910,7 @@ async def test_response_storage_reserve_covers_supported_escaped_unicode_fallbac
                     for index, item in enumerate(items)]
     raw = json.dumps({"selections": selections, "limitations": ["x"], "dispositions": dispositions}, ensure_ascii=False)
     provider = AsyncMock(side_effect=[("😀" * 32000, {}), (raw, {})])
-    monkeypatch.setattr("digest.review.complete", provider)
+    monkeypatch.setattr("digest.application.review.complete", provider)
     capture = CandidateDispositionCapture()
     report = await run_primary_review(packet_articles(packet), config,
         execution=model_execution, disposition_capture=capture)

@@ -47,7 +47,7 @@ async def test_every_slot_is_blind_and_gets_identical_evidence() -> None:
             text = json.dumps(data)
         return text, usage
 
-    with patch("digest.review.complete", side_effect=adapter):
+    with patch("digest.application.review.complete", side_effect=adapter):
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert len(requests) == 3
     assert all(request == requests[0] for request in requests)
@@ -69,7 +69,7 @@ async def test_agreement_does_not_call_third_model() -> None:
             response = await fixture_response(role, messages, config, **kwargs)
         return response
 
-    with patch("digest.review.complete", side_effect=adapter) as complete:
+    with patch("digest.application.review.complete", side_effect=adapter) as complete:
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert complete.call_count == 2
     assert report.selection_overlap == 1
@@ -87,7 +87,7 @@ async def test_peer_failure_is_incomplete_not_disagreement(failure: object) -> N
             return str(failure), {}
         return await fixture_response(role, messages, config, **kwargs)
 
-    with patch("digest.review.complete", side_effect=adapter) as complete:
+    with patch("digest.application.review.complete", side_effect=adapter) as complete:
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert complete.call_count == 2
     assert report.status == "incomplete"
@@ -160,7 +160,7 @@ async def test_completion_order_does_not_change_slot_attribution() -> None:
             await asyncio.sleep(0.001)
         return await fixture_response(role, messages, config, **kwargs)
 
-    with patch("digest.review.complete", side_effect=adapter):
+    with patch("digest.application.review.complete", side_effect=adapter):
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert [r.slot for r in report.reviews] == ["primary", "secondary", "third"]
 
@@ -172,7 +172,7 @@ async def test_selection_survives_category_prose_failure() -> None:
 
     report = await run_fixture(execution=execution)
     with (
-        patch("digest.review.run_blind_review", AsyncMock(return_value=report)),
+        patch("digest.application.review.run_blind_review", AsyncMock(return_value=report)),
         patch("digest.radar.summarize_all", AsyncMock(return_value=([], None))),
         patch("digest.radar.pick_top_articles", AsyncMock()) as legacy_picker,
     ):
@@ -191,7 +191,7 @@ async def test_duplicate_article_identity_uses_same_canonical_source_for_cards()
     articles = fixture_articles()
     original = next(a for a in articles["Architecture"] if a.link.endswith("idempotency"))
     articles["zz_duplicate"] = [replace(original, source="DIFFERENT_SOURCE", category="zz_duplicate")]
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         report = await run_blind_review(articles, fixture_config(), execution=execution)
     evidence = {i.url: i for i in report.evidence.items}[original.link]
     card = next(c for c in primary_cards(report, articles, "en") if c.link == original.link)
@@ -204,7 +204,7 @@ async def test_disagreement_below_threshold_is_not_labeled_agreement() -> None:
     execution = ModelExecution()
     config = fixture_config()
     config.review.disagreement_threshold = 0.1
-    with patch("digest.review.complete", side_effect=fixture_response) as complete:
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         report = await run_blind_review(fixture_articles(), config, execution=execution)
     assert report.disputed_ids
     assert report.third_model_reason == "selection_disagreement_not_escalated"
@@ -319,7 +319,7 @@ async def test_invalid_review_preserves_reason_and_rejected_model_text() -> None
     config = fixture_config()
     raw = ('{"selections":[{"evidence_id":"invented","reason":"Useful",'
            '"quote":"text","confidence":"high"}],"limitations":[]}')
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))):
+    with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))):
         report = await run_blind_review(fixture_articles(), config, execution=execution)
     assert report.reviews[0].error == "unknown evidence id"
     assert report.reviews[0].rejected_output == raw

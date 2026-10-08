@@ -28,8 +28,8 @@ from digest.presentation.supplement import signal_text
 from digest.review_checkpoint import load_review_checkpoint
 
 if TYPE_CHECKING:
+    from digest.domain.editorial.reviews import EvidenceBundle
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
-    from digest.review import EvidenceBundle
     from digest.review_checkpoint import FullSourceEvidence
 
 

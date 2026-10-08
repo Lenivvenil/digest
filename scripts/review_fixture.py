@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import patch
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_blind_review
 from digest.config import (
     Config,
     FiltersConfig,
@@ -25,8 +26,9 @@ from digest.config import (
     ReviewModelConfig,
     TelegramConfig,
 )
-from digest.radar.collector import Article
-from digest.review import BlindReviewReport, render_review, run_blind_review
+from digest.domain.catalog.articles import Article
+from digest.domain.editorial.reviews import BlindReviewReport
+from digest.presentation.review import render_review
 
 
 def fixture_config() -> Config:
@@ -60,7 +62,7 @@ async def fixture_response(
 
 
 async def run_fixture(*, execution: ModelExecution) -> BlindReviewReport:
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         return await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
 
 

@@ -153,7 +153,7 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
     expected = _messages(config)
     with (
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),
-        patch("digest.review.complete", side_effect=fixture_response) as complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
     ):
         primary = await run_primary_review(fixture_articles(), config, execution=execution)
         assert complete.call_count == 1
@@ -185,7 +185,7 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
     config = fixture_config()
     _sources(config)
     config.review.tie_breaker = None
-    with patch("digest.review.complete", side_effect=fixture_response):
+    with patch("digest.application.review.complete", side_effect=fixture_response):
         original = await run_primary_review(fixture_articles(), config, execution=execution)
     old = deepcopy(original)
     for review in old.reviews:
@@ -199,7 +199,7 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
     assert _reusable_slots(bundle, cached, config) == set()
     with (
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),
-        patch("digest.review.complete", side_effect=fixture_response) as complete,
+        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
     ):
         resumed = await run_evidence_review(bundle, config, cached, execution=execution)
     assert complete.call_count == 2  # Existing configured slots, no repair call.

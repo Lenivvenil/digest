@@ -79,7 +79,8 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     begin_packet(progress, packet, tmp_path)
     raw = _response(packet.evidence)
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as complete:
+    with patch(
+        "digest.application.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as complete:
         report = await run_primary_review(packet_articles(packet), config,
             execution=model_execution, disposition_capture=capture)
     complete.assert_awaited_once()
@@ -153,7 +154,9 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
     else:
         assert len(json.loads(raw)["selections"]) == detailed
     capture = CandidateDispositionCapture()
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))) as complete:
+    with patch(
+        "digest.application.review.complete",
+        AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))) as complete:
         report = await run_primary_review(packet_articles(packet), config,
             execution=model_execution, disposition_capture=capture)
     assert complete.await_count == 2  # Only the existing primary and fallback attempt.
@@ -187,7 +190,7 @@ async def test_saved_eight_selection_review_remains_strictly_valid_at_new_defaul
     bundle = build_evidence_bundle(articles, config.review)
     raw = _response(bundle, 8)
     config.review.max_detailed_selections = 8
-    with patch("digest.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
+    with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         report = await run_primary_review(articles, config, execution=model_execution)
     complete.assert_awaited_once()
     assert len(report.reviews[0].selections) == 8

@@ -228,7 +228,7 @@ async def test_pipeline_uses_one_presentation_for_both_outputs_and_keeps_raw_rev
     with (
         patch("digest.config.load_config", return_value=cfg),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
-        patch("digest.review.complete", side_effect=fixture_response),
+        patch("digest.application.review.complete", side_effect=fixture_response),
         patch("digest.translation.complete", side_effect=translate) as translation,
         patch("digest.delivery.send_article_cards", AsyncMock(
             return_value=ArticleDeliveryResult(attempted=2, sent=2),

@@ -20,9 +20,9 @@ from digest._util import atomic_json_write
 from digest._util import utc_instant as _instant
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.closing import ClosingDecision, validate_closing
+from digest.domain.editorial.reviews import BlindReviewReport
 from digest.domain.editorial.reviews import validate_canonical_report as _validate_report
 from digest.radar.summarizer import ArticleSummary, CategorySummary
-from digest.review import BlindReviewReport
 
 PREPARATION_FILE = "pending_preparation.json"
 LEGACY_SCHEMA_VERSION = 1
