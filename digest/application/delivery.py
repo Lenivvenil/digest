@@ -118,6 +118,10 @@ def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
         return AppliedOutcome()
     store = load_feedback(policy.cache_dir, strict=True)
     cache = delivery_state.load_delivery_cache(Path(policy.cache_dir) / "seen_articles.json")
+    # Validate every applicable current input before the first accounting write.
+    # Transport may already be confirmed; failures retain unapplied, held receipts.
+    stats = load_stats(policy.cache_dir, strict=True)
+    state = load_source_state(policy.cache_dir, strict=True) if policy.adaptive_enabled else None
     now = datetime.now(timezone.utc)
     new_hashes = outcome.delivered_hashes - cache.keys()
     for identity in outcome.delivered_hashes:
@@ -133,11 +137,9 @@ def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
     # Preserve current votes/cursors/decisions; every write failure propagates.
     # Order is feedback -> stats -> optional adaptive state -> seen articles.
     save_feedback(store, policy.cache_dir, strict=True)
-    stats = load_stats(policy.cache_dir)
     record_delivered_articles(stats, new_hashes, outcome.article_source_map, policy.publication_day)
     delivery_state.save_delivery_source_stats(stats, policy.cache_dir)
-    if policy.adaptive_enabled:
-        state = load_source_state(policy.cache_dir)
+    if state is not None:
         today = now.date().isoformat()
         promote, demote, start = evaluate_trial_sources(policy.enabled_sources, stats, today, state)
         apply_trial_decisions_to_cache(state, promote, demote, today, start)

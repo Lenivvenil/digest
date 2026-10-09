@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Strictly preload prepared accounting inputs before the first accounting write
+  (#220, slice 1). Complete current-writer source history is preserved; malformed,
+  sparse or unknown-field records now hold accounting instead of being reset.
+  Default legacy reads and ordered nontransactional writes are unchanged. See the
+  [ADR0017 amendment](docs/decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09).
+
 - Route feed collection, configuration probes, discovery, article acquisition and optional
   liveness through one public-address fetch boundary (#218). Each hop connects only to
   validated public IPs while retaining original Host/TLS identity, with no global DNS
@@ -10,6 +16,7 @@
   and URL credentials fail technically. Caller parsing, feed retry/backoff, HEAD status
   rules, logical provenance and persisted formats remain intact; article concurrency no
   longer needs a process-global lock. See ADR0026 for deadlines and compatibility limits.
+
 
 - Share credential-safe Telegram diagnostics across prepared, direct/legacy,
   supplementary, discovery and feedback operations (#219), preserving their distinct

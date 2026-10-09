@@ -56,9 +56,10 @@ Direct application retains seen cache → usable feedback → lifecycle state �
 statistics → category map. Cards may consume saved Markdown output under the
 existing optional/complete Telegram rule; direct compact may not. Fetch observations,
 current-day history, inactive-source pruning, conditional trial evaluation and
-existing caught versus propagated write failures remain unchanged. Prepared strict
-writes do not convert the existing permissive statistics/lifecycle loaders into
-strict readers. Failed delivery preserves collected votes and polling cursors.
+existing caught versus propagated write failures remain unchanged. The initial
+implementation retained permissive statistics/lifecycle reads; the
+[strict prepared preflight amendment](#strict-prepared-accounting-preflight--2026-10-09)
+below deliberately changes only prepared reads. Failed delivery preserves collected votes and polling cursors.
 Markdown consumption does not imply Telegram confirmation. Legacy cards retain the
 deduplication writer's default cache path, ignoring the supplied `cache_dir`;
 compact uses that supplied directory.
@@ -215,3 +216,38 @@ timeout and traceback paths without a live token or Telegram send. Existing regr
 retain payloads, request counts, status interpretation, prepared holds and persistence
 ordering. Release/rollout evidence belongs to the implementing issue; no wire format,
 provider route, additional request or runtime-state migration is introduced.
+
+
+## Strict prepared accounting preflight — 2026-10-09
+
+Accepted as slice 1 of [#220](https://github.com/Lenivvenil/digest/issues/220).
+`adapters.storage.sources` adds opt-in strict restoration through the existing
+dataclass fields/types and JSON duplicate-key authority. `application.delivery`
+preloads feedback, deduplication, statistics and applicable lifecycle state before
+the first accounting write. Empty confirmed coverage remains a no-op; disabled
+adaptation does not read lifecycle state. Existing encoders, write order and the
+caller's applied marker are unchanged.
+
+Strict source reads accept complete current-writer records: supported lifecycle
+schema, exact booleans/integer counters, finite nonnegative averages and counters,
+and canonical calendar dates (nullable only where declared). They preserve source
+and history order, non-ASCII names and values, without source-key/name equality or
+cross-counter equations. Unknown or missing fields and duplicate keys fail rather
+than being discarded or reconstructed. Only absence of the whole file is first-run
+empty state; symlinks, invalid JSON/UTF-8, directories and read errors fail closed.
+Default legacy reads keep their historical permissive behavior.
+
+This intentionally narrows prepared compatibility to the complete current encoder
+shape. Previously tolerated sparse, unknown-field or noncanonical-date records now
+hold accounting; they are not silently migrated. A demonstrated older supported
+writer format requires a named compatibility decision rather than guessed defaults.
+
+Preflight is at accounting time, not a new pre-send gate. A receipt may already
+confirm transport when corrupt source history is discovered. Inspect preserved
+receipts and original state to establish the cause; do not delete history to make
+validation pass, reset the claim or resend. Preserve evidence and use an explicit
+reviewed recovery decision. Later write failures can still leave a written prefix
+and unapplied receipts: no transaction, automatic rollback or safe replay is added.
+Accepted-reference admission and receipt-owned dispatch/application remain later
+#220 work. The [current effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
+remains the canonical contract.

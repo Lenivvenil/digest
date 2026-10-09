@@ -145,7 +145,8 @@ natural run does not block an unrelated mechanical safety repair.
    accepted/ready/claim/receipt bytes and hashes, CLI phases, remote barriers, source
    and feedback identities, empty-result rules and interruption holds. Amend
    [ADR0017](decisions/0017-confirmed-delivery-application.md) explicitly: its current
-   permissive statistics/lifecycle reads are not the target strict preflight. Prove
+   strict current-writer preflight is implemented in slice 1; accepted-reference and
+   receipt-owned application remain pending. Prove
    invalid existing state blocks before the first accounting write, valid history survives, and
    every write-failure prefix remains held with a truthful read-only diagnosis.
 4. **Resolve measured operating-policy tradeoffs.** Decide supported delivery guarantees,
@@ -433,14 +434,20 @@ record or a change to the prepared-edition policy.
 
 | Effect | Prepared edition | Legacy direct run, including direct compact |
 | --- | --- | --- |
-| Mutable input | Reload current feedback, delivered cache and statistics; reload lifecycle state only when adaptation is enabled. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
+| Mutable input | Strictly reload current feedback, delivered cache and statistics, plus lifecycle state only when adaptation is enabled, before the first accounting write. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
 | Delivery identity | Full article hashes enter deduplication only after complete confirmed chunk coverage. Empty coverage returns before state reads or writes. | Confirmed Telegram hashes qualify. Cards mode additionally consumes summarized-category articles and top articles after a saved Markdown output when Telegram is optional or complete. That consumption does not imply Telegram confirmation. Direct compact never treats Markdown as delivered coverage. |
 | Attribution | Merge confirmed vote-token/source mappings: full article identities for ready v2/v3, original short tokens for ready v1. Supplement coverage adds no article identity. Update last-digest sources/time only when the whole issue is complete. | New delivery uses full article vote identities. Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
 | Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
 | Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
 | Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
 | Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; `mark_applied` consumes complete ready3 supplement coverage before writing the applied receipt marker. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
-| Failure policy | Feedback/cache validation fails closed. All application writes propagate failures. Statistics and lifecycle reads retain their existing permissive loaders; strict writes do not imply strict reads. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
+| Failure policy | All applicable reads fail closed before the first accounting write. Source reads require complete current-writer fields, supported schema, exact types, finite nonnegative numeric values and canonical calendar days. For source statistics/lifecycle files, missing whole files are first-run state; malformed, sparse, unknown-field, duplicate-key, symlinked or unreadable files hold application. All writes propagate failures. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
+
+This preflight runs at accounting time, potentially after confirmed transport. Invalid
+source history leaves saved receipts unapplied and holds the edition without changing
+accounting files; it does not prove that no message was sent. Default direct/legacy
+source readers remain permissive. See the [strict-read amendment](decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09)
+for the intentional current-writer compatibility boundary and inspection guidance.
 
 After a successful prepared application, inclusion counters and existing deduplication
 timestamps remain unchanged on reapplication while those hashes are cached. Metadata,
