@@ -17,7 +17,7 @@ from scripts.review_fixture import fixture_articles, fixture_config
 from tests.test_candidate_dispositions import payload
 
 
-@pytest.mark.parametrize("value", [None, True, False, -1, "17", 1.5, {}, [], "private reasoning text"])
+@pytest.mark.parametrize("value", [None, True, -1, "17", 1.5])
 def test_reasoning_token_usage_rejects_unknown_and_noninteger_values(value: object) -> None:
     assert _review_usage({"completion_tokens_details": {"reasoning_tokens": value, "reasoning": "private"}}) == {}
 

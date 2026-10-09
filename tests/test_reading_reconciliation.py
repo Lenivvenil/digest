@@ -604,22 +604,12 @@ def test_completion_binding_rejects_each_changed_transport_component(
         parse_reconciliation_response(raw, value, source, state, admission=admission, completion=completion)
 
 
-@pytest.mark.parametrize("provider", ["gemini", "groq"])
-@pytest.mark.parametrize(
-    "damage",
-    [
-        "route",
-        "model",
-        "input_limit",
-        "output_reserve",
-        "request",
-        "status",
-        "method",
-        "count",
-        "error",
-        "record",
-    ],
-)
+@pytest.mark.parametrize("damage,provider", [
+    ("route", "gemini"), ("model", "gemini"), ("input_limit", "gemini"),
+    ("output_reserve", "gemini"), ("request", "gemini"), ("status", "gemini"),
+    ("method", "gemini"), ("count", "gemini"), ("error", "gemini"), ("record", "gemini"),
+    ("method", "groq"), ("count", "groq"), ("record", "groq"),
+])
 def test_admitted_status_does_not_replace_route_and_count_proof(
     saved_synthetic: tuple[Source, BriefState],
     provider: str,

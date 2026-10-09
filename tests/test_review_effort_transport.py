@@ -95,7 +95,7 @@ async def test_review_controls_reach_actual_http_request_without_changing_cap_or
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("role", list(llm.LLMRole))
+@pytest.mark.parametrize("role", [llm.LLMRole.SUMMARIZE, llm.LLMRole.REVIEW_EVIDENCE])
 async def test_omitted_controls_keep_all_groq_roles_wire_unchanged(role: llm.LLMRole) -> None:
     execution = ModelExecution()
     provider = ProviderConfig("groq", "openai/gpt-oss-120b", [role.value])

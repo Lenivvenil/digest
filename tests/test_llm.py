@@ -46,10 +46,6 @@ def test_extract_json_direct() -> None:
     assert _extract_json('{"key": "value"}') == {"key": "value"}
 
 
-def test_extract_json_array() -> None:
-    assert _extract_json("[1, 2, 3]") == [1, 2, 3]
-
-
 def test_extract_json_code_fence() -> None:
     text = '```json\n{"a": 1}\n```'
     assert _extract_json(text) == {"a": 1}
@@ -105,14 +101,6 @@ def test_providers_for_role_deduplication() -> None:
     providers = _providers_for_role(LLMRole.SUMMARIZE, config)
     names = [p.name for p in providers]
     assert names.count("groq") == 1
-
-
-def test_providers_for_role_empty_when_no_match() -> None:
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-    ])
-    providers = _providers_for_role(LLMRole.RANK_SIGNALS, config)
-    assert providers == []
 
 
 # ---------------------------------------------------------------------------

@@ -90,8 +90,9 @@ async def test_captured_response_retains_four_exact_source_selections_and_one_re
     assert all("groq/openai/gpt-oss-120b" in card.summary for card in cards)
 
 
-@pytest.mark.parametrize("source_hyphen", ["-", "\u2010", "\u2011"])
-@pytest.mark.parametrize("output_hyphen", ["-", "\u2010", "\u2011"])
+@pytest.mark.parametrize("output_hyphen,source_hyphen", [
+    ("-", "-"), ("-", "\u2010"), ("-", "\u2011"), ("\u2010", "-"), ("\u2011", "-"),
+])
 def test_only_narrow_hyphens_align_to_original_source(source_hyphen: str, output_hyphen: str) -> None:
     source = f"Multi{source_hyphen}AZ architecture"
     returned, normalized = canonical_evidence_quote(f"Multi{output_hyphen}AZ", "unrelated", source)

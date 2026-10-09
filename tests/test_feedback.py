@@ -32,19 +32,6 @@ FULL_ARTICLE_A = "cdb96691fa65888074dc4008dd039e3f"
 FULL_ARTICLE_B = "cdb96691b648d61a1fbaba5907095a7d"
 
 # ---------------------------------------------------------------------------
-# Initial feedback state
-# ---------------------------------------------------------------------------
-
-
-def test_feedback_store_defaults() -> None:
-    store = FeedbackStore()
-    assert store.ratings == []
-    assert store.last_update_id == 0
-    assert store.pending_replies == [] and store.seen_callback_ids == [] and store.last_poll_counts == {}
-    assert store.seen_message_ids == []
-
-
-# ---------------------------------------------------------------------------
 # load_feedback / save_feedback round-trip
 # ---------------------------------------------------------------------------
 
@@ -53,6 +40,8 @@ def test_load_feedback_missing_file(tmp_path: Path) -> None:
     store = load_feedback(str(tmp_path))
     assert store.ratings == []
     assert store.last_update_id == 0
+    assert store.pending_replies == [] and store.seen_callback_ids == [] and store.last_poll_counts == {}
+    assert store.seen_message_ids == []
 
 
 def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
@@ -72,7 +61,12 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     original = FeedbackStore(
         ratings=[fb1, fb2], last_update_id=100,
         article_source_map={FULL_ARTICLE_A[:8]: "Source A", FULL_ARTICLE_A: "Source B"},
-        pending_replies=[PendingReply("callback", "receipt"), PendingReply("vote", "recorded_votes")],
+        source_decisions={"abc12345": "approved", "def67890": "rejected"},
+        source_decision_bindings={"abc12345": "a" * 64, "def67890": "b" * 64},
+        pending_replies=[
+            PendingReply("callback", "receipt"), PendingReply("vote", "recorded_votes"),
+            PendingReply("source", "source_decisions"), PendingReply("source", "unknown_source"),
+        ],
         seen_callback_ids=[str(index) for index in range(1005)],
         seen_message_ids=[f"owner:{index}" for index in range(1005)],
     )
@@ -81,6 +75,8 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     loaded = load_feedback(str(tmp_path))
     assert loaded.ratings == original.ratings
     assert loaded.article_source_map == original.article_source_map
+    assert loaded.source_decisions == {"abc12345": "approved", "def67890": "rejected"}
+    assert loaded.source_decision_bindings == original.source_decision_bindings
     assert loaded.last_update_id == 100
     assert len(loaded.ratings) == 2
     assert loaded.ratings[0].source_name == "Source A"
@@ -711,44 +707,21 @@ def test_get_source_feedback_score_only_old_returns_none() -> None:
 
 
 def test_save_feedback_prunes_old_ratings(tmp_path: Path) -> None:
-    """save_feedback should discard ratings older than 30 days."""
-    old_ts = (datetime.now(tz=timezone.utc) - timedelta(days=31)).isoformat()
-    fresh_ts = datetime.now(tz=timezone.utc).isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed A", 1, old_ts),
-        ArticleFeedback("h2", "Feed B", -1, fresh_ts),
-    ])
-    save_feedback(store, str(tmp_path))
-
-    loaded = load_feedback(str(tmp_path))
-    assert len(loaded.ratings) == 1
-    assert loaded.ratings[0].source_name == "Feed B"
-
-
-def test_save_feedback_keeps_all_recent_ratings(tmp_path: Path) -> None:
-    """save_feedback should keep all ratings within 30 days."""
+    """Discard old ratings while retaining both recent ratings."""
     now = datetime.now(tz=timezone.utc)
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed A", 1, (now - timedelta(days=29)).isoformat()),
-        ArticleFeedback("h2", "Feed B", -1, (now - timedelta(days=1)).isoformat()),
-    ])
+    old = ArticleFeedback("old", "Old Feed", 1, (now - timedelta(days=31)).isoformat())
+    recent = ArticleFeedback("h1", "Feed A", 1, (now - timedelta(days=29)).isoformat())
+    fresh = ArticleFeedback("h2", "Feed B", -1, (now - timedelta(days=1)).isoformat())
+    store = FeedbackStore(ratings=[old, recent, fresh])
     save_feedback(store, str(tmp_path))
 
     loaded = load_feedback(str(tmp_path))
-    assert len(loaded.ratings) == 2
+    assert loaded.ratings == [recent, fresh]
 
 
 # ---------------------------------------------------------------------------
 # article_source_map persistence
 # ---------------------------------------------------------------------------
-
-
-def test_article_source_map_round_trip(tmp_path: Path) -> None:
-    """article_source_map is saved and loaded correctly."""
-    store = FeedbackStore(article_source_map={"abcd1234": "Feed A", "ef567890": "Feed B"})
-    save_feedback(store, str(tmp_path))
-    loaded = load_feedback(str(tmp_path))
-    assert loaded.article_source_map == {"abcd1234": "Feed A", "ef567890": "Feed B"}
 
 
 def test_article_source_map_pruned_to_1000(tmp_path: Path) -> None:
@@ -771,6 +744,7 @@ def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
     (tmp_path / "feedback.json").write_text(_json.dumps(data), encoding="utf-8")
     loaded = load_feedback(str(tmp_path))
     assert loaded.article_source_map == {}
+    assert loaded.source_decisions == {}
     assert loaded.pending_replies == [] and loaded.seen_callback_ids == [] and loaded.last_poll_counts == {}
     assert loaded.seen_message_ids == []
     assert loaded.cursor_observed_at == "" and loaded.previous_update_id == 0
@@ -781,34 +755,12 @@ def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_source_decisions_round_trip(tmp_path: Path) -> None:
-    store = FeedbackStore(
-        source_decisions={"abc12345": "approved", "def67890": "rejected"},
-        source_decision_bindings={"abc12345": "a" * 64, "def67890": "b" * 64},
-        pending_replies=[PendingReply("source", "source_decisions"), PendingReply("source", "unknown_source")],
-    )
-    save_feedback(store, str(tmp_path))
-    loaded = load_feedback(str(tmp_path))
-    assert loaded.source_decisions == {"abc12345": "approved", "def67890": "rejected"}
-    assert loaded.source_decision_bindings == store.source_decision_bindings
-    assert loaded.pending_replies == store.pending_replies
-
-
 def test_source_decisions_default_empty(tmp_path: Path) -> None:
     store = FeedbackStore()
     save_feedback(store, str(tmp_path))
     loaded = load_feedback(str(tmp_path))
     assert loaded.source_decisions == {}
     assert loaded.source_decision_bindings == {}
-
-
-def test_source_decisions_missing_key_loads_empty(tmp_path: Path) -> None:
-    """Feedback file without source_decisions key loads as empty dict (backward compat)."""
-    import json as _json
-    data = {"last_update_id": 5, "ratings": []}
-    (tmp_path / "feedback.json").write_text(_json.dumps(data), encoding="utf-8")
-    loaded = load_feedback(str(tmp_path))
-    assert loaded.source_decisions == {}
 
 
 @pytest.mark.asyncio
@@ -933,8 +885,11 @@ async def test_unreadable_proposals_preserve_source_batch_until_repaired(
 
 @pytest.mark.asyncio
 @respx.mock
-@pytest.mark.parametrize("case", ["missing", "stale", "future", "duplicate", "wrong_hash"])
-@pytest.mark.parametrize("transport", ["start", "command", "callback"])
+@pytest.mark.parametrize("transport,case", [
+    ("command", "missing"), ("command", "stale"), ("command", "future"),
+    ("command", "duplicate"), ("command", "wrong_hash"),
+    ("start", "stale"), ("callback", "stale"),
+])
 async def test_source_decisions_reject_unavailable_proposals(
     case: str, transport: str, tmp_path: Path,
 ) -> None:

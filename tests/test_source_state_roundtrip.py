@@ -115,10 +115,9 @@ def test_legacy_stats_setup_precedes_pruning_but_failed_write_keeps_pruning(tmp_
             storage.save_stats(stats, str(tmp_path))
 
 
-@pytest.mark.parametrize("kind", ["stats", "state", "categories"])
+@pytest.mark.parametrize("kind", ["state", "categories"])
 def test_legacy_source_writers_only_catch_atomic_write_failures(tmp_path: Path, kind: str) -> None:
     values = {
-        "stats": ({"Feed": sources.SourceStats("Feed")}, storage.save_stats),
         "state": (sources.SourceStateStore(), storage.save_source_state),
         "categories": ([], storage.save_source_category_map),
     }

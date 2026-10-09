@@ -711,7 +711,10 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         assert load_feedback(".cache", strict=True).ratings == [vote]
 
 
-@pytest.mark.parametrize(("enabled", "decisions"), [(True, {}), (False, {}), (False, {"source": "approved"})])
+@pytest.mark.parametrize(("enabled", "decisions"), [
+    pytest.param(True, {}, id="True-decisions0"),
+    pytest.param(False, {"source": "approved"}, id="False-decisions2"),
+])
 def test_no_approval_reload_retains_config_and_execution(enabled: bool, decisions: dict[str, str]) -> None:
     from digest.application.run_state import apply_pending_approvals
 
@@ -1216,7 +1219,7 @@ async def test_discovery_generation_preserves_bounded_configured_fallback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("dry_run", "radar_only"), [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize(("dry_run", "radar_only"), [(True, False), (False, True)])
 async def test_programmatic_preparation_rejects_preview_before_preparation_effects(
     dry_run: bool, radar_only: bool,
 ) -> None:

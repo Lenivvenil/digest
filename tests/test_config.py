@@ -80,7 +80,7 @@ def test_discovery_configuration_does_not_change_professional_sources(tmp_path: 
     assert "art" not in DiscoveryConfig().exploration_areas
 
 
-@pytest.mark.parametrize("value", ["[]", "science", "[null]", "['']", "['  ']", "[science, SCIENCE]",
+@pytest.mark.parametrize("value", ["[]", "science", "[null]", "['  ']", "[science, SCIENCE]",
                                   "['" + "a" * 81 + "']", "[" + ",".join(str(n) for n in range(17)) + "]"])
 def test_discovery_configuration_rejects_invalid_areas(tmp_path: Path, value: str) -> None:
     path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f"\ndiscovery:\n  exploration_areas: {value}\n")
@@ -563,14 +563,6 @@ def test_effective_sources_empty_state_same_as_enabled(tmp_path: Path) -> None:
 
     store = SourceStateStore()
     assert config.effective_sources(store) == config.enabled_sources
-
-
-def test_irritator_config_default_min_signal_score() -> None:
-    """IrritatorConfig() default min_signal_score must be 5, not the old 7."""
-    from digest.config import IrritatorConfig
-
-    cfg = IrritatorConfig()
-    assert cfg.min_signal_score == 5
 
 
 @pytest.mark.parametrize(

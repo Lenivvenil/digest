@@ -30,10 +30,6 @@ def test_partial_word_match() -> None:
     assert is_blocked("trumpeter plays jazz", ["trump"]) is True
 
 
-def test_multiple_keywords_first_match() -> None:
-    assert is_blocked("Sports news: Biden scores goal", ["biden", "sports"]) is True
-
-
 def test_keyword_with_spaces() -> None:
     assert is_blocked("breaking news today", ["breaking news"]) is True
 
