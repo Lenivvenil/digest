@@ -391,6 +391,7 @@ and applies identical final cards to archive and frozen payloads.
 | Inspect/recover accepted or ready work; present/freeze | `edition_runtime.py:recover_preparation`, `accept_preparation`, `present_preparation`; `preparation.py:load_accepted_preparation` |
 | Assemble presented main cards and optional closing disposition | `application/publication.py:assemble_publication`, `PublicationAssembly` |
 | Candidate rules, packet construction and ordered persistence | `domain/editorial/candidate_policy.py`, `application/candidate_review.py`, `application/candidate_lifecycle.py` |
+| Canonical RSS item preparation, measurement and evidence bundle serialization | `domain/editorial/evidence.py` |
 | Configured request, review routes and display copy | `application/review_request.py`, `application/review.py`, `presentation/review.py` |
 | Freeze/claim/send/inspect an edition | `application/prepared_delivery.py`; CLI phases enter through `edition_runtime.delivery_phase` |
 | Edition/claim/receipt validation and bytes | `domain/delivery/edition.py`, `adapters/storage/edition.py` |
@@ -405,6 +406,13 @@ candidate import bridges are retired with an explicit
 [migration map](decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08).
 Feedback, discovery and source-scoring compatibility interfaces remain supported.
 The map describes ownership, not a requirement that every facade disappear.
+
+Candidate admission returns exact scheduling-order occurrences together with their
+canonical evidence. Its lazy occurrence cache shares the RSS builder's item preparation
+and JSON measurement; accepted items retain the separate category-round-robin evidence
+order. Packet construction consumes that result directly. The
+[admission ownership amendment](decisions/0008-candidate-selection-progress.md#candidate-admission-ownership-211)
+records the internal return migration and preserved scheduling and trust boundaries.
 
 ## Deliberate remaining coupling
 

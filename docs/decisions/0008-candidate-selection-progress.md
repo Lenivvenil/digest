@@ -347,3 +347,23 @@ The catalog owns the seven-field `SourceOccurrence`; the named `CandidateArticle
 compatibility subclass preserves its Python and serialized contracts. Occurrence,
 packet, report and decision hashes, immutable storage, scheduling and retirement
 policy remain unchanged. This does not establish natural-run or disposition quality.
+
+## Candidate admission ownership (#211)
+
+[#211](https://github.com/Lenivvenil/digest/issues/211) shares canonical RSS item
+preparation, exact per-item JSON measurement and bundle serialization in
+`domain/editorial/evidence.py`. Candidate admission lazily caches evidence by exact
+occurrence and checks complete fit without repeatedly rebuilding proposed bundles.
+Its existing scheduling order remains separate from category-round-robin evidence
+order; both the generic builder's duplicate/omission rules and admitted packet bytes
+remain unchanged.
+
+The internal `candidate_policy.plan_articles` now returns `AdmittedCandidates | None`
+instead of an article list. Its `.articles` and `.evidence` supply the sole production
+caller, `application.candidate_review.plan_packet`, directly. Private
+`_admit_candidate` and `_closing_opportunity` helpers retire; the existing fit test
+exercises the planner. The two clock samples and application effect order remain.
+Oldest-unseen/retry protection, intrinsic technical-pending versus aggregate skips,
+closing replacement, laziness and all size limits retain their existing rules.
+Strict request and persisted-proof validators stay separate and unchanged; no schema
+migration, scheduling-policy change or test-count reduction is implied.
