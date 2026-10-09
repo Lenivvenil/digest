@@ -29,7 +29,7 @@ from digest.adapters.storage.candidate_progress import load_candidate_progress
 from digest.adapters.storage.checkpoints import safe_checkpoint_path as _safe
 from digest.config import Config, load_config
 from digest.domain.editorial.candidates import CandidateProgress
-from digest.reading_brief_state import BriefState, Source, checksum, load_source, load_state, state_root
+from digest.reading_brief_state import checksum, load_source, load_state, state_root
 from digest.reading_preparation import (
     ReadingBinding,
     _binding,
@@ -167,7 +167,7 @@ def eligible_handoffs(progress: CandidateProgress, state_dir: Path) -> tuple[str
     return tuple(sorted(found))
 
 
-def _input(handoff: str, state_dir: Path) -> tuple[ReconciliationInput, Source, BriefState]:
+def _input(handoff: str, state_dir: Path) -> ReconciliationInput:
     raw = _json(Path(handoff))
     binding: ReadingBinding = _restore(raw["binding"], ReadingBinding)
     state = load_state(state_dir, binding.identity)
@@ -177,7 +177,7 @@ def _input(handoff: str, state_dir: Path) -> tuple[ReconciliationInput, Source, 
     if saved != {"binding": asdict(binding), "sha256": _hash(asdict(binding))}:
         raise ValueError("technical_checkpoint_evidence")
     source = load_source(state_dir, state)
-    return build_reconciliation_input(source, state), source, state
+    return build_reconciliation_input(source, state)
 
 
 def _candidate_files(state_dir: Path) -> set[Path]:
@@ -212,8 +212,6 @@ def _active() -> model_budget.BudgetSnapshot:
 async def _rebind_unstarted(
     record: operation.OperationRecord,
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     config: Config,
     state_dir: Path,
     claim: model_budget.StageClaim,
@@ -253,14 +251,14 @@ async def _rebind_unstarted(
     archive.parent.mkdir(exist_ok=True)
     path = operation._path(state_dir, record.prepared.article_identity)
     with operation._locked(path):
-        if operation._load(path, value, source, state, config) != record:
+        if operation._load(path, value, config) != record:
             raise ValueError("technical_checkpoint_changed")
         if archive.exists() and archive.read_bytes() != path.read_bytes():
             raise ValueError("technical_checkpoint_changed")
         if not archive.exists():
             archive.write_bytes(path.read_bytes())
         prepared = operation._manifest(
-            value, source, state, config, operation.IntentOrigin(claim.cycle_id, claim.stage, claim.claim_sha)
+            value, config, operation.IntentOrigin(claim.cycle_id, claim.stage, claim.claim_sha)
         )
         rollback[path] = path.read_bytes()
         operation._save(path, operation.OperationRecord(prepared))
@@ -336,7 +334,7 @@ async def _prepare_batch(
     for handoff in handoffs:
         path = Path(handoff)
         try:
-            value, source, state = _input(handoff, state_dir)
+            value = _input(handoff, state_dir)
             path = operation._path(state_dir, value.selection.identity)
             retained = await _remote_file(baseline, _relative(path), deadline)
             if not path.exists():
@@ -346,14 +344,12 @@ async def _prepare_batch(
                 rollback[path] = None
                 prepared = operation.prepare_reconciliation_operation(
                     value,
-                    source,
-                    state,
                     config,
                     state_dir,
                     claim=claim,
                 )
             else:
-                record = operation._load(path, value, source, state, config)
+                record = operation._load(path, value, config)
                 if retained is not None and retained != path.read_bytes():
                     raise ValueError("technical_checkpoint_history_changed")
                 if any(attempt.kind == "generate" and attempt.status == "completed" for attempt in record.attempts):
@@ -364,8 +360,6 @@ async def _prepare_batch(
                     prepared, prior_paths = await _rebind_unstarted(
                         record,
                         value,
-                        source,
-                        state,
                         config,
                         state_dir,
                         claim,
@@ -385,7 +379,7 @@ async def _prepare_batch(
                     Path(handoff),
                     state_dir / "reading_bindings" / f"{value.selection.identity}.json",
                     state_root(state_dir) / f"{value.selection.identity}.json",
-                    state_root(state_dir) / "sources" / f"{state.source_sha256}.json",
+                    state_root(state_dir) / "sources" / f"{value.source_sha256}.json",
                 }
             )
         except TimeoutError:
@@ -437,7 +431,11 @@ async def prepare_current_batch(
         return
     try:
         path = await prepare_batch(
-            progress, config, config_path, reading_deadline(config, started), execution=execution,
+            progress,
+            config,
+            config_path,
+            reading_deadline(config, started),
+            execution=execution,
         )
         if path is not None and (output := os.environ.get("GITHUB_OUTPUT")):
             with Path(output).open("a") as stream:
@@ -479,7 +477,10 @@ def _verify_local(batch: ReconciliationBatch) -> None:
 
 
 async def checkpoint_and_execute(
-    path: Path, config: Config, *, execution: ModelExecution,
+    path: Path,
+    config: Config,
+    *,
+    execution: ModelExecution,
 ) -> tuple[operation.OperationResult, ...]:
     batch = _load_batch(path)
     deadline = time.monotonic() + batch.deadline_unix - time.time()
@@ -523,7 +524,7 @@ async def checkpoint_and_execute(
     runtime.next_request_at = max(runtime.next_request_at, time.monotonic() + batch.not_before_unix - time.time())
     results = []
     for item in batch.items:
-        value, source, state = _input(item.handoff, Path(".cache"))
+        value = _input(item.handoff, Path(".cache"))
         assertion = operation.ExactIntentCheckpoint(
             item.manifest_sha256,
             batch.cycle_id,
@@ -534,8 +535,6 @@ async def checkpoint_and_execute(
         results.append(
             await operation.execute_reconciliation_operation(
                 value,
-                source,
-                state,
                 config,
                 Path(".cache"),
                 deadline=deadline,
@@ -568,9 +567,9 @@ async def finalize_batch(path: Path, config: Config) -> None:
     unstarted = {}
     records = {}
     for item in batch.items:
-        value, source, state = _input(item.handoff, Path(".cache"))
+        value = _input(item.handoff, Path(".cache"))
         operation_path = operation._path(Path(".cache"), item.identity)
-        record = operation._load(operation_path, value, source, state, config)
+        record = operation._load(operation_path, value, config)
         if record.prepared.manifest_sha256 != item.manifest_sha256:
             raise ValueError("technical_checkpoint_changed")
         records[item.identity] = _digest(operation_path.read_bytes())

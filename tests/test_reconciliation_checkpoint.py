@@ -173,9 +173,9 @@ async def test_batched_checkpoint_execute_finalize_persist_and_cache(runtime: Ru
     from digest import reconciliation_operation as operation
 
     for item in checkpoint._load_batch(path).items:
-        value, source, state = checkpoint._input(item.handoff, Path(".cache"))
+        value = checkpoint._input(item.handoff, Path(".cache"))
         result = await operation.execute_reconciliation_operation(
-            value, source, state, runtime.config, Path(".cache"), checkpoint=None, deadline=0, execution=model_execution
+            value, runtime.config, Path(".cache"), checkpoint=None, deadline=0, execution=model_execution
         )
         assert result.cached and result.status == "completed"
     assert len(runtime.calls) == 4
@@ -258,14 +258,12 @@ async def test_fresh_checkout_cannot_execute_or_finalize(runtime: Runtime, monke
     from digest import reconciliation_operation as operation
 
     for item in batch.items:
-        value, source, state = checkpoint._input(item.handoff, Path(".cache"))
+        value = checkpoint._input(item.handoff, Path(".cache"))
         proof = operation.ExactIntentCheckpoint(
             item.manifest_sha256, batch.cycle_id, "prepare", batch.claim_sha, git(clone, "rev-parse", "HEAD")
         )
         result = await operation.execute_reconciliation_operation(
             value,
-            source,
-            state,
             runtime.config,
             Path(".cache"),
             deadline=time.monotonic() + 1000,

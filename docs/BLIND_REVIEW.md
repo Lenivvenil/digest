@@ -645,6 +645,12 @@ The former standalone reading-angle renderer and delivered-marking Python helper
 have been retired; they were not a supported CLI path. Existing source snapshots and
 historical delivered records remain readable. See the
 [internal API compatibility note](../CHANGELOG.md#unreleased--reliability-rehabilitation).
+Reconciliation builds one validated immutable input from the current source and
+completed page state. Offline planning consumes that input; the operation owns saved
+request, admission and completion proof, and parsing validates sparse response content.
+The unused `digest.reading_points` grouped-point prototype is retired with immutable
+historical links in [ADR0010](decisions/0010-group-source-points-with-qualifications.md#retire-the-unused-grouped-point-prototype--2026-10-09).
+Direct Python callers must follow the [ADR0009 migration](decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09).
 Unknown generation outcomes remain held across invocations and route changes.
 The [accounting guide](reading-brief-accounting.md) describes verified profiles,
 optional offline tokenizer preparation and the bounded configured fallback. Unknown

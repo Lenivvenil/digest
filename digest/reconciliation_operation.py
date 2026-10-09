@@ -30,7 +30,7 @@ from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.reading_brief import _can_fallback, _generation_timeout, _routes
-from digest.reading_brief_state import BriefState, Route, Source, checksum, now
+from digest.reading_brief_state import Route, checksum, now
 from digest.reading_brief_tokens import TokenProfileUnavailable
 from digest.reading_reconciliation import (
     RESPONSE_INSTRUCTION,
@@ -40,7 +40,6 @@ from digest.reading_reconciliation import (
     ReconciliationResponse,
     _reconciliation_messages,
     parse_reconciliation_response,
-    verify_reconciliation_input,
 )
 
 OPERATION_VERSION = "article-reconciliation-operation-v1"
@@ -143,12 +142,9 @@ class OperationResult:
 
 def _manifest(
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     config: Config,
     origin: IntentOrigin,
 ) -> PreparedReconciliation:
-    verify_reconciliation_input(value, source, state)
     if (
         not isinstance(origin.cycle_id, str)
         or re.fullmatch(r"[1-9][0-9]{0,29}", origin.cycle_id) is None
@@ -220,8 +216,6 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _load(
     path: Path,
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     config: Config,
 ) -> OperationRecord:
     data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
@@ -231,7 +225,7 @@ def _load(
     if not isinstance(raw, dict) or set(raw) != {"prepared", "execution", "attempts", "raw_response"}:
         raise ValueError("technical_operation_integrity")
     origin = IntentOrigin(**raw["prepared"]["origin"])
-    expected = _manifest(value, source, state, config, origin)
+    expected = _manifest(value, config, origin)
     if raw["prepared"] != json.loads(json.dumps(asdict(expected))):
         raise ValueError("technical_operation_binding")
     execution = ExecutionBinding(**raw["execution"]) if raw["execution"] is not None else None
@@ -270,7 +264,11 @@ def _load(
     completed = any(item.kind == "generate" and item.status == "completed" for item in attempts)
     if (completed and not isinstance(raw["raw_response"], str)) or (not completed and raw["raw_response"] is not None):
         raise ValueError("technical_operation_integrity")
-    return OperationRecord(expected, execution, attempts, raw["raw_response"])
+    record = OperationRecord(expected, execution, attempts, raw["raw_response"])
+    for attempt in attempts:
+        if attempt.kind == "generate":
+            _validate_transport(record, attempt, completed=attempt.status == "completed")
+    return record
 
 
 def _validate_attempt(
@@ -309,17 +307,7 @@ def _validate_attempt(
             raise ValueError("technical_operation_integrity")
         return
     admission = attempt.admission
-    if (
-        attempt.exact_count is not None
-        or admission is None
-        or admission.status != "admitted"
-        or admission.error_class is not None
-        or admission.provider != route.provider
-        or admission.model != route.model
-        or admission.request_sha256 != prepared.requests[attempt.request_index].request_sha256
-        or admission.output_reserve != route.max_output_tokens
-        or admission.input_limit != route.input_tokens
-    ):
+    if attempt.exact_count is not None or admission is None:
         raise ValueError("technical_operation_integrity")
     if route.provider == "gemini":
         count = next(
@@ -344,8 +332,6 @@ def _validate_attempt(
 
 def prepare_reconciliation_operation(
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     config: Config,
     state_dir: Path,
     *,
@@ -358,7 +344,7 @@ def prepare_reconciliation_operation(
     The runtime must reconcile remotely retained article history before using it.
     Replacement, missing-runner recovery and next-cycle policy remain undecided.
     """
-    prepared = _manifest(value, source, state, config, IntentOrigin(claim.cycle_id, claim.stage, claim.claim_sha))
+    prepared = _manifest(value, config, IntentOrigin(claim.cycle_id, claim.stage, claim.claim_sha))
     path = _path(state_dir, prepared.article_identity)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _locked(path):
@@ -408,17 +394,77 @@ def _completion(record: OperationRecord, attempt: OperationAttempt) -> Reconcili
     )
 
 
+def _validate_transport(record: OperationRecord, attempt: OperationAttempt, *, completed: bool) -> None:
+    """Validate operation-owned admission and, for success, exact terminal evidence.
+
+    The decoder checks every generation before cache/hold/fallback decisions. Fresh
+    accepted output takes the same terminal path before it can become completed.
+    """
+    request = record.prepared.requests[attempt.request_index]
+    route = request.route
+    admission = attempt.admission
+    if admission is None or (
+        not isinstance(admission.evidence, dict)
+        or admission.request_sha256 != request.request_sha256
+        or admission.provider != route.provider
+        or admission.model != route.model
+        or type(admission.output_reserve) is not int
+        or admission.output_reserve != route.max_output_tokens
+        or type(admission.input_limit) is not int
+        or admission.input_limit != route.input_tokens
+        or admission.status != "admitted"
+        or admission.error_class is not None
+    ):
+        raise ValueError("technical_operation_integrity")
+    if route.provider == "gemini":
+        if (
+            admission.method != "exact"
+            or type(admission.exact_count) is not int
+            or not 0 < admission.exact_count <= route.input_tokens
+            or admission.input_estimate is not None
+            or admission.evidence
+        ):
+            raise ValueError("technical_operation_integrity")
+    else:
+        count = admission.evidence.get("local_input_count")
+        if type(count) is not int or count <= 0:
+            raise ValueError("technical_operation_integrity")
+        expected = source_admission.estimate_record(route, count)
+        if (
+            admission.method != "estimated"
+            or admission.exact_count is not None
+            or type(admission.input_estimate) is not int
+            or admission.input_estimate != expected["input_estimate"]
+            or admission.input_estimate > route.input_tokens
+            or admission.evidence != expected
+            or any(type(admission.evidence[key]) is not type(item) for key, item in expected.items())
+        ):
+            raise ValueError("technical_operation_integrity")
+    if completed and (
+        attempt.finish_reason not in {"STOP", "stop"}
+        or not isinstance(record.raw_response, str)
+        or attempt.response_sha256 != hashlib.sha256(record.raw_response.encode()).hexdigest()
+    ):
+        raise ValueError("technical_operation_integrity")
+
+
 def _parse(
     record: OperationRecord,
     attempt: OperationAttempt,
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
 ) -> ReconciliationResponse:
-    if attempt.admission is None or record.raw_response is None:
-        raise ValueError("technical_operation_integrity")
-    return parse_reconciliation_response(
-        record.raw_response, value, source, state, admission=attempt.admission, completion=_completion(record, attempt)
+    assert attempt.admission is not None and record.raw_response is not None
+    content = parse_reconciliation_response(record.raw_response, value)
+    return ReconciliationResponse(
+        value,
+        _completion(record, attempt),
+        json.dumps(asdict(attempt.admission), ensure_ascii=False, sort_keys=True),
+        record.raw_response,
+        content.selected_span_ids,
+        content.qualification_span_ids,
+        content.reading_angle,
+        content.angle_span_ids,
+        content.abstain,
     )
 
 
@@ -526,8 +572,6 @@ async def _generate(
     deadline: float,
     admission: source_admission.RequestAdmission,
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     *,
     execution: ModelExecution,
 ) -> ReconciliationResponse:
@@ -570,7 +614,8 @@ async def _generate(
     _save(path, record)  # A crash or invalid output cannot buy another generation.
     record.raw_response = text
     try:
-        result = _parse(record, attempt, value, source, state)
+        _validate_transport(record, attempt, completed=True)
+        result = _parse(record, attempt, value)
     except (ValueError, TypeError, KeyError):
         attempt.status = "accepted_invalid"
         attempt.error_class = "technical_invalid_output"
@@ -588,8 +633,6 @@ async def _advance(
     config: Config,
     deadline: float,
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     *,
     execution: ModelExecution,
 ) -> OperationResult:
@@ -612,7 +655,14 @@ async def _advance(
         try:
             admission = await _admit(path, record, index, call_config, messages, deadline, execution=call_execution)
             response = await _generate(
-                path, record, index, call_config, messages, deadline, admission, value, source, state,
+                path,
+                record,
+                index,
+                call_config,
+                messages,
+                deadline,
+                admission,
+                value,
                 execution=call_execution,
             )
             return OperationResult("completed", response)
@@ -649,8 +699,6 @@ async def _advance(
 
 async def execute_reconciliation_operation(
     value: ReconciliationInput,
-    source: Source,
-    state: BriefState,
     config: Config,
     state_dir: Path,
     *,
@@ -670,13 +718,13 @@ async def execute_reconciliation_operation(
         if not path.is_file():
             return OperationResult("pending", error_class="technical_operation_missing")
         with _locked(path):
-            record = _load(path, value, source, state, config)
+            record = _load(path, value, config)
             prepared = record.prepared
             completed = [item for item in record.attempts if item.kind == "generate" and item.status == "completed"]
             if completed:
                 if len(completed) != 1:
                     raise ValueError("technical_operation_integrity")
-                return OperationResult("completed", _parse(record, completed[0], value, source, state), cached=True)
+                return OperationResult("completed", _parse(record, completed[0], value), cached=True)
             if any(item.kind == "generate" and item.status != "definite_failed" for item in record.attempts):
                 return OperationResult("pending", error_class="technical_generation_held")
             if (
@@ -691,7 +739,7 @@ async def execute_reconciliation_operation(
                 return OperationResult("pending", error_class="technical_checkpoint_transition_required")
             record.execution = binding
             _save(path, record)
-            return await _advance(path, record, config, deadline, value, source, state, execution=execution)
+            return await _advance(path, record, config, deadline, value, execution=execution)
     except model_budget.ModelBudgetError:
         return OperationResult("pending", error_class="technical_request_budget")
     except (OSError, ValueError, TypeError, KeyError) as exc:
