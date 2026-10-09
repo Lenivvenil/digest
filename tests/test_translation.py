@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import json
+import os
 import textwrap
 from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.presentation import primary_presentation as _primary_presentation
+from digest.application.review import run_primary_review
 from digest.config import ProviderConfig, TranslationConfig, load_config
 from digest.radar.collector import article_hash
 from digest.radar.summarizer import ArticleSummary
 from digest.translation import TranslationResult, _parse, translate_fields, translate_primary_presentation
-from scripts.review_fixture import fixture_config
+from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 from tests.test_config import MINIMAL_CONFIG
 
 
@@ -67,6 +70,84 @@ async def test_absent_translation_does_not_touch_models_or_cache(tmp_path: Path)
     assert result.fields == fields and result.status == "disabled" and not (tmp_path / "absent").exists()
     call.assert_not_called()
     assert execution._state is None
+
+
+@pytest.mark.asyncio
+async def test_primary_review_pacing_carries_into_translation_without_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("DIGEST_MODEL_BUDGET_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-offline-key")
+    execution = ModelExecution()
+    cfg = config()
+    assert not cfg.reading_brief.enabled
+    cfg.review.primary = cfg.review.secondary
+    cfg.translation = replace(cfg.translation, model=cfg.review.primary.model)
+    cfg.llm.min_request_interval_seconds = 20
+    clock = [100.0]
+    waits: list[float] = []
+    requests: list[tuple[float, httpx.Request]] = []
+    client_class = httpx.AsyncClient
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+        clock[0] += delay
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append((clock[0], request))
+        payload = json.loads(request.content)
+        if len(requests) == 1:
+            text, _ = await fixture_response(
+                None,
+                payload["messages"],
+                cfg,
+                provider_override=ProviderConfig(cfg.review.primary.provider, cfg.review.primary.model),
+            )
+            clock[0] += 7.5
+        else:
+            text = '{"translations":[{"id":"a","text":"Только участвующие клиенты."}]}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": text}, "finish_reason": "stop"}]})
+
+    with (
+        patch("digest.llm.time.monotonic", side_effect=lambda: clock[0]),
+        patch("digest.llm.asyncio.sleep", side_effect=sleep),
+        patch(
+            "digest.llm.httpx.AsyncClient",
+            side_effect=lambda: client_class(
+                transport=httpx.MockTransport(respond),
+                trust_env=False,
+            ),
+        ),
+    ):
+        review = await run_primary_review(fixture_articles(), cfg, execution=execution)
+        assert review.report.reviews[0].status == "ok" and clock[0] == 107.5
+        translated = await translate_fields(
+            {"a": "Only participating clients."},
+            cfg,
+            tmp_path,
+            execution=execution,
+        )
+
+    assert translated.status == "translated" and translated.calls == 1
+    assert translated.fields == {"a": "Только участвующие клиенты."}
+    assert [started for started, _ in requests] == [100.0, 120.0]
+    assert waits == [12.5]
+    assert execution.request_state(cfg.llm).requests_attempted == 2
+    assert [str(request.url) for _, request in requests] == [
+        "https://api.groq.com/openai/v1/chat/completions",
+    ] * 2
+    payloads = [json.loads(request.content) for _, request in requests]
+    assert [payload["model"] for payload in payloads] == [cfg.review.primary.model, cfg.translation.model]
+    assert [payload["temperature"] for payload in payloads] == [0.2, 0]
+    assert [payload["max_completion_tokens"] for payload in payloads] == [
+        cfg.review.max_output_tokens,
+        cfg.translation.max_output_tokens,
+    ]
+    assert payloads[0]["reasoning_effort"] == "low" and payloads[0]["response_format"]["type"] == "json_schema"
+    assert "reasoning_effort" not in payloads[1] and "response_format" not in payloads[1]
 
 
 def test_structural_contract_rejects_changed_numbers_urls_quotes_and_missing_ids() -> None:

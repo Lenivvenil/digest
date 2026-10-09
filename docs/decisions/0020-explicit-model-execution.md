@@ -1,6 +1,7 @@
 # 0020. Separate model execution ownership from configuration
 
 Status: implementation record for the scoped #147-B migration on 2026-10-07.
+Primary-review ownership amended on 2026-10-09 by #215, as recorded below.
 Merge and runtime rollout evidence are tracked in #147; editorial acceptance is separate.
 
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-b-explicit-model-execution),
@@ -31,16 +32,16 @@ provider adapter rewrite or a new dependency-injection framework.
 ## Entrypoints and copy policy
 
 Applications create an execution once and pass it through model-consuming work.
-The following matrix deliberately preserves the prior behavior, including its
-different fresh/shared branches:
+The following matrix records execution ownership. The #215 amendment supersedes
+the original fresh-state branch for primary review with reading disabled;
+the remaining fresh/shared policies are preserved:
 
 | Operation | Holder and state policy |
 | --- | --- |
 | Main prepared/direct run | `application.execution._run` creates a lazy holder after `load_config`; preparation and legacy handoffs explicitly carry it. Public `main.run` and `_run` signatures stay unchanged. |
 | Config-only replacement | Pass the identical holder, including source-portfolio and presentation-language variants. |
 | Nested LLM replacement | Select a fresh holder unless the specific sharing exception below applies. There is no automatic rule inferred from object identity. |
-| Primary review, reading disabled | Fresh holder, with no caller cooldown, cap, count or pacing state. Primary and possible secondary use that same new holder. |
-| Primary review, reading enabled | Initialize caller settings, then give review a separate holder sharing that state. |
+| Primary review, with or without reading | Initialize caller settings, then give review a separate holder sharing that state. Primary and possible secondary use that same derived holder, with zero-retry settings. |
 | Translation | Initialize caller before shallow-copying its LLM settings; give translation a separate sharing holder and keep its zero-retry policy. |
 | Reading and reconciliation operations | Call `request_budget_remaining` first, then derive a separate sharing holder and shallow settings copy. Existing route-specific pacing remains dynamic. |
 | RSS evidence, translation disabled and no full-source evidence | Fresh holder; initialize from the bounded settings (concurrency 1, interval 65 seconds). |
@@ -49,11 +50,37 @@ different fresh/shared branches:
 | Review trial/resume, post-delivery and reconciliation CLIs | One fresh lazy holder for each invocation, explicitly passed to the internal operation. Settings load/route restriction precede first state access. |
 | Approved-source reload | `apply_pending_approvals` returns both settings and execution. No decisions or disabled application returns both original objects. Any actual `load_config` call returns a fresh holder, even if settings do not change. |
 
-Initialization timing stays at the existing points. Accepted preparation and
+Other initialization timing stays at the existing points. Accepted preparation and
 cached review recovery do not acquire a model allowance merely because an owner
 exists. Semaphore capacity is sampled on initialization and is not resized after
 settings mutation. Same-holder aliases observe the same loop replacement; separate
 holders that shared a state replace their own slots independently on a later loop.
+
+### Primary review pacing correction — 2026-10-09
+
+[#215](https://github.com/Lenivvenil/digest/issues/215) replaces the original
+reading-disabled fresh execution with `execution.share_initialized(config.llm)`.
+Review and later translation now share the caller's same-loop semaphore, spacing
+lock, next/last request timestamps, provider-plus-model cooldowns, local request
+cap and spent-attempt count. This intentionally changes admission: an existing
+caller cap or cooldown may reduce the attempts review can make. It is a correction,
+not behavior parity with the old branch. The settings clone keeps `max_retries=0`,
+and primary/fallback retain one derived holder without adding a model allowance.
+
+Sharing remains local to one application execution and event loop. Independent
+discovery, review-resume and post-delivery invocations keep their own ownership;
+shared holders still rebind independently on later loops. Accepted/cache replay
+and durable reservation ordering do not change. Local sharing neither enables
+an unconfigured durable ledger nor establishes cross-process pacing.
+
+The offline real-owner regression runs primary review followed by translation,
+with reading disabled and durable-budget environment absent. A review starting
+at synthetic t=100 and finishing at 107.5 previously allowed immediate translation
+at 107.5; a configured 20-second interval now requires one 12.5-second wait until
+t=120. Both successful runs dispatch exactly two requests, with each request's
+payload unchanged by the correction.
+This proves the configured pacing boundary, not the cause of an observed HTTP 429
+or live provider, translation-fidelity or editorial acceptance.
 
 ## Accounting and deadlines
 

@@ -183,12 +183,9 @@ async def run_primary_review(
         bundle, settings, config.radar.language, sources=config.sources, closing=getattr(config, "closing", None)
     )
     prompt_hash = review_prompt_hash(messages)
-    # Delivery starts a fresh execution unless reading shares the existing request budget.
+    # Review and later translation share caller pacing, cooldowns and request budget.
     delivery_config = replace(config, llm=replace(config.llm, max_retries=0))
-    if getattr(getattr(config, "reading_brief", None), "enabled", False):
-        delivery_execution = execution.share_initialized(config.llm)
-    else:
-        delivery_execution = ModelExecution()
+    delivery_execution = execution.share_initialized(config.llm)
     primary = await _review_slot(
         "primary", settings.primary, bundle, messages, delivery_config, execution=delivery_execution
     )
