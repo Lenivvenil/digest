@@ -88,7 +88,6 @@ agent-only design.
 │   ├── config.py            # config loading and validation
 │   ├── llm.py               # LLM provider abstraction (Groq, Gemini, DeepSeek)
 │   ├── filters.py           # blocklist keyword filtering
-│   ├── _dns_pinning.py      # URL validation and DNS pinning for feed/article acquisition
 │   ├── _sanitize.py         # HTML/text sanitization for feed content
 │   ├── _util.py             # atomic_json_write and other shared utilities
 │   ├── radar/               # Phase 1: Collection & Summarization
@@ -102,7 +101,7 @@ agent-only design.
 │   │   └── sources/                # multi-platform search adapters
 │   │       ├── arxiv.py, devto.py, hackernews.py, lobsters.py, reddit.py
 │   ├── presentation/        # Pure publication copy, escaping and chunk coverage
-│   ├── adapters/http/       # Optional bounded signal-liveness checks
+│   ├── adapters/http/       # Shared bounded public acquisition and optional signal liveness
 │   ├── adapters/models/     # Explicit lazy model-execution state
 │   ├── adapters/telegram/   # Concrete Telegram protocols
 │   ├── adapters/storage/    # Exact persisted records, path guards and local writes

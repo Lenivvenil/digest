@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import socket as _socket
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from digest._dns_pinning import ValidatedURL as _ValidatedURL
+from digest.adapters.http.public_fetch import UnsafePublicURL
 from digest.config import (
     Config,
     FiltersConfig,
@@ -143,39 +142,13 @@ def _make_config(
     )
 
 
-def _make_fake_validated(url: str) -> _ValidatedURL:
-    """Return a fake ValidatedURL for any URL (used in tests to avoid real DNS)."""
-    from urllib.parse import urlparse
-
-    hostname = urlparse(url).hostname or "example.com"
-    return _ValidatedURL(
-        url=url,
-        hostname=hostname,
-        pinned_addrinfos=[(_socket.AF_INET, _socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))],
-    )
-
-
 @pytest.fixture(autouse=True)
-def _mock_validate_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch _validate_url in collector to avoid real DNS lookups in tests."""
+def _offline_public_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collector behavior tests mock acquisition, never its safety decision."""
     monkeypatch.setattr(
-        "digest.radar.collector._validate_url",
-        lambda url: _make_fake_validated(url),
+        "digest.radar.collector.fetch_public",
+        AsyncMock(side_effect=AssertionError("This test must provide a public acquisition result")),
     )
-    monkeypatch.setattr(
-        "digest.radar.collector._pin_dns",
-        lambda hostname, addrinfos: _NullCtx(),
-    )
-
-
-class _NullCtx:
-    """No-op context manager used by _mock_validate_url autouse fixture."""
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, *_: object) -> None:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -305,10 +278,10 @@ async def test_collect_rss_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     config = _make_config(sources=[make_source()])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert "Tech" in result
@@ -330,10 +303,10 @@ async def test_collect_atom_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     config = _make_config(sources=[make_source(name="Atom", url="https://atom.example.com/feed")])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(ATOM_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert "Tech" in result
@@ -348,10 +321,10 @@ async def test_collect_deduplication(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     config = _make_config(sources=[make_source()])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         first, first_cache = await collect(config)
         save_dedup_cache(first_cache)
         second, _ = await collect(config)
@@ -372,14 +345,14 @@ async def test_collect_malformed_feed_continues(tmp_path: Path, monkeypatch: pyt
 
     call_count = 0
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if "bad" in url:
             return make_http_response(MALFORMED_XML, status_code=200)
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert call_count == 2
@@ -396,12 +369,12 @@ async def test_collect_http_error_continues(tmp_path: Path, monkeypatch: pytest.
     bad_source = make_source(name="Bad", url="https://bad.example.com/feed")
     config = _make_config(sources=[good_source, bad_source])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         if "bad" in url:
             return make_http_response(b"", status_code=500)
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) > 0
@@ -415,10 +388,10 @@ async def test_collect_all_feeds_http_error_raises(tmp_path: Path, monkeypatch: 
 
     config = _make_config(sources=[make_source()])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(b"", status_code=500)
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
 
@@ -435,12 +408,12 @@ async def test_collect_timeout_continues(tmp_path: Path, monkeypatch: pytest.Mon
     bad_source = make_source(name="Bad", url="https://bad.example.com/feed")
     config = _make_config(sources=[good_source, bad_source])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         if "bad" in url:
             raise _httpx.TimeoutException("timed out")
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) > 0
@@ -456,10 +429,10 @@ async def test_collect_all_feeds_timeout_raises(tmp_path: Path, monkeypatch: pyt
 
     config = _make_config(sources=[make_source()])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         raise _httpx.TimeoutException("timed out")
 
-    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
 
@@ -472,10 +445,10 @@ async def test_collect_respects_max_per_category(tmp_path: Path, monkeypatch: py
 
     config = _make_config(sources=[make_source()], max_articles_per_category=1)
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(RSS_SAMPLE.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) == 1
@@ -514,13 +487,13 @@ async def test_collect_respects_total_budget(tmp_path: Path, monkeypatch: pytest
 
     call_count = 0
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         nonlocal call_count
         idx = call_count
         call_count += 1
         return make_http_response(make_unique_rss(idx))
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     total = sum(len(v) for v in result.values())
@@ -550,10 +523,10 @@ async def test_collect_filters_old_articles(tmp_path: Path, monkeypatch: pytest.
 
     config = _make_config(sources=[make_source()])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(old_rss.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert result.get("Tech", []) == []
@@ -585,11 +558,11 @@ async def test_collect_groups_by_category(tmp_path: Path, monkeypatch: pytest.Mo
             </rss>
         """).encode()
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         domain = "tech" if "t.example" in url else "finance"
         return make_http_response(make_rss_for(domain))
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert "Tech" in result
@@ -679,11 +652,11 @@ async def test_collect_respects_priority(tmp_path: Path, monkeypatch: pytest.Mon
     # Budget=6 (max_per_cat=6, 1 category), weights=6 → High=5 slots, Low=1 slot
     config = _make_config(sources=[high, low], max_articles_per_category=6)
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         prefix = "High" if "high" in url else "Low"
         return make_http_response(make_multi_rss(prefix, count=5))
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     high_count = sum(1 for a in result.get("Tech", []) if a.source == "High")
@@ -724,12 +697,12 @@ async def test_collect_redistributes_unused_slots(tmp_path: Path, monkeypatch: p
     # Budget = max_per_cat * 1 category = 5
     config = _make_config(sources=[quiet, active], max_articles_per_category=5)
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         if "quiet" in url:
             return make_http_response(make_multi_rss("Quiet", count=0))
         return make_http_response(make_multi_rss("Active", count=5))
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     total = sum(len(v) for v in result.values())
@@ -771,10 +744,10 @@ async def test_collect_blocklist_filters_by_title(tmp_path: Path, monkeypatch: p
 
     config = _make_config(sources=[make_source()], blocklist_keywords=["trump", "tariff"])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(blocked_rss.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     articles = result.get("Tech", [])
@@ -811,10 +784,10 @@ async def test_collect_blocklist_filters_by_description(tmp_path: Path, monkeypa
 
     config = _make_config(sources=[make_source()], blocklist_keywords=["scam"])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(blocked_rss.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     articles = result.get("Tech", [])
@@ -844,10 +817,10 @@ async def test_collect_blocklist_case_insensitive(tmp_path: Path, monkeypatch: p
 
     config = _make_config(sources=[make_source()], blocklist_keywords=["crypto"])
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(mixed_case_rss.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert result.get("Tech", []) == []
@@ -890,14 +863,14 @@ async def test_fetch_feed_retries_503(tmp_path: Path, monkeypatch: pytest.Monkey
     config = _make_config(sources=[make_source()])
     call_count = 0
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return make_http_response(b"", 503)
         return make_http_response(make_rss_sample().encode())
 
-    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert call_count == 2
@@ -916,14 +889,14 @@ async def test_fetch_feed_retries_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     config = _make_config(sources=[make_source()])
     call_count = 0
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             raise _httpx.TimeoutException("timed out")
         return make_http_response(make_rss_sample().encode())
 
-    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert call_count == 2
@@ -941,13 +914,13 @@ async def test_fetch_feed_no_retry_404(tmp_path: Path, monkeypatch: pytest.Monke
     config = _make_config(sources=[source_404, source_ok])
     calls: list[str] = []
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         calls.append(url)
         if "bad" in url:
             return make_http_response(b"", 404)
         return make_http_response(make_rss_sample().encode())
 
-    with patch("asyncio.sleep"), patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("asyncio.sleep"), patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     bad_calls = [c for c in calls if "bad" in c]
@@ -981,7 +954,7 @@ async def test_fetch_feed_429_retry_after_honoured(tmp_path: Path, monkeypatch: 
     config = _make_config(sources=[source])
     calls: list[str] = []
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         calls.append(url)
         if len(calls) == 1:
             return make_http_response_with_headers(b"", 429, {"Retry-After": "5"})
@@ -994,7 +967,7 @@ async def test_fetch_feed_429_retry_after_honoured(tmp_path: Path, monkeypatch: 
 
     with (
         patch("asyncio.sleep", side_effect=fake_sleep),
-        patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)),
+        patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)),
     ):
         result, _ = await collect(config)
 
@@ -1013,7 +986,7 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(tmp_path: Path, monkeypa
     config = _make_config(sources=[source])
     calls: list[str] = []
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         calls.append(url)
         return make_http_response_with_headers(b"", 429, {"Retry-After": "600"})
 
@@ -1024,7 +997,7 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(tmp_path: Path, monkeypa
 
     with (
         patch("asyncio.sleep", side_effect=fake_sleep),
-        patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)),
+        patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)),
     ):
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
@@ -1035,30 +1008,18 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(tmp_path: Path, monkeypa
 
 @pytest.mark.asyncio
 async def test_fetch_feed_ssrf_unsafe_url_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """_fetch_feed returns None immediately when _validate_url returns None."""
+    """An unsafe acquisition fails the source without retrying."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    source = make_source(name="Internal", url="http://192.168.1.1/feed.rss")
-    config = _make_config(sources=[source])
-    calls: list[str] = []
-
-    monkeypatch.setattr("digest.radar.collector._validate_url", lambda url: None)
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:  # pragma: no cover
-        calls.append(url)
-        return make_http_response(make_rss_sample().encode())
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    config = _make_config(sources=[make_source(name="Internal", url="http://192.168.1.1/feed.rss")])
+    with patch("digest.radar.collector.fetch_public", AsyncMock(side_effect=UnsafePublicURL())) as fetch:
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
-
-    assert calls == []
+    assert fetch.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_fetch_feed_ssrf_valid_url_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """_fetch_feed fetches URLs that pass SSRF validation (autouse mock covers DNS)."""
+    """The collector uses the bounded public acquisition operation for each feed."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
@@ -1066,11 +1027,11 @@ async def test_fetch_feed_ssrf_valid_url_proceeds(tmp_path: Path, monkeypatch: p
     config = _make_config(sources=[source])
     calls: list[str] = []
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         calls.append(url)
         return make_http_response(make_rss_sample().encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert calls == ["https://example.com/feed.rss"]
@@ -1112,10 +1073,10 @@ async def test_collect_per_source_recency_hours(tmp_path: Path, monkeypatch: pyt
         </rss>
     """)
 
-    async def fake_get(url: str, timeout: float) -> MagicMock:
+    async def fake_get(url: str, timeout: float, **_kwargs: object) -> MagicMock:
         return make_http_response(old_rss.encode())
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("digest.radar.collector.fetch_public", new=AsyncMock(side_effect=fake_get)):
         result, _ = await collect(config)
 
     assert len(result.get("Tech", [])) == 1
@@ -1154,7 +1115,7 @@ async def test_feedback_allocation_changes_candidates_seen_by_review(
     config = _make_config(sources=sources, max_articles_per_category=3)
     now = datetime.now(timezone.utc)
 
-    async def fetched(_client, source):
+    async def fetched(source):
         return [
             Article(f"{source.name}{i}", f"{source.url}/{i}", "Evidence", source.name, source.category, now)
             for i in range(3)
@@ -1252,7 +1213,7 @@ async def test_inventory_reports_parser_bound_without_inventing_candidates(
     )
     rss = f"<rss version='2.0'><channel><title>Feed</title>{items}</channel></rss>".encode()
     inventory = CollectionInventory()
-    with patch("httpx.AsyncClient.get", AsyncMock(return_value=make_http_response(rss))):
+    with patch("digest.radar.collector.fetch_public", AsyncMock(return_value=make_http_response(rss))):
         grouped, _ = await collect(config, inventory=inventory)
     assert sum(map(len, grouped.values())) == 1
     assert len(inventory.observations) == FEED_ENTRY_LIMIT
@@ -1260,3 +1221,63 @@ async def test_inventory_reports_parser_bound_without_inventing_candidates(
     assert inventory.sources[0].omitted_entry_count == 3
     assert inventory.sources[0].skipped_empty_entries == 0
     assert sum(map(len, inventory.eligible_articles().values())) == FEED_ENTRY_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_aggregate_timeout_retries_with_a_fresh_bounded_acquisition_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import call
+
+    from digest.radar.collector import USER_AGENT
+
+    monkeypatch.chdir(tmp_path)
+    source = make_source()
+    with (
+        patch("digest.radar.collector.fetch_public", AsyncMock(
+            side_effect=[TimeoutError(), make_http_response(RSS_SAMPLE.encode())],
+        )) as fetch,
+        patch("digest.radar.collector.asyncio.sleep", AsyncMock()) as sleep,
+    ):
+        result, _ = await collect(_make_config(sources=[source]))
+    assert len(result["Tech"]) == 2
+    assert fetch.await_args_list == [call(
+        source.url, timeout=15.0, max_bytes=2 * 1024 * 1024, max_redirects=3,
+        headers={"User-Agent": USER_AGENT},
+    )] * 2
+    sleep.assert_awaited_once_with(2)
+
+
+@pytest.mark.asyncio
+async def test_collection_retains_twenty_way_acquisition_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    monkeypatch.chdir(tmp_path)
+    sources = [make_source(name=f"source-{index}", url=f"https://example.com/{index}") for index in range(21)]
+    entered: list[str] = []
+    capacity_reached = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(url: str, **_kwargs: object) -> MagicMock:
+        entered.append(url)
+        if len(entered) == 20:
+            capacity_reached.set()
+        await release.wait()
+        return make_http_response(RSS_SAMPLE.encode())
+
+    with patch("digest.radar.collector.fetch_public", AsyncMock(side_effect=fetch)):
+        task = asyncio.create_task(collect(_make_config(sources=sources)))
+        try:
+            await asyncio.wait_for(capacity_reached.wait(), timeout=1)
+            await asyncio.sleep(0)
+            assert len(entered) == 20
+            release.set()
+            result, _ = await asyncio.wait_for(task, timeout=1)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+    assert len(entered) == 21
+    assert result["Tech"]

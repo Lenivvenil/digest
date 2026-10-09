@@ -11,14 +11,18 @@ from digest.irritator.validator import validate_signals, validate_signals_async
 from tests.factories import make_signal as _make_signal
 
 
-def _mock_client(status: int | None = 200, raises: Exception | None = None) -> MagicMock:
+def _mock_client() -> MagicMock:
+    """The legacy supplied client must not be used for public acquisition."""
     client = MagicMock(spec=httpx.AsyncClient)
-    if raises is not None:
-        client.head = AsyncMock(side_effect=raises)
-    else:
-        response = httpx.Response(status, request=httpx.Request("HEAD", "https://example.com"))
-        client.head = AsyncMock(return_value=response)
+    client.head = AsyncMock(side_effect=AssertionError("Legacy client must not bypass public acquisition"))
     return client
+
+
+@pytest.fixture(autouse=True)
+def mock_fetch(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    fetch = AsyncMock(return_value=httpx.Response(200))
+    monkeypatch.setattr("digest.adapters.http.signal_liveness.fetch_public", fetch)
+    return fetch
 
 
 class TestValidateSignals:
@@ -52,72 +56,87 @@ class TestValidateSignals:
 
 @pytest.mark.asyncio
 class TestValidateSignalsAsync:
-    async def test_check_liveness_false_skips_head(self) -> None:
+    async def test_check_liveness_false_skips_head(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        client = _mock_client(404)
+        mock_fetch.return_value = httpx.Response(404)
+        client = _mock_client()
         result = await validate_signals_async(signals, [], client, check_liveness=False)
         assert len(result) == 1
+        mock_fetch.assert_not_called()
         client.head.assert_not_called()
 
-    async def test_liveness_200_keeps_signal(self) -> None:
+    async def test_liveness_200_keeps_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(200), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(200)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert len(result) == 1
 
-    async def test_liveness_503_keeps_signal(self) -> None:
+    async def test_liveness_503_keeps_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(503), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(503)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert len(result) == 1
 
-    async def test_liveness_410_drops_signal(self) -> None:
+    async def test_liveness_410_drops_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(410), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(410)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert result == []
 
-    async def test_liveness_401_keeps_signal(self) -> None:
+    async def test_liveness_401_keeps_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(401), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(401)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert len(result) == 1
 
-    async def test_liveness_429_keeps_signal(self) -> None:
+    async def test_liveness_429_keeps_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(429), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(429)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert len(result) == 1
 
-    async def test_liveness_invalid_url_drops_signal(self) -> None:
+    async def test_liveness_invalid_url_drops_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        client = _mock_client(raises=httpx.InvalidURL("bad url"))
+        mock_fetch.side_effect = httpx.InvalidURL("bad url")
+        client = _mock_client()
         result = await validate_signals_async(signals, [], client, check_liveness=True)
         assert result == []
 
-    async def test_liveness_timeout_drops_signal(self) -> None:
+    async def test_liveness_timeout_drops_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        client = _mock_client(raises=httpx.TimeoutException("timeout"))
+        mock_fetch.side_effect = httpx.TimeoutException("timeout")
+        client = _mock_client()
         result = await validate_signals_async(signals, [], client, check_liveness=True)
         assert result == []
 
-    async def test_liveness_transport_error_drops_signal(self) -> None:
+    async def test_liveness_transport_error_drops_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        client = _mock_client(raises=httpx.TransportError("connect failed"))
+        mock_fetch.side_effect = httpx.TransportError("connect failed")
+        client = _mock_client()
         result = await validate_signals_async(signals, [], client, check_liveness=True)
         assert result == []
 
-    async def test_liveness_405_keeps_signal(self) -> None:
+    async def test_liveness_405_keeps_signal(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(405), check_liveness=True)
+        mock_fetch.return_value = httpx.Response(405)
+        result = await validate_signals_async(signals, [], _mock_client(), check_liveness=True)
         assert len(result) == 1
 
-    async def test_blocklist_applied_before_liveness(self) -> None:
+    async def test_blocklist_applied_before_liveness(self, mock_fetch: AsyncMock) -> None:
         signals = [_make_signal("https://example.com/a", title="BLOCKED content")]
-        client = _mock_client(200)
+        mock_fetch.return_value = httpx.Response(200)
+        client = _mock_client()
         result = await validate_signals_async(signals, ["blocked"], client, check_liveness=True)
         assert result == []
+        mock_fetch.assert_not_called()
         client.head.assert_not_called()
 
-    async def test_empty_signals_returns_empty(self) -> None:
-        client = _mock_client(200)
+    async def test_empty_signals_returns_empty(self, mock_fetch: AsyncMock) -> None:
+        mock_fetch.return_value = httpx.Response(200)
+        client = _mock_client()
         result = await validate_signals_async([], [], client, check_liveness=True)
         assert result == []
+        mock_fetch.assert_not_called()
         client.head.assert_not_called()
 
 
@@ -191,9 +210,9 @@ def test_first_seen_url_stays_consumed_after_blocklist_filtering() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_url_parse_error_propagates_before_any_head() -> None:
+async def test_malformed_url_parse_error_propagates_before_any_head(mock_fetch: AsyncMock) -> None:
     signals = [_make_signal("https://[invalid")]
-    client = _mock_client(200)
+    client = _mock_client()
     with pytest.raises(ValueError, match="Invalid IPv6 URL"):
         validate_signals(signals, [])
     with pytest.raises(ValueError, match="Invalid IPv6 URL"):
@@ -203,9 +222,10 @@ async def test_malformed_url_parse_error_propagates_before_any_head() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [ValueError("bad URL"), RuntimeError("unexpected client failure")])
-async def test_head_retains_existing_error_boundary(error: Exception) -> None:
+async def test_head_retains_existing_error_boundary(error: Exception, mock_fetch: AsyncMock) -> None:
     signals = [_make_signal("https://example.com/a")]
-    client = _mock_client(raises=error)
+    mock_fetch.side_effect = error
+    client = _mock_client()
     if isinstance(error, ValueError):
         assert await validate_signals_async(signals, [], client, check_liveness=True) == []
     else:
@@ -214,7 +234,7 @@ async def test_head_retains_existing_error_boundary(error: Exception) -> None:
 
 
 @pytest.mark.asyncio
-async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_options() -> None:
+async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_options(mock_fetch: AsyncMock) -> None:
     import asyncio
     from unittest.mock import call
 
@@ -225,7 +245,7 @@ async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_op
     capacity_reached = asyncio.Event()
     all_entered = asyncio.Event()
 
-    async def head(url: str, *, follow_redirects: bool, timeout: float) -> httpx.Response:
+    async def head(url: str, *, method: str, max_bytes: int, timeout: float) -> httpx.Response:
         index = int(url.rsplit("/", 1)[1])
         entered.append(index)
         if len(entered) == 10:
@@ -237,7 +257,7 @@ async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_op
         return httpx.Response(404 if index == 2 else 403, request=httpx.Request("HEAD", url))
 
     client = _mock_client()
-    client.head = AsyncMock(side_effect=head)
+    mock_fetch.side_effect = head
     task = asyncio.create_task(validate_signals_async(signals, [], client, check_liveness=True))
     try:
         await asyncio.wait_for(capacity_reached.wait(), timeout=1)
@@ -257,4 +277,25 @@ async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_op
             await asyncio.gather(task, return_exceptions=True)
     assert completed != list(range(12))
     assert result == [signal for index, signal in enumerate(signals) if index != 2]
-    assert client.head.await_args_list == [call(signal.url, follow_redirects=False, timeout=5.0) for signal in signals]
+    assert mock_fetch.await_args_list == [
+        call(signal.url, method="HEAD", timeout=5.0, max_bytes=0) for signal in signals
+    ]
+    client.head.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_liveness_aggregate_deadline_drops_signal(mock_fetch: AsyncMock) -> None:
+    mock_fetch.side_effect = TimeoutError()
+    assert await validate_signals_async([_make_signal()], [], _mock_client(), check_liveness=True) == []
+
+
+@pytest.mark.asyncio
+async def test_supplied_client_cannot_bypass_public_destination_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.adapters.http.public_fetch import fetch_public
+
+    monkeypatch.setattr("digest.adapters.http.signal_liveness.fetch_public", fetch_public)
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.head = AsyncMock(return_value=httpx.Response(200))
+    signals = [_make_signal("http://127.0.0.1/private")]
+    assert await validate_signals_async(signals, [], client, check_liveness=True) == []
+    client.head.assert_not_called()

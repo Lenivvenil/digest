@@ -58,8 +58,8 @@ def sanitize_article(
     """Return sanitized (title, description, source) safe for use in LLM prompts.
 
     Applies injection-pattern removal and enforces maximum field lengths.
-    The link field is not sanitized here — it is already validated by
-    _dns_pinning.validate_url() during collection.
+    The link field is not sanitized here. Feed bodies and article links remain
+    untrusted; public-address validation applies when a URL is actually fetched.
     """
     return (
         _sanitize_field(title, _TITLE_MAX),

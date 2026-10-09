@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Route feed collection, configuration probes, discovery, article acquisition and optional
+  liveness through one public-address fetch boundary (#218). Each hop connects only to
+  validated public IPs while retaining original Host/TLS identity, with no global DNS
+  override or ambient proxy. GETs now have three redirects and separate 2 MiB raw/decoded
+  limits; gzip/deflate decoding is bounded. Unsupported/chained/multi-member encodings
+  and URL credentials fail technically. Caller parsing, feed retry/backoff, HEAD status
+  rules, logical provenance and persisted formats remain intact; article concurrency no
+  longer needs a process-global lock. See ADR0026 for deadlines and compatibility limits.
+
 - Share credential-safe Telegram diagnostics across prepared, direct/legacy,
   supplementary, discovery and feedback operations (#219), preserving their distinct
   retries, receipt interpretation and persistence barriers. Response/error request

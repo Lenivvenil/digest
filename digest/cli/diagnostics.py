@@ -11,8 +11,7 @@ async def check_config(config_path: str) -> int:
     import feedparser
     import httpx
 
-    from digest._dns_pinning import pin_dns as _pin_dns
-    from digest._dns_pinning import validate_url as _validate_url
+    from digest.adapters.http.public_fetch import UnsafePublicURL, fetch_public
     from digest.config import load_config
 
     ok = True
@@ -73,29 +72,24 @@ async def check_config(config_path: str) -> int:
 
     print(f"\nProbing {len(config.enabled_sources)} feed URLs...")
 
-    async def _probe(client: httpx.AsyncClient, source: Any) -> tuple[str, str, str]:
-        validated = _validate_url(source.url)
-        if validated is None:
-            return source.name, "BLOCKED", "unsafe URL (private/local/non-http)"
+    async def _probe(source: Any) -> tuple[str, str, str]:
         try:
-            with _pin_dns(validated.hostname, validated.pinned_addrinfos):
-                resp = await client.get(validated.url, timeout=15.0)
+            resp = await fetch_public(source.url, timeout=15.0, max_bytes=2 * 1024 * 1024, max_redirects=3)
             resp.raise_for_status()
-            feed = feedparser.parse(resp.text)
+            feed = feedparser.parse(resp.content.decode(resp.encoding, errors="replace"))
             if feed.bozo and not feed.entries:
                 return source.name, "WARN", f"feedparser error: {feed.bozo_exception}"
             entry_count = len(feed.entries)
             return source.name, "OK", f"{entry_count} entries"
-        except httpx.TimeoutException:
+        except UnsafePublicURL:
+            return source.name, "BLOCKED", "unsafe URL (private/local/non-http)"
+        except (TimeoutError, httpx.TimeoutException):
             return source.name, "FAIL", "timeout"
         except Exception as exc:
             return source.name, "FAIL", str(exc)
 
-    async with httpx.AsyncClient(
-        timeout=15.0, follow_redirects=True, trust_env=False
-    ) as client:
-        tasks = [asyncio.create_task(_probe(client, s)) for s in config.enabled_sources]
-        results = await asyncio.gather(*tasks)
+    tasks = [asyncio.create_task(_probe(s)) for s in config.enabled_sources]
+    results = await asyncio.gather(*tasks)
 
     for name, status, detail in sorted(results):
         print(f"  [{status:6}] {name}: {detail}")

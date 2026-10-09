@@ -7,6 +7,7 @@ import logging
 
 import httpx
 
+from digest.adapters.http.public_fetch import fetch_public
 from digest.domain.investigation.signals import Signal
 
 logger = logging.getLogger(__name__)
@@ -23,20 +24,19 @@ async def check_signal_liveness(
     """Return signal if URL is likely live, None if unavailable or gone.
 
     Only 404/410 are treated as confirmed-dead. 401/403/429/5xx may be
-    transient or access-controlled; keep those signals. follow_redirects=False
-    avoids cross-host redirect chains that could probe unexpected destinations.
+    transient or access-controlled; keep those signals. The public acquisition
+    boundary performs HEAD without redirects or a response body. The supplied
+    client is retained for compatibility only and cannot bypass destination policy.
     """
     async with sem:
         try:
-            resp = await client.head(
-                signal.url,
-                follow_redirects=False,
-                timeout=_LIVENESS_TIMEOUT,
+            resp = await fetch_public(
+                signal.url, method="HEAD", timeout=_LIVENESS_TIMEOUT, max_bytes=0,
             )
             if resp.status_code in _DEAD_STATUS_CODES:
                 logger.debug("Liveness check: confirmed gone (%d): %s", resp.status_code, signal.url[:100])
                 return None
             return signal
-        except (httpx.TransportError, httpx.TimeoutException, httpx.InvalidURL, ValueError):
+        except (TimeoutError, httpx.TransportError, httpx.TimeoutException, httpx.InvalidURL, ValueError):
             logger.debug("Liveness check failed (network/url error): %s", signal.url[:100])
             return None

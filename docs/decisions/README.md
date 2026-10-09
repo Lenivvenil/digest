@@ -138,3 +138,7 @@ explicit limitations rather than a guessed history migration.
 [0025](0025-owned-irritator-fanout-results.md) records #204's owned ordinary query
 and search batches, exported-helper return/keyword migration and explicit query-child
 cancellation correction. Public run status and bounded persisted evidence remain separate.
+
+[0026](0026-public-acquisition-boundary.md) records the #218 connection-scoped public
+acquisition operation, bounded bodies/deadlines, per-hop validation and deliberate
+compression/source limits. Publication and rollout evidence are tracked on the issue.
