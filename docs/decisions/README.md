@@ -41,7 +41,8 @@ covered PR #125 and its engine-pin rollout; natural-run, disposition-quality and
 throughput acceptance remain separate and open.
 
 [0009](0009-selected-source-admission.md) proposes candidate-bound source admission
-and technical handoff under #122; it does not approve semantic publication or runtime activation.
+and technical handoff under #122, with the #207 immutable-input/operation-owned
+transport migration. It does not approve semantic publication or runtime activation.
 
 [0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
 source-point representation for #55, with its unused prototype explicitly retired under

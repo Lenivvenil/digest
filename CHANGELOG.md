@@ -2,6 +2,14 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Reconciliation now consumes one validated immutable input (#207). Direct Python
+  callers remove parallel source/state parameters from planning, preparation and
+  execution. `verify_reconciliation_input` is removed; parsing takes `(raw, input)`
+  and returns frozen content, while the operation owns completion and admission.
+  [ADR0009](docs/decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
+  gives the migration and trust boundaries. Persisted schemas, request bytes, offline
+  planning, both providers and conservative uncertain-attempt holds remain unchanged.
+
 - Retired the unintegrated grouped-point prototype `digest.reading_points` (#207)
   and its two dedicated test files. Direct Python imports now fail; no replacement
   shim is supplied. [ADR0010](docs/decisions/0010-group-source-points-with-qualifications.md#retire-the-unused-grouped-point-prototype--2026-10-09)

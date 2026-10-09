@@ -6,7 +6,7 @@ import asyncio
 import copy
 import json
 import time
-from dataclasses import dataclass, replace
+from dataclasses import FrozenInstanceError, asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +51,6 @@ class Harness:
         arguments = {"deadline": time.monotonic() + 1000, "checkpoint": self.checkpoint, **kwargs}
         return await operation.execute_reconciliation_operation(
             self.value,
-            self.source,
-            self.state,
             self.config,
             self.root,
             execution=self.model_execution,
@@ -96,7 +94,7 @@ def harness(
     settings.llm.providers = [ProviderConfig("groq", "openai/gpt-oss-120b")]
     source, state = saved_synthetic
     value = build_reconciliation_input(source, state)
-    prepared = operation.prepare_reconciliation_operation(value, source, state, settings, tmp_path, claim=execution)
+    prepared = operation.prepare_reconciliation_operation(value, settings, tmp_path, claim=execution)
     checkpoint = operation.ExactIntentCheckpoint(
         prepared.manifest_sha256, execution.cycle_id, execution.stage, execution.claim_sha, "verified-test-commit"
     )
@@ -112,7 +110,18 @@ def harness(
         }
     )
     result = Harness(
-        tmp_path, source, state, value, settings, prepared, checkpoint, execution, ModelExecution(), [], [], raw,
+        tmp_path,
+        source,
+        state,
+        value,
+        settings,
+        prepared,
+        checkpoint,
+        execution,
+        ModelExecution(),
+        [],
+        [],
+        raw,
     )
     monkeypatch.setattr(
         source_admission,
@@ -248,8 +257,23 @@ async def test_failure_outcomes_and_alternate_boundaries(
         return original(current, request)
 
     monkeypatch.setattr("tests.test_reconciliation_operation.transport", handler)
+    original_estimate = source_admission.estimate_request
+    if failure == "generation_rejected":
+
+        def unavailable(*_args: Any, **_kwargs: Any) -> dict[str, int | str]:
+            raise TokenProfileUnavailable("fake fallback tokenizer temporarily unavailable")
+
+        monkeypatch.setattr(source_admission, "estimate_request", unavailable)
+        assert (await harness.run()).error_class == "technical_tokenizer_profile"
+        held = harness.record()["attempts"]
+        assert [item["status"] for item in held] == ["completed", "definite_failed"]
+        assert len(harness.calls) == 2 and model_budget.inspect_budget(harness.execution.cycle_id).remaining == 8
+        monkeypatch.setattr(source_admission, "estimate_request", original_estimate)
     result = await harness.run()
     record = harness.record()
+    if failure == "generation_rejected":
+        assert record["attempts"][:2] == held
+        assert [item["request_index"] for item in record["attempts"]] == [0, 0, 1]
     if failure in {"count_unknown", "generation_rejected"}:
         assert result.status == "completed" and result.response is not None
         assert result.response.completion.provider == "groq"
@@ -290,9 +314,7 @@ async def test_changed_input_or_route_cannot_bypass_stable_operation(harness: Ha
     harness.value = build_reconciliation_input(harness.source, harness.state, extra_context_span_ids=(2,))
     assert (await harness.run()).status == "pending" and not harness.calls
     with pytest.raises(ValueError, match="technical_operation_exists"):
-        operation.prepare_reconciliation_operation(
-            harness.value, harness.source, harness.state, harness.config, harness.root, claim=harness.execution
-        )
+        operation.prepare_reconciliation_operation(harness.value, harness.config, harness.root, claim=harness.execution)
     harness.value = build_reconciliation_input(harness.source, harness.state)
     harness.config.reading_brief = replace(harness.config.reading_brief, provider="groq", model="openai/gpt-oss-120b")
     assert (await harness.run()).status == "pending" and not harness.calls
@@ -303,21 +325,30 @@ async def test_foreign_cycle_is_checkpoint_transition_hold_not_generation_unknow
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def unknown_count(*_args: Any, **_kwargs: Any) -> int:
-        raise RuntimeError("fake count unknown")
+    original_transport = transport
+
+    def unknown_count(current: Harness, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":countTokens"):
+            current.calls.append(request)
+            raise httpx.ReadTimeout("fake count unknown", request=request)
+        return original_transport(current, request)
 
     def unavailable(*_args: Any, **_kwargs: Any) -> dict[str, int | str]:
         raise TokenProfileUnavailable("fake tokenizer unavailable")
 
-    monkeypatch.setattr(llm, "count_gemini_tokens", unknown_count)
+    monkeypatch.setattr("tests.test_reconciliation_operation.transport", unknown_count)
     monkeypatch.setattr(source_admission, "estimate_request", unavailable)
     assert (await harness.run()).status == "pending"
     assert harness.record()["attempts"][0]["status"] == "unknown"
+    attempts = harness.record()["attempts"]
+    assert (await harness.run()).error_class == "technical_tokenizer_profile"
+    assert harness.record()["attempts"] == attempts and len(harness.calls) == 1
+    assert model_budget.inspect_budget(harness.execution.cycle_id).reserved_count == 1
     execution = bind_execution(monkeypatch, cycle="987654321")
     harness.checkpoint = replace(harness.checkpoint, cycle_id=execution.cycle_id, claim_sha=execution.claim_sha)
     result = await harness.run()
     assert result.error_class == "technical_checkpoint_transition_required"
-    assert harness.record()["attempts"][0]["kind"] == "count" and not harness.calls
+    assert harness.record()["attempts"][0]["kind"] == "count" and len(harness.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -354,9 +385,10 @@ async def test_interrupted_generation_keeps_intent_and_prevents_replay(
 async def test_corrupt_completed_cache_is_held(harness: Harness) -> None:
     assert (await harness.run()).status == "completed"
     payload = json.loads(harness.path.read_text())
-    payload["record"]["raw_response"] = "changed cached response"
+    payload["record"]["raw_response"] += " "  # Same JSON, different exact response bytes.
+    payload["sha256"] = checksum(payload["record"])
     harness.path.write_text(json.dumps(payload))
-    assert (await harness.run()).status == "pending" and len(harness.calls) == 2
+    assert (await harness.run()).error_class == "technical_operation_integrity" and len(harness.calls) == 2
 
 
 @pytest.mark.asyncio
@@ -534,8 +566,6 @@ async def test_local_primary_can_resume_after_alternate_count_when_tokenizer_rec
     harness.config.llm.providers = [ProviderConfig("gemini", "gemini-3.8-flash")]
     harness.prepared = operation.prepare_reconciliation_operation(
         harness.value,
-        harness.source,
-        harness.state,
         harness.config,
         harness.root,
         claim=harness.execution,
@@ -579,3 +609,227 @@ async def test_completed_cache_requires_consistent_original_execution(harness: H
     harness.path.write_text(json.dumps(payload))
     assert (await harness.run()).error_class == "technical_operation_integrity"
     assert len(harness.calls) == 2
+
+
+def save_record(harness: Harness, record: dict[str, Any]) -> None:
+    harness.path.write_text(json.dumps({"record": record, "sha256": checksum(record)}))
+
+
+def use_primary(harness: Harness, provider: str) -> None:
+    """Select the fixture's untouched route before the first operation invocation."""
+    harness.path.unlink()
+    model = "gemini-3.8-flash" if provider == "gemini" else "openai/gpt-oss-120b"
+    harness.config.reading_brief = replace(harness.config.reading_brief, provider=provider, model=model)
+    harness.config.llm.providers = []
+    harness.prepared = operation.prepare_reconciliation_operation(
+        harness.value, harness.config, harness.root, claim=harness.execution
+    )
+    harness.checkpoint = replace(harness.checkpoint, manifest_sha256=harness.prepared.manifest_sha256)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gemini", "groq"])
+async def test_response_binds_sparse_archive_without_certifying_prose(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    use_primary(harness, provider)
+    data = json.loads(harness.raw)
+    data["reading_angle"]["span_ids"] = [1]
+    harness.raw = json.dumps(data)
+    original = copy.deepcopy((asdict(harness.source), asdict(harness.state), asdict(harness.value)))
+    original_admit = operation._admit
+    admissions: list[source_admission.RequestAdmission] = []
+
+    async def admit(*args: Any, **kwargs: Any) -> source_admission.RequestAdmission:
+        admission = await original_admit(*args, **kwargs)
+        admissions.append(admission)
+        return admission
+
+    monkeypatch.setattr(operation, "_admit", admit)
+    result = (await harness.run()).response
+    assert result is not None and result.input == harness.value and result.input.pages[-1].abstain
+    assert result.qualification_span_ids == (len(harness.source.spans),)
+    # Keeping a qualification in the archive does not certify its use in prose.
+    assert result.angle_span_ids == (1,) and not set(result.qualification_span_ids) & set(result.angle_span_ids)
+    assert result.reading_angle and result.semantic_completeness == "unverified"
+    assert result.raw_response == harness.raw and result.completion.provider == provider
+    assert json.loads(result.admission_json) == harness.record()["attempts"][-1]["admission"]
+    admissions[-1].evidence["tampered_later"] = "Must not change the stored result"
+    assert "tampered_later" not in result.admission_json
+    monkeypatch.setattr(source_admission, "estimate_request", lambda *args: pytest.fail("Must reuse saved count"))
+    monkeypatch.setattr(source_admission, "count_gpt_input", lambda *args: pytest.fail("Must not need tokenizer"))
+    assert (await harness.run()).response == result
+    assert original == (asdict(harness.source), asdict(harness.state), asdict(harness.value))
+    with pytest.raises(FrozenInstanceError):
+        result.reading_angle = "Changed"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,changed",
+    [
+        ("response_sha256", "0" * 64),
+        ("finish_reason", None),
+        ("finish_reason", "length"),
+        ("finish_reason", "MAX_TOKENS"),
+    ],
+)
+async def test_completed_cache_requires_terminal_transport_evidence(
+    harness: Harness,
+    field: str,
+    changed: Any,
+) -> None:
+    assert (await harness.run()).status == "completed"
+    record = harness.record()
+    record["attempts"][-1][field] = changed
+    save_record(harness, record)
+    before = harness.path.read_bytes()
+    assert (await harness.run()).error_class == "technical_operation_integrity"
+    assert harness.path.read_bytes() == before and len(harness.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage,provider",
+    [
+        ("route", "gemini"),
+        ("model", "gemini"),
+        ("input_limit", "gemini"),
+        ("output_reserve", "gemini"),
+        ("request", "gemini"),
+        ("status", "gemini"),
+        ("method", "gemini"),
+        ("count", "gemini"),
+        ("error", "gemini"),
+        ("record", "gemini"),
+        ("method", "groq"),
+        ("count", "groq"),
+        ("record", "groq"),
+    ],
+)
+async def test_admitted_status_does_not_replace_route_and_count_proof(
+    harness: Harness,
+    provider: str,
+    damage: str,
+) -> None:
+    use_primary(harness, provider)
+    assert (await harness.run()).status == "completed"
+    record = harness.record()
+    admission = record["attempts"][-1]["admission"]
+    changes: dict[str, Any] = {
+        "route": {"provider": "different"},
+        "model": {"model": "different"},
+        "input_limit": {"input_limit": True},
+        "output_reserve": {"output_reserve": True},
+        "request": {"request_sha256": "0" * 64},
+        "status": {"status": "unverified"},
+        "method": {"method": "unverified"},
+        "count": {"exact_count" if provider == "gemini" else "input_estimate": True},
+        "error": {"error_class": "technical_count_unknown"},
+        "record": {"evidence": []},
+    }
+    admission.update(changes[damage])
+    save_record(harness, record)
+    before = harness.path.read_bytes()
+    calls = len(harness.calls)
+    assert (await harness.run()).error_class == "technical_operation_integrity"
+    assert harness.path.read_bytes() == before and len(harness.calls) == calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gemini", "groq"])
+@pytest.mark.parametrize("damage", ["zero", "oversized", "other_method_count", "saved_method", "saved_tokenizer"])
+async def test_completed_response_requires_valid_saved_accounting(
+    harness: Harness,
+    provider: str,
+    damage: str,
+) -> None:
+    use_primary(harness, provider)
+    assert (await harness.run()).status == "completed"
+    record = harness.record()
+    admission = record["attempts"][-1]["admission"]
+    route = harness.prepared.requests[0].route
+    if damage in {"zero", "oversized"}:
+        count = 0 if damage == "zero" else route.input_tokens + 1
+        if provider == "gemini":
+            admission["exact_count"] = record["attempts"][0]["exact_count"] = count
+        else:
+            evidence = source_admission.estimate_record(route, count)
+            admission.update(input_estimate=evidence["input_estimate"], evidence=evidence)
+    elif damage == "other_method_count":
+        admission["input_estimate" if provider == "gemini" else "exact_count"] = 100
+    elif damage == "saved_method":
+        admission["evidence"]["method"] = "unrecognized-estimator"
+    else:
+        admission["evidence"]["tokenizer_sha256"] = "0" * 64
+    save_record(harness, record)
+    before = harness.path.read_bytes()
+    calls = len(harness.calls)
+    assert (await harness.run()).error_class == "technical_operation_integrity"
+    assert harness.path.read_bytes() == before and len(harness.calls) == calls
+
+
+@pytest.mark.asyncio
+async def test_rehashed_persisted_input_cannot_replace_fresh_evidence(harness: Harness) -> None:
+    record = harness.record()
+    prepared = record["prepared"]
+    value = json.loads(prepared["input_json"])
+    value["evidence"][-1]["text"] = "All clients qualify."
+    value["input_sha256"] = ""
+    value["input_sha256"] = checksum(value)
+    prepared["input_json"] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    prepared["input_sha256"] = value["input_sha256"]
+    prepared["manifest_sha256"] = ""
+    prepared["manifest_sha256"] = checksum(prepared)
+    save_record(harness, record)
+    before = harness.path.read_bytes()
+    assert (await harness.run()).error_class == "technical_operation_binding"
+    assert harness.path.read_bytes() == before and not harness.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "duplicate_attempt",
+        "missing_execution",
+        "missing_raw",
+        "reserved_terminal",
+        "terminal_before_reservation",
+        "completed_error",
+        "count_generation_metadata",
+        "unfinished_count_result",
+        "unfinished_generation_result",
+    ],
+)
+async def test_rehashed_decoder_corruption_holds_before_reuse_or_fallback(harness: Harness, damage: str) -> None:
+    assert (await harness.run()).status == "completed"
+    record = harness.record()
+    count, generation = record["attempts"]
+    if damage == "duplicate_attempt":
+        record["attempts"].insert(0, copy.deepcopy(count))
+    elif damage == "missing_execution":
+        record["execution"] = None
+    elif damage == "missing_raw":
+        record["raw_response"] = None
+    elif damage == "reserved_terminal":
+        generation["status"] = "reserved"
+    elif damage == "terminal_before_reservation":
+        generation["finished_at"] = "2000-01-01T00:00:00+00:00"
+    elif damage == "completed_error":
+        generation["error_class"] = "technical_generation_unknown"
+    elif damage == "count_generation_metadata":
+        count["usage"] = {"prompt_tokens": 500}
+    elif damage == "unfinished_count_result":
+        count["status"] = "unknown"
+        record["attempts"] = [count]
+        record["raw_response"] = None
+    else:
+        generation["status"] = "unknown"
+        record["raw_response"] = None
+    save_record(harness, record)
+    before = harness.path.read_bytes()
+    assert (await harness.run()).error_class == "technical_operation_integrity"
+    assert harness.path.read_bytes() == before and len(harness.calls) == 2

@@ -303,6 +303,20 @@ applied marker fails, the held receipt prevents blind replay.
 | Supplementary investigation | Search external sources from frozen evidence under its own attempt. New compact attempts bind actually delivered canonical cards and may retain one accepted fragment for a later ordinary edition; unbound standalone results have no fragment eligibility. |
 | Experimental source preparation | Optional source-bound acquisition/analysis with its own technical handoff and uncertainty holds; it does not publish a concatenated prototype as an edition. |
 
+Experimental source preparation reloads the current handoff, source, page state and
+eligibility through [`reconciliation_checkpoint`](../digest/reconciliation_checkpoint.py).
+[`build_reconciliation_input`](../digest/reading_reconciliation.py) then validates and
+freezes one evidence input for offline planning and execution. The
+[`reconciliation_operation`](../digest/reconciliation_operation.py) owns its exact
+request, admission, attempt history and completion envelope; its decoder verifies
+persisted records against the fresh input before cache reuse, uncertainty holds or
+fallback. Fresh generation saves accepted metadata before validating terminal output.
+The content parser only checks response schema, citation membership and retained
+qualifications. Complete source access and sparse evidence remain distinct; none of
+these checks establishes semantic completeness or publication acceptance. Reading
+remains optional and off by default. [ADR0009](decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
+records the direct-call migration and retained trust boundaries.
+
 <a id="stage-5-first-telegram-delivery-ownership-slice"></a>
 
 The transport contracts also differ. Selecting compact formatting alone does not

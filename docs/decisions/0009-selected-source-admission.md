@@ -376,3 +376,82 @@ candidates. Local bare-Git and fake-transport verification can establish orchest
 invariants, but does not establish live latency, account quota, semantic quality or
 production acceptance. The prior frozen runtime proposal and deployed pins remain
 unchanged until explicit adoption.
+
+### One immutable reconciliation authority — 2026-10-09
+
+[#207](https://github.com/Lenivvenil/digest/issues/207) amends the earlier caller-
+assertion protocol. `build_reconciliation_input(source, state, extra_context_span_ids=...)`
+is the validated immutable construction boundary. Downstream planning, preparation
+and execution consume that input without parallel `Source` / `BriefState` arguments
+or reconstruction through `verify_reconciliation_input`; that helper is removed.
+Direct Python callers must build once and remove those two positional arguments from
+`plan_reconciliation_request`, `prepare_reconciliation_operation` and
+`execute_reconciliation_operation`. There is no compatibility wrapper.
+
+`parse_reconciliation_response(raw, input)` now returns a frozen content result:
+selected IDs, qualification IDs, reading angle, cited IDs and abstention. It validates
+hostile JSON and evidence membership. Remove caller-supplied `admission` and
+`completion` arguments; consumers needing the complete `ReconciliationResponse` use
+the operation result. The operation alone derives that unchanged full envelope from
+its own saved request, admission and terminal transport evidence. Offline planning
+still sizes arbitrary instructions, without counting remotely or granting dispatch.
+
+Fresh checkpoint entry still reloads and verifies the current handoff, selection,
+source, state and eligibility before building input. Persisted `input_json` is never
+restored as authority: the operation decoder compares its complete prepared manifest
+with the freshly built immutable input and current configured routes. It validates
+all attempts before cache reuse, uncertain-generation holds or fallback. One
+operation-owned transport validator checks exact request/admission binding, strict
+count types and arithmetic on decoded generation attempts, and checks `STOP`/`stop`
+and the exact raw UTF-8 response hash for both fresh success and completed restoration.
+Existing reserved, unknown, accepted and accepted-invalid records remain conservative
+holds without requiring completed-only raw response or finish metadata.
+
+Reserve and save before dispatch; persist accepted safe metadata before parsing or
+terminal checks; invalid/incomplete success becomes accepted-invalid, clears raw
+response and saves without fallback. Only validated success becomes completed.
+Locks, remote checkpoints, byte comparisons, physical request budgets, deadlines and
+uncertainty rules remain. Source/state/page/attempt/operation/response schemas,
+versions, canonical hash encodings, fixed prompt and provider wire bytes do not change.
+This ownership change grants no semantic acceptance or runtime activation.
+
+#### Removed cases and retained trust boundaries
+
+The scoped case reduction follows the removed authority. The original measurement
+on baseline `f8ad6811` changed collection from 2,238 to 2,169 cases: 54 prototype cases and 24 obsolete caller-authority cases
+retire; one raw-binding case moves into an existing cache story; ten new persisted-
+boundary cases are collected separately. The wider at-most-1,500 target remains open.
+The current-base integration on `872f0a2e` collects 2,110 cases from 2,179. Its
+aggregate covers 12,754 of 13,704 statements (93.067717%), with 950 missed and
+140 excluded; the baseline covered 12,893 of 13,858 (93.036513%). The smaller
+denominator reflects retired code, so this is not a same-line-set coverage claim.
+The 54 grouped-point cases retire with the unused module as recorded in ADR0010.
+The reconciliation changes are:
+
+| Former proof / cases | Disposition and retained owner |
+| --- | --- |
+| Six forged in-process `verify_reconciliation_input` values | Retire the removed reconstruction API; source/page validation remains in the builder. A rehashed persisted `prepared.input_json` corruption is rejected without HTTP or writes by the operation decoder. |
+| Four response cases supplying independent source, page, input version or arbitrary instruction | Retire parallel caller authority. Fresh checkpoint reload and builder tests retain source/page proofs; the decoder compares exact manifests, including version and the fixed instruction request. Offline planning still sizes arbitrary instructions. |
+| Thirteen caller-created completion identity/status variants | Retire independently supplied completion records. The operation derives completion identity/status from its validated manifest and attempts; changed routes/inputs and foreign execution remain guarded. |
+| One prospective plan passed as completion/admission | Retire the unsupported parameter path. Offline plans do not dispatch; operation checkpoint, budget and intent-before-HTTP tests retain admission authority. |
+| Four terminal transport variants | Move to real rehashed completed-operation decoding: wrong response SHA and missing/length/MAX_TOKENS finish reasons hold without another request or record repair. |
+| Exact raw-text response binding | Move into the existing completed-cache corruption story: append whitespace and recompute the outer checksum, proving raw SHA enforcement independently of JSON content and envelope integrity. |
+| Thirteen admission-binding and ten saved-accounting variants | Move to actual persisted-operation decoding with both providers. Preserve request/route/reserve/limit/status, strict count types, exact/estimated method and arithmetic, evidence/profile checks, no HTTP and unchanged rejected bytes. |
+| Two archive/response provider cases | Move to actual operation success/cache stories. Preserve source/input immutability, full response envelope, qualification roles, mutable-admission snapshot, no cache retokenization and unverified semantic status. |
+
+Nine separately collected decoder corruptions cover duplicate attempt identity,
+missing execution binding, missing completed raw response, reserved terminal metadata,
+backward terminal time, completed error, count generation metadata, unfinished count
+result and unfinished generation response/usage. Validation precedes cache reuse,
+unknown-generation holds and fallback; rejection preserves exact saved bytes.
+
+Two existing continuations are strengthened without adding cases: same-cycle retry
+after unknown counting skips the original remote count before a foreign-cycle hold;
+a definite primary generation rejection followed by unavailable fallback resumes only
+the frozen fallback, preserving the first attempt history and physical budget charges.
+Fresh malformed/unfinished success tests still prove accepted-invalid persistence,
+raw-response clearing, no fallback and conservative later holds. Checkpoint tests
+retain locks, remote barriers, source/eligibility reload and before/after byte guards.
+
+These mechanical proofs do not certify semantic completeness, improve the failed
+research results, activate optional reading or complete the wider #164 target.
