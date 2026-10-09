@@ -251,7 +251,7 @@ record or a change to the prepared-edition policy.
 | --- | --- | --- |
 | Mutable input | Reload current feedback, delivered cache and statistics; reload lifecycle state only when adaptation is enabled. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
 | Delivery identity | Full article hashes enter deduplication only after complete confirmed chunk coverage. Empty coverage returns before state reads or writes. | Confirmed Telegram hashes qualify. Cards mode additionally consumes summarized-category articles and top articles after a saved Markdown output when Telegram is optional or complete. That consumption does not imply Telegram confirmation. Direct compact never treats Markdown as delivered coverage. |
-| Attribution | Merge confirmed 8-character hash/source mappings; update last-digest sources/time only when the whole issue is complete. | Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
+| Attribution | Merge confirmed vote-token/source mappings: full article identities for ready v2, original short tokens for ready v1. Update last-digest sources/time only when the whole issue is complete. | New delivery uses full article vote identities. Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
 | Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
 | Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
 | Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
@@ -303,8 +303,12 @@ poller validates identity/replay, saves votes, cursor and pending acknowledgemen
 then acknowledges the exact saved batch. Managed runtimes persist that batch remotely
 before acknowledgement. A later send failure does not roll votes back.
 
-Only the latest valid vote per article contributes within the existing 14-day feedback
-window. Source allocation uses the resulting effective priority; model review sees
+Only the latest valid vote per exact stored token contributes within the existing
+14-day feedback window. New tokens carry the full article identity; historical
+eight-character tokens remain a separate namespace. They cannot safely be joined
+by prefix, so mixed old/full votes for one article may both contribute. This legacy
+limitation is explicit in [ADR0024](decisions/0024-full-article-vote-identity.md).
+Source allocation uses the resulting effective priority; model review sees
 ordinary supplied evidence rather than individual private votes. Repeated taps are
 not independent evidence, and a changed allocation does not guarantee a different
 editorial choice.

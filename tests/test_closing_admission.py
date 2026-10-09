@@ -72,10 +72,21 @@ def test_opportunity_preserves_first_unseen_reserved_retries_and_exact_pending_h
     assert first is not None
     begin_packet(progress, first, tmp_path)
     saved_first = asdict(first)
+    oldest = next(item for item in progress.candidates.values() if item.article.source == "Regular 2")
+    fresh = Article(
+        "Fresh from the same source",
+        "https://regular2.example/fresh",
+        "Fresh evidence",
+        oldest.article.source,
+        oldest.article.category,
+        NOW + timedelta(minutes=2),
+    )
+    merge_candidates(progress, {"tech": [fresh]}, config, {}, now=NOW + timedelta(minutes=2))
     config.review.max_evidence_articles = limit
     config.review.max_technical_retry_articles = reserved
     baseline = plan_packet(progress, config, NOW + timedelta(minutes=2))
     assert baseline is not None and not eligible_ids(baseline.evidence, config.closing, config.sources)
+    assert baseline.articles[0] == oldest.article
     before = asdict(progress)
     config.closing = replace(config.closing, enabled=True)
     packet = plan_packet(progress, config, NOW + timedelta(minutes=2))

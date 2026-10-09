@@ -251,6 +251,13 @@ an entire feed cohort in one run. Missing/invalid dispositions and capacity-only
 omissions remain unfinished. Policy exclusions, duplicates and editorial not-selection
 retain distinct evidence.
 
+The protected first-unseen opportunity uses original identity observation age,
+then existing priority/source/identity ties, and skips evidence that cannot fit.
+Technical retries and the remaining fresh/age source turns follow within the same
+packet. At a one-item cap this deliberately favors age over freshness; a larger
+old excerpt can leave less room for later items. Planning is only an opportunity,
+not a completed review. See the [oldest-unseen amendment](decisions/0008-candidate-selection-progress.md#oldest-unseen-opportunity-amendment-196).
+
 With optional closing enabled, an otherwise absent approved source can receive
 one fitting review opportunity. Spare capacity is used first; a full packet may
 defer only its final ordinary backfill item while preserving the first unseen
@@ -529,13 +536,24 @@ and can be superseded by later collection. Corrupt state is retained for diagnos
 Unknown/stale cursor history uses a non-confirming read without an offset before
 re-anchoring, not an old high offset that could discard updates.
 
-Only the latest valid vote per article is effective. Raw votes never enter model input.
+Only the latest valid vote per exact token is effective. New article tokens use
+the full 32-character identity; historical eight-character tokens remain supported
+without guessed migration. Mixed old/full tokens may count separately, and old
+buttons mean this is not a guaranteed short transition. Raw votes never enter model input.
 Even with automatic adaptation disabled, feedback can adjust priorities within existing
 bounds; unrated sources retain configured priority. With adaptation enabled, reliability,
 productivity, description length and recency also affect source scoring, and trials may
 graduate or be demoted. Disabling adaptation also disables automatic trial decisions.
 See the [feedback contract](ARCHITECTURE.md#feedback-loop) and
 [retained scoring rules](history/architecture-2026-10-08.md#source-quality-scoring).
+
+New ready editions use schema 2; the reader also accepts immutable schema-1 editions.
+Claims and receipts remain schema 1. A known short-prefix collision in an unstarted
+schema-1 edition blocks claim/send, while confirmed/applied history remains readable
+and is never resent. After any full-token publication, both the sender and feedback
+collector must stay on a compatible-reader engine. An old poller can discard full
+tokens as malformed while advancing its cursor. Roll back using a compatible-reader
+build or backport, not an arbitrary previous pin; see [ADR0024](decisions/0024-full-article-vote-identity.md#deployment-and-rollback-floor).
 An allocation change does not guarantee article selection.
 
 Source proposals use Add/Reject links followed by Start, or `/source ok HASH` and

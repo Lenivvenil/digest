@@ -5,6 +5,10 @@ The source-catalog continuation deployed through engine PR #156 and runtime PR #
 The discovery continuation deployed through engine PR #157 and runtime PR #80.
 These ownership releases do not establish source activation or editorial acceptance.
 
+[ADR0024](0024-full-article-vote-identity.md) subsequently versions future article
+vote tokens and ready editions. The original extraction below preserved the short
+identity contract; historical records and source-proposal identities remain unchanged.
+
 Refs [the staged architecture](../ARCHITECTURE.md#stage-5-c-catalog-and-feedback-boundaries),
 [ADR0003](0003-source-state-split.md), [ADR0006](0006-batch-message-voting.md),
 [ADR0013](0013-discovery-exploration-state.md) and

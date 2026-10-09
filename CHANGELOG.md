@@ -11,6 +11,20 @@
   lists destinations and retired private aliases. Canonical types, persisted formats,
   CLI/run/config and the supported feedback/discovery/source-scoring interfaces remain.
 
+- Preserve full article identity in new vote links and confirmed attribution
+  (#199). Ready editions now use schema 2; readers retain schema 1, and claims and
+  receipts stay schema 1. Existing short votes/history remain readable without
+  guessed migration. Known-colliding unstarted legacy editions are held before
+  dispatch. Once full-token links are published, both sender and poller require a
+  compatible-reader engine; an arbitrary older pin is not a safe rollback.
+
+- Give the existing protected unseen-candidate opportunity to the oldest fitting
+  identity before technical retries and fresh backfill. This changes future
+  admission order within existing limits; it adds no model calls or packet slots
+  and preserves stored decisions and optional closing protection. See
+  [#196](https://github.com/Lenivvenil/digest/issues/196) for the explicit freshness,
+  source-diversity and character-budget tradeoffs.
+
 - Search adapters now own response validation and bounded buffering (#190).
   The bounded Irritator no longer installs or removes response hooks on a caller's
   HTTP client. Direct/legacy Hacker News requests now reject bodies over 512,000
@@ -170,60 +184,62 @@ survive a fresh GitHub runner. No production workflow or credentials are changed
 
 ## [1.0.0] — 2026-04-07
 
-Первый стабильный релиз. Проект работает в продакшене с марта 2026 года.
+Historical release record translated from the [original Russian entry](https://github.com/Lenivvenil/digest/blob/0b939fb6b065723eee278069fec546980788e439/CHANGELOG.md#100--2026-04-07). Claims below are preserved as recorded for this release.
+
+First stable release. The project has been running in production since March 2026.
 
 ### Features
 
-**Сбор новостей**
-- RSS/Atom feed collection через `httpx` + `feedparser`
-- Параллельный fetch всех источников
-- Дедупликация статей по MD5(title|link) с 7-дневным окном
-- Priority-based slot allocation: источники с высоким приоритетом получают больше слотов
-- Ограничение по категории (`max_articles_per_source`) и глобальное (`max_total_articles`)
-- Фильтрация по свежести (`recency_hours`)
+**News collection**
+- RSS/Atom feed collection via `httpx` + `feedparser`
+- Parallel fetching of all sources
+- Article deduplication by MD5(title|link) with a 7-day window
+- Priority-based slot allocation: higher-priority sources receive more slots
+- Per-category limit (`max_articles_per_source`) and global limit (`max_total_articles`)
+- Recency filtering (`recency_hours`)
 
-**LLM-суммаризация**
-- Поддержка 5 провайдеров: Anthropic Claude, Google Gemini, Groq, Mistral, DeepSeek
-- `ProviderChain`: автоматический fallback на следующего провайдера при сбое
-- Category routing: разные провайдеры для разных категорий
-- Параллельная обработка категорий через `asyncio.gather()`
-- Three perspectives format (Optimist 🟢 / Skeptic 🔴 / Realist ⚖️) для топ-новостей
-- Кросс-категорийные тренды в конце дайджеста
-- Три стиля: `analytical`, `brief`, `detailed`
+**LLM summarization**
+- Support for 5 providers: Anthropic Claude, Google Gemini, Groq, Mistral, DeepSeek
+- `ProviderChain`: automatic fallback to the next provider on failure
+- Category routing: different providers for different categories
+- Parallel category processing via `asyncio.gather()`
+- Three perspectives format (Optimist 🟢 / Skeptic 🔴 / Realist ⚖️) for top stories
+- Cross-category trends at the end of the digest
+- Three styles: `analytical`, `brief`, `detailed`
 
-**Доставка**
-- Telegram Bot API: отдельная карточка на каждую статью с кнопками 👍/👎
-- Markdown-файлы в `digests/` с YAML front matter для Obsidian
-- Статус-footer с метриками запуска (источники, статьи, провайдеры, средний score)
-- Уведомление в Telegram при падении workflow
+**Delivery**
+- Telegram Bot API: a separate card for each article with 👍/👎 buttons
+- Markdown files in `digests/` with YAML front matter for Obsidian
+- Status footer with run metrics (sources, articles, providers, average score)
+- Telegram notification on workflow failure
 
-**Адаптивная система**
-- Пользовательские оценки 👍/👎 влияют на приоритеты источников
-- Автоматические метрики качества: reliability, productivity, description quality, recency
-- Обнаружение trending-источников (+1 к приоритету при росте >50% за 7 дней)
-- Trial source system: LLM-discovery → Telegram approval → пробный период → promote/disable
+**Adaptive system**
+- User ratings 👍/👎 affect source priorities
+- Automatic quality metrics: reliability, productivity, description quality, recency
+- Trending-source detection (+1 to priority for growth >50% over 7 days)
+- Trial source system: LLM-discovery → Telegram approval → trial period → promote/disable
 
-**Обнаружение источников**
-- `--discover`: LLM генерирует RSS-кандидатов для недопредставленных категорий
-- Валидация URL перед предложением
-- Telegram approval workflow с кнопками ✅/❌
-- Автоматическое добавление в `config.yaml` после одобрения
+**Source discovery**
+- `--discover`: the LLM generates RSS candidates for underrepresented categories
+- URL validation before proposing a source
+- Telegram approval workflow with ✅/❌ buttons
+- Automatic addition to `config.yaml` after approval
 
 **CI/CD**
-- GitHub Actions: daily digest (02:00 + 13:00 UTC) с test gate (lint, typecheck, tests)
-- Weekly discovery (Sundays 06:00 UTC) с test gate
-- Concurrency group предотвращает concurrent writes в `.cache/`
-- Commit-back pattern: cache и дайджесты автоматически коммитятся в `main`
+- GitHub Actions: daily digest (02:00 + 13:00 UTC) with a test gate (lint, typecheck, tests)
+- Weekly discovery (Sundays 06:00 UTC) with a test gate
+- Concurrency group prevents concurrent writes to `.cache/`
+- Commit-back pattern: cache and digests are automatically committed to `main`
 
-**Безопасность**
-- DNS pinning + SSRF protection через `_dns_pinning.py`
-- Input sanitization feed-контента через `_sanitize.py`
-- Atomic JSON writes через `_util.py`
+**Security**
+- DNS pinning + SSRF protection via `_dns_pinning.py`
+- Input sanitization of feed content via `_sanitize.py`
+- Atomic JSON writes via `_util.py`
 
 ### Quality
 
-- 260+ unit/integration тестов (pytest + pytest-asyncio + respx)
-- Покрытие: все модули src/
+- 260+ unit/integration tests (pytest + pytest-asyncio + respx)
+- Coverage: all src/ modules
 - Lint: ruff (E, F, B rules)
 - Type checking: mypy (strict)
-- Pre-commit hooks для автоматического форматирования
+- Pre-commit hooks for automatic formatting

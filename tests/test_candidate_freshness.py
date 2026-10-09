@@ -59,7 +59,7 @@ def test_retry_allowance_rejects_non_integer_or_out_of_range_values(tmp_path: Pa
         load_config(str(path))
 
 
-def test_fresh_same_source_article_advances_past_thirty_three_old_candidates() -> None:
+def test_fresh_same_source_article_follows_oldest_ahead_of_remaining_backlog() -> None:
     config, articles = population(33)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     oldest = min(progress.candidates.values(), key=lambda item: (item.first_observed_at, item.identity))
@@ -67,8 +67,8 @@ def test_fresh_same_source_article_advances_past_thirty_three_old_candidates() -
     merge_candidates(progress, fresh, config, {}, now=NOW + timedelta(hours=1))
     packet = _packet(progress, config, 1)
     assert len(packet.articles) == 20
-    assert packet.articles[0].title == fresh["tech"][0].title
-    assert packet.articles[1] == oldest.article
+    assert packet.articles[0] == oldest.article
+    assert packet.articles[1].title == fresh["tech"][0].title
     assert all(candidate.status == "not_presented" for candidate in progress.candidates.values())
     assert build_evidence_bundle(packet_articles(packet), config.review) == packet.evidence
 
@@ -89,9 +89,9 @@ def test_fresh_and_oldest_turns_preserve_missing_and_future_date_candidates() ->
         merge_candidates(progress, {"tech": [article]}, config, {}, now=NOW + timedelta(minutes=index))
     packet = _packet(progress, config, 2)
     assert [item.title for item in packet.articles] == [
-        "Newest valid date", "Undated oldest", "Second newest date", "Future at observation", "Old valid date",
+        "Undated oldest", "Newest valid date", "Second newest date", "Future at observation", "Old valid date",
     ]
-    assert packet.articles[1].published is None
+    assert packet.articles[0].published is None
     assert packet.articles[3].published == (NOW + timedelta(hours=1)).isoformat()
 
 
@@ -100,9 +100,11 @@ def test_date_future_at_observation_never_acquires_a_freshness_boost(hours: int)
     config, articles = population(2)
     articles["tech"][0].pub_date = NOW + timedelta(hours=1)
     articles["tech"][1].pub_date = NOW - timedelta(minutes=1)
-    config.review.max_evidence_articles = 1
-    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
-    assert _packet(progress, config, hours).articles[0].title == "Item 1"
+    config.review.max_evidence_articles = 2
+    oldest = Article("Oldest unseen", "https://a.example/oldest", "Synthetic evidence", "A", "tech", None)
+    progress = merge_candidates(CandidateProgress(), {"tech": [oldest]}, config, {}, now=NOW - timedelta(minutes=1))
+    merge_candidates(progress, articles, config, {}, now=NOW)
+    assert [item.title for item in _packet(progress, config, hours).articles] == ["Oldest unseen", "Item 1"]
     assert all(candidate.eligible for candidate in progress.candidates.values())
 
 

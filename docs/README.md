@@ -25,7 +25,7 @@ configuration, delivery destinations, the engine pin and durable state.
    with the [working agreement](../AGENTS.md#working-agreement) and
    [development commands](../README.md#development) as references
 2. [Project principles](principles.md#definition-of-done): required evidence, optional
-   local tooling and the unresolved 70% configured / 80% default coverage disposition
+   local tooling and the aligned 80% coverage floor with its historical disposition
 3. [Decision index](decisions/README.md): accepted decisions, proposals and release scope
 
 ## Understand the architecture

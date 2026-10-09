@@ -14,6 +14,7 @@ from digest.adapters.storage.issue_paths import safe_issue_path as _safe
 from digest.delivery.issue_guard import ISSUE_FILE, _Record
 from digest.delivery.issue_guard import _read as _read_legacy
 from digest.domain.delivery.edition import (
+    READY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ChunkReceipt,
     Claim,
@@ -40,14 +41,23 @@ def canonical_bytes(data: dict[str, Any]) -> bytes:
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
 
 
-def read_record(path: Path, expected: str | None = None) -> tuple[dict[str, Any], str]:
+def read_record(
+    path: Path,
+    expected: str | None = None,
+    *,
+    allowed_schemas: tuple[int, ...] = (SCHEMA_VERSION,),
+) -> tuple[dict[str, Any], str]:
     raw = _safe(path).read_bytes()
     digest = content_sha256(raw)
     if expected is not None and digest != expected:
         raise ValueError("Prepared edition hash mismatch; publishing blocked.")
     try:
         value = json.loads(raw)
-        if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] != SCHEMA_VERSION:
+        if (
+            not isinstance(value, dict)
+            or type(value.get("schema")) is not int
+            or value["schema"] not in allowed_schemas
+        ):
             raise ValueError
     except (ValueError, TypeError) as exc:
         raise ValueError("Invalid prepared edition JSON or schema; publishing blocked.") from exc
@@ -97,7 +107,7 @@ def load_edition(
     *,
     fresh: bool = False,
 ) -> tuple[Edition, str]:
-    data, digest = read_record(path, expected)
+    data, digest = read_record(path, expected, allowed_schemas=(1, READY_SCHEMA_VERSION))
     validate_manifest_record(data, owner, now, fresh=fresh)
     try:
         fields = dict(data)

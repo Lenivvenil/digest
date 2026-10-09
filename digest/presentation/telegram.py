@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from digest.domain.catalog.articles import article_hash
+from digest.domain.delivery.outcomes import article_vote_token
 from digest.presentation.supplement import signal_text, split_supplement
 
 if TYPE_CHECKING:
@@ -175,7 +176,7 @@ def render_article_card(
     config: Any,
 ) -> _IssueChunk:
     """Render the existing card copy and optional deep-link vote keyboard."""
-    hash8 = article_hash(title, link)[:8]
+    vote_token = article_vote_token(article_hash(title, link), "full32")
     title_esc = escape_markdownv2(title)
     url_esc = link.replace("\\", "\\\\").replace(")", "\\)")
     source_esc = escape_markdownv2(source)
@@ -185,15 +186,15 @@ def render_article_card(
     labels = _labels(config)
     username = getattr(config.telegram, "bot_username", "")
     notice = labels["feedback"] if username else labels["feedback_plain"]
-    async_note = escape_markdownv2(notice + "\n" + labels["fallback"].format(hash=hash8))
+    async_note = escape_markdownv2(notice + "\n" + labels["fallback"].format(hash=vote_token))
     text = f"[{title_esc}]({url_esc})\n\n{summary_esc}\n\n*{source_esc}* \u00b7 _{cat_esc}_\n_{async_note}_"
 
     keyboard: dict[str, Any] | None = (
         {
             "inline_keyboard": [
                 [
-                    {"text": "\U0001f44d", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
-                    {"text": "\U0001f44e", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+                    {"text": "\U0001f44d", "url": f"https://t.me/{username}?start=vote_g_{vote_token}"},
+                    {"text": "\U0001f44e", "url": f"https://t.me/{username}?start=vote_b_{vote_token}"},
                 ]
             ]
         }
@@ -218,7 +219,7 @@ def render_compact_issue(
         full_hash = article_hash(article.title, article.link)
         block = f"{index}. {article.title}\n{article.summary}\n{article.source}\n{article.link}"
         if not username:
-            block += f"\n[{full_hash[:8]}]"
+            block += f"\n[{article_vote_token(full_hash, 'full32')}]"
         if parts:
             offset += len(escape_markdownv2("\n\n"))
         end = offset + len(escape_markdownv2(block))
@@ -252,11 +253,11 @@ def render_compact_issue(
             final_chunk = chunks[article_range.covering_chunks[-1]]
             if final_chunk.reply_markup is None:
                 final_chunk.reply_markup = {"inline_keyboard": []}
-            hash8 = article_range.full_hash[:8]
+            vote_token = article_vote_token(article_range.full_hash, "full32")
             final_chunk.reply_markup["inline_keyboard"].append(
                 [
-                    {"text": f"{index}👍", "url": f"https://t.me/{username}?start=vote_g_{hash8}"},
-                    {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{hash8}"},
+                    {"text": f"{index}👍", "url": f"https://t.me/{username}?start=vote_g_{vote_token}"},
+                    {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{vote_token}"},
                 ]
             )
     return chunks, ranges

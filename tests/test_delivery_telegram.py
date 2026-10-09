@@ -328,8 +328,14 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
-        articles = {"tech": [_make_article(), _make_article(title="Second", link="https://b.com")]}
-        top = [_make_top(), _make_top(title="Second", link="https://b.com")]
+        top = [
+            _make_top(title=f"Synthetic collision article {number}",
+                      link=f"https://example.invalid/article/{number}", source=source)
+            for number, source in ((42028, "A"), (53130, "B"))
+        ]
+        articles = {"tech": [
+            _make_article(title=article.title, link=article.link, source=article.source) for article in top
+        ]}
 
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
@@ -338,7 +344,10 @@ class TestSendArticleCards:
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
         assert (result.attempted, result.sent, result.failed) == (2, 2, 0)
-        assert len(result.article_source_map) == 2
+        assert result.article_source_map == {
+            "cdb96691fa65888074dc4008dd039e3f": "A",
+            "cdb96691b648d61a1fbaba5907095a7d": "B",
+        }
         assert result.delivered_hashes == {
             article_hash(article.title, article.link) for article in top
         }
@@ -346,7 +355,7 @@ class TestSendArticleCards:
         for call, article in zip(route.calls, top, strict=True):
             payload = json.loads(call.request.content)
             assert "reply_markup" not in payload
-            assert escape_markdownv2(f"/vote g {article_hash(article.title, article.link)[:8]}") in payload["text"]
+            assert escape_markdownv2(f"/vote g {article_hash(article.title, article.link)}") in payload["text"]
 
     async def test_returns_hash_source_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -362,11 +371,7 @@ class TestSendArticleCards:
             result = await send_article_cards(articles, _make_config(), top_articles=top)
 
         assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
-        assert len(result.article_source_map) == 1
-        source_name = list(result.article_source_map.values())[0]
-        assert source_name == "reddit"
-        hash_key = list(result.article_source_map.keys())[0]
-        assert len(hash_key) == 8
+        assert result.article_source_map == {article_hash(top[0].title, top[0].link): "reddit"}
 
     async def test_missing_token_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
@@ -398,7 +403,7 @@ class TestSendArticleCards:
 
         good_hash = article_hash("Good", "https://good.com")
         assert (result.attempted, result.sent, result.failed) == (2, 1, 1)
-        assert result.article_source_map == {good_hash[:8]: "hackernews"}
+        assert result.article_source_map == {good_hash: "hackernews"}
         assert result.delivered_hashes == {good_hash}
 
     async def test_all_cards_fail_returns_no_delivery(
@@ -451,7 +456,7 @@ class TestSendArticleCards:
             )
 
         full_hash = article_hash("Test Article", "https://example.com/article")
-        assert result.article_source_map == {full_hash[:8]: "hackernews"}
+        assert result.article_source_map == {full_hash: "hackernews"}
         assert result.delivered_hashes == {full_hash}
 
     async def test_sends_top_articles_with_summaries(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -501,10 +506,10 @@ class TestSendArticleCards:
         assert escape_markdownv2(note) in text
         assert escape_markdownv2("/vote g ") in text
 
-        hash8 = article_hash(top[0].title, top[0].link)[:8]
+        full_hash = article_hash(top[0].title, top[0].link)
         assert payload["reply_markup"]["inline_keyboard"] == [[
-            {"text": "👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{hash8}"},
-            {"text": "👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{hash8}"},
+            {"text": "👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
+            {"text": "👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
         ]]
 
     async def test_skips_send_when_top_articles_empty(
@@ -598,15 +603,15 @@ class TestSendCompactIssue:
             ]
             full_hash = article_hash(article.title, article.link)
             assert rows == [(article_range.covering_chunks[-1], [
-                {"text": f"{index}👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash[:8]}"},
-                {"text": f"{index}👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash[:8]}"},
+                {"text": f"{index}👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
+                {"text": f"{index}👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
             ])]
         assert result.complete and result.outcome == "sent"
         assert (result.attempted, result.sent, result.failed) == (3, 3, 0)
         assert result.total_chunks == result.attempted_chunks == result.confirmed_chunks == len(texts)
         assert result.delivered_hashes == {article_hash(article.title, article.link) for article in top}
         assert result.article_source_map == {
-            article_hash(article.title, article.link)[:8]: article.source for article in top
+            article_hash(article.title, article.link): article.source for article in top
         }
         callback.assert_called_once_with()
 
@@ -641,7 +646,7 @@ class TestSendCompactIssue:
         assert result.outcome == outcome and not result.complete
         assert (result.attempted, result.sent, result.failed) == (2, 1, 1)
         assert result.delivered_hashes == {full_hash}
-        assert result.article_source_map == {full_hash[:8]: "A"}
+        assert result.article_source_map == {full_hash: "A"}
         callback.assert_called_once_with()
 
     async def test_final_notice_failure_does_not_complete_issue(
@@ -740,7 +745,7 @@ class TestSendCompactIssue:
         article_payload = json.loads(route.calls[0].request.content)
         assert article_result.complete
         assert "reply_markup" not in article_payload
-        assert article_hash(top[0].title, top[0].link)[:8] in article_payload["text"]
+        assert article_hash(top[0].title, top[0].link) in article_payload["text"]
         assert article_payload["text"].count("/vote g HASH") == 1
 
 

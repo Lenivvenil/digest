@@ -28,6 +28,9 @@ from digest.feedback import (
     save_feedback,
 )
 
+FULL_ARTICLE_A = "cdb96691fa65888074dc4008dd039e3f"
+FULL_ARTICLE_B = "cdb96691b648d61a1fbaba5907095a7d"
+
 # ---------------------------------------------------------------------------
 # Initial feedback state
 # ---------------------------------------------------------------------------
@@ -55,19 +58,20 @@ def test_load_feedback_missing_file(tmp_path: Path) -> None:
 def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     now = datetime.now(tz=timezone.utc)
     fb1 = ArticleFeedback(
-        article_hash="h1",
+        article_hash=FULL_ARTICLE_A[:8],
         source_name="Source A",
         rating=1,
         timestamp=(now - timedelta(hours=2)).isoformat(),
     )
     fb2 = ArticleFeedback(
-        article_hash="h2",
+        article_hash=FULL_ARTICLE_A,
         source_name="Source B",
         rating=-1,
         timestamp=(now - timedelta(hours=1)).isoformat(),
     )
     original = FeedbackStore(
         ratings=[fb1, fb2], last_update_id=100,
+        article_source_map={FULL_ARTICLE_A[:8]: "Source A", FULL_ARTICLE_A: "Source B"},
         pending_replies=[PendingReply("callback", "receipt"), PendingReply("vote", "recorded_votes")],
         seen_callback_ids=[str(index) for index in range(1005)],
         seen_message_ids=[f"owner:{index}" for index in range(1005)],
@@ -76,6 +80,7 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
 
     loaded = load_feedback(str(tmp_path))
     assert loaded.ratings == original.ratings
+    assert loaded.article_source_map == original.article_source_map
     assert loaded.last_update_id == 100
     assert len(loaded.ratings) == 2
     assert loaded.ratings[0].source_name == "Source A"
@@ -205,12 +210,13 @@ def _sha(cache_dir: Path) -> str:
 async def test_collect_feedback_per_article_good(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Persist the rating, offset and receipt before ack; replay adds no votes."""
     caplog.set_level(logging.INFO, logger="httpx")
-    store = FeedbackStore(article_source_map={"abcd1234": "My Source"})
-    route = _poll([_callback(1001)])
+    store = FeedbackStore(article_source_map={FULL_ARTICLE_A: "My Source"})
+    route = _poll([_callback(1001, f"fb:a:g:{FULL_ARTICLE_A}")])
 
     def answer(request: httpx.Request) -> httpx.Response:
         durable = load_feedback(str(tmp_path), strict=True)
         assert durable.last_update_id >= 1001
+        assert durable.ratings[0].article_hash == FULL_ARTICLE_A
         assert durable.ratings[0].source_name == "My Source"
         assert durable.pending_replies
         assert json.loads(request.content)["callback_query_id"] in durable.seen_callback_ids
@@ -222,8 +228,9 @@ async def test_collect_feedback_per_article_good(tmp_path: Path, caplog: pytest.
     assert result.pending_replies == []
     assert store.ratings == [] and store.last_update_id == 0
     route.mock(return_value=httpx.Response(200, json={
-        "ok": True, "result": [_callback(1001), _callback(1002, identifier="callback-1001"),
-                                _callback(1003, "fb:a:b:abcd1234")],
+        "ok": True, "result": [_callback(1001, f"fb:a:g:{FULL_ARTICLE_A}"),
+                                _callback(1002, f"fb:a:g:{FULL_ARTICLE_A}", identifier="callback-1001"),
+                                _callback(1003, f"fb:a:b:{FULL_ARTICLE_A}")],
     }))
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path))
     assert [rating.rating for rating in result.ratings] == [1, -1]
@@ -260,10 +267,10 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
     """Message replay cannot replace a later vote, even after cursor reanchoring."""
     owner_hash = hashlib.sha256(b"123").hexdigest()
     store = FeedbackStore(
-        article_source_map={"abcd1234": "My Source"},
+        article_source_map={FULL_ARTICLE_A: "My Source"},
         seen_callback_ids=[f"{owner_hash}:100"],
     )
-    route = _poll([_message(1001, "/start vote_g_abcd1234 \n", 100)])
+    route = _poll([_message(1001, f"/start vote_g_{FULL_ARTICLE_A} \n", 100)])
     result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
     assert store.ratings == [] and store.seen_message_ids == []
     assert get_source_feedback_score(result, "My Source") == 1.0
@@ -277,6 +284,7 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
     def answer(request: httpx.Request) -> httpx.Response:
         durable = load_feedback(str(tmp_path), strict=True)
         assert durable.ratings and durable.seen_message_ids and durable.pending_replies
+        assert durable.ratings[0].article_hash == FULL_ARTICLE_A
         saved = sum(reply.identifier == "recorded_votes" for reply in durable.pending_replies)
         unknown = len(durable.pending_replies) - saved
         assert json.loads(request.content) == {
@@ -290,8 +298,8 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
     }
     result = load_feedback(str(tmp_path), strict=True)
     _poll([
-        _message(1002, "/vote b abcd1234 \n", 101),
-        _message(1003, "/start vote_g_abcd1234", 100),
+        _message(1002, f"/vote b {FULL_ARTICLE_A} \n", 101),
+        _message(1003, f"/start vote_g_{FULL_ARTICLE_A}", 100),
         _message(1004, "/start vote_b_deadbeef", 102),
     ])
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path))
@@ -303,14 +311,14 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
 
     result.cursor_observed_at = ""
     save_feedback(result, str(tmp_path), strict=True)
-    _poll([_message(2, "/start vote_g_abcd1234", 100)])
+    _poll([_message(2, f"/start vote_g_{FULL_ARTICLE_A}", 100)])
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
     assert "offset" not in json.loads(route.calls[-1].request.content)
     assert len(result.ratings) == 2 and result.last_poll_counts["duplicates"] == 1
     assert get_source_feedback_score(result, "My Source") == 0.0
 
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "456")
-    new_owner = _message(3, "/vote g abcd1234", 100)
+    new_owner = _message(3, f"/vote g {FULL_ARTICLE_A}", 100)
     new_owner["message"]["chat"]["id"] = new_owner["message"]["from"]["id"] = 456
     _poll([new_owner])
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
@@ -318,6 +326,42 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
     assert result.seen_message_ids[-1] == f"{hashlib.sha256(b'456').hexdigest()}:100"
     persisted = (tmp_path / "feedback.json").read_text()
     assert "/start vote_" not in persisted and "/vote " not in persisted
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("transport", ["start", "command", "callback"])
+async def test_full_vote_identity_preserves_shared_prefix_attribution(tmp_path: Path, transport: str) -> None:
+    """Each owner-only route stores the exact delivered identity and source."""
+    assert FULL_ARTICLE_A != FULL_ARTICLE_B and FULL_ARTICLE_A[:8] == FULL_ARTICLE_B[:8]
+    bindings = {FULL_ARTICLE_A: "Source A", FULL_ARTICLE_B: "Source B"}
+    updates = []
+    for update_id, (identity, rating) in enumerate([
+        (FULL_ARTICLE_A, "g"), (FULL_ARTICLE_B, "b"), (FULL_ARTICLE_A, "b"),
+    ], 1):
+        if transport == "callback":
+            update = _callback(update_id, f"fb:a:{rating}:{identity}")
+        else:
+            text = f"/start vote_{rating}_{identity}" if transport == "start" else f"/vote {rating} {identity}"
+            update = _message(update_id, text, update_id)
+        updates.append(update)
+    updates[-1]["callback_query" if transport == "callback" else "message"]["from"]["id"] = 456
+    _poll(updates)
+
+    result = await collect_feedback(
+        TOKEN, FeedbackStore(article_source_map=bindings), cache_dir=str(tmp_path), acknowledge=False,
+    )
+    durable = load_feedback(str(tmp_path), strict=True)
+    assert durable == result
+    assert durable.article_source_map == bindings
+    assert [(rating.article_hash, rating.source_name, rating.rating) for rating in durable.ratings] == [
+        (FULL_ARTICLE_A, "Source A", 1), (FULL_ARTICLE_B, "Source B", -1),
+    ]
+    assert durable.last_poll_counts["recorded_votes"] == 2
+    assert durable.last_poll_counts["rejected_owner"] == 1
+    assert not any(
+        endpoint in str(call.request.url) for call in respx.calls for endpoint in ("answerCallbackQuery", "sendMessage")
+    )
 
 
 @pytest.mark.asyncio
@@ -622,19 +666,23 @@ def test_get_source_feedback_score_all_negative() -> None:
 def test_get_source_feedback_score_mixed() -> None:
     now = datetime.now(tz=timezone.utc).isoformat()
     store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed C", 1, now),
-        ArticleFeedback("h2", "Feed C", -1, now),
+        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
+        ArticleFeedback(FULL_ARTICLE_B, "Feed C", -1, now),
     ])
     score = get_source_feedback_score(store, "Feed C")
     assert score == 0.5
-    # Duplicate legacy history and a new opposite tap affect one effective vote.
+    # Repeated taps affect only their exact identity, even with a shared prefix.
     store.ratings.extend([
-        ArticleFeedback("h1", "Feed C", 1, now),
-        ArticleFeedback("h1", "Feed C", -1, now),
-        ArticleFeedback("h1", "Feed C", 1, "invalid timestamp"),
+        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
+        ArticleFeedback(FULL_ARTICLE_A, "Feed C", -1, now),
+        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, "invalid timestamp"),
     ])
     assert get_source_feedback_score(store, "Feed C") == 0.0
     assert len(store.ratings) == 5
+    # A historical short token remains separate; its identity cannot be inferred.
+    store.ratings.append(ArticleFeedback(FULL_ARTICLE_A[:8], "Feed C", 1, now))
+    assert get_source_feedback_score(store, "Feed C") == pytest.approx(1 / 3)
+    assert len(store.ratings) == 6
 
 
 def test_get_source_feedback_score_old_ratings_excluded() -> None:

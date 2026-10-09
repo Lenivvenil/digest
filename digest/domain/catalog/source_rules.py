@@ -80,7 +80,7 @@ def record_delivered_articles(
     partial multi-file write.
     """
     for identity in new_hashes:
-        source = article_source_map.get(identity[:8])
+        source = article_source_map.get(identity, article_source_map.get(identity[:8]))
         if source in stats:
             stats[source].articles_included_in_digest += 1
             day = publication_day.isoformat()

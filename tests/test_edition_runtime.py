@@ -198,7 +198,7 @@ async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying
     assert persisted.last_update_id == 999
     card = snapshot.top_articles[0]
     identity = article_hash(card.title, card.link)
-    assert (identity[:8] in persisted.article_source_map) is (failed_file != "feedback.json")
+    assert (identity in persisted.article_source_map) is (failed_file != "feedback.json")
     source = load_stats(".cache")["Source"]
     assert source.articles_included_in_digest == int(failed_file in {"source_state.json", "seen_articles.json"})
     assert source.total_fetches == source.successful_fetches == 2
@@ -429,7 +429,7 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     chunk = frozen["payloads"][closing["covering_chunks"][0]]["text"]
     assert escape_markdownv2(presented.summary) in chunk and escape_markdownv2(card.link) in chunk
     buttons = frozen["payloads"][closing["covering_chunks"][-1]]["reply_markup"]["inline_keyboard"]
-    assert buttons[-1][0]["url"].endswith(f"vote_g_{closing['full_hash'][:8]}")
+    assert buttons[-1][0]["url"].endswith(f"vote_g_{closing['full_hash']}")
     ready_bytes = Path(".cache", READY_FILE).read_bytes()
     config.translation = SimpleNamespace(enabled=True)
     config.radar.language = "ru"
@@ -558,7 +558,7 @@ async def test_unattributable_closing_is_omitted_and_only_unchanged_main_is_deli
     assert article_hash(main.title, main.link) in seen
     assert article_hash(card.title, card.link) not in seen
     feedback = load_feedback(".cache", strict=True)
-    assert article_hash(card.title, card.link)[:8] not in feedback.article_source_map
+    assert article_hash(card.title, card.link) not in feedback.article_source_map
 
 
 @pytest.mark.asyncio

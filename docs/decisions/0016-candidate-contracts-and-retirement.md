@@ -121,6 +121,10 @@ freshness, review and preparation regressions must retain interruption, corrupti
 accepted-abstention and bounded-continuation coverage. Verification results belong
 to the implementing change; this record does not assert that checks have passed.
 
-A compatible code revert or prior engine pin is the rollback boundary. Retain runtime
-objects, candidate history and delivery receipts; no format migration or state reset
-is required. Editorial quality and ordinary-runtime acceptance remain separate.
+A reviewed revert restoring the four bridges, or a compatible prior engine pin,
+is the rollback boundary. After full-token vote publication, every sender and
+feedback collector must retain the ready-v2 and full-token readers required by
+[ADR0024's rollback floor](0024-full-article-vote-identity.md#deployment-and-rollback-floor);
+an arbitrary pre-retirement pin is not safe. Retain runtime objects, candidate
+history and delivery receipts; no format migration or state reset is required.
+Editorial quality and ordinary-runtime acceptance remain separate.

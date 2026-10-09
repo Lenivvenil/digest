@@ -11,7 +11,7 @@ from typing import Literal
 class ArticleDeliveryResult:
     """Delivery counts and attribution for cards Telegram actually accepted.
 
-    ``article_source_map`` uses the 8-character callback hashes, while
+    ``article_source_map`` uses the exact delivered vote tokens, while
     ``delivered_hashes`` contains full hashes for the collector's dedup cache.
     Skipped delivery (including missing credentials) has zero attempts.
     """
@@ -52,9 +52,22 @@ class ArticleCoverage:
     covering_chunks: tuple[int, ...]
 
 
+VoteProtocol = Literal["legacy8", "full32"]
+
+
+def article_vote_token(full_hash: str, protocol: VoteProtocol) -> str:
+    """Select the wire identity declared by a publication's vote protocol."""
+    if protocol == "legacy8":
+        return full_hash[:8]
+    if protocol == "full32":
+        return full_hash
+    raise ValueError("Unsupported article vote protocol.")
+
+
 def project_issue_coverage(
     articles: Iterable[ArticleCoverage],
     *,
+    vote_protocol: VoteProtocol,
     outcome: Literal["sent", "failed", "unknown", "skipped"],
     total_chunks: int,
     attempted_chunks: int,
@@ -78,7 +91,7 @@ def project_issue_coverage(
             if all(index < result.confirmed_chunks for index in article.covering_chunks):
                 result.sent += 1
                 result.delivered_hashes.add(article.full_hash)
-                result.article_source_map[article.full_hash[:8]] = article.source
+                result.article_source_map[article_vote_token(article.full_hash, vote_protocol)] = article.source
             else:
                 result.failed += 1
     return result
