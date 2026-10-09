@@ -2,6 +2,11 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Record the accepted [target architecture and staged migration](docs/ARCHITECTURE.md#target-architecture-and-migration)
+  under #164, with an editable diagram and explicit ownership, compatibility and
+  acceptance boundaries. This documentation change does not implement the target
+  or establish runtime, semantic or zero-cost acceptance.
+
 - Reconciliation now consumes one validated immutable input (#207). Direct Python
   callers remove parallel source/state parameters from planning, preparation and
   execution. `verify_reconciliation_input` is removed; parsing takes `(raw, input)`

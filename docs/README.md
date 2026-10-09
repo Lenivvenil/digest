@@ -40,6 +40,9 @@ configuration, delivery destinations, the engine pin and durable state.
 4. [Irritator current model](domain/irritator/overview.md#current-domain-model):
    independent external evidence has a different purpose from model comparison
 
+The [target architecture and staged migration](ARCHITECTURE.md#target-architecture-and-migration)
+distinguishes accepted direction from implemented guarantees and natural-run acceptance.
+
 ## Historical material
 
 The following retain their original language, date and decision context. They are not
