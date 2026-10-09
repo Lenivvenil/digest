@@ -2,6 +2,14 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Candidate admission now carries exact selected occurrences and canonical RSS
+  evidence together (#211). Shared item preparation and bundle serialization remove
+  repeated sanitization, proposed-bundle rebuilds and the temporary empty packet.
+  The internal `candidate_policy.plan_articles` returns `AdmittedCandidates | None`
+  instead of an article list; private `_admit_candidate` and `_closing_opportunity`
+  helpers retire. Scheduling, size limits, request/persisted bytes and strict
+  validators remain unchanged; no test-count reduction or editorial acceptance is implied.
+
 - Restore visible, grounded Irritator material inside a later ordinary compact
   edition ([#208](https://github.com/Lenivvenil/digest/issues/208), continuing #77).
   New attempts target canonical cards from an exactly confirmed/applied publication,

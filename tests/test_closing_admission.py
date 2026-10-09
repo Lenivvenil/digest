@@ -16,8 +16,8 @@ from digest.application.candidate_review import begin_packet, merge_candidates, 
 from digest.application.review_request import build_evidence_bundle, eligible_ids
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig
 from digest.domain.editorial.attempts import restore_review
-from digest.domain.editorial.candidate_policy import _closing_opportunity, packet_articles
-from digest.domain.editorial.candidates import Candidate, CandidateProgress
+from digest.domain.editorial.candidate_policy import packet_articles
+from digest.domain.editorial.candidates import Candidate, CandidateArticle, CandidatePacket, CandidateProgress
 from digest.domain.editorial.dispositions import capture_review_dispositions
 from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS
 from digest.radar.collector import Article, article_hash
@@ -211,7 +211,9 @@ def test_complete_bundle_fit_skips_oversized_offer_and_never_displaces_for_spare
     fitting = next(item for item in progress.candidates.values() if item.article.source == "Community News")
     fitting.article = replace(fitting.article, description="Synthetic evidence 😀 " * 10)
     # This item fits alone, but exceeds the whole bundle's character budget.
-    large_article = replace(fitting.article, link="https://large.example/" + "x" * 15000)
+    large_article = replace(
+        fitting.article, link="https://large.example/" + "x" * 15000, published=(NOW + timedelta(seconds=1)).isoformat()
+    )
     large = Candidate(
         article_hash(large_article.title, large_article.link),
         large_article,
@@ -219,18 +221,31 @@ def test_complete_bundle_fit_skips_oversized_offer_and_never_displaces_for_spare
         fitting.priority,
     )
     assert len(build_evidence_bundle({large_article.category: [large_article.article()]}, config.review).items) == 1
-    result = _closing_opportunity(selected, [large, fitting], 1, max_evidence_articles=4, max_excerpt_chars=37)
-    assert result == [*selected[:-1], fitting.article]
-    grouped: dict[str, list[Article]] = {}
-    for item in result:
-        grouped.setdefault(item.category, []).append(item.article())
-    rebuilt = build_evidence_bundle(grouped, config.review)
+    config.closing = replace(config.closing, enabled=True)
+
+    def offer(retained: list[CandidateArticle], candidates: list[Candidate]) -> CandidatePacket:
+        attempt = CandidateProgress(
+            candidates={
+                article_hash(saved.title, saved.link): progress.candidates[article_hash(saved.title, saved.link)]
+                for saved in retained
+            }
+            | {candidate.identity: candidate for candidate in candidates}
+        )
+        before = asdict(attempt)
+        result = plan_packet(attempt, config, NOW + timedelta(minutes=1))
+        assert result is not None and asdict(attempt) == before
+        return result
+
+    result = offer(selected, [large, fitting])
+    assert result.articles == (*selected[:-1], fitting.article)
+    rebuilt = build_evidence_bundle(packet_articles(result), config.review)
+    assert rebuilt == result.evidence
     assert sum(len(json.dumps(asdict(item), ensure_ascii=False)) for item in rebuilt.items) <= MAX_EVIDENCE_JSON_CHARS
     assert all(len(item.excerpt) <= 37 for item in rebuilt.items)
-    assert _closing_opportunity(selected, [large], 1, max_evidence_articles=4, max_excerpt_chars=37) is selected
+    no_fit = offer(selected, [large])
+    assert no_fit.articles == packet.articles and no_fit.evidence == packet.evidence
     spare = selected[:-1]
-    assert _closing_opportunity(spare, [fitting], 1, max_evidence_articles=4, max_excerpt_chars=37) == [
-        *spare,
-        fitting.article,
-    ]
-    assert _closing_opportunity(spare, [large], 1, max_evidence_articles=4, max_excerpt_chars=37) is spare
+    assert offer(spare, [fitting]).articles == (*spare, fitting.article)
+    unchanged = offer(spare, [large])
+    baseline = offer(spare, [])
+    assert unchanged.articles == tuple(spare) and unchanged.evidence == baseline.evidence

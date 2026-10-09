@@ -17,7 +17,7 @@ from digest.application.candidate_lifecycle import (
     index_candidate,
     persist_candidates,
 )
-from digest.application.review_request import build_evidence_bundle, build_review_messages, closing_source_bindings
+from digest.application.review_request import build_review_messages, closing_source_bindings
 from digest.config import Config
 from digest.domain.catalog.articles import Article, article_hash
 from digest.domain.editorial.attempts import ResolvedReview
@@ -26,7 +26,6 @@ from digest.domain.editorial.candidate_policy import (
     clear_disposition,
     eligibility_policy,
     excluded_policy_relevant,
-    packet_articles,
     plan_articles,
     reconcile_eligibility,
     register_occurrence,
@@ -53,10 +52,16 @@ def _persist_observed_source(article: CandidateArticle, cache_dir: str | Path | 
 
 
 def merge_candidates(
-    progress: CandidateProgress, articles_by_category: dict[str, list[Article]], config: Config,
-    delivered_cache: dict[str, str], effective_priorities: dict[str, int] | None = None,
-    now: datetime | None = None, *, inventory: CollectionInventory | None = None,
-    delivery_history: dict[str, str] | None = None, cache_dir: str | Path | None = None,
+    progress: CandidateProgress,
+    articles_by_category: dict[str, list[Article]],
+    config: Config,
+    delivered_cache: dict[str, str],
+    effective_priorities: dict[str, int] | None = None,
+    now: datetime | None = None,
+    *,
+    inventory: CollectionInventory | None = None,
+    delivery_history: dict[str, str] | None = None,
+    cache_dir: str | Path | None = None,
 ) -> CandidateProgress:
     """Merge observations; recheck old work without changing original timestamps.
 
@@ -78,14 +83,25 @@ def merge_candidates(
         if source is None:
             continue
         identity = article_hash(article.title, article.link)
-        saved = CandidateArticle(article.title, article.link, article.description, article.source,
-                                 article.category, article.pub_date.isoformat() if article.pub_date else None,
-                                 source.url)
+        saved = CandidateArticle(
+            article.title,
+            article.link,
+            article.description,
+            article.source,
+            article.category,
+            article.pub_date.isoformat() if article.pub_date else None,
+            source.url,
+        )
         _persist_observed_source(saved, cache_dir)
         register_occurrence(progress, identity, saved, source.priority, instant)
     reconcile_eligibility(
-        progress, sources, config.filters.blocklist_keywords, delivered_cache, effective_priorities,
-        instant, delivery_history,
+        progress,
+        sources,
+        config.filters.blocklist_keywords,
+        delivered_cache,
+        effective_priorities,
+        instant,
+        delivery_history,
     )
     if inventory is not None:
         audit = asdict(inventory)
@@ -95,9 +111,14 @@ def merge_candidates(
             observed_candidate = progress.candidates.get(observation.identity)
             if observation.eligible and observed_candidate is not None:
                 article = observation.article
-                observed_saved = next((saved for saved in (observed_candidate.article,
-                                                           *observed_candidate.occurrences)
-                                       if saved.article() == article), None)
+                observed_saved = next(
+                    (
+                        saved
+                        for saved in (observed_candidate.article, *observed_candidate.occurrences)
+                        if saved.article() == article
+                    ),
+                    None,
+                )
                 if observed_saved is not None:
                     raw.pop("article")
                     raw["article_reference"] = {
@@ -105,7 +126,9 @@ def merge_candidates(
                         "occurrence_sha256": hashlib.sha256(_canonical(asdict(observed_saved))).hexdigest(),
                     }
         progress.latest_collection_json = json.dumps(
-            audit, ensure_ascii=False, sort_keys=True,
+            audit,
+            ensure_ascii=False,
+            sort_keys=True,
             default=lambda value: value.isoformat() if isinstance(value, datetime) else str(value),
         )
     return progress
@@ -120,31 +143,48 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
     editorial decision is implied by a turn, a byte skip or a saved plan.
     """
     instant = _instant(now)
-    selected = plan_articles(
-        progress, instant, max_evidence_articles=config.review.max_evidence_articles,
+    admitted = plan_articles(
+        progress,
+        instant,
+        max_evidence_articles=config.review.max_evidence_articles,
         max_excerpt_chars=config.review.max_excerpt_chars,
         max_technical_retry_articles=config.review.max_technical_retry_articles,
-        closing_sources=(closing_source_bindings(config.closing, config.sources)
-                         if config.closing.enabled else frozenset()),
+        closing_sources=(
+            closing_source_bindings(config.closing, config.sources) if config.closing.enabled else frozenset()
+        ),
     )
-    if not selected:
+    if admitted is None:
         return None
-    packet = CandidatePacket(build_evidence_bundle({}, config.review), tuple(selected),
-                             {item.source: progress.candidates[article_hash(item.title, item.link)].priority
-                              for item in selected}, _instant(now).isoformat())
-    packet.evidence = build_evidence_bundle(packet_articles(packet), config.review)
+    packet = CandidatePacket(
+        admitted.evidence,
+        admitted.articles,
+        {item.source: progress.candidates[article_hash(item.title, item.link)].priority for item in admitted.articles},
+        _instant(now).isoformat(),
+    )
     packet.collection_json = progress.latest_collection_json
-    validate_request_evidence_bundle(packet.evidence, max_evidence_articles=config.review.max_evidence_articles,
-                                     max_excerpt_chars=config.review.max_excerpt_chars)
-    packet.prompt_hash = review_prompt_hash(build_review_messages(
-        packet.evidence, config.review, config.radar.language, sources=config.sources,
-        closing=getattr(config, "closing", None)))
+    validate_request_evidence_bundle(
+        packet.evidence,
+        max_evidence_articles=config.review.max_evidence_articles,
+        max_excerpt_chars=config.review.max_excerpt_chars,
+    )
+    packet.prompt_hash = review_prompt_hash(
+        build_review_messages(
+            packet.evidence,
+            config.review,
+            config.radar.language,
+            sources=config.sources,
+            closing=getattr(config, "closing", None),
+        )
+    )
     packet.max_selections = config.review.max_selections
     return packet
 
 
 def begin_packet(
-    progress: CandidateProgress, packet: CandidatePacket, cache_dir: str | Path = ".cache", *,
+    progress: CandidateProgress,
+    packet: CandidatePacket,
+    cache_dir: str | Path = ".cache",
+    *,
     skipped_empty_reports: set[str] | None = None,
 ) -> Path:
     """Persist a planned attempt; this is not evidence that dispatch occurred."""
@@ -159,24 +199,35 @@ def begin_packet(
         candidate.status = "technical_pending"
     path = checkpoint_candidates(progress, cache_dir, skipped_empty_reports=skipped_empty_reports)
     if progress_size(progress, cache_dir) + RESPONSE_STORAGE_RESERVE > MAX_BYTES:
-        raise ValueError(
-            "Insufficient candidate working-set capacity before model work; no input was truncated.")
+        raise ValueError("Insufficient candidate working-set capacity before model work; no input was truncated.")
     return path
 
 
 def reconcile_packet(
-    progress: CandidateProgress, packet: CandidatePacket, result: ResolvedReview, config: Config,
+    progress: CandidateProgress,
+    packet: CandidatePacket,
+    result: ResolvedReview,
+    config: Config,
     cache_dir: str | Path = ".cache",
 ) -> Path:
     """Keep only validated primary/fallback results; technical failure is unfinished."""
     report = result.report
     validate_packet_report(
-        progress, packet, report, max_evidence_articles=config.review.max_evidence_articles,
+        progress,
+        packet,
+        report,
+        max_evidence_articles=config.review.max_evidence_articles,
         max_excerpt_chars=config.review.max_excerpt_chars,
     )
-    prompt_hash = review_prompt_hash(build_review_messages(
-        report.evidence, config.review, config.radar.language, sources=config.sources,
-        closing=getattr(config, "closing", None)))
+    prompt_hash = review_prompt_hash(
+        build_review_messages(
+            report.evidence,
+            config.review,
+            config.radar.language,
+            sources=config.sources,
+            closing=getattr(config, "closing", None),
+        )
+    )
     apply_packet_report(progress, packet, result, prompt_hash)
     path = persist_candidates(progress, cache_dir)
     ensure_report_accounting(progress, report, cache_dir)
@@ -191,7 +242,10 @@ def mark_prepared(progress: CandidateProgress, bundle_id: str, cache_dir: str | 
 
 
 def _restore_relevant_history(
-    progress: CandidateProgress, articles: dict[str, list[Article]], config: Config, cache_dir: str | Path,
+    progress: CandidateProgress,
+    articles: dict[str, list[Article]],
+    config: Config,
+    cache_dir: str | Path,
     now: datetime,
 ) -> None:
     from digest.adapters.storage import candidate_objects as storage
@@ -201,7 +255,8 @@ def _restore_relevant_history(
         for identity in storage.list_excluded(cache_dir):
             header = storage.read_candidate_header(identity, cache_dir)
             if header is not None and excluded_policy_relevant(
-                header, {source.name: source for source in config.enabled_sources}, now):
+                header, {source.name: source for source in config.enabled_sources}, now
+            ):
                 identities.add(identity)
     known_packets = {storage.packet_key(packet) for packet in progress.packets}
     for identity in sorted(identities - progress.candidates.keys()):
