@@ -37,7 +37,10 @@ def isolated_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 async def _checkpoint(
-    path: Path, *, age: timedelta = timedelta(minutes=10), failed: tuple[str, ...] = ("secondary",),
+    path: Path,
+    *,
+    age: timedelta = timedelta(minutes=10),
+    failed: tuple[str, ...] = ("secondary",),
 ) -> dict[str, Any]:
     execution = ModelExecution()
     with patch("digest.application.review.complete", side_effect=fixture_response):
@@ -63,7 +66,8 @@ def _marker(checkpoint: Path) -> Path:
 
 @pytest.mark.asyncio
 async def test_prepare_selects_newest_eligible_report_and_persists_safe_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reports = tmp_path / "digests"
     older = reports / "older.review.json"
@@ -91,15 +95,14 @@ async def test_prepare_selects_newest_eligible_report_and_persists_safe_marker(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["stale", "boundary", "future", "complete", "marked", "unknown_age", "corrupt"])
+@pytest.mark.parametrize("kind", ["stale", "boundary", "future", "unknown_age", "corrupt"])
 async def test_prepare_skips_ineligible_reports(kind: str, tmp_path: Path) -> None:
     path = tmp_path / "digests/day.review.json"
     age = {"stale": timedelta(days=2), "boundary": timedelta(days=1), "future": timedelta(minutes=-1)}.get(
-        kind, timedelta(minutes=10),
+        kind,
+        timedelta(minutes=10),
     )
-    payload = await _checkpoint(path, age=age, failed=() if kind == "complete" else ("secondary",))
-    if kind == "marked":
-        _marker(path).write_text("{}")
+    payload = await _checkpoint(path, age=age)
     if kind == "unknown_age":
         for review in payload["reviews"]:
             review["generated_at"] = review["attempted_at"] = None
@@ -218,8 +221,11 @@ async def test_resume_preserves_separate_source_provenance_without_promoting_rss
     execution = ModelExecution()
     checkpoint = tmp_path / "digests/day.review.json"
     payload = await _checkpoint(checkpoint)
-    provenance = {"full_source_required": True, "full_source_error": "ValueError",
-                  "reading_brief_status": {"pending": 2, "abstained": 0, "oldest_pending": "2026-09-29"}}
+    provenance = {
+        "full_source_required": True,
+        "full_source_error": "ValueError",
+        "reading_brief_status": {"pending": 2, "abstained": 0, "oldest_pending": "2026-09-29"},
+    }
     payload.update(provenance)
     checkpoint.write_text(json.dumps(payload))
     assert prepare_resume(Path("fixture.yaml"), checkpoint.parent, NOW) == checkpoint

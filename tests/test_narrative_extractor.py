@@ -15,11 +15,13 @@ from digest.irritator.narrative_extractor import (
     _parse_narratives,
     extract_narratives,
 )
+from digest.llm import LLMRole
 from digest.radar.summarizer import CategorySummary
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_summary(category: str = "AI", text: str = "AI is changing everything.", count: int = 5) -> CategorySummary:
     return CategorySummary(category=category, summary_text=text, article_count=count)
@@ -39,13 +41,17 @@ def _valid_narrative_dicts(n: int = 2) -> list[dict[str, object]]:
 
 def _make_config(language: str = "ru", max_narratives: int = 5) -> Any:
     """Minimal config stub for narrative extractor tests."""
+
     class IrritatorCfg:
         max_narratives = 5
+
     class RadarCfg:
         language = "ru"
+
     class Cfg:
         irritator = IrritatorCfg()
         radar = RadarCfg()
+
     Cfg.radar.language = language
     Cfg.irritator.max_narratives = max_narratives
     return Cfg()
@@ -54,6 +60,7 @@ def _make_config(language: str = "ru", max_narratives: int = 5) -> Any:
 # ---------------------------------------------------------------------------
 # _build_prompt tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildPrompt:
     def test_russian_prompt(self) -> None:
@@ -92,20 +99,8 @@ class TestBuildPrompt:
 # _parse_narratives tests
 # ---------------------------------------------------------------------------
 
+
 class TestParseNarratives:
-    def test_valid_json(self) -> None:
-        raw = _valid_narrative_dicts(2)
-        result = _parse_narratives(raw, 5)
-        assert len(result) == 2
-        assert isinstance(result[0], Narrative)
-        assert result[0].claim == "Narrative claim 0"
-        assert len(result[0].implicit_assumptions) == 2
-
-    def test_truncates_to_max(self) -> None:
-        raw = _valid_narrative_dicts(5)
-        result = _parse_narratives(raw, 3)
-        assert len(result) == 3
-
     def test_not_a_list(self) -> None:
         with pytest.raises(ValueError, match="Expected JSON array"):
             _parse_narratives({"claim": "x"}, 5)
@@ -120,12 +115,14 @@ class TestParseNarratives:
             _parse_narratives(raw, 5)
 
     def test_assumptions_not_list(self) -> None:
-        raw = [{
-            "claim": "x",
-            "category": "AI",
-            "implicit_assumptions": "not a list",
-            "why_worth_challenging": "reason",
-        }]
+        raw = [
+            {
+                "claim": "x",
+                "category": "AI",
+                "implicit_assumptions": "not a list",
+                "why_worth_challenging": "reason",
+            }
+        ]
         with pytest.raises(ValueError, match="must be a list"):
             _parse_narratives(raw, 5)
 
@@ -133,6 +130,7 @@ class TestParseNarratives:
 # ---------------------------------------------------------------------------
 # extract_narratives (async) tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestExtractNarratives:
@@ -143,12 +141,19 @@ class TestExtractNarratives:
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             result = await extract_narratives(
-                [_make_summary("AI"), _make_summary("Banking")], _make_config(), execution=execution,
+                [_make_summary("AI"), _make_summary("Banking")],
+                _make_config(),
+                execution=execution,
             )
 
         assert len(result) == 2
+        assert isinstance(result[0], Narrative)
         assert result[0].claim == "Narrative claim 0"
+        assert len(result[0].implicit_assumptions) == 2
         mock_complete.assert_called_once()
+        call_args = mock_complete.call_args
+        assert call_args.args[0] == LLMRole.EXTRACT_NARRATIVES
+        assert call_args.kwargs["temperature"] == 0.5
 
     async def test_empty_summaries(self) -> None:
         execution = ModelExecution()
@@ -162,7 +167,9 @@ class TestExtractNarratives:
 
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             result = await extract_narratives(
-                [_make_summary()], _make_config(max_narratives=2), execution=execution,
+                [_make_summary()],
+                _make_config(max_narratives=2),
+                execution=execution,
             )
 
         assert len(result) == 2
@@ -191,20 +198,6 @@ class TestExtractNarratives:
         with patch("digest.irritator.narrative_extractor.complete", mock_complete):
             with pytest.raises(RuntimeError, match="All providers failed"):
                 await extract_narratives([_make_summary()], _make_config(), execution=execution)
-
-    async def test_uses_correct_role_and_temperature(self) -> None:
-        execution = ModelExecution()
-        from digest.llm import LLMRole
-
-        dicts = _valid_narrative_dicts(1)
-        mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
-
-        with patch("digest.irritator.narrative_extractor.complete", mock_complete):
-            await extract_narratives([_make_summary()], _make_config(), execution=execution)
-
-        call_args = mock_complete.call_args
-        assert call_args[0][0] == LLMRole.EXTRACT_NARRATIVES
-        assert call_args[1]["temperature"] == 0.5
 
     async def test_json_in_markdown_fence(self) -> None:
         execution = ModelExecution()

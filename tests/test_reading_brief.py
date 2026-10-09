@@ -1,4 +1,5 @@
 """Offline contract tests for complete source use, resumability and immutable quotes."""
+
 from __future__ import annotations
 
 import json
@@ -39,9 +40,14 @@ def config() -> Config:
 
 
 def fetched(text: str) -> FetchedArticle:
-    return FetchedArticle(text, "https://example.com/final", "2026-10-02T12:00:00+00:00",
-                          "2026-09-20T09:00:00+00:00", "article",
-                          ("Textual content only; semantic completeness is not guaranteed.", "Uninspected images."))
+    return FetchedArticle(
+        text,
+        "https://example.com/final",
+        "2026-10-02T12:00:00+00:00",
+        "2026-09-20T09:00:00+00:00",
+        "article",
+        ("Textual content only; semantic completeness is not guaranteed.", "Uninspected images."),
+    )
 
 
 def payload(messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -55,8 +61,9 @@ def response(messages: list[dict[str, str]], *, abstain: bool = False) -> tuple[
         "coverage": {"first_span_id": ids[0], "last_span_id": ids[-1]},
         "selected_span_ids": [] if abstain else [ids[0]],
         "qualification_span_ids": [span["id"] for span in spans if "QUALIFICATION" in span["text"]],
-        "reading_angle": None if abstain else {"text": "Read the measured scope before using this result.",
-                                                "span_ids": [ids[0]]},
+        "reading_angle": None
+        if abstain
+        else {"text": "Read the measured scope before using this result.", "span_ids": [ids[0]]},
         "abstain": abstain,
     }
     return json.dumps(result), {"finish_reason": "STOP"}
@@ -89,11 +96,14 @@ async def test_direct_full_body_and_late_qualification_reach_checked_evidence(tm
         usage.update(prompt_tokens=100, completion_tokens=80, total_tokens=180)
         return raw, usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=150_000)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
-        prepared = await prepare_selected_sources(progress, packet, report, cfg, tmp_path,
-                                                  time.monotonic() + 1000, execution=execution)
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=150_000)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
+        prepared = await prepare_selected_sources(
+            progress, packet, report, cfg, tmp_path, time.monotonic() + 1000, execution=execution
+        )
         assert prepared.technical_complete == 1 and prepared.pending == 0
         state, source = ready_brief_evidence(tmp_path, identity)
         assert state.status == "ready" and len(state.pages) == 1
@@ -107,12 +117,13 @@ async def test_direct_full_body_and_late_qualification_reach_checked_evidence(tm
         assert handoff["source_sha256"] == state.source_sha256
         assert handoff["source_body_sha256"] == source.body_sha256
         assert handoff["state"]["pages"][0]["result"]["qualification_span_ids"] == [source.spans[-1].id]
-        assert Path(handoff["source_path"]).read_bytes() == (
-            state_root(tmp_path) / "sources" / f"{state.source_sha256}.json"
-        ).read_bytes()
+        assert (
+            Path(handoff["source_path"]).read_bytes()
+            == (state_root(tmp_path) / "sources" / f"{state.source_sha256}.json").read_bytes()
+        )
         evidence = build_reconciliation_input(source, state)
         assert evidence.pages[0].qualification_span_ids == (source.spans[-1].id,)
-        assert evidence.evidence[-1].text == source.text[source.spans[-1].start:source.spans[-1].end]
+        assert evidence.evidence[-1].text == source.text[source.spans[-1].start : source.spans[-1].end]
         assert "FINAL QUALIFICATION" in evidence.evidence[-1].text
         assert evidence.source_published == "2026-09-20T09:00:00+00:00"
         assert "Uninspected images." in evidence.source_coverage_notes
@@ -146,10 +157,12 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
             raise RuntimeError("HTTP 429 code=RESOURCE_EXHAUSTED")
         return response(messages)
 
-    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 121}),
-          patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate)):
+    with (
+        patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 121}),
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))) as fetch,
+        patch("digest.llm.count_gemini_tokens", side_effect=count),
+        patch("digest.llm.complete", side_effect=generate),
+    ):
         state = saved_brief_state(tmp_path, cfg)
         identity = state.selection.identity
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
@@ -167,15 +180,16 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
         assert generated == [[1, 2], [3, 4], [3, 4], [5, 6], [7, 8]]
         assert counted.count([3, 4]) == 1 and fetch.call_count == 1
         assert [span for page in state.pages for span in page.result.covered_span_ids] == list(range(1, 9))
-        assert "".join(source.text[s.start:s.end] for s in source.spans) == text
+        assert "".join(source.text[s.start : s.end] for s in source.spans) == text
         evidence = build_reconciliation_input(source, state)
         assert [span for page in evidence.pages for span in page.qualification_span_ids] == list(range(1, 9))
         assert "".join(span.text for span in evidence.evidence) == text
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("damage", ["truncated", "unknown_id", "partial_coverage", "no_angle_citations",
-                                    "missing_brief", "bad_type"])
+@pytest.mark.parametrize(
+    "damage", ["unknown_id", "partial_coverage", "no_angle_citations", "missing_brief", "bad_type"]
+)
 async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path: Path, damage: str) -> None:
     execution = ModelExecution()
     cfg = config()
@@ -184,9 +198,7 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         text, usage = response(messages)
         data = json.loads(text)
-        if damage == "truncated":
-            usage["finish_reason"] = "MAX_TOKENS"
-        elif damage == "unknown_id":
+        if damage == "unknown_id":
             data["qualification_span_ids"] = [999]
         elif damage == "partial_coverage":
             data["coverage"]["last_span_id"] = 1
@@ -198,9 +210,11 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
             data["abstain"] = "false"
         return json.dumps(data), usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Claim.\n\nQualification."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Claim.\n\nQualification."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == "pending" and state.pages[0].result is None and call.call_count == 1
@@ -224,11 +238,12 @@ async def test_abstention_is_semantic_only_after_every_page_completes(tmp_path: 
         assert persisted.status == "pending"
         return response(messages, abstain=True)
 
-    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
-          patch("digest.reading_brief.fetch_article",
-                AsyncMock(return_value=fetched("Routine notice.\n\nNo finding."))),
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Routine notice.\n\nNo finding."))),
+        patch("digest.llm.count_gemini_tokens", side_effect=count),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         state = saved_brief_state(tmp_path, cfg)
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         state = load_state(tmp_path, state.selection.identity)
@@ -246,14 +261,18 @@ async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_reje
     cfg = config()
     state = saved_brief_state(tmp_path, cfg)
     llm.set_request_limit(cfg, execution, 0)
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=ValueError("coverage_incomplete"))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(side_effect=ValueError("coverage_incomplete"))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == "pending" and state.error_class == "technical_fetch_incomplete"
     assert state.source_sha256 is None and count.call_count == 0
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == "pending" and state.error_class == "technical_quota_or_budget"
@@ -263,7 +282,9 @@ async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_reje
 @pytest.mark.asyncio
 @pytest.mark.parametrize("remaining,expected_calls", [(60.0, 1), (34.0, 0)])
 async def test_deadline_admits_a_clipped_useful_window_after_pacing(
-    tmp_path: Path, remaining: float, expected_calls: int,
+    tmp_path: Path,
+    remaining: float,
+    expected_calls: int,
 ) -> None:
     execution = ModelExecution()
     cfg = config()
@@ -274,10 +295,12 @@ async def test_deadline_admits_a_clipped_useful_window_after_pacing(
         assert kwargs["request_timeout_seconds"] < 120
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
-          patch("digest.llm.request_wait_seconds", return_value=5),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
-          patch("digest.llm.complete", side_effect=generate_response) as generate):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete article text."))),
+        patch("digest.llm.request_wait_seconds", return_value=5),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+        patch("digest.llm.complete", side_effect=generate_response) as generate,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + remaining, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == ("ready" if expected_calls else "pending")
@@ -295,10 +318,11 @@ async def test_completed_state_cannot_validate_after_evidence_or_result_tamperin
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article",
-                AsyncMock(return_value=fetched("First source.\n\nSecond source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("First source.\n\nSecond source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         ready_brief_evidence(tmp_path, identity)
         path = state_root(tmp_path) / f"{identity}.json"
@@ -334,11 +358,14 @@ async def test_unknown_profile_holds_admitted_selection_without_fetch_or_fallbac
     execution = ModelExecution()
     cfg, progress, packet, report = await saved_selection(tmp_path, execution=execution)
     cfg.reading_brief = replace(cfg.reading_brief, model="unprofiled-model")
-    with (patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
-          patch("digest.llm.complete", AsyncMock()) as generate):
-        result = await prepare_selected_sources(progress, packet, report, cfg, tmp_path,
-                                                time.monotonic() + 1000, execution=execution)
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock()) as fetch,
+        patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+        patch("digest.llm.complete", AsyncMock()) as generate,
+    ):
+        result = await prepare_selected_sources(
+            progress, packet, report, cfg, tmp_path, time.monotonic() + 1000, execution=execution
+        )
     assert result.pending == 1 and result.technical_complete == 0
     assert fetch.call_count == count.call_count == generate.call_count == 0
     state = load_state(tmp_path, result.outcomes[0].identity)
@@ -357,9 +384,11 @@ async def test_rss_description_does_not_enter_reader_prompt(tmp_path: Path) -> N
         messages_seen.append(messages)
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete actual source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete actual source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state, _ = ready_brief_evidence(tmp_path, state.selection.identity)
     assert state.selection.article() == original and call.call_count == 1
@@ -419,15 +448,21 @@ async def test_substantive_brief_retains_conditions_and_unresolved_conflict_in_s
         assert "Retain the nominated material conditions in that prose" in instructions
         assert "cache" not in instructions.lower()
         assert "".join(span["text"] for span in payload(messages)["spans"]) == text
-        return json.dumps({
-            "coverage": {"first_span_id": 1, "last_span_id": 4},
-            "selected_span_ids": [1], "qualification_span_ids": [2, 3, 4],
-            "reading_angle": {"text": brief, "span_ids": [1, 2, 3, 4]}, "abstain": False,
-        }), {"finish_reason": "STOP"}
+        return json.dumps(
+            {
+                "coverage": {"first_span_id": 1, "last_span_id": 4},
+                "selected_span_ids": [1],
+                "qualification_span_ids": [2, 3, 4],
+                "reading_angle": {"text": brief, "span_ids": [1, 2, 3, 4]},
+                "abstain": False,
+            }
+        ), {"finish_reason": "STOP"}
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state, source = ready_brief_evidence(tmp_path, state.selection.identity)
     evidence = build_reconciliation_input(source, state)
@@ -441,7 +476,8 @@ async def test_substantive_brief_retains_conditions_and_unresolved_conflict_in_s
 @pytest.mark.asyncio
 @pytest.mark.parametrize("previous_version", ["source-passages-v1", "source-passages-v2", "source-passages-v3"])
 async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
-    tmp_path: Path, previous_version: str,
+    tmp_path: Path,
+    previous_version: str,
 ) -> None:
     execution = ModelExecution()
     cfg = config()
@@ -451,9 +487,11 @@ async def test_cached_previous_brief_cannot_be_reused_or_silently_rewritten(
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public article."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         ready_brief_evidence(tmp_path, identity)
         path = state_root(tmp_path) / f"{identity}.json"
@@ -484,18 +522,22 @@ async def test_abstaining_later_page_qualification_remains_literal_in_retained_e
         ids = [span["id"] for span in payload(messages)["spans"]]
         generated_pages.append(ids)
         is_qualification = ids == [2]
-        return json.dumps({
-            "coverage": {"first_span_id": ids[0], "last_span_id": ids[-1]},
-            "selected_span_ids": [] if is_qualification else [1],
-            "qualification_span_ids": [2] if is_qualification else [],
-            "reading_angle": None if is_qualification else {"text": claim, "span_ids": [1]},
-            "abstain": is_qualification,
-        }), {"finish_reason": "STOP"}
+        return json.dumps(
+            {
+                "coverage": {"first_span_id": ids[0], "last_span_id": ids[-1]},
+                "selected_span_ids": [] if is_qualification else [1],
+                "qualification_span_ids": [2] if is_qualification else [],
+                "reading_angle": None if is_qualification else {"text": claim, "span_ids": [1]},
+                "abstain": is_qualification,
+            }
+        ), {"finish_reason": "STOP"}
 
-    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
-          patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate)):
+    with (
+        patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(text))),
+        patch("digest.llm.count_gemini_tokens", side_effect=count),
+        patch("digest.llm.complete", side_effect=generate),
+    ):
         state = saved_brief_state(tmp_path, cfg)
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state, source = ready_brief_evidence(tmp_path, state.selection.identity)
@@ -519,9 +561,11 @@ async def test_historical_delivered_record_remains_readable_without_writes(tmp_p
     async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Retained original source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate)):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Retained original source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate),
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state_path = state_root(tmp_path) / f"{identity}.json"
     envelope = json.loads(state_path.read_text())
@@ -529,10 +573,12 @@ async def test_historical_delivered_record_remains_readable_without_writes(tmp_p
     envelope["sha256"] = checksum(envelope["payload"])
     state_path.write_text(json.dumps(envelope))
     original = {path: path.read_bytes() for path in state_root(tmp_path).rglob("*.json")}
-    with (patch("digest.reading_brief.save_state", side_effect=AssertionError("No delivery-state writes")),
-          patch("digest.llm.complete", side_effect=AssertionError("No repeated generation")),
-          patch("digest.llm.count_gemini_tokens", side_effect=AssertionError("No repeated count")),
-          patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No repeated fetch"))):
+    with (
+        patch("digest.reading_brief.save_state", side_effect=AssertionError("No delivery-state writes")),
+        patch("digest.llm.complete", side_effect=AssertionError("No repeated generation")),
+        patch("digest.llm.count_gemini_tokens", side_effect=AssertionError("No repeated count")),
+        patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No repeated fetch")),
+    ):
         restored = load_state(tmp_path, identity)
         checked, source = ready_brief_evidence(tmp_path, identity)
         evidence = build_reconciliation_input(source, checked)

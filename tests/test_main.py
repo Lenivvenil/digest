@@ -26,9 +26,11 @@ class _Article:
     description: str = "Description"
     source: str = "test"
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ProviderCfg:
@@ -138,6 +140,7 @@ def _mock_config() -> _Config:
 # _clean_summary
 # ---------------------------------------------------------------------------
 
+
 class TestCleanSummary:
     def test_removes_link_lines(self) -> None:
         text = "Content here\nLink: https://example.com\nMore content"
@@ -186,7 +189,7 @@ class TestCleanSummary:
         assert "AI" in result
 
     def test_normalizes_category_header(self) -> None:
-        text = 'Категория «Финансы» содержит 5 статей'
+        text = "Категория «Финансы» содержит 5 статей"
         result = _clean_summary(text)
         assert result.startswith("## ")
         assert "Финансы" in result
@@ -202,6 +205,7 @@ class TestCleanSummary:
 # ---------------------------------------------------------------------------
 # check_config
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestCheckConfig:
@@ -219,10 +223,18 @@ class TestCheckConfig:
         with (
             patch("digest.config.load_config", return_value=cfg),
             patch("httpx.AsyncClient", return_value=mock_client),
-            patch("digest._dns_pinning.validate_url", return_value=type("V", (), {
-                "hostname": "example.com", "pinned_addrinfos": [],
-                "url": "https://example.com/feed",
-            })()),
+            patch(
+                "digest._dns_pinning.validate_url",
+                return_value=type(
+                    "V",
+                    (),
+                    {
+                        "hostname": "example.com",
+                        "pinned_addrinfos": [],
+                        "url": "https://example.com/feed",
+                    },
+                )(),
+            ),
             patch("digest._dns_pinning.pin_dns", MagicMock()),
         ):
             result = await check_config("config.yaml")
@@ -233,9 +245,7 @@ class TestCheckConfig:
             result = await check_config("missing.yaml")
         assert result == 1
 
-    async def test_warns_missing_env_vars(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_warns_missing_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mock_config()
         cfg.telegram.enabled = True
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
@@ -252,10 +262,18 @@ class TestCheckConfig:
         with (
             patch("digest.config.load_config", return_value=cfg),
             patch("httpx.AsyncClient", return_value=mock_client),
-            patch("digest._dns_pinning.validate_url", return_value=type("V", (), {
-                "hostname": "example.com", "pinned_addrinfos": [],
-                "url": "https://example.com/feed",
-            })()),
+            patch(
+                "digest._dns_pinning.validate_url",
+                return_value=type(
+                    "V",
+                    (),
+                    {
+                        "hostname": "example.com",
+                        "pinned_addrinfos": [],
+                        "url": "https://example.com/feed",
+                    },
+                )(),
+            ),
             patch("digest._dns_pinning.pin_dns", MagicMock()),
         ):
             result = await check_config("config.yaml")
@@ -265,6 +283,7 @@ class TestCheckConfig:
 # ---------------------------------------------------------------------------
 # run — radar only
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestRunRadarOnly:
@@ -318,14 +337,15 @@ class TestRunRadarOnly:
 # run — dry run (full pipeline)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestRunDryRun:
-    async def test_dry_run_does_not_save_cache(self) -> None:
-        summary = _CategorySummary()
+    async def test_dry_run_prints_combined(self, capsys: pytest.CaptureFixture[str]) -> None:
+        summary = _CategorySummary(summary_text="Test output")
         mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
         mock_summarize = AsyncMock(return_value=([summary], ""))
-        mock_save = MagicMock()
         mock_extract = AsyncMock(return_value=[])
+        mock_save = MagicMock()
 
         with (
             patch("digest.config.load_config", return_value=_mock_config()),
@@ -340,28 +360,10 @@ class TestRunDryRun:
         assert isinstance(result, RunStats)
         mock_save.assert_not_called()
 
-    async def test_dry_run_prints_combined(self, capsys: pytest.CaptureFixture[str]) -> None:
-        summary = _CategorySummary(summary_text="Test output")
-        mock_collect = AsyncMock(return_value=({"tech": [_Article()]}, {}))
-        mock_summarize = AsyncMock(return_value=([summary], ""))
-        mock_extract = AsyncMock(return_value=[])
-
-        with (
-            patch("digest.config.load_config", return_value=_mock_config()),
-            patch("digest.radar.collect", mock_collect),
-            patch("digest.radar.summarize_all", mock_summarize),
-            patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
-            patch("digest.radar.save_dedup_cache", MagicMock()),
-            patch("digest.irritator.extract_narratives", mock_extract),
-        ):
-            await run("config.yaml", dry_run=True, radar_only=False, verbose=False)
-
         captured = capsys.readouterr()
         assert "Test output" in captured.out
 
-    async def test_dry_run_prints_irritator_status(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    async def test_dry_run_prints_irritator_status(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Dry-run always prints irritator status — visible even when no signals survive."""
         summary = _CategorySummary(summary_text="News")
         mock_status = IrritatorStatus("2 narratives, 0 signals", "empty")
@@ -383,6 +385,7 @@ class TestRunDryRun:
 # ---------------------------------------------------------------------------
 # run — full pipeline with delivery
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestRunFullPipeline:
@@ -439,6 +442,7 @@ class TestRunFullPipeline:
 # main (CLI entrypoint)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestMain:
     async def test_check_flag(self) -> None:
@@ -449,9 +453,13 @@ class TestMain:
 
     async def test_default_flags(self) -> None:
         mock_stats = RunStats(
-            feeds_fetched=1, new_articles=0, digest_length=0,
-            telegram_sent=False, telegram_partial=False,
-            markdown_saved=False, markdown_path="",
+            feeds_fetched=1,
+            new_articles=0,
+            digest_length=0,
+            telegram_sent=False,
+            telegram_partial=False,
+            markdown_saved=False,
+            markdown_path="",
         )
         with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
             result = await main([])
@@ -460,13 +468,18 @@ class TestMain:
 
     async def test_all_flags(self) -> None:
         mock_stats = RunStats(
-            feeds_fetched=1, new_articles=0, digest_length=0,
-            telegram_sent=False, telegram_partial=False,
-            markdown_saved=False, markdown_path="",
+            feeds_fetched=1,
+            new_articles=0,
+            digest_length=0,
+            telegram_sent=False,
+            telegram_partial=False,
+            markdown_saved=False,
+            markdown_path="",
         )
         with patch("digest.main.run", new_callable=AsyncMock, return_value=mock_stats) as mock_run:
-            result = await main(["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml",
-                                 "--feedback-precollected"])
+            result = await main(
+                ["--dry-run", "--radar-only", "--verbose", "--config", "alt.yaml", "--feedback-precollected"]
+            )
         assert result == 0
         mock_run.assert_called_once_with("alt.yaml", True, True, True, feedback_precollected=True)
 
@@ -483,19 +496,28 @@ class TestMain:
 )
 @pytest.mark.parametrize("required", [False, True])
 async def test_direct_delivery_accounts_for_confirmed_and_eligible_archive_articles(
-    sent: int, failed: int, markdown: bool, expected_titles: set[str], required: bool,
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    sent: int,
+    failed: int,
+    markdown: bool,
+    expected_titles: set[str],
+    required: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    articles = [_Article(title="One", link="https://example.com/1"),
-                _Article(title="Two", link="https://example.com/2")]
+    articles = [
+        _Article(title="One", link="https://example.com/1"),
+        _Article(title="Two", link="https://example.com/2"),
+    ]
     hashes = [article_hash(a.title, a.link) for a in articles]
     cache = {"existing": "old", **dict.fromkeys(hashes, "new")}
     top_articles = [ArticleSummary(a.title, a.link, a.source, "tech", "Summary") for a in articles]
     delivery = ArticleDeliveryResult(
-        attempted=2, sent=sent, failed=failed,
+        attempted=2,
+        sent=sent,
+        failed=failed,
         article_source_map={h[:8]: "test" for h in hashes[:sent]},
         delivered_hashes=set(hashes[:sent]),
     )
@@ -503,7 +525,8 @@ async def test_direct_delivery_accounts_for_confirmed_and_eligible_archive_artic
     source_stats: dict = {}
     feedback = FeedbackStore(
         article_source_map={"previous": "Previous source"},
-        last_digest_sources=["Previous source"], last_digest_time="Previous time",
+        last_digest_sources=["Previous source"],
+        last_digest_time="Previous time",
     )
     cfg = _mock_config()
     cfg.telegram.enabled = True
@@ -529,8 +552,9 @@ async def test_direct_delivery_accounts_for_confirmed_and_eligible_archive_artic
             "digest.radar.summarize_all": AsyncMock(return_value=([_CategorySummary()], "")),
             "digest.radar.pick_top_articles": AsyncMock(return_value=top_articles),
             "digest.radar.save_dedup_cache": save_cache,
-            "digest.application.investigation.run_irritator": AsyncMock(return_value=([],
-                  [], IrritatorStatus("empty", "empty"))),
+            "digest.application.investigation.run_irritator": AsyncMock(
+                return_value=([], [], IrritatorStatus("empty", "empty"))
+            ),
             "digest.delivery.write_digest": MagicMock(return_value=Path("digest.md") if markdown else None),
             "digest.delivery.send_article_cards": AsyncMock(side_effect=send_stub),
             "digest.delivery.send_counter_signals": AsyncMock(),
@@ -563,7 +587,8 @@ async def test_direct_delivery_accounts_for_confirmed_and_eligible_archive_artic
 
 @pytest.mark.asyncio
 async def test_failed_category_remains_retryable_in_markdown(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     good = _Article(title="Good")
@@ -573,14 +598,22 @@ async def test_failed_category_remains_retryable_in_markdown(
     save_cache = MagicMock()
     with (
         patch("digest.config.load_config", return_value=_mock_config()),
-        patch("digest.radar.collect", AsyncMock(return_value=(
-            {"tech": [good], "failed": [failed]}, {good_hash: "new", failed_hash: "new"},
-        ))),
+        patch(
+            "digest.radar.collect",
+            AsyncMock(
+                return_value=(
+                    {"tech": [good], "failed": [failed]},
+                    {good_hash: "new", failed_hash: "new"},
+                )
+            ),
+        ),
         patch("digest.radar.summarize_all", AsyncMock(return_value=([_CategorySummary()], ""))),
         patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])),
         patch("digest.radar.save_dedup_cache", save_cache),
-        patch("digest.application.investigation.run_irritator",
-              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch(
+            "digest.application.investigation.run_irritator",
+            AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty"))),
+        ),
         patch("digest.delivery.write_digest", return_value=Path("digest.md")),
         patch("digest.application.run_state.process_pending_approvals"),
     ):
@@ -590,7 +623,8 @@ async def test_failed_category_remains_retryable_in_markdown(
 
 @pytest.mark.asyncio
 async def test_radar_only_does_not_consume_articles_and_cli_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     save_cache = MagicMock()
@@ -609,7 +643,10 @@ async def test_radar_only_does_not_consume_articles_and_cli_succeeds(
 @pytest.mark.parametrize("feed_failure", [False, True])
 @pytest.mark.parametrize("dry_run", [False, True])
 async def test_failed_runs_record_fetch_health_without_consuming_articles(
-    feed_failure: bool, dry_run: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    feed_failure: bool,
+    dry_run: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.radar import AllFeedsFailedError
 
@@ -654,9 +691,14 @@ async def test_failed_runs_record_fetch_health_without_consuming_articles(
 @pytest.mark.asyncio
 async def test_required_telegram_failure_is_red_even_when_markdown_exists() -> None:
     stats = RunStats(
-        feeds_fetched=1, new_articles=1, digest_length=100,
-        telegram_sent=False, telegram_partial=False,
-        markdown_saved=True, markdown_path="digest.md", required_delivery_failed=True,
+        feeds_fetched=1,
+        new_articles=1,
+        digest_length=100,
+        telegram_sent=False,
+        telegram_partial=False,
+        markdown_saved=True,
+        markdown_path="digest.md",
+        required_delivery_failed=True,
     )
     with patch("digest.main.run", AsyncMock(return_value=stats)):
         assert await main([]) == 1
@@ -664,7 +706,8 @@ async def test_required_telegram_failure_is_red_even_when_markdown_exists() -> N
 
 @pytest.mark.asyncio
 async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_run_never_repolls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import datetime, timezone
 
@@ -688,10 +731,14 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         patch("digest.config.load_config", return_value=cfg),
         patch("digest.application.feedback.collect_feedback", side_effect=collect_vote) as poll,
         patch("digest.radar.collect", AsyncMock(return_value=({"tech": [article]}, {}))) as collect,
-        patch("digest.application.analysis.analyze_articles",
-              AsyncMock(return_value=([_CategorySummary()], None, [card], None))),
-        patch("digest.application.investigation.run_irritator",
-              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch(
+            "digest.application.analysis.analyze_articles",
+            AsyncMock(return_value=([_CategorySummary()], None, [card], None)),
+        ),
+        patch(
+            "digest.application.investigation.run_irritator",
+            AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty"))),
+        ),
         patch("digest.delivery.write_digest", return_value=None),
         patch("digest.delivery.send_article_cards", AsyncMock(return_value=ArticleDeliveryResult(1, 0, 1))),
         patch("digest.delivery.send_counter_signals", AsyncMock()),
@@ -711,19 +758,29 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         assert load_feedback(".cache", strict=True).ratings == [vote]
 
 
-@pytest.mark.parametrize(("enabled", "decisions"), [
-    pytest.param(True, {}, id="True-decisions0"),
-    pytest.param(False, {"source": "approved"}, id="False-decisions2"),
-])
+@pytest.mark.parametrize(
+    ("enabled", "decisions"),
+    [
+        pytest.param(True, {}, id="True-decisions0"),
+        pytest.param(False, {"source": "approved"}, id="False-decisions2"),
+    ],
+)
 def test_no_approval_reload_retains_config_and_execution(enabled: bool, decisions: dict[str, str]) -> None:
     from digest.application.run_state import apply_pending_approvals
 
     config, execution = _mock_config(), ModelExecution()
     store = FeedbackStore(source_decisions=decisions)
-    with (patch("digest.config.load_config", side_effect=AssertionError("No reload")),
-          patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization"))):
+    with (
+        patch("digest.config.load_config", side_effect=AssertionError("No reload")),
+        patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization")),
+    ):
         current_config, current_execution = apply_pending_approvals(
-            config, "config.yaml", ".cache", store, enabled=enabled, execution=execution,
+            config,
+            "config.yaml",
+            ".cache",
+            store,
+            enabled=enabled,
+            execution=execution,
         )
     assert current_config is config and current_execution is execution
 
@@ -735,11 +792,18 @@ def test_approval_reload_starts_fresh_lazy_execution_even_when_config_is_unchang
     config, execution = _mock_config(), ModelExecution()
     store = FeedbackStore(source_decisions={"source": "approved"})
     failure = OSError("state write failed") if persistence_failure else None
-    with (patch("digest.application.run_state.process_pending_approvals", side_effect=failure),
-          patch("digest.config.load_config", return_value=config) as reload,
-          patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization"))):
+    with (
+        patch("digest.application.run_state.process_pending_approvals", side_effect=failure),
+        patch("digest.config.load_config", return_value=config) as reload,
+        patch.object(ModelExecution, "request_state", side_effect=AssertionError("No initialization")),
+    ):
         current_config, current_execution = apply_pending_approvals(
-            config, "config.yaml", ".cache", store, enabled=True, execution=execution,
+            config,
+            "config.yaml",
+            ".cache",
+            store,
+            enabled=True,
+            execution=execution,
         )
     reload.assert_called_once_with("config.yaml")
     assert current_config is config
@@ -755,7 +819,7 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
     now = datetime.now(timezone.utc)
     fresh = PendingSource("Fresh", "https://example.com/fresh", "Tech", now.isoformat())
     failed = PendingSource("Retry", "https://example.com/retry", "Tech", now.isoformat())
-    stale = PendingSource("Stale", "https://example.com/stale", "Tech", (now-timedelta(days=31)).isoformat())
+    stale = PendingSource("Stale", "https://example.com/stale", "Tech", (now - timedelta(days=31)).isoformat())
     wrong = PendingSource("Wrong", "https://example.com/wrong", "Tech", now.isoformat(), "12345678")
     proposals = (fresh, failed, stale, wrong)
     store = FeedbackStore(
@@ -782,7 +846,9 @@ def test_pending_source_approval_requires_current_identity_and_keeps_failed_deci
 @pytest.mark.asyncio
 @pytest.mark.parametrize("write_fails", [False, True])
 async def test_discovery_persists_unique_proposals_before_sending_instructions(
-    write_fails: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    write_fails: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.discovery import ProposalDelivery, load_pending
     from digest.main import discover_sources
@@ -806,18 +872,29 @@ async def test_discovery_persists_unique_proposals_before_sending_instructions(
     config.telegram.enabled = True
     config.telegram.bot_username = "digest_test_bot"
     from digest.config import ProviderConfig
+
     config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
     with ExitStack() as stack:
         stack.enter_context(patch("digest.config.load_config", return_value=config))
-        stack.enter_context(patch("digest.llm.complete", AsyncMock(return_value=(
-            f"FEED|{url}|tech|New\nFEED|{url}|tech|Duplicate", None,
-        ))))
+        stack.enter_context(
+            patch(
+                "digest.llm.complete",
+                AsyncMock(
+                    return_value=(
+                        f"FEED|{url}|tech|New\nFEED|{url}|tech|Duplicate",
+                        None,
+                    )
+                ),
+            )
+        )
         stack.enter_context(patch("digest.discovery_feed.validate_feed_url", AsyncMock(return_value=url)))
-        sent = stack.enter_context(patch(
-            "digest.adapters.telegram.discovery.send_source_approval_message", side_effect=send))
+        sent = stack.enter_context(
+            patch("digest.adapters.telegram.discovery.send_source_approval_message", side_effect=send)
+        )
         if write_fails:
-            stack.enter_context(patch(
-                "digest.adapters.storage.discovery.atomic_json_write", side_effect=OSError("disk full")))
+            stack.enter_context(
+                patch("digest.adapters.storage.discovery.atomic_json_write", side_effect=OSError("disk full"))
+            )
             with pytest.raises(OSError):
                 await discover_sources("config.yaml")
             sent.assert_not_called()
@@ -838,8 +915,10 @@ def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path
     import json
     from dataclasses import asdict
     from datetime import timedelta
-    expired = PendingSource("Expired", "https://example.com/expired", "Tech",
-                            (datetime.now(timezone.utc)-timedelta(days=31)).isoformat())
+
+    expired = PendingSource(
+        "Expired", "https://example.com/expired", "Tech", (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+    )
     (tmp_path / "pending_sources.json").write_text(json.dumps({"pending": [asdict(proposal), asdict(expired)]}))
     store = FeedbackStore(
         source_decisions={proposal.source_hash: "rejected"},
@@ -853,6 +932,7 @@ def test_bound_rejection_removes_proposal_without_config_addition(tmp_path: Path
     assert load_feedback(str(tmp_path), strict=True).source_decisions == {}
     assert store.source_decisions == {} and store.source_decision_bindings == {}
     from digest.discovery import load_delivery
+
     assert {item["decision"] for item in load_delivery(str(tmp_path))["history"]} == {"rejected", "expired"}
 
 
@@ -922,13 +1002,16 @@ def test_source_application_io_failure_preserves_durable_decision(failure: str, 
         return original_replace(path, target)
 
     targets = {
-        "backup": "digest.adapters.storage.source_config.shutil.copy2", "config": "pathlib.Path.replace",
+        "backup": "digest.adapters.storage.source_config.shutil.copy2",
+        "config": "pathlib.Path.replace",
         "pending": "digest.adapters.storage.pending_sources.atomic_json_write",
         "feedback": "digest.adapters.storage.feedback.atomic_json_write",
     }
-    with patch(targets[failure], autospec=True, side_effect=(
-        fail_config_replace if failure == "config" else OSError("synthetic failure")
-    )):
+    with patch(
+        targets[failure],
+        autospec=True,
+        side_effect=(fail_config_replace if failure == "config" else OSError("synthetic failure")),
+    ):
         if failure in ("pending", "feedback"):
             with pytest.raises(OSError):
                 _process_pending_approvals(str(config_path), str(tmp_path), store)
@@ -946,7 +1029,9 @@ def test_source_application_io_failure_preserves_durable_decision(failure: str, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["empty", "feeds", "analysis", "pending_write"])
 async def test_source_application_precedes_collection_and_survives_unsuccessful_digest(
-    failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import datetime, timezone
 
@@ -958,10 +1043,14 @@ async def test_source_application_precedes_collection_and_survives_unsuccessful_
     proposal = PendingSource("New", "https://example.com/new", "tech", datetime.now(timezone.utc).isoformat())
     Path("config.yaml").write_text("sources: []\n", encoding="utf-8")
     save_pending([proposal], ".cache", strict=True)
-    save_feedback(FeedbackStore(
-        source_decisions={proposal.source_hash: "approved"},
-        source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
-    ), ".cache", strict=True)
+    save_feedback(
+        FeedbackStore(
+            source_decisions={proposal.source_hash: "approved"},
+            source_decision_bindings={proposal.source_hash: proposal_binding(proposal)},
+        ),
+        ".cache",
+        strict=True,
+    )
     initial = _mock_config()
     reloaded = _mock_config()
     reloaded.sources.append(_SourceCfg(name=proposal.name, url=proposal.url))
@@ -975,12 +1064,16 @@ async def test_source_application_precedes_collection_and_survives_unsuccessful_
     with ExitStack() as stack:
         stack.enter_context(patch("digest.config.load_config", side_effect=[initial, reloaded]))
         stack.enter_context(patch("digest.radar.collect", side_effect=collect))
-        stack.enter_context(patch("digest.application.analysis.analyze_articles",
-              AsyncMock(return_value=([], None, [], None))))
+        stack.enter_context(
+            patch("digest.application.analysis.analyze_articles", AsyncMock(return_value=([], None, [], None)))
+        )
         if failure == "pending_write":
-            stack.enter_context(patch(
-                "digest.adapters.storage.pending_sources.atomic_json_write", side_effect=OSError("disk full"),
-            ))
+            stack.enter_context(
+                patch(
+                    "digest.adapters.storage.pending_sources.atomic_json_write",
+                    side_effect=OSError("disk full"),
+                )
+            )
         if failure == "feeds":
             with pytest.raises(AllFeedsFailedError):
                 await run("config.yaml", False, False, False, feedback_precollected=True)
@@ -992,10 +1085,13 @@ async def test_source_application_precedes_collection_and_survives_unsuccessful_
     assert durable.source_decisions == ({proposal.source_hash: "approved"} if failure == "pending_write" else {})
     assert load_pending(".cache") == ([proposal] if failure == "pending_write" else [])
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["sent", "unknown", "persist_failure", "no_content", "corrupt_feedback"])
 async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertainty(
-    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import json
 
@@ -1026,10 +1122,15 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
     async def sender(*args, before_send, **kwargs):
         before_send()
         return IssueDeliveryResult(
-            attempted=2, sent=confirmed, failed=2 - confirmed,
+            attempted=2,
+            sent=confirmed,
+            failed=2 - confirmed,
             delivered_hashes=set(hashes[:confirmed]),
             article_source_map={key[:8]: "test" for key in hashes[:confirmed]},
-            outcome=outcome, total_chunks=2, attempted_chunks=2, confirmed_chunks=confirmed,
+            outcome=outcome,
+            total_chunks=2,
+            attempted_chunks=2,
+            confirmed_chunks=confirmed,
         )
 
     def save(store, directory, *, strict=False):
@@ -1039,13 +1140,23 @@ async def test_compact_issue_persists_only_confirmed_coverage_and_holds_uncertai
 
     with (
         patch("digest.config.load_config", return_value=cfg),
-        patch("digest.radar.collect", AsyncMock(return_value=(
-            {} if case == "no_content" else {"tech": articles}, cache,
-        ))),
-        patch("digest.application.analysis.analyze_articles",
-              AsyncMock(return_value=([_CategorySummary()], None, cards, None))),
-        patch("digest.application.investigation.run_irritator",
-              AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty")))),
+        patch(
+            "digest.radar.collect",
+            AsyncMock(
+                return_value=(
+                    {} if case == "no_content" else {"tech": articles},
+                    cache,
+                )
+            ),
+        ),
+        patch(
+            "digest.application.analysis.analyze_articles",
+            AsyncMock(return_value=([_CategorySummary()], None, cards, None)),
+        ),
+        patch(
+            "digest.application.investigation.run_irritator",
+            AsyncMock(return_value=([], [], IrritatorStatus("empty", "empty"))),
+        ),
         patch("digest.delivery.write_digest", return_value=Path("digest.md")),
         patch("digest.delivery.telegram.send_compact_issue", AsyncMock(side_effect=sender)) as send,
         patch("digest.delivery.send_article_cards", AsyncMock()) as old_send,
@@ -1094,25 +1205,37 @@ async def test_discovery_legacy_batch_pair_barrier_receipts_and_no_reoffer(tmp_p
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fixture-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "fixture-owner")
     now = datetime.now(timezone.utc)
-    proposals = [PendingSource(f"Feed {n}", f"https://example.com/{n}", "New category", now.isoformat())
-                 for n in range(3)]
-    expired = PendingSource("Old", "https://example.com/old", "Old", (now-timedelta(days=31)).isoformat())
+    proposals = [
+        PendingSource(f"Feed {n}", f"https://example.com/{n}", "New category", now.isoformat()) for n in range(3)
+    ]
+    expired = PendingSource("Old", "https://example.com/old", "Old", (now - timedelta(days=31)).isoformat())
     # Write expired explicitly: save_pending itself prunes on write.
     import json
     from dataclasses import asdict
+
     Path(".cache").mkdir()
     Path(".cache/pending_sources.json").write_text(json.dumps({"pending": [asdict(p) for p in [expired, *proposals]]}))
     config = fixture_config()
     config.telegram.enabled = True
     config.telegram.bot_username = "fixture_bot"
     from digest.config import ProviderConfig
+
     config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
-          patch("digest.llm.complete", AsyncMock(return_value=("", {}))) as model,
-          patch("digest.adapters.telegram.discovery.send_source_approval_message", AsyncMock(side_effect=[
-              ProposalDelivery("confirmed", 42), ProposalDelivery("unknown"), ProposalDelivery("rejected"),
-          ])) as send):
+    with (
+        patch("digest.config.load_config", return_value=config),
+        patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
+        patch("digest.llm.complete", AsyncMock(return_value=("", {}))) as model,
+        patch(
+            "digest.adapters.telegram.discovery.send_source_approval_message",
+            AsyncMock(
+                side_effect=[
+                    ProposalDelivery("confirmed", 42),
+                    ProposalDelivery("unknown"),
+                    ProposalDelivery("rejected"),
+                ]
+            ),
+        ) as send,
+    ):
         assert await discover_sources("config.yaml", phase="prepare") == 0
         model.assert_not_awaited()
         send.assert_not_awaited()
@@ -1164,11 +1287,14 @@ async def test_discovery_reserved_before_crash_holds_future_run(tmp_path, monkey
     config = fixture_config()
     config.telegram.enabled = True
     from digest.config import ProviderConfig
+
     config.llm.providers = [ProviderConfig("groq", "fixture-model", ["summarize"])]
-    with (patch("digest.config.load_config", return_value=config),
-          patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
-          patch("digest.llm.complete", AsyncMock(side_effect=RuntimeError("unavailable"))),
-          patch("digest.adapters.telegram.discovery.send_source_approval_message", AsyncMock()) as send):
+    with (
+        patch("digest.config.load_config", return_value=config),
+        patch("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url)),
+        patch("digest.llm.complete", AsyncMock(side_effect=RuntimeError("unavailable"))),
+        patch("digest.adapters.telegram.discovery.send_source_approval_message", AsyncMock()) as send,
+    ):
         await discover_sources("config.yaml", phase="prepare")
         assert len(load_delivery(".cache")["batch"]["bindings"]) == 1
         assert load_delivery(".cache")["prepare_counts"]["generation_failed"] == 1
@@ -1181,7 +1307,10 @@ async def test_discovery_reserved_before_crash_holds_future_run(tmp_path, monkey
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failures, expected_calls", [(0, 1), (1, 2), (2, 2)])
 async def test_discovery_generation_preserves_bounded_configured_fallback(
-    tmp_path, monkeypatch, failures, expected_calls,
+    tmp_path,
+    monkeypatch,
+    failures,
+    expected_calls,
 ):
     import httpx
 
@@ -1209,8 +1338,10 @@ async def test_discovery_generation_preserves_bounded_configured_fallback(
             raise httpx.HTTPStatusError("unavailable", request=response.request, response=response)
         return "", {}  # Valid empty ends generation without trying another provider.
 
-    with patch("digest.config.load_config", return_value=config), \
-            patch("digest.llm._call_provider", side_effect=provider_call):
+    with (
+        patch("digest.config.load_config", return_value=config),
+        patch("digest.llm._call_provider", side_effect=provider_call),
+    ):
         assert await discover_sources("config.yaml", phase="prepare") == 0
     assert calls == ["first", "second"][:expected_calls]
     counts = load_delivery(".cache")["prepare_counts"]
@@ -1221,7 +1352,8 @@ async def test_discovery_generation_preserves_bounded_configured_fallback(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("dry_run", "radar_only"), [(True, False), (False, True)])
 async def test_programmatic_preparation_rejects_preview_before_preparation_effects(
-    dry_run: bool, radar_only: bool,
+    dry_run: bool,
+    radar_only: bool,
 ) -> None:
     with patch("digest.config.load_config", side_effect=AssertionError("No configuration or state work")):
         with pytest.raises(ValueError, match="cannot be combined with preview"):

@@ -33,6 +33,7 @@ from tests.factories import make_article, make_ranked_signal
 # escape_markdownv2
 # ---------------------------------------------------------------------------
 
+
 class TestEscapeMarkdownV2:
     def test_no_special_chars(self) -> None:
         assert escape_markdownv2("hello world") == "hello world"
@@ -51,6 +52,7 @@ class TestEscapeMarkdownV2:
 # to_markdownv2
 # ---------------------------------------------------------------------------
 
+
 class TestToMarkdownV2:
     def test_mixed_content(self) -> None:
         result = to_markdownv2("## Title\n\n**bold** and [link](https://x.com), price is 5.99")
@@ -64,6 +66,7 @@ class TestToMarkdownV2:
 # ---------------------------------------------------------------------------
 # split_message
 # ---------------------------------------------------------------------------
+
 
 class TestSplitMessage:
     def test_short_message_no_split(self) -> None:
@@ -96,8 +99,10 @@ def _make_config(telegram_enabled: bool = True) -> Any:
     class TelegramCfg:
         enabled = telegram_enabled
         split_messages = True
+
     class Cfg:
         telegram = TelegramCfg()
+
     return Cfg()
 
 
@@ -105,10 +110,12 @@ def _make_config(telegram_enabled: bool = True) -> Any:
 # _send_chunk (retry exhaustion must never masquerade as a successful send)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestSendChunk:
     async def test_repeated_rate_limits_raise(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sleep = AsyncMock()
         monkeypatch.setattr("digest.adapters.telegram.delivery.asyncio.sleep", sleep)
@@ -128,17 +135,20 @@ class TestSendChunk:
         assert all(call.args == (3,) for call in sleep.await_args_list)
 
     async def test_rate_limit_then_success(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sleep = AsyncMock()
         monkeypatch.setattr("digest.adapters.telegram.delivery.asyncio.sleep", sleep)
         api_url = "https://api.telegram.org/botfake-token/sendMessage"
 
         with respx.mock:
-            route = respx.post(api_url).mock(side_effect=[
-                httpx.Response(429, headers={"Retry-After": "1"}),
-                httpx.Response(200, json={"ok": True}),
-            ])
+            route = respx.post(api_url).mock(
+                side_effect=[
+                    httpx.Response(429, headers={"Retry-After": "1"}),
+                    httpx.Response(200, json={"ok": True}),
+                ]
+            )
             async with httpx.AsyncClient() as client:
                 await _send_chunk(client, api_url, "123", "test")
 
@@ -150,6 +160,7 @@ class TestSendChunk:
 # send_counter_signals (async, mocked HTTP)
 # ---------------------------------------------------------------------------
 
+
 def _make_ranked_signal(
     url: str = "https://example.com/a",
     title: str = "Counter point",
@@ -158,46 +169,44 @@ def _make_ranked_signal(
     narrative_claim: str = "AI replaces devs",
 ) -> Any:
     return make_ranked_signal(
-        url=url, title=title, score=score,
-        reasoning=reasoning, narrative_claim=narrative_claim,
+        url=url,
+        title=title,
+        score=score,
+        reasoning=reasoning,
+        narrative_claim=narrative_claim,
     )
 
 
 @pytest.mark.asyncio
 class TestSendCounterSignals:
-    async def test_sends_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        signals = [_make_ranked_signal(), _make_ranked_signal(url="https://b.com")]
-
-        with respx.mock:
-            respx.post(re.compile(r"api\.telegram\.org")).mock(
-                return_value=httpx.Response(200, json={"ok": True})
-            )
-            result = await send_counter_signals(signals, _make_config())
-
-        assert result is True
-
-    @pytest.mark.parametrize("language,name,challenge", [
-        ("en", "Irritator", "Challenges or complicates"),
-        ("ru", "Раздражатор", "Оспаривает или уточняет"),
-    ])
+    @pytest.mark.parametrize(
+        "language,name,challenge",
+        [
+            ("en", "Irritator", "Challenges or complicates"),
+            ("ru", "Раздражатор", "Оспаривает или уточняет"),
+        ],
+    )
     async def test_static_labels_follow_canonical_language(
-        self, monkeypatch: pytest.MonkeyPatch, language: str, name: str, challenge: str,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        language: str,
+        name: str,
+        challenge: str,
     ) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
         config = _make_config()
-        config.radar = SimpleNamespace(language=language)
+        if language == "ru":
+            config.radar = SimpleNamespace(language=language)
         config.translation = SimpleNamespace(target_language="ru" if language == "en" else "en")
         signal = _make_ranked_signal()
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
                 return_value=httpx.Response(200, json={"ok": True})
             )
-            await send_counter_signals([signal], config)
+            populated_result = await send_counter_signals([signal], config)
             empty_result = await send_counter_signals([], config, IrritatorStatus("0 signals", "empty"))
+        assert populated_result is True
         assert empty_result is False
         populated, empty = [json.loads(call.request.content) for call in route.calls]
         assert name.upper() in populated["text"]
@@ -227,7 +236,8 @@ class TestSendCounterSignals:
                 return_value=httpx.Response(200, json={"ok": True})
             )
             result = await send_counter_signals(
-                [], _make_config(),
+                [],
+                _make_config(),
                 irritator_status=IrritatorStatus("query generation failed: timeout", "error"),
             )
 
@@ -240,6 +250,7 @@ class TestSendCounterSignals:
 # ---------------------------------------------------------------------------
 # send_article_cards (async, mocked HTTP)
 # ---------------------------------------------------------------------------
+
 
 def _make_article(
     title: str = "Test Article",
@@ -258,8 +269,13 @@ def _make_top(
     summary: str = "A short LLM summary.",
 ) -> Any:
     from digest.radar.summarizer import ArticleSummary
+
     return ArticleSummary(
-        title=title, link=link, source=source, category=category, summary=summary,
+        title=title,
+        link=link,
+        source=source,
+        category=category,
+        summary=summary,
     )
 
 
@@ -274,13 +290,16 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         top = [
-            _make_top(title=f"Synthetic collision article {number}",
-                      link=f"https://example.invalid/article/{number}", source=source)
+            _make_top(
+                title=f"Synthetic collision article {number}",
+                link=f"https://example.invalid/article/{number}",
+                source=source,
+            )
             for number, source in ((42028, "A"), (53130, "B"))
         ]
-        articles = {"tech": [
-            _make_article(title=article.title, link=article.link, source=article.source) for article in top
-        ]}
+        articles = {
+            "tech": [_make_article(title=article.title, link=article.link, source=article.source) for article in top]
+        }
 
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org")).mock(
@@ -293,9 +312,7 @@ class TestSendArticleCards:
             "cdb96691fa65888074dc4008dd039e3f": "A",
             "cdb96691b648d61a1fbaba5907095a7d": "B",
         }
-        assert result.delivered_hashes == {
-            article_hash(article.title, article.link) for article in top
-        }
+        assert result.delivered_hashes == {article_hash(article.title, article.link) for article in top}
         assert route.call_count == 2
         for call, article in zip(route.calls, top, strict=True):
             payload = json.loads(call.request.content)
@@ -306,7 +323,9 @@ class TestSendArticleCards:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
         monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
         result = await send_article_cards(
-            {"tech": [_make_article()]}, _make_config(), top_articles=[_make_top()],
+            {"tech": [_make_article()]},
+            _make_config(),
+            top_articles=[_make_top()],
         )
         assert result == ArticleDeliveryResult()
 
@@ -336,7 +355,8 @@ class TestSendArticleCards:
         assert result.delivered_hashes == {good_hash}
 
     async def test_all_cards_fail_returns_no_delivery(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -353,7 +373,8 @@ class TestSendArticleCards:
         assert result == ArticleDeliveryResult(attempted=2, failed=2)
 
     async def test_exhausted_rate_limit_marks_card_failed(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -363,14 +384,17 @@ class TestSendArticleCards:
                 return_value=httpx.Response(429, headers={"Retry-After": "0"}),
             )
             result = await send_article_cards(
-                {"tech": [_make_article()]}, _make_config(), top_articles=[_make_top()],
+                {"tech": [_make_article()]},
+                _make_config(),
+                top_articles=[_make_top()],
             )
 
         assert route.call_count == _MAX_RETRIES
         assert result == ArticleDeliveryResult(attempted=1, failed=1)
 
     async def test_only_selected_delivered_articles_are_attributed(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -381,7 +405,9 @@ class TestSendArticleCards:
                 return_value=httpx.Response(200, json={"ok": True}),
             )
             result = await send_article_cards(
-                articles, _make_config(), top_articles=[_make_top(source="Rewritten source")],
+                articles,
+                _make_config(),
+                top_articles=[_make_top(source="Rewritten source")],
             )
 
         full_hash = article_hash("Test Article", "https://example.com/article")
@@ -392,8 +418,11 @@ class TestSendArticleCards:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
-        top = [_make_top(title="Big News", source="TechCrunch", category="AI",
-                         summary="This is an important development in AI.")]
+        top = [
+            _make_top(
+                title="Big News", source="TechCrunch", category="AI", summary="This is an important development in AI."
+            )
+        ]
         articles = {"AI": [_make_article(title="Big News")]}
 
         with respx.mock:
@@ -405,12 +434,19 @@ class TestSendArticleCards:
         assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
         assert route.call_count == 1
 
-    @pytest.mark.parametrize("language,enabled,note", [
-        ("en", False, "Tap a vote button, then Start to send it."),
-        ("ru", False, "Нажмите оценку, затем Start (Запустить), чтобы отправить голос."),
-    ])
+    @pytest.mark.parametrize(
+        "language,enabled,note",
+        [
+            ("en", False, "Tap a vote button, then Start to send it."),
+            ("ru", False, "Нажмите оценку, затем Start (Запустить), чтобы отправить голос."),
+        ],
+    )
     async def test_card_includes_async_feedback_note(
-        self, monkeypatch: pytest.MonkeyPatch, language: str, enabled: bool, note: str,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        language: str,
+        enabled: bool,
+        note: str,
     ) -> None:
         """Each card must carry the italicised async-feedback note."""
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
@@ -436,23 +472,23 @@ class TestSendArticleCards:
         assert escape_markdownv2("/vote g ") in text
 
         full_hash = article_hash(top[0].title, top[0].link)
-        assert payload["reply_markup"]["inline_keyboard"] == [[
-            {"text": "👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
-            {"text": "👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
-        ]]
+        assert payload["reply_markup"]["inline_keyboard"] == [
+            [
+                {"text": "👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
+                {"text": "👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
+            ]
+        ]
 
     async def test_skips_send_when_top_articles_empty(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Regression: without top_articles the function must NOT fan out raw feed."""
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
 
         articles = {
-            "tech": [
-                _make_article(title=f"A{i}", link=f"https://example.com/{i}")
-                for i in range(60)
-            ],
+            "tech": [_make_article(title=f"A{i}", link=f"https://example.com/{i}") for i in range(60)],
         }
 
         with respx.mock:
@@ -472,6 +508,7 @@ class TestSendArticleCards:
 # compact issue: lossless preparation, one-attempt dispatch, confirmed coverage
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestSendCompactIssue:
     @pytest.fixture(autouse=True)
@@ -486,7 +523,8 @@ class TestSendCompactIssue:
         return config
 
     async def test_lossless_shared_and_spanning_chunks_with_indexed_votes(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 240)
         long_url = "https://example.com/" + "path_" * 24 + "?a=1&b=2"
@@ -517,8 +555,7 @@ class TestSendCompactIssue:
             for index, article in enumerate(top, 1)
         )
         assert recovered == expected + "\n\n" + notice + "\n" + (
-            "Tap a vote button, then Start to send it. "
-            "Processed on the next digest run; private owner chat only."
+            "Tap a vote button, then Start to send it. Processed on the next digest run; private owner chat only."
         )
         assert all(len(text.encode("utf-16-le")) // 2 <= 240 for text in texts)
         assert sum(escape_markdownv2(long_url) in text for text in texts) == 1
@@ -526,15 +563,22 @@ class TestSendCompactIssue:
         assert len(ranges[2].covering_chunks) > 1
         for index, (article, article_range) in enumerate(zip(top, ranges, strict=True), 1):
             rows = [
-                (chunk_index, row) for chunk_index, chunk in enumerate(chunks)
-                if chunk.reply_markup for row in chunk.reply_markup["inline_keyboard"]
+                (chunk_index, row)
+                for chunk_index, chunk in enumerate(chunks)
+                if chunk.reply_markup
+                for row in chunk.reply_markup["inline_keyboard"]
                 if row[0]["text"] == f"{index}👍"
             ]
             full_hash = article_hash(article.title, article.link)
-            assert rows == [(article_range.covering_chunks[-1], [
-                {"text": f"{index}👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
-                {"text": f"{index}👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
-            ])]
+            assert rows == [
+                (
+                    article_range.covering_chunks[-1],
+                    [
+                        {"text": f"{index}👍", "url": f"https://t.me/example_digest_bot?start=vote_g_{full_hash}"},
+                        {"text": f"{index}👎", "url": f"https://t.me/example_digest_bot?start=vote_b_{full_hash}"},
+                    ],
+                )
+            ]
         assert result.complete and result.outcome == "sent"
         assert (result.attempted, result.sent, result.failed) == (3, 3, 0)
         assert result.total_chunks == result.attempted_chunks == result.confirmed_chunks == len(texts)
@@ -544,16 +588,21 @@ class TestSendCompactIssue:
         }
         callback.assert_called_once_with()
 
-    @pytest.mark.parametrize("second_response,outcome", [
-        (httpx.Response(429, headers={"Retry-After": "0"}), "failed"),
-        (httpx.Response(200, json={"ok": False}), "failed"),
-        (httpx.ReadTimeout("uncertain receipt"), "unknown"),
-        (httpx.Response(200, text="invalid receipt"), "unknown"),
-        (httpx.Response(200, json={"result": {}}), "unknown"),
-    ])
+    @pytest.mark.parametrize(
+        "second_response,outcome",
+        [
+            (httpx.Response(429, headers={"Retry-After": "0"}), "failed"),
+            (httpx.Response(200, json={"ok": False}), "failed"),
+            (httpx.ReadTimeout("uncertain receipt"), "unknown"),
+            (httpx.Response(200, text="invalid receipt"), "unknown"),
+            (httpx.Response(200, json={"result": {}}), "unknown"),
+        ],
+    )
     async def test_stops_without_retry_and_keeps_only_confirmed_article_coverage(
-        self, monkeypatch: pytest.MonkeyPatch,
-        second_response: httpx.Response | Exception, outcome: str,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        second_response: httpx.Response | Exception,
+        outcome: str,
     ) -> None:
         monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 200)
         top = [
@@ -563,9 +612,12 @@ class TestSendCompactIssue:
         ]
         callback = Mock()
         with respx.mock:
-            route = respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=[
-                httpx.Response(200, json={"ok": True}), second_response,
-            ])
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                side_effect=[
+                    httpx.Response(200, json={"ok": True}),
+                    second_response,
+                ]
+            )
             result = await send_compact_issue(top, self.config(), before_send=callback)
 
         full_hash = article_hash(top[0].title, top[0].link)
@@ -579,7 +631,8 @@ class TestSendCompactIssue:
         callback.assert_called_once_with()
 
     async def test_final_notice_failure_does_not_complete_issue(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 200)
         top = [_make_top(title="Article", link="https://a.test/1", summary="Complete", source="A")]
@@ -588,10 +641,12 @@ class TestSendCompactIssue:
         chunks, ranges = _render_compact_issue(top, config, notice)
         assert ranges[0].covering_chunks[-1] < len(chunks) - 1
         with respx.mock:
-            route = respx.post(re.compile(r"api\.telegram\.org")).mock(side_effect=[
-                *[httpx.Response(200, json={"ok": True}) for _ in chunks[:-1]],
-                httpx.Response(403, json={"ok": False}),
-            ])
+            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
+                side_effect=[
+                    *[httpx.Response(200, json={"ok": True}) for _ in chunks[:-1]],
+                    httpx.Response(403, json={"ok": False}),
+                ]
+            )
             result = await send_compact_issue(top, config, notice=notice)
 
         assert route.call_count == len(chunks)
@@ -619,7 +674,8 @@ class TestSendCompactIssue:
         callback.assert_called_once_with()
 
     async def test_total_dispatch_timeout_stops_without_retry(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import asyncio
 
@@ -640,7 +696,8 @@ class TestSendCompactIssue:
         assert result.delivered_hashes == set()
 
     async def test_missing_credentials_and_empty_issue_skip_callback(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         callback = Mock()
         with respx.mock:
@@ -656,7 +713,10 @@ class TestSendCompactIssue:
         with respx.mock:
             route = respx.post(re.compile(r"api\.telegram\.org"))
             result = await send_compact_issue(
-                [], self.config(), notice="No selected articles.", before_send=callback,
+                [],
+                self.config(),
+                notice="No selected articles.",
+                before_send=callback,
             )
         assert result == IssueDeliveryResult()
         assert not result.complete and not route.called
@@ -722,17 +782,26 @@ async def test_legacy_markdown_fallback_retains_payload_and_http_only_acceptance
     api_url = "https://api.telegram.org/botfake-token/sendMessage"
     keyboard = {"inline_keyboard": [[{"text": "Vote", "url": "https://t.me/example?start=vote_g_abcd"}]]}
     with respx.mock:
-        route = respx.post(api_url).mock(side_effect=[
-            httpx.Response(400), httpx.Response(200, json={"ok": False}),
-        ])
+        route = respx.post(api_url).mock(
+            side_effect=[
+                httpx.Response(400),
+                httpx.Response(200, json={"ok": False}),
+            ]
+        )
         async with httpx.AsyncClient() as client:
             await _send_chunk(client, api_url, "123", r"A \*qualified\* point", True, keyboard)
     assert route.call_count == 2
     first, fallback = [json.loads(call.request.content) for call in route.calls]
     assert first == {
-        "chat_id": "123", "text": r"A \*qualified\* point", "parse_mode": "MarkdownV2",
-        "disable_notification": True, "reply_markup": keyboard,
+        "chat_id": "123",
+        "text": r"A \*qualified\* point",
+        "parse_mode": "MarkdownV2",
+        "disable_notification": True,
+        "reply_markup": keyboard,
     }
     assert fallback == {
-        "chat_id": "123", "text": "A *qualified* point", "disable_notification": True, "reply_markup": keyboard,
+        "chat_id": "123",
+        "text": "A *qualified* point",
+        "disable_notification": True,
+        "reply_markup": keyboard,
     }

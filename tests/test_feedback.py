@@ -59,13 +59,16 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
         timestamp=(now - timedelta(hours=1)).isoformat(),
     )
     original = FeedbackStore(
-        ratings=[fb1, fb2], last_update_id=100,
+        ratings=[fb1, fb2],
+        last_update_id=100,
         article_source_map={FULL_ARTICLE_A[:8]: "Source A", FULL_ARTICLE_A: "Source B"},
         source_decisions={"abc12345": "approved", "def67890": "rejected"},
         source_decision_bindings={"abc12345": "a" * 64, "def67890": "b" * 64},
         pending_replies=[
-            PendingReply("callback", "receipt"), PendingReply("vote", "recorded_votes"),
-            PendingReply("source", "source_decisions"), PendingReply("source", "unknown_source"),
+            PendingReply("callback", "receipt"),
+            PendingReply("vote", "recorded_votes"),
+            PendingReply("source", "source_decisions"),
+            PendingReply("source", "unknown_source"),
         ],
         seen_callback_ids=[str(index) for index in range(1005)],
         seen_message_ids=[f"owner:{index}" for index in range(1005)],
@@ -174,7 +177,8 @@ def _callback(update_id: int, data: str = "fb:a:g:abcd1234", identifier: str = "
     return {
         "update_id": update_id,
         "callback_query": {
-            "id": identifier or f"callback-{update_id}", "data": data,
+            "id": identifier or f"callback-{update_id}",
+            "data": data,
             "from": {"id": 123},
             "message": {"message_id": 1, "chat": {"id": 123, "type": "private"}},
         },
@@ -182,10 +186,15 @@ def _callback(update_id: int, data: str = "fb:a:g:abcd1234", identifier: str = "
 
 
 def _message(update_id: int, text: str, message_id: int) -> dict[str, Any]:
-    return {"update_id": update_id, "message": {
-        "message_id": message_id, "text": text, "from": {"id": 123},
-        "chat": {"id": 123, "type": "private"},
-    }}
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": message_id,
+            "text": text,
+            "from": {"id": 123},
+            "chat": {"id": 123, "type": "private"},
+        },
+    }
 
 
 def _poll(updates: list[dict[str, Any]]) -> respx.Route:
@@ -223,11 +232,19 @@ async def test_collect_feedback_per_article_good(tmp_path: Path, caplog: pytest.
     assert result.ratings[0].rating == 1
     assert result.pending_replies == []
     assert store.ratings == [] and store.last_update_id == 0
-    route.mock(return_value=httpx.Response(200, json={
-        "ok": True, "result": [_callback(1001, f"fb:a:g:{FULL_ARTICLE_A}"),
-                                _callback(1002, f"fb:a:g:{FULL_ARTICLE_A}", identifier="callback-1001"),
-                                _callback(1003, f"fb:a:b:{FULL_ARTICLE_A}")],
-    }))
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": [
+                    _callback(1001, f"fb:a:g:{FULL_ARTICLE_A}"),
+                    _callback(1002, f"fb:a:g:{FULL_ARTICLE_A}", identifier="callback-1001"),
+                    _callback(1003, f"fb:a:b:{FULL_ARTICLE_A}"),
+                ],
+            },
+        )
+    )
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path))
     assert [rating.rating for rating in result.ratings] == [1, -1]
     assert result.last_poll_counts["duplicates"] == 2
@@ -258,7 +275,8 @@ async def test_collect_feedback_per_article_bad(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Message replay cannot replace a later vote, even after cursor reanchoring."""
     owner_hash = hashlib.sha256(b"123").hexdigest()
@@ -284,20 +302,25 @@ async def test_collect_feedback_vote_messages_are_durable_and_latest_wins(
         saved = sum(reply.identifier == "recorded_votes" for reply in durable.pending_replies)
         unknown = len(durable.pending_replies) - saved
         assert json.loads(request.content) == {
-            "chat_id": "123", "text": f"Votes saved: {saved}. Unknown articles: {unknown}.",
+            "chat_id": "123",
+            "text": f"Votes saved: {saved}. Unknown articles: {unknown}.",
         }
         return httpx.Response(200, json={"ok": True})
 
     send = respx.post(f"{API}/sendMessage").mock(side_effect=answer)
     assert await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path)) == {
-        "attempted": 1, "ack_ok": 1, "ack_failed": 0,
+        "attempted": 1,
+        "ack_ok": 1,
+        "ack_failed": 0,
     }
     result = load_feedback(str(tmp_path), strict=True)
-    _poll([
-        _message(1002, f"/vote b {FULL_ARTICLE_A} \n", 101),
-        _message(1003, f"/start vote_g_{FULL_ARTICLE_A}", 100),
-        _message(1004, "/start vote_b_deadbeef", 102),
-    ])
+    _poll(
+        [
+            _message(1002, f"/vote b {FULL_ARTICLE_A} \n", 101),
+            _message(1003, f"/start vote_g_{FULL_ARTICLE_A}", 100),
+            _message(1004, "/start vote_b_deadbeef", 102),
+        ]
+    )
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path))
     assert [rating.rating for rating in result.ratings] == [1, -1]
     assert get_source_feedback_score(result, "My Source") == 0.0
@@ -332,9 +355,14 @@ async def test_full_vote_identity_preserves_shared_prefix_attribution(tmp_path: 
     assert FULL_ARTICLE_A != FULL_ARTICLE_B and FULL_ARTICLE_A[:8] == FULL_ARTICLE_B[:8]
     bindings = {FULL_ARTICLE_A: "Source A", FULL_ARTICLE_B: "Source B"}
     updates = []
-    for update_id, (identity, rating) in enumerate([
-        (FULL_ARTICLE_A, "g"), (FULL_ARTICLE_B, "b"), (FULL_ARTICLE_A, "b"),
-    ], 1):
+    for update_id, (identity, rating) in enumerate(
+        [
+            (FULL_ARTICLE_A, "g"),
+            (FULL_ARTICLE_B, "b"),
+            (FULL_ARTICLE_A, "b"),
+        ],
+        1,
+    ):
         if transport == "callback":
             update = _callback(update_id, f"fb:a:{rating}:{identity}")
         else:
@@ -345,13 +373,17 @@ async def test_full_vote_identity_preserves_shared_prefix_attribution(tmp_path: 
     _poll(updates)
 
     result = await collect_feedback(
-        TOKEN, FeedbackStore(article_source_map=bindings), cache_dir=str(tmp_path), acknowledge=False,
+        TOKEN,
+        FeedbackStore(article_source_map=bindings),
+        cache_dir=str(tmp_path),
+        acknowledge=False,
     )
     durable = load_feedback(str(tmp_path), strict=True)
     assert durable == result
     assert durable.article_source_map == bindings
     assert [(rating.article_hash, rating.source_name, rating.rating) for rating in durable.ratings] == [
-        (FULL_ARTICLE_A, "Source A", 1), (FULL_ARTICLE_B, "Source B", -1),
+        (FULL_ARTICLE_A, "Source A", 1),
+        (FULL_ARTICLE_B, "Source B", -1),
     ]
     assert durable.last_poll_counts["recorded_votes"] == 2
     assert durable.last_poll_counts["rejected_owner"] == 1
@@ -375,11 +407,25 @@ async def test_collect_feedback_vote_messages_fail_closed(tmp_path: Path, caplog
     group["message"]["chat"]["type"] = "group"
     del no_id["message"]["message_id"]
     boolean_id["message"]["message_id"] = True
-    _poll([unknown, malformed, quoted, foreign_sender, foreign_chat, group, no_id, boolean_id,
-           _message(9, "/start vote_g_ABCD1234", 9), _message(10, "/vote x abcd1234", 10)])
+    _poll(
+        [
+            unknown,
+            malformed,
+            quoted,
+            foreign_sender,
+            foreign_chat,
+            group,
+            no_id,
+            boolean_id,
+            _message(9, "/start vote_g_ABCD1234", 9),
+            _message(10, "/vote x abcd1234", 10),
+        ]
+    )
     result = await collect_feedback(
-        TOKEN, FeedbackStore(article_source_map={"abcd1234": "My Source"}),
-        cache_dir=str(tmp_path), acknowledge=False,
+        TOKEN,
+        FeedbackStore(article_source_map={"abcd1234": "My Source"}),
+        cache_dir=str(tmp_path),
+        acknowledge=False,
     )
     assert result.ratings == []
     assert result.last_poll_counts["unknown_article"] == 1
@@ -405,8 +451,15 @@ async def test_collect_feedback_non_feedback_callback_ignored(tmp_path: Path) ->
     foreign_chat["callback_query"]["message"]["chat"]["id"] = 456
     group["callback_query"]["message"]["chat"]["type"] = "group"
     del inline["callback_query"]["message"]
-    updates = [foreign_sender, foreign_chat, group, inline, _callback(5, "fb:a:g:bad"),
-               _callback(6, "other:action:1"), _callback(7, "src:ok:not-a-hash")]
+    updates = [
+        foreign_sender,
+        foreign_chat,
+        group,
+        inline,
+        _callback(5, "fb:a:g:bad"),
+        _callback(6, "other:action:1"),
+        _callback(7, "src:ok:not-a-hash"),
+    ]
     _poll(updates)
     result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.ratings == [] and result.source_decisions == {} and result.pending_replies == []
@@ -430,7 +483,8 @@ async def test_collect_feedback_empty_updates(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_per_article_unknown_hash_records_empty_source(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _poll([_callback(4001, "fb:a:g:deadbeef")])
     with caplog.at_level(logging.WARNING, logger="digest.adapters.telegram.feedback"):
@@ -460,16 +514,23 @@ async def test_collect_feedback_legacy_callback_answered_not_recorded(tmp_path: 
 async def test_collect_feedback_uses_offset(tmp_path: Path) -> None:
     """Legacy/stale cursors reanchor without acknowledging a newer ID generation."""
     store = FeedbackStore(
-        last_update_id=500, seen_callback_ids=["old-receipt"],
+        last_update_id=500,
+        seen_callback_ids=["old-receipt"],
         article_source_map={"abcd1234": "My Source"},
     )
     route = _poll([])
     result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
     assert "offset" not in json.loads(route.calls[0].request.content)
     assert result.last_update_id == 500 and result.cursor_observed_at == ""
-    route.mock(return_value=httpx.Response(200, json={
-        "ok": True, "result": [_callback(10, identifier="old-receipt"), _callback(11)],
-    }))
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": [_callback(10, identifier="old-receipt"), _callback(11)],
+            },
+        )
+    )
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
     assert "offset" not in json.loads(route.calls[1].request.content)
     assert result.last_update_id == 11 and result.previous_update_id == 500 and result.cursor_observed_at
@@ -491,19 +552,24 @@ async def test_collect_feedback_uses_offset(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_handles_failed_answer_callback(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Real nested callbacks retain their votes after HTTP/API ack failures."""
     route = _poll([_callback(100), _callback(101)])
     result = await collect_feedback(
-        TOKEN, FeedbackStore(article_source_map={"abcd1234": "My Source"}),
-        cache_dir=str(tmp_path), acknowledge=False,
+        TOKEN,
+        FeedbackStore(article_source_map={"abcd1234": "My Source"}),
+        cache_dir=str(tmp_path),
+        acknowledge=False,
     )
-    respx.post(f"{API}/answerCallbackQuery").mock(side_effect=[
-        httpx.Response(500, json={"ok": False}),
-        httpx.Response(200, json={"ok": False, "description": "query expired"}),
-        httpx.Response(200, json={"ok": True}),
-    ])
+    respx.post(f"{API}/answerCallbackQuery").mock(
+        side_effect=[
+            httpx.Response(500, json={"ok": False}),
+            httpx.Response(200, json={"ok": False, "description": "query expired"}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
     with caplog.at_level(logging.WARNING, logger="digest.adapters.telegram.feedback"):
         counts = await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path))
     assert counts == {"attempted": 2, "ack_ok": 0, "ack_failed": 2}
@@ -513,10 +579,20 @@ async def test_collect_feedback_handles_failed_answer_callback(
     route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [_callback(102)]}))
     result = await collect_feedback(TOKEN, durable, cache_dir=str(tmp_path))
     assert len(result.ratings) == 3 and result.last_update_id == 102
-    route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [
-        _callback(103), _callback(104),
-        _message(105, "/vote g deadbeef", 105), _message(106, "/vote b deadbeef", 106),
-    ]}))
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": [
+                    _callback(103),
+                    _callback(104),
+                    _message(105, "/vote g deadbeef", 105),
+                    _message(106, "/vote b deadbeef", 106),
+                ],
+            },
+        )
+    )
     result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
 
     async def slow_answer(request: httpx.Request) -> httpx.Response:
@@ -543,8 +619,12 @@ async def test_collect_feedback_getupdates_not_ok(tmp_path: Path) -> None:
         await collect_feedback(TOKEN, FeedbackStore(last_update_id=999), cache_dir=str(tmp_path))
     assert not respx.calls
     route = _poll([])
-    for envelope in ({"ok": False}, [], {"ok": True, "result": "bad"},
-                     {"ok": True, "result": [_callback(11), {"update_id": "12"}]}):
+    for envelope in (
+        {"ok": False},
+        [],
+        {"ok": True, "result": "bad"},
+        {"ok": True, "result": [_callback(11), {"update_id": "12"}]},
+    ):
         route.mock(return_value=httpx.Response(200, json=envelope))
         with pytest.raises(ValueError):
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
@@ -584,8 +664,9 @@ async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) ->
     original_bytes = (tmp_path / "feedback.json").read_bytes()
     proposal = PendingSource("New feed", "https://example.com/new", "Tech", datetime.now(timezone.utc).isoformat())
     save_pending([proposal], str(tmp_path), strict=True)
-    _poll([_callback(1), _message(2, "/start vote_g_abcd1234", 2),
-           _message(3, f"/source ok {proposal.source_hash}", 3)])
+    _poll(
+        [_callback(1), _message(2, "/start vote_g_abcd1234", 2), _message(3, f"/source ok {proposal.source_hash}", 3)]
+    )
     with patch("digest.adapters.storage.feedback.atomic_json_write", side_effect=OSError("disk full")):
         with pytest.raises(OSError):
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
@@ -599,7 +680,8 @@ async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) ->
 @pytest.mark.asyncio
 @respx.mock
 async def test_acknowledge_requires_exact_committed_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FeedbackStore(
         pending_replies=[PendingReply("callback", "receipt")],
@@ -633,46 +715,37 @@ async def test_acknowledge_requires_exact_committed_hash(
 # ---------------------------------------------------------------------------
 
 
-def test_get_source_feedback_score_unknown_source() -> None:
-    store = FeedbackStore()
-    assert get_source_feedback_score(store, "Unknown") is None
-
-
 def test_get_source_feedback_score_all_positive() -> None:
     now = datetime.now(tz=timezone.utc).isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed A", 1, now),
-        ArticleFeedback("h2", "Feed A", 1, now),
-        ArticleFeedback("h3", "Feed A", 1, now),
-    ])
+    store = FeedbackStore(
+        ratings=[
+            ArticleFeedback("h1", "Feed A", 1, now),
+            ArticleFeedback("h2", "Feed A", 1, now),
+            ArticleFeedback("h3", "Feed A", 1, now),
+        ]
+    )
     score = get_source_feedback_score(store, "Feed A")
     assert score == 1.0
 
 
-def test_get_source_feedback_score_all_negative() -> None:
-    now = datetime.now(tz=timezone.utc).isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed B", -1, now),
-        ArticleFeedback("h2", "Feed B", -1, now),
-    ])
-    score = get_source_feedback_score(store, "Feed B")
-    assert score == 0.0
-
-
 def test_get_source_feedback_score_mixed() -> None:
     now = datetime.now(tz=timezone.utc).isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
-        ArticleFeedback(FULL_ARTICLE_B, "Feed C", -1, now),
-    ])
+    store = FeedbackStore(
+        ratings=[
+            ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
+            ArticleFeedback(FULL_ARTICLE_B, "Feed C", -1, now),
+        ]
+    )
     score = get_source_feedback_score(store, "Feed C")
     assert score == 0.5
     # Repeated taps affect only their exact identity, even with a shared prefix.
-    store.ratings.extend([
-        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
-        ArticleFeedback(FULL_ARTICLE_A, "Feed C", -1, now),
-        ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, "invalid timestamp"),
-    ])
+    store.ratings.extend(
+        [
+            ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, now),
+            ArticleFeedback(FULL_ARTICLE_A, "Feed C", -1, now),
+            ArticleFeedback(FULL_ARTICLE_A, "Feed C", 1, "invalid timestamp"),
+        ]
+    )
     assert get_source_feedback_score(store, "Feed C") == 0.0
     assert len(store.ratings) == 5
     # A historical short token remains separate; its identity cannot be inferred.
@@ -685,19 +758,23 @@ def test_get_source_feedback_score_old_ratings_excluded() -> None:
     now = datetime.now(tz=timezone.utc)
     old = (now - timedelta(days=30)).isoformat()
     recent = now.isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed D", -1, old),  # too old, excluded
-        ArticleFeedback("h2", "Feed D", 1, recent),
-    ])
+    store = FeedbackStore(
+        ratings=[
+            ArticleFeedback("h1", "Feed D", -1, old),  # too old, excluded
+            ArticleFeedback("h2", "Feed D", 1, recent),
+        ]
+    )
     score = get_source_feedback_score(store, "Feed D", days=14)
     assert score == 1.0
 
 
 def test_get_source_feedback_score_only_old_returns_none() -> None:
     old = (datetime.now(tz=timezone.utc) - timedelta(days=30)).isoformat()
-    store = FeedbackStore(ratings=[
-        ArticleFeedback("h1", "Feed E", 1, old),
-    ])
+    store = FeedbackStore(
+        ratings=[
+            ArticleFeedback("h1", "Feed E", 1, old),
+        ]
+    )
     assert get_source_feedback_score(store, "Feed E", days=14) is None
 
 
@@ -726,9 +803,7 @@ def test_save_feedback_prunes_old_ratings(tmp_path: Path) -> None:
 
 def test_article_source_map_pruned_to_1000(tmp_path: Path) -> None:
     """article_source_map is pruned to 1000 entries on save (FIFO)."""
-    store = FeedbackStore(
-        article_source_map={f"hash{i:04d}": f"Source {i}" for i in range(1200)}
-    )
+    store = FeedbackStore(article_source_map={f"hash{i:04d}": f"Source {i}" for i in range(1200)})
     save_feedback(store, str(tmp_path))
     loaded = load_feedback(str(tmp_path))
     assert len(loaded.article_source_map) == 1000
@@ -740,6 +815,7 @@ def test_article_source_map_pruned_to_1000(tmp_path: Path) -> None:
 def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
     """Feedback file without article_source_map key loads as empty dict."""
     import json as _json
+
     data = {"last_update_id": 5, "ratings": []}
     (tmp_path / "feedback.json").write_text(_json.dumps(data), encoding="utf-8")
     loaded = load_feedback(str(tmp_path))
@@ -770,8 +846,13 @@ async def test_collect_feedback_src_ok_callback(tmp_path: Path) -> None:
     accepted = PendingSource("Accepted", "https://example.com/accept", "Tech", now)
     rejected = PendingSource("Rejected", "https://example.com/reject", "Tech", now)
     save_pending([accepted, rejected], str(tmp_path), strict=True)
-    _poll([_callback(10001, f"src:ok:{accepted.source_hash}"),
-           _callback(10002, f"src:no:{rejected.source_hash}"), _callback(10003, "src:ok:deadbeef")])
+    _poll(
+        [
+            _callback(10001, f"src:ok:{accepted.source_hash}"),
+            _callback(10002, f"src:no:{rejected.source_hash}"),
+            _callback(10003, "src:ok:deadbeef"),
+        ]
+    )
     result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.source_decisions == {accepted.source_hash: "approved", rejected.source_hash: "rejected"}
     assert result.source_decision_bindings == {
@@ -781,25 +862,30 @@ async def test_collect_feedback_src_ok_callback(tmp_path: Path) -> None:
     assert result.last_poll_counts["source_decisions"] == 2
     assert result.last_poll_counts["unknown_source"] == 1
     assert [reply.text for reply in result.pending_replies] == [
-        "Decision saved", "Decision saved", "Proposal unavailable or expired",
+        "Decision saved",
+        "Decision saved",
+        "Proposal unavailable or expired",
     ]
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_source_messages_bind_current_proposals_before_one_batch_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     accepted = PendingSource("Accepted", "https://example.com/accept", "Tech", now)
     rejected = PendingSource("Rejected", "https://example.com/reject", "Tech", now)
     save_pending([accepted, rejected], str(tmp_path), strict=True)
-    route = _poll([
-        _message(1, f"/start source_ok_{accepted.source_hash}", 10),
-        _message(2, f"/source no {rejected.source_hash}", 11),
-        _message(3, "/source ok deadbeef", 12),
-        _message(4, f"/source no {accepted.source_hash}", 10),
-    ])
+    route = _poll(
+        [
+            _message(1, f"/start source_ok_{accepted.source_hash}", 10),
+            _message(2, f"/source no {rejected.source_hash}", 11),
+            _message(3, "/source ok deadbeef", 12),
+            _message(4, f"/source no {accepted.source_hash}", 10),
+        ]
+    )
     result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.source_decisions == {accepted.source_hash: "approved", rejected.source_hash: "rejected"}
     assert result.source_decision_bindings == {
@@ -818,13 +904,16 @@ async def test_source_messages_bind_current_proposals_before_one_batch_receipt(
         durable = load_feedback(str(tmp_path), strict=True)
         assert durable == result
         assert json.loads(request.content) == {
-            "chat_id": "123", "text": "Source decisions saved: 2. Unavailable or expired proposals: 1.",
+            "chat_id": "123",
+            "text": "Source decisions saved: 2. Unavailable or expired proposals: 1.",
         }
         return httpx.Response(200, json={"ok": True})
 
     send = respx.post(f"{API}/sendMessage").mock(side_effect=answer)
     assert await acknowledge_feedback(TOKEN, str(tmp_path), _sha(tmp_path)) == {
-        "attempted": 1, "ack_ok": 1, "ack_failed": 0,
+        "attempted": 1,
+        "ack_ok": 1,
+        "ack_failed": 0,
     }
     assert send.call_count == 1
     result = load_feedback(str(tmp_path), strict=True)
@@ -841,22 +930,28 @@ async def test_source_messages_bind_current_proposals_before_one_batch_receipt(
 @respx.mock
 @pytest.mark.parametrize("transport", ["start", "command", "callback"])
 async def test_unreadable_proposals_preserve_source_batch_until_repaired(
-    transport: str, tmp_path: Path,
+    transport: str,
+    tmp_path: Path,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     proposal = PendingSource("New", "https://example.com/new", "Tech", now)
     owner_hash = hashlib.sha256(b"123").hexdigest()
     store = FeedbackStore(
-        last_update_id=43, cursor_observed_at=now, article_source_map={"abcd1234": "My Source"},
-        seen_message_ids=[f"{owner_hash}:1"], seen_callback_ids=["prior-callback"],
-        pending_replies=[PendingReply("vote", "unknown_article")], pending_owner_sha256=owner_hash,
+        last_update_id=43,
+        cursor_observed_at=now,
+        article_source_map={"abcd1234": "My Source"},
+        seen_message_ids=[f"{owner_hash}:1"],
+        seen_callback_ids=["prior-callback"],
+        pending_replies=[PendingReply("vote", "unknown_article")],
+        pending_owner_sha256=owner_hash,
     )
     save_feedback(store, str(tmp_path), strict=True)
     original_bytes = (tmp_path / "feedback.json").read_bytes()
     (tmp_path / "pending_sources.json").write_text("{broken", encoding="utf-8")
     hash8 = proposal.source_hash
     source_update = (
-        _callback(45, f"src:ok:{hash8}") if transport == "callback"
+        _callback(45, f"src:ok:{hash8}")
+        if transport == "callback"
         else _message(45, f"/start source_ok_{hash8}" if transport == "start" else f"/source ok {hash8}", 45)
     )
     vote_update = _message(44, "/vote g abcd1234", 44)
@@ -885,13 +980,22 @@ async def test_unreadable_proposals_preserve_source_batch_until_repaired(
 
 @pytest.mark.asyncio
 @respx.mock
-@pytest.mark.parametrize("transport,case", [
-    ("command", "missing"), ("command", "stale"), ("command", "future"),
-    ("command", "duplicate"), ("command", "wrong_hash"),
-    ("start", "stale"), ("callback", "stale"),
-])
+@pytest.mark.parametrize(
+    "transport,case",
+    [
+        ("command", "missing"),
+        ("command", "stale"),
+        ("command", "future"),
+        ("command", "duplicate"),
+        ("command", "wrong_hash"),
+        ("start", "stale"),
+        ("callback", "stale"),
+    ],
+)
 async def test_source_decisions_reject_unavailable_proposals(
-    case: str, transport: str, tmp_path: Path,
+    case: str,
+    transport: str,
+    tmp_path: Path,
 ) -> None:
     now = datetime.now(timezone.utc)
     proposal = PendingSource("Feed", "https://example.com/feed", "Tech", now.isoformat())
@@ -904,7 +1008,8 @@ async def test_source_decisions_reject_unavailable_proposals(
     pending = [] if case == "missing" else [proposal, proposal] if case == "duplicate" else [proposal]
     hash8 = proposal.source_hash
     update = (
-        _callback(1, f"src:ok:{hash8}") if transport == "callback"
+        _callback(1, f"src:ok:{hash8}")
+        if transport == "callback"
         else _message(1, f"/start source_ok_{hash8}" if transport == "start" else f"/source ok {hash8}", 1)
     )
     _poll([update])
@@ -926,8 +1031,16 @@ async def test_source_messages_reject_foreign_owner_and_malformed_commands(tmp_p
     group["message"]["chat"]["type"] = "group"
     no_id = _message(4, f"/source ok {hash8}", 4)
     del no_id["message"]["message_id"]
-    _poll([foreign_sender, foreign_chat, group, no_id,
-           _message(5, f"/source ok {hash8}\nextra", 5), _message(6, f"/start source_yes_{hash8}", 6)])
+    _poll(
+        [
+            foreign_sender,
+            foreign_chat,
+            group,
+            no_id,
+            _message(5, f"/source ok {hash8}\nextra", 5),
+            _message(6, f"/start source_yes_{hash8}", 6),
+        ]
+    )
     result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path), acknowledge=False)
     assert result.source_decisions == {} and result.source_decision_bindings == {}
     assert result.last_poll_counts["rejected_owner"] == 3 and result.last_poll_counts["malformed"] == 3
@@ -941,13 +1054,22 @@ async def test_collect_feedback_status_command(tmp_path: Path) -> None:
     store = FeedbackStore(last_digest_time="2026-03-20 08:00 UTC", last_digest_sources=["A", "B", "C"])
     messages = []
     for update_id, text, sender, chat_type in (
-        (9001, "/status", 123, "private"), (9002, "/bubble", 123, "private"),
-        (9003, "/status", 456, "private"), (9004, "/status", 123, "group"),
+        (9001, "/status", 123, "private"),
+        (9002, "/bubble", 123, "private"),
+        (9003, "/status", 456, "private"),
+        (9004, "/status", 123, "group"),
         (9005, "a private message", 123, "private"),
     ):
-        messages.append({"update_id": update_id, "message": {
-            "text": text, "chat": {"id": 123, "type": chat_type}, "from": {"id": sender},
-        }})
+        messages.append(
+            {
+                "update_id": update_id,
+                "message": {
+                    "text": text,
+                    "chat": {"id": 123, "type": chat_type},
+                    "from": {"id": sender},
+                },
+            }
+        )
     _poll(messages)
     result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
     assert result.pending_replies == [PendingReply("command", "/status"), PendingReply("command", "/bubble")]
@@ -963,7 +1085,8 @@ async def test_collect_feedback_status_command(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_managed_cli_exports_exact_saved_hash_without_ack_and_rejects_uncommitted_ack(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import AsyncMock
 

@@ -94,10 +94,12 @@ async def test_eight_useful_five_confirmed_three_next_window(
     config.obsidian.output_dir = "digests"
     save_feedback(FeedbackStore(), ".cache", strict=True)
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
-    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
-          AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
-        lambda c, *args, **kwargs: (c, kwargs["execution"]))
+    monkeypatch.setattr(
+        "digest.application.run_state.collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))
+    )
+    monkeypatch.setattr(
+        "digest.application.run_state.apply_pending_approvals", lambda c, *args, **kwargs: (c, kwargs["execution"])
+    )
     collection_calls = 0
     requests: list[list[str]] = []
 
@@ -203,8 +205,8 @@ async def test_full_or_partial_report_reuses_all_selections_after_publication_ca
     restored_bundle, cached = load_review_checkpoint(path, config)
     assert _reusable_slots(restored_bundle, cached, config) == {"primary", "secondary"}
     with patch(
-        "digest.application.review.complete",
-        AsyncMock(side_effect=AssertionError("No new relevance request"))) as complete:
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("No new relevance request"))
+    ) as complete:
         reused = await run_evidence_review(restored_bundle, config, cached, execution=execution)
     complete.assert_not_called()
     assert path.read_bytes() == original_bytes
@@ -256,10 +258,14 @@ async def test_fallback_preserves_duplicate_bound_to_overflow_selected_identity(
     )
     with patch(
         "digest.application.review.complete",
-        AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})])
+        AsyncMock(side_effect=[RuntimeError("unavailable"), (json.dumps(payload), {})]),
     ) as complete:
         reviewed = await _review_candidates(
-            CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution,
+            CandidateWork(progress, packet),
+            articles,
+            config,
+            str(tmp_path),
+            execution=execution,
         )
         cards, report = reviewed.cards, reviewed.report
     assert complete.await_count == 2  # Existing primary/fallback budget, with no overflow repair call.
@@ -285,8 +291,9 @@ def test_packet_and_response_bounds_still_reject_invalid_envelopes(failure: str)
     raw = json.dumps(payload)
     if failure == "response_budget":
         raw += " " * 32000
+    error = "^invalid selection count$" if failure == "count" else "^response exceeds review budget$"
     for parser in (_parse_review, _parse_live_review):
-        with pytest.raises(ValueError, match="invalid selection count|response exceeds review budget"):
+        with pytest.raises(ValueError, match=error):
             parser(raw, bundle)
 
 
@@ -307,7 +314,11 @@ async def test_unicode_selections_reconcile_with_original_character_budget(tmp_p
     assert len(raw) < 32000 < len(json.dumps(payload))
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
         reviewed = await _review_candidates(
-            CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution,
+            CandidateWork(progress, packet),
+            articles,
+            config,
+            str(tmp_path),
+            execution=execution,
         )
         cards, report = reviewed.cards, reviewed.report
     complete.assert_awaited_once()

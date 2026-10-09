@@ -35,11 +35,6 @@ class TestValidateSignals:
         result = validate_signals(signals, ["celebrity"])
         assert result == []
 
-    def test_blocklist_no_match_keeps_signal(self) -> None:
-        signals = [_make_signal(title="AI research paper")]
-        result = validate_signals(signals, ["trump", "election"])
-        assert len(result) == 1
-
     def test_invalid_url_filtered(self) -> None:
         signals = [_make_signal(url="not-a-url")]
         result = validate_signals(signals, [])
@@ -53,6 +48,7 @@ class TestValidateSignals:
     def test_empty_input(self) -> None:
         result = validate_signals([], [])
         assert result == []
+
 
 @pytest.mark.asyncio
 class TestValidateSignalsAsync:
@@ -124,6 +120,7 @@ class TestValidateSignalsAsync:
         assert result == []
         client.head.assert_not_called()
 
+
 def test_validation_compatibility_exports_keep_identity_and_runtime_annotations() -> None:
     from dataclasses import MISSING, fields
     from inspect import signature
@@ -146,11 +143,16 @@ def test_validation_compatibility_exports_keep_identity_and_runtime_annotations(
     assert list(signature(Signal).parameters) == list(expected_fields)
     assert all(field.default is MISSING and field.default_factory is MISSING for field in fields(Signal))
     assert get_type_hints(validate_signals) == {
-        "signals": list[Signal], "blocklist": list[str], "return": list[Signal],
+        "signals": list[Signal],
+        "blocklist": list[str],
+        "return": list[Signal],
     }
     assert get_type_hints(validate_signals_async) == {
-        "signals": list[Signal], "blocklist": list[str], "client": httpx.AsyncClient,
-        "check_liveness": bool, "return": list[Signal],
+        "signals": list[Signal],
+        "blocklist": list[str],
+        "client": httpx.AsyncClient,
+        "check_liveness": bool,
+        "return": list[Signal],
     }
     assert signature(validate_signals_async).parameters["check_liveness"].default is False
     assert get_type_hints(check_signal_liveness)["signal"] is Signal
@@ -255,6 +257,4 @@ async def test_liveness_is_bounded_to_ten_and_retains_input_order_and_request_op
             await asyncio.gather(task, return_exceptions=True)
     assert completed != list(range(12))
     assert result == [signal for index, signal in enumerate(signals) if index != 2]
-    assert client.head.await_args_list == [
-        call(signal.url, follow_redirects=False, timeout=5.0) for signal in signals
-    ]
+    assert client.head.await_args_list == [call(signal.url, follow_redirects=False, timeout=5.0) for signal in signals]

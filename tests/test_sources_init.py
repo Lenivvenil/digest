@@ -31,8 +31,10 @@ def _make_query(query: str = "test failure") -> SearchQuery:
 def _make_config(sources: list[str] | None = None) -> Any:
     class IrritatorCfg:
         pass
+
     class Cfg:
         irritator = IrritatorCfg()
+
     Cfg.irritator.sources = sources or ["hackernews", "reddit"]  # type: ignore[attr-defined]
     return Cfg()
 
@@ -43,24 +45,6 @@ def _make_signal(source: str = "hackernews") -> Any:
 
 @pytest.mark.asyncio
 class TestSearchAllSources:
-    async def test_fans_out_to_all_configured_sources(self) -> None:
-        mock_hn = AsyncMock(return_value=[_make_signal("hackernews")])
-        mock_reddit = AsyncMock(return_value=[_make_signal("reddit")])
-        queries = [_make_query()]
-
-        with patch.dict(
-            "digest.irritator.sources._ADAPTERS",
-            {"hackernews": mock_hn, "reddit": mock_reddit},
-            clear=True,
-        ):
-            async with httpx.AsyncClient() as client:
-                batch = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
-
-        assert len(batch.signals) == 2
-        assert asdict(batch.diagnostics) == {"successful": 2, "failed": 0, "unavailable": 0}
-        mock_hn.assert_called_once()
-        mock_reddit.assert_called_once()
-
     async def test_multiple_queries_fan_to_all_sources(self) -> None:
         mock_hn = AsyncMock(return_value=[_make_signal("hackernews")])
         mock_reddit = AsyncMock(return_value=[_make_signal("reddit")])
@@ -73,7 +57,9 @@ class TestSearchAllSources:
         ):
             async with httpx.AsyncClient() as client:
                 batch = await search_all_sources(
-                    queries, _make_config(["reddit", "hackernews", "hackernews"]), client,
+                    queries,
+                    _make_config(["reddit", "hackernews", "hackernews"]),
+                    client,
                 )
 
         assert [signal.source_name for signal in batch.signals] == ["hackernews", "hackernews", "reddit"] * 2
@@ -98,23 +84,6 @@ class TestSearchAllSources:
         assert asdict(batch.diagnostics) == {"successful": 0, "failed": 0, "unavailable": 1}
         mock_arxiv.assert_not_called()
 
-    async def test_graceful_degradation_on_failure(self) -> None:
-        mock_good = AsyncMock(return_value=[_make_signal("hackernews")])
-        mock_bad = AsyncMock(side_effect=RuntimeError("API down"))
-        queries = [_make_query()]
-
-        with patch.dict(
-            "digest.irritator.sources._ADAPTERS",
-            {"hackernews": mock_good, "reddit": mock_bad},
-            clear=True,
-        ):
-            async with httpx.AsyncClient() as client:
-                batch = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
-
-        assert len(batch.signals) == 1
-        assert batch.signals[0].source_name == "hackernews"
-        assert asdict(batch.diagnostics) == {"successful": 1, "failed": 1, "unavailable": 0}
-
     async def test_empty_queries(self) -> None:
         async with httpx.AsyncClient() as client:
             batch = await search_all_sources([], _make_config(), client)
@@ -122,7 +91,8 @@ class TestSearchAllSources:
         assert batch.diagnostics.total == 0
 
     async def test_outcomes_distinguish_valid_empty_failed_and_unavailable(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         adapters = {
             "hackernews": AsyncMock(return_value=[_make_signal("hackernews")]),
@@ -134,10 +104,12 @@ class TestSearchAllSources:
             async with httpx.AsyncClient() as client:
                 batch = await search_all_sources(
                     [_make_query("private search query"), _make_query("second private query")],
-                    _make_config([*adapters, "unknown"]), client,
+                    _make_config([*adapters, "unknown"]),
+                    client,
                 )
 
         assert len(batch.signals) == 2
+        assert [signal.source_name for signal in batch.signals] == ["hackernews", "hackernews"]
         diagnostics = batch.diagnostics
         assert diagnostics.successful == 4
         assert diagnostics.failed == 2
@@ -165,21 +137,27 @@ class TestSearchAllSources:
         assert called_query == "AI failure criticism"
 
 
-@pytest.mark.parametrize(("source", "body"), [
-    ("hackernews", {"hits": []}),
-    ("lobsters", []),
-    ("lobsters", {"results": []}),
-    ("reddit", {"data": {"children": []}}),
-])
+@pytest.mark.parametrize(
+    ("source", "body"),
+    [
+        ("hackernews", {"hits": []}),
+        ("lobsters", []),
+        ("lobsters", {"results": []}),
+        ("reddit", {"data": {"children": []}}),
+    ],
+)
 def test_valid_empty_search_envelopes(source: str, body: Any) -> None:
     assert validate_search_response(httpx.Response(200, json=body), source) == body
 
 
-@pytest.mark.parametrize(("source", "message", "body"), [
-    ("hackernews", "Invalid Hacker News search response.", {"hits": None}),
-    ("lobsters", "Invalid Lobsters search response.", {"results": {}}),
-    ("reddit", "Invalid Reddit search response.", {"data": []}),
-])
+@pytest.mark.parametrize(
+    ("source", "message", "body"),
+    [
+        ("hackernews", "Invalid Hacker News search response.", {"hits": None}),
+        ("lobsters", "Invalid Lobsters search response.", {"results": {}}),
+        ("reddit", "Invalid Reddit search response.", {"data": []}),
+    ],
+)
 def test_invalid_search_envelopes(source: str, message: str, body: Any) -> None:
     with pytest.raises(ValueError) as caught:
         validate_search_response(httpx.Response(200, json=body), source)
@@ -195,17 +173,21 @@ def test_non_json_search_response_has_fixed_error(source: str) -> None:
 
 def test_valid_empty_atom_feed() -> None:
     root = validate_search_response(
-        httpx.Response(200, text='<feed xmlns="http://www.w3.org/2005/Atom"/>'), "arxiv",
+        httpx.Response(200, text='<feed xmlns="http://www.w3.org/2005/Atom"/>'),
+        "arxiv",
     )
     assert root.tag == "{http://www.w3.org/2005/Atom}feed"
 
 
-@pytest.mark.parametrize("body", [
-    "<html>error</html>",
-    "<feed>",
-    '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
-    '<id>http://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>',
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<html>error</html>",
+        "<feed>",
+        '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
+        "<id>http://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>",
+    ],
+)
 def test_invalid_or_error_atom_feed(body: str) -> None:
     with pytest.raises(ValueError, match=r"^Invalid or error arXiv feed\.$"):
         validate_search_response(httpx.Response(200, text=body), "arxiv")

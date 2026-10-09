@@ -1,4 +1,5 @@
 """Full supplementary meaning survives both transports and Telegram boundaries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -41,11 +42,15 @@ async def test_both_supplement_paths_keep_all_archived_signal_content(monkeypatc
     config = fixture_config()
     config.radar.language = "en"
     config.telegram.enabled = True
-    signals = [make_ranked_signal(
-        title=f"Evidence {index}", url=f"https://example.com/{index}",
-        reasoning="😀\\*_ " * 800 + f" ONLY CONDITION {index}",
-        narrative_claim="An assumption " * 40 + f" EXCEPTION {index}",
-    ) for index in range(3)]
+    signals = [
+        make_ranked_signal(
+            title=f"Evidence {index}",
+            url=f"https://example.com/{index}",
+            reasoning="😀\\*_ " * 800 + f" ONLY CONDITION {index}",
+            narrative_claim="An assumption " * 40 + f" EXCEPTION {index}",
+        )
+        for index in range(3)
+    ]
     result = EvidenceIrritatorResult(schema_version=1, bundle_id="bundle", status="complete", ranked_signals=signals)
     archived = _render_result(result)
     legacy_archive = _build_counter_signals_section(signals)
@@ -56,6 +61,7 @@ async def test_both_supplement_paths_keep_all_archived_signal_content(monkeypatc
         split_at = route.call_count
         assert await _send_supplement(result, config) == "sent"
     payloads = [json.loads(call.request.content) for call in route.calls]
+    assert "IRRITATOR" in _decode([p["text"] for p in payloads[:split_at]])
     assert "Irritator status: incomplete — " + status.text in _decode([p["text"] for p in payloads[:split_at]])
     for subset in (payloads[:split_at], payloads[split_at:]):
         text = _decode([payload["text"] for payload in subset])

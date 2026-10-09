@@ -21,11 +21,13 @@ from digest.irritator.ranker import (
     rank_signals,
 )
 from digest.irritator.sources import Signal
+from digest.llm import LLMRole
 from tests.factories import make_narrative, make_signal
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_narrative(claim: str = "AI will replace developers") -> Narrative:
     return make_narrative(claim=claim, why_worth_challenging="Ignores evidence.")
@@ -43,8 +45,12 @@ def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict[st
     if scores is None:
         scores = [8, 6]
     return [
-        {"index": i, "score": scores[i] if i < len(scores) else 5,
-         "relation": "complicates", "reasoning": f"Reason {i}"}
+        {
+            "index": i,
+            "score": scores[i] if i < len(scores) else 5,
+            "relation": "complicates",
+            "reasoning": f"Reason {i}",
+        }
         for i in range(n)
     ]
 
@@ -52,11 +58,14 @@ def _valid_rankings(n: int = 2, scores: list[int] | None = None) -> list[dict[st
 def _make_config(language: str = "ru", min_score: int = 5, top_signals: int = 3) -> Any:
     class IrritatorCfg:
         pass
+
     class RadarCfg:
         pass
+
     class Cfg:
         irritator = IrritatorCfg()
         radar = RadarCfg()
+
     Cfg.radar.language = language  # type: ignore[attr-defined]
     Cfg.irritator.min_signal_score = min_score  # type: ignore[attr-defined]
     Cfg.irritator.top_signals = top_signals  # type: ignore[attr-defined]
@@ -66,6 +75,7 @@ def _make_config(language: str = "ru", min_score: int = 5, top_signals: int = 3)
 # ---------------------------------------------------------------------------
 # _build_prompt tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildPrompt:
     def test_complete_snippet_keeps_late_condition(self) -> None:
@@ -110,17 +120,31 @@ class TestBuildPrompt:
         assert RANK_RELATION_CONTRACT in messages[0]["content"]
         assert n.claim in messages[1]["content"]
         assert signals[0].title in messages[1]["content"]
-        assert all(relation in messages[1]["content"] for relation in (
-            "contradicts", "complicates", "supports", "context", "insufficient",
-        ))
+        assert all(
+            relation in messages[1]["content"]
+            for relation in (
+                "contradicts",
+                "complicates",
+                "supports",
+                "context",
+                "insufficient",
+            )
+        )
 
     def test_english_prompt(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
         assert "counter-signal" in messages[0]["content"]
         assert RANK_RELATION_CONTRACT in messages[0]["content"]
-        assert all(relation in messages[1]["content"] for relation in (
-            "contradicts", "complicates", "supports", "context", "insufficient",
-        ))
+        assert all(
+            relation in messages[1]["content"]
+            for relation in (
+                "contradicts",
+                "complicates",
+                "supports",
+                "context",
+                "insufficient",
+            )
+        )
 
     def test_english_prompt_has_calibration_anchors(self) -> None:
         messages = _build_prompt(_make_narrative(), [_make_signal()], "en")
@@ -144,29 +168,8 @@ class TestBuildPrompt:
 # _parse_rankings tests
 # ---------------------------------------------------------------------------
 
+
 class TestParseRankings:
-    def test_valid_rankings(self) -> None:
-        signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
-        raw = _valid_rankings(2, [8, 9])
-        result = _parse_rankings(raw, signals, "claim", 5)
-        assert len(result) == 2
-        assert result[0].score == 9  # sorted desc
-        assert result[1].score == 8
-
-    def test_filters_below_min_score(self) -> None:
-        signals = [_make_signal(), _make_signal("https://b.com")]
-        raw = _valid_rankings(2, [8, 3])
-        result = _parse_rankings(raw, signals, "claim", 5)
-        assert len(result) == 1
-        assert result[0].score == 8
-
-    def test_threshold_5_lets_through_score_5(self) -> None:
-        signals = [_make_signal()]
-        raw = _valid_rankings(1, [5])
-        result = _parse_rankings(raw, signals, "claim", 5)
-        assert len(result) == 1
-        assert result[0].score == 5
-
     def test_invalid_index_rejected(self) -> None:
         signals = [_make_signal()]
         raw = _valid_rankings(1, [9])
@@ -182,12 +185,6 @@ class TestParseRankings:
         with pytest.raises(ValueError, match="Invalid ranking fields"):
             _parse_rankings(["not a dict"], [_make_signal()], "claim", 1)
 
-    @pytest.mark.parametrize("relation", ["supports", "context", "insufficient"])
-    def test_high_scoring_non_counter_relations_excluded(self, relation: str) -> None:
-        raw = _valid_rankings(1, [10])
-        raw[0]["relation"] = relation
-        assert _parse_rankings(raw, [_make_signal()], "claim", 1) == []
-
     def test_mixed_relations_keep_only_qualifying_counter_signals(self) -> None:
         signals = [_make_signal(f"https://example.com/{index}") for index in range(4)]
         raw = _valid_rankings(4, [10, 5, 9, 4])
@@ -196,11 +193,18 @@ class TestParseRankings:
         raw[2]["relation"] = "contradicts"
         result = _parse_rankings(raw, signals, "The rollout improves reliability.", 5)
         assert [item.signal for item in result] == [signals[2], signals[1]]
+        assert [item.score for item in result] == [9, 5]
         assert set(asdict(result[0])) == {"signal", "score", "reasoning", "narrative_claim"}
 
-    @pytest.mark.parametrize(("field", "value"), [
-        ("index", True), ("score", 11), ("relation", "unknown"), ("reasoning", "  "),
-    ])
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("index", True),
+            ("score", 11),
+            ("relation", "unknown"),
+            ("reasoning", "  "),
+        ],
+    )
     def test_invalid_non_counter_entry_rejects_whole_response(self, field: str, value: Any) -> None:
         signals = [_make_signal(), _make_signal("https://example.com/support")]
         raw = _valid_rankings(2, [8, 1])
@@ -227,6 +231,7 @@ class TestParseRankings:
 # rank_signals (async) tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestRankSignals:
     async def test_omitted_candidate_cannot_be_ranked_and_indices_do_not_shift(self) -> None:
@@ -237,8 +242,12 @@ class TestRankSignals:
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
         with patch("digest.irritator.ranker.complete", mock_complete):
             result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
+        assert len(result) == 1
+        assert isinstance(result[0], RankedSignal)
         assert result[0].signal is signals[1]
+        assert result[0].score == 8
         assert mock_complete.await_count == 1
+        assert mock_complete.call_args.args[0] == LLMRole.RANK_SIGNALS
         raw[0]["index"] = 0
         with pytest.raises(ValueError, match="ranking index"):
             _parse_rankings(raw, signals, "claim", 5)
@@ -251,19 +260,6 @@ class TestRankSignals:
             result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
         assert result == []
         mock_complete.assert_not_awaited()
-
-    async def test_success(self) -> None:
-        execution = ModelExecution()
-        signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
-        raw = _valid_rankings(2, [9, 8])
-        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
-
-        with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(), execution=execution)
-
-        assert len(result) == 2
-        assert isinstance(result[0], RankedSignal)
-        assert result[0].score == 9
 
     async def test_empty_signals(self) -> None:
         execution = ModelExecution()
@@ -281,27 +277,17 @@ class TestRankSignals:
 
         assert len(result) == 2
 
-    async def test_filters_below_threshold(self) -> None:
-        execution = ModelExecution()
-        signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
-        raw = _valid_rankings(2, [9, 4])
-        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
-
-        with patch("digest.irritator.ranker.complete", mock_complete):
-            result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5), execution=execution)
-
-        assert len(result) == 1
-
     async def test_score_5_passes_default_threshold(self) -> None:
         execution = ModelExecution()
-        signals = [_make_signal("https://a.com")]
-        raw = _valid_rankings(1, [5])
+        signals = [_make_signal("https://a.com"), _make_signal("https://b.com")]
+        raw = _valid_rankings(2, [5, 4])
         mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
 
         with patch("digest.irritator.ranker.complete", mock_complete):
             result = await rank_signals(_make_narrative(), signals, _make_config(min_score=5), execution=execution)
 
         assert len(result) == 1
+        assert result[0].signal is signals[0]
         assert result[0].score == 5
 
     async def test_all_non_counter_relations_return_empty_without_another_request(self) -> None:
@@ -323,15 +309,3 @@ class TestRankSignals:
         with patch("digest.irritator.ranker.complete", mock_complete):
             with pytest.raises(RuntimeError):
                 await rank_signals(_make_narrative(), [_make_signal()], _make_config(), execution=execution)
-
-    async def test_uses_correct_role(self) -> None:
-        execution = ModelExecution()
-        from digest.llm import LLMRole
-
-        raw = _valid_rankings(1, [8])
-        mock_complete = AsyncMock(return_value=(json.dumps(raw), {}))
-
-        with patch("digest.irritator.ranker.complete", mock_complete):
-            await rank_signals(_make_narrative(), [_make_signal()], _make_config(), execution=execution)
-
-        assert mock_complete.call_args[0][0] == LLMRole.RANK_SIGNALS

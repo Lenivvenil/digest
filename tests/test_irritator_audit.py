@@ -136,10 +136,22 @@ def test_every_valid_returned_judgment_is_auditable(relation: str, score: int, d
 @pytest.mark.parametrize(
     "mutation",
     [
-        "duplicate_url", "unknown_url", "unknown_quote_id", "cross_url_quote",
-        "extra_field", "bad_relation", "float_score", "bool_score", "high_score",
-        "blank_reason", "too_many", "invalid_json", "too_long", "bad_limitations",
-        "missing_relation", "empty_unexplained",
+        "duplicate_url",
+        "unknown_url",
+        "unknown_quote_id",
+        "cross_url_quote",
+        "extra_field",
+        "bad_relation",
+        "float_score",
+        "bool_score",
+        "high_score",
+        "blank_reason",
+        "too_many",
+        "invalid_json",
+        "too_long",
+        "bad_limitations",
+        "missing_relation",
+        "empty_unexplained",
     ],
 )
 def test_invalid_ranking_is_atomic_even_below_the_editorial_threshold(mutation: str) -> None:
@@ -243,12 +255,17 @@ async def test_ranking_failure_keeps_admission_trace_without_decisions(failure: 
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=signals)),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client,
-                execution=model_execution, timeout_seconds=0.05)
+            result = await run_evidence_irritator(
+                bundle, config, client, execution=model_execution, timeout_seconds=0.05
+            )
     assert result.status == "incomplete" and not result.ranked_signals
     assert result.ranking_audit is not None and not result.ranking_audit.response_validated
     assert all(item.disposition == "pending" and item.decision is None for item in result.ranking_audit.candidates)
     assert model.await_count == 3 and "RAW ERROR SENTINEL" not in json.dumps(asdict(result))
+    if failure == "provider":
+        assert next(d for d in result.diagnostics if d.stage == "ranking").error == "RuntimeError"
+    elif failure == "invalid_response":
+        assert next(d for d in result.diagnostics if d.stage == "ranking").status == "error"
 
 
 @pytest.mark.asyncio
@@ -266,6 +283,9 @@ async def test_all_oversized_candidates_keep_trace_without_ranking_call() -> Non
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client, execution=model_execution)
     assert result.status == "incomplete" and model.await_count == 2
+    assert result.ranked_signals == []
+    ranking = next(d for d in result.diagnostics if d.stage == "ranking")
+    assert ranking.status == "incomplete" and ranking.omitted_count == len(signals) == 2
     assert result.ranking_audit is not None and not result.ranking_audit.response_validated
     assert all(
         item.admission == "evidence_budget" and item.disposition == "not_admitted"
@@ -360,8 +380,9 @@ async def test_ranking_admission_hold_retains_evidence_without_generation(tmp_pa
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=_signals(1))),
     ):
         async with _offline_client() as client:
-            result = await run_evidence_irritator(rss, config, client,
-                execution=model_execution, source_evidence=source)
+            result = await run_evidence_irritator(
+                rss, config, client, execution=model_execution, source_evidence=source
+            )
     assert result.status == "incomplete" and model.await_count == 2 and admissions == 3
     assert result.ranking_audit is not None and not result.ranking_audit.response_validated
     assert result.ranking_audit.candidates[0].disposition == "pending"
@@ -398,12 +419,16 @@ async def test_failure_before_retrieval_does_not_invent_an_audit(failure: str) -
     if failure == "queries":
         responses.insert(0, (json.dumps(_narrative(bundle)), {}))
     with (
-        patch("digest.irritator.evidence_stage.complete", AsyncMock(side_effect=responses)),
+        patch("digest.irritator.evidence_stage.complete", AsyncMock(side_effect=responses)) as model,
         patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock()) as search,
     ):
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client, execution=model_execution)
     assert result.ranking_audit is None and "PRIVATE ERROR BODY" not in json.dumps(asdict(result))
+    assert model.await_count == (1 if failure == "narrative" else 2)
+    assert result.status in {"error", "incomplete"}
+    assert next(d for d in result.diagnostics if d.stage == failure).error == "RuntimeError"
+    assert not result.source_attempts
     search.assert_not_awaited()
 
 
