@@ -52,9 +52,70 @@ It can continue even while publication is held. A clean exit without a POST reco
 represented as unknown rather than zero. Missing/corrupt/mismatched state fails closed.
 
 Compact presentation retains bounded Irritator and independent-comparison processing
-and its canonical/translated archives, but sends no additional optional Telegram
-supplement. `archive_only` is explicit and is never labelled `sent`. An incomplete
-external stage remains incomplete; format choice does not prove its factual utility.
+and its canonical/translated archives. The original archive-only Irritator decision
+is superseded for new target-bound attempts by the #208 policy below. No independent
+optional Telegram dispatch is added. An incomplete external stage remains incomplete;
+format choice does not prove its factual utility.
+
+## 2026-10-09 later-edition supplementary evidence (#208)
+
+An accepted target-bound investigation can retain one immutable fragment projection
+beside its existing result archive. Its existing per-investigation attempt owns the
+mutable pending/reserved/consumed/expired disposition in the existing
+`supplement_status` field. There is no queue, index, worker,
+extra model request, search request, retry, job or billing allowance. An occupied or
+unverifiable pending slot skips a new optional investigation while primary delivery
+remains independent. Incomplete overall investigations may contribute individually
+accepted material counter-signals, with their coverage limits retained visibly.
+
+An origin edition on UTC day D can contribute to an ordinary edition on D+1 through
+D+3. The actual UTC clock reaching D+4 expires an unreserved fragment; preparing
+a future D+4 edition earlier only makes that destination ineligible and does not
+discard remaining D+1..D+3 opportunities. This is an explicit bounded product
+tradeoff, not a factual-currentness guarantee; origin, investigation and source dates
+remain visible. Expiry never releases a claimed or uncertain dispatch.
+
+The fragment follows main cards and precedes an admitted positive closer. It has no
+article identity, vote buttons, deduplication entry or source-statistics entry. The
+existing lossless renderer and whole-edition transport deadline remain; there is no
+new one-chunk or total chunk-count cap. Required main copy, source evidence, qualifiers
+and closer are never removed or truncated to make room. A rendering conflict archives
+the fragment with an explicit reason. Its existing translated presentation or canonical
+fallback is reused without next-day translation or a second semantic model check.
+
+Main-only readiness retains schema 2. Fragment editions use schema 3, which old
+senders reject before claim or POST. New readers accept exactly schemas 1, 2 and 3;
+schema 1 retains legacy eight-character votes, schemas 2/3 use full article hashes.
+Claims and receipts retain schema 1 because their exact ready hash includes fragment
+bytes, immutable references and complete supplement coverage. The trusted renderer
+creates the ordered payload and coverage once; the sender validates references and
+coverage bounds, then consumes the exact frozen bytes.
+Mutable attempt records never enter checkpoint references. Sending uses frozen payloads,
+not a second renderer or prose parser.
+
+Schema 3 also names the current publication's review checkpoint explicitly. The
+origin review is a separate immutable reference and can never become the next
+post-delivery target merely by sorting before the current review filename.
+
+`included_ready` is a reservation, not consumption. An expired unclaimed ready may
+release its fragment only after verifying the exact old manifest/hash and absence of
+claim, receipt and orphan dispatch state. Only the latest exact release proof is retained.
+The old binding and release reason are saved
+before ready replacement; the new reservation is saved after ready and before claim.
+Missing proof or a crash between writes holds the optional fragment; it is never guessed
+or overwritten. Frozen-reference corruption blocks dispatch.
+
+`mark_applied` owns the required consumption write before the receipt's applied marker.
+Every fragment-covering chunk needs a positive owner-matching receipt. A later unrelated
+unknown chunk does not undo complete fragment coverage, but the overall issue stays held.
+Incomplete fragment coverage or a failed consumption write leaves receipts unapplied and
+the fragment unconsumed. These ordered local writes are not a transaction or replay licence.
+
+Deployment requires two changes to existing runtime steps: supply `TELEGRAM_CHAT_ID`
+to post-delivery preparation for owner verification, and include `digests/` alongside
+`.cache/` in the receipt/application persistence barrier. This persists the consumed
+attempt together with applied receipts. No bot/model credential is needed for prepare;
+no new job, schedule or supplemental persistence ledger is introduced.
 
 ## Consequences and recovery limits
 

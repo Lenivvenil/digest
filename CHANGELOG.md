@@ -2,6 +2,21 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Restore visible, grounded Irritator material inside a later ordinary compact
+  edition ([#208](https://github.com/Lenivvenil/digest/issues/208), continuing #77).
+  New attempts target canonical cards from an exactly confirmed/applied publication,
+  retain source occurrence and presentation provenance, and exclude speculative
+  hypotheses from target-bound query planning. Accepted material can accompany an
+  edition on origin day D+1 through D+3, before the closer, using its existing
+  translated presentation or canonical fallback. No additional model/search calls,
+  retries, jobs, token allowance or billing capacity are added. Ready schema 3 binds
+  separate supplement coverage and the current review checkpoint; main-only ready2
+  and historical ready1 remain readable. Consumption precedes the applied receipt
+  marker, and uncertain dispatch is never replayed. Rollout requires the existing
+  runtime receipt barrier to persist the consumed attempt under digests/ and the
+  existing post-prepare step to receive the owner ID. Ordinary semantic/editorial
+  acceptance, aggregate coverage and the <=1,500-test goal remain separate gates.
+
 - Closing-enabled RSS reviews now request a complete optional v2 card separately
   from professional selections, within the existing shared detail allowance
   ([#127](https://github.com/Lenivvenil/digest/issues/127)). Selected dispositions

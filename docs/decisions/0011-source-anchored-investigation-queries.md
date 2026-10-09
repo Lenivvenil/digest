@@ -10,6 +10,42 @@ Refs [#77](https://github.com/Lenivvenil/digest/issues/77),
 [the Irritator domain](../domain/irritator/overview.md), and
 [ADR0009](0009-selected-source-admission.md).
 
+## 2026-10-09 delivered-card contract (#208)
+
+The compact post-delivery path freezes the exact confirmed and applied origin
+edition before creating its attempt. Attempt schema 3 binds ready, claim, receipts,
+publication day, original review bytes, canonical and presented cards, and original
+source occurrences. It includes every actually delivered card, including an admitted
+closer; a selected but omitted closer is not a target. Canonical source identity is
+preserved while presented summaries may contain translation and source credit.
+The original evidence bundle and hash remain unchanged.
+
+Only this target-bound mode requests `target_card_id` and `delivered_quote` (an exact
+nonempty substring of the canonical `title` or `summary` of an actually delivered
+card) in the existing narrative
+call. The original-source quotation must belong to that same occurrence. Cross-card
+or field stitching, paraphrases and typography repairs cannot establish this binding.
+No supported assertion means no target. Literal matching proves provenance, not
+semantic entailment or factual correctness.
+
+The canonical field is not necessarily the literal translated Telegram wording.
+Exact presentation bytes and hashes prove publication association; translation and
+appended source credits remain outside analysis inputs, preserving ADR0005.
+
+The target and quotation remain in existing query and ranking contexts, together
+with source qualifications. Target-bound narratives allow zero inferred assumptions;
+speculative hypotheses and model motivation are excluded from query inputs.
+Topic/entity search, lexical validation, optional literal-anchor diagnostics and
+existing ranking rules remain. Unbound standalone and full-source callers retain
+their previous response/query contracts and cannot imply delivered-fragment eligibility.
+Old compact attempt schemas are held unchanged, not reinterpreted or rerun.
+
+No additional model call, source fetch, provider, retry, job or budget is introduced.
+The same one-narrative, three-query, nine-source-request maximum and 180-second
+investigation deadline apply. Existing optional translation and full-source availability
+are unchanged; this does not activate full-source reading. Semantic translation errors,
+including changing sharing to use, remain an ordinary editorial acceptance gate.
+
 ## Context and existing purpose
 
 Irritator seeks meaningful external contradictions and qualifications, not a forced

@@ -308,14 +308,27 @@ request allowance rather than assuming comparison is free.
 After confirmed, durably persisted primary delivery, supplementary work can use the
 saved evidence checkpoint under a separate reservation. Irritator extracts an attributed
 target, plans queries, searches external sources, validates results and ranks their
-relationship to the target. Query hypotheses remain labelled hypotheses; they do not
-become source facts for ranking.
+relationship to the target. New compact schema-3 attempts bind canonical cards from
+the exact confirmed/applied edition and their original source occurrences. They retain
+exact card/source quotations in query and ranking inputs and exclude speculative
+hypotheses. Unbound standalone contracts remain available separately.
 
 Empty search results, unavailable/unsupported adapters, rejected evidence and failed
 model stages are different outcomes. Optional translation failure retains canonical
-fallback according to its existing contract. In compact mode the supplement is
-`archive_only`: it does not send another Telegram message. The legacy/post-delivery
-transport retains its separately documented behavior.
+fallback according to its existing contract. An accepted compact result can freeze one
+fragment for an ordinary edition on origin day D+1..D+3, after main cards and before
+the closer. No extra dispatch or model work is created. Unusable material remains
+explicitly archive-only; partial searches retain their limitations. Actual UTC D+4
+expires unused material; a future ineligible edition does not expire it early.
+The legacy standalone transport retains its separately documented behavior.
+
+Fragment editions use ready schema 3 with independent supplement chunk coverage and
+an explicit current-review checkpoint. Complete owner-matching coverage must be
+consumed before the applied receipt marker. Claimed/unknown publication is never
+automatically released or replayed. The runtime must persist the existing consumed
+attempt under `digests/` with `.cache/` receipts and provide the private owner ID to
+post-prepare. See [ADR0007](decisions/0007-compact-issue-reservation.md) for the complete
+rollout and unclaimed-ready release contract.
 
 New post-attempt markers bind the versioned Hacker News/arXiv/DEV search policy,
 effective source list and query ceiling. DEV uses the documented unauthenticated
@@ -325,7 +338,7 @@ can now occur within the existing three-by-three ceiling and stage deadline.
 See [ADR0022](decisions/0022-versioned-bounded-search-policy.md) for the exact
 contract, validation and historical-policy boundary.
 
-An older schema-1 marker or a changed source-policy binding is held before
+An older compact attempt marker or a changed source-policy binding is held before
 execution. Preserve it and inspect its original engine/configuration; do not
 remove markers or archives to rerun an old edition. Completed attempts and saved
 results remain protected. Confirm no pending old-policy attempt crosses a rollout.

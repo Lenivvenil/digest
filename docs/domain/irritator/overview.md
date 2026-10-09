@@ -11,11 +11,11 @@ score or matching quotation alone does not establish a useful counter-signal.
 
 | Concept | Contract that matters |
 | --- | --- |
-| Narrative and cited target | Keep the attributed claim and supporting source evidence distinct from exploratory hypotheses. Hypotheses guide query planning; ranking excludes them. |
+| Narrative and cited target | New delivered-card attempts bind an exact canonical card quotation to original evidence from that occurrence. Translation is provenance, not analysis input. Their queries exclude hypotheses; unbound legacy contracts retain their existing inputs. |
 | Search query | A bounded topic/entity search can be valid without copying a source phrase. Optional phrase matches are provenance diagnostics. |
 | External signal | A search hit retains its URL and source data. Deterministic filtering and optional liveness checks do not verify its truth or relevance. |
 | Ranked result and status | Report validated ranking outcomes, omissions and incomplete coverage honestly. No result, unavailable search and rejected evidence are different outcomes. |
-| Saved investigation evidence | The review-led supplementary path uses saved checkpoints and private archive traces. Compact mode keeps actual results in the archive; the legacy summary path can still run synchronously. |
+| Saved investigation evidence | The review-led path keeps original checkpoints and private result traces. New target-bound attempts may freeze one later-edition fragment; the legacy summary path can still run synchronously. |
 
 The application orchestrates search/model work; [pure investigation owners](../../../digest/domain/investigation/)
 hold signal/query values and URL rules. Concrete adapters handle search and liveness.
@@ -43,11 +43,44 @@ mandatory processing or closure requirement.
 Irritator's product purpose remains genuine external counter-evidence. An
 independent model opinion or a Skeptic paragraph is not an external counter-signal.
 The primary-first delivery recovery isolates optional-stage failures without
-removing that purpose; compact mode retains actual supplementary results in the archive.
+removing that purpose; compact mode retains actual supplementary results in the archive,
+with the #208 engine restoration described below adding a bounded visible carry-forward.
 Statements below that the pipeline is wholly transient
 or that nothing is persisted describe the April snapshot, not the later
 follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
 acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
+
+### Delivered-card restoration under #208
+
+The new compact attempt contract freezes a fully confirmed/applied origin edition,
+its exact claim/receipt and canonical/presentation identities, and the original review
+and source occurrences for every actually delivered card. A selected but omitted
+closer is excluded. The same narrative call can return one supported canonical target
+and exact card/source quotations, or no target. Zero inferred assumptions are allowed;
+speculation cannot steer these queries. Literal provenance does not prove entailment.
+
+The evidence stage owns narrative/ranking value validation and accepted projection.
+The supplement application binds that checked result to its exact canonical archive,
+then freezes lossless presentation once. An accepted individual material qualification
+can survive an overall incomplete status with its limitations shown. One pending slot
+in the existing investigation attempt carries material only into ordinary editions
+dated D+1..D+3; actual UTC day D+4 expires unused material. A future ineligible destination
+does not prematurely expire a still-eligible fragment. Origin, source and investigation
+dates remain explicit, without asserting current factual validity.
+
+Prepared delivery inserts the fragment after main cards and before an admitted closer.
+It has separate chunk coverage and no article votes, dedup entries or source statistics.
+No source facts, qualifiers or required cards are truncated to fit. Complete positive
+owner-matching coverage is consumed before the receipt applied marker; uncertainty
+still holds the overall issue. Old artifacts are retained without reinterpretation,
+rerun or automatic resend. Standalone/full-source APIs remain available, and full-source
+reading stays disabled. See [ADR0011](../../decisions/0011-source-anchored-investigation-queries.md)
+and [ADR0007](../../decisions/0007-compact-issue-reservation.md) for versioning, lifecycle,
+unchanged budgets and the two existing-step runtime deployment prerequisites.
+
+Offline structural proof does not close ordinary useful-counter-evidence acceptance,
+semantic translation fidelity (including the known sharing-to-use failure), or the
+separate <=1,500-test goal. Release status must follow exact engine/runtime readback.
 
 ### Ordinary fan-out result ownership under #204
 

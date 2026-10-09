@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from digest.domain.catalog.articles import article_hash
 from digest.domain.delivery.outcomes import article_vote_token
+from digest.domain.delivery.supplement import SupplementCoverage
 from digest.presentation.supplement import signal_text, split_supplement
 
 if TYPE_CHECKING:
@@ -57,6 +58,20 @@ class _IssueArticleRange:
 class _IssueChunk:
     text: str
     reply_markup: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class SupplementPlacement:
+    fragment_id: str
+    text: str
+    before_article: int
+
+
+@dataclass(frozen=True)
+class CompactPublication:
+    chunks: list[_IssueChunk]
+    articles: list[_IssueArticleRange]
+    supplement: SupplementCoverage | None
 
 
 def _labels(config: Any) -> dict[str, str]:
@@ -210,22 +225,47 @@ def render_compact_issue(
     config: Any,
     notice: str,
 ) -> tuple[list[_IssueChunk], list[_IssueArticleRange]]:
+    publication = render_compact_publication(articles, config, notice)
+    return publication.chunks, publication.articles
+
+
+def render_compact_publication(
+    articles: list[ArticleSummary],
+    config: Any,
+    notice: str,
+    supplement: SupplementPlacement | None = None,
+) -> CompactPublication:
     """Prepare every chunk and map escaped article ranges before dispatch."""
     username = getattr(config.telegram, "bot_username", "")
     parts: list[str] = []
     ranges: list[_IssueArticleRange] = []
+    supplement_span = None
     offset = 0
+
+    def append_block(text: str) -> tuple[int, int]:
+        nonlocal offset
+        if parts:
+            offset += 2
+        encoded = escape_markdownv2(text)
+        span = offset, offset + len(encoded)
+        parts.append(text)
+        offset = span[1]
+        return span
+
+    if supplement is not None and not 0 <= supplement.before_article <= len(articles):
+        raise ValueError("Invalid supplement publication position.")
     for index, article in enumerate(articles, 1):
+        if supplement is not None and supplement.before_article == index - 1:
+            supplement_span = append_block(supplement.text)
         full_hash = article_hash(article.title, article.link)
         block = f"{index}. {article.title}\n{article.summary}\n{article.source}\n{article.link}"
         if not username:
             block += f"\n[{article_vote_token(full_hash, 'full32')}]"
-        if parts:
-            offset += len(escape_markdownv2("\n\n"))
-        end = offset + len(escape_markdownv2(block))
-        ranges.append(_IssueArticleRange(offset, end, full_hash, article.source))
-        parts.append(block)
-        offset = end
+        start, end = append_block(block)
+        ranges.append(_IssueArticleRange(start, end, full_hash, article.source))
+
+    if supplement is not None and supplement.before_article == len(articles):
+        supplement_span = append_block(supplement.text)
 
     footer = [notice] if notice else []
     if articles:
@@ -260,7 +300,18 @@ def render_compact_issue(
                     {"text": f"{index}👎", "url": f"https://t.me/{username}?start=vote_b_{vote_token}"},
                 ]
             )
-    return chunks, ranges
+    supplement_coverage = None
+    if supplement is not None:
+        assert supplement_span is not None
+        supplement_coverage = SupplementCoverage(
+            supplement.fragment_id,
+            tuple(
+                index
+                for index, (start, end) in enumerate(chunk_ranges)
+                if start < supplement_span[1] and supplement_span[0] < end
+            ),
+        )
+    return CompactPublication(chunks, ranges, supplement_coverage)
 
 
 def render_counter_signals(

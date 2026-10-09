@@ -61,7 +61,7 @@ async def test_sender_uses_frozen_payload_without_rendering_or_config(
 ) -> None:
     manifest, ready, claim = prepare(tmp_path)
     renderer = Mock(side_effect=AssertionError("sender rendered"))
-    monkeypatch.setattr(prepared_delivery, "render_compact_issue", renderer)
+    monkeypatch.setattr(prepared_delivery, "render_compact_publication", renderer)
     route = respx.post(API).mock(return_value=success())
     result = await edition.send_prepared_edition(
         ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
@@ -247,16 +247,21 @@ async def test_partial_receipts_keep_only_complete_article_coverage(tmp_path: Pa
 @pytest.mark.parametrize("failure", ["attempted", "confirmed", "terminal"])
 @respx.mock
 async def test_receipt_write_failure_retains_hold_without_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     _, ready, claim = prepare(tmp_path)
     original_write = edition_storage.write_record
 
     def crash(path: Path, value: dict[str, Any], *, exclusive: bool = False) -> str:
         if (
-            failure == "attempted" and value.get("attempted") == 1
-            or failure == "confirmed" and value.get("confirmed")
-            or failure == "terminal" and value.get("state") == "confirmed"
+            failure == "attempted"
+            and value.get("attempted") == 1
+            or failure == "confirmed"
+            and value.get("confirmed")
+            or failure == "terminal"
+            and value.get("state") == "confirmed"
         ):
             raise OSError("disk lost")
         return original_write(path, value, exclusive=exclusive)
@@ -642,3 +647,325 @@ def test_prepared_compatibility_exports_keep_value_and_entrypoint_identity() -> 
         assert getattr(edition, name) is getattr(domain, name)
     for name in ("prepare_edition", "claim_edition", "send_prepared_edition", "inspect_edition", "mark_applied"):
         assert getattr(edition, name) is getattr(prepared_delivery, name)
+
+
+async def supplement_edition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, dict[str, Any], str, datetime]:
+    from dataclasses import asdict
+
+    from tests.test_post_delivery import pending_supplement
+
+    monkeypatch.chdir(tmp_path)
+    pending = await pending_supplement(monkeypatch, long=True)
+    day = datetime.fromisoformat(pending.fragment.origin.publication_day).replace(tzinfo=timezone.utc) + timedelta(
+        days=1
+    )
+    cards = [
+        ArticleSummary("Tomorrow main", "https://example.com/tomorrow", "Source", "Tech", "Main survives."),
+        ArticleSummary("Final kindness", "https://example.com/kindness", "Community", "Life", "Closer survives."),
+    ]
+    config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
+    path, ready = edition.prepare_edition(
+        cards,
+        config,
+        publication_date=day.date(),
+        supplement=pending,
+        canonical_metadata={"cards": [asdict(cards[0])], "closing": {"card": asdict(cards[1])}},
+        presentation_metadata={"cards": [asdict(card) for card in cards], "closing": {"card": asdict(cards[1])}},
+        notice="Unrelated footer " * 500,
+    )
+    return pending, json.loads(path.read_text()), ready, day + timedelta(hours=12)
+
+
+@pytest.mark.asyncio
+async def test_ready3_sends_frozen_multichunk_fragment_without_article_votes_or_rerender(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.presentation.telegram import escape_markdownv2
+
+    pending, manifest, ready, now = await supplement_edition(tmp_path, monkeypatch)
+    assert manifest["schema"] == 3 and len(manifest["supplement"]["coverage"]["covering_chunks"]) > 1
+    text = "".join(item["text"] for item in manifest["payloads"])
+    escaped_fragment = escape_markdownv2(pending.fragment.text)
+    assert text.count(escaped_fragment) == 1
+    fragment_start = text.index(escaped_fragment)
+    fragment_end = fragment_start + len(escaped_fragment)
+    offset = 0
+    expected_coverage = []
+    for index, payload in enumerate(manifest["payloads"]):
+        end = offset + len(payload["text"])
+        if offset < fragment_end and fragment_start < end:
+            expected_coverage.append(index)
+        offset = end
+    assert manifest["supplement"]["coverage"]["covering_chunks"] == expected_coverage
+    assert text.index("Tomorrow main") < text.index("Irritator:") < text.index("Final kindness")
+    assert "LATE QUALIFIER" in text and "One external source was unavailable" in text
+    assert pending.attempt not in manifest["checkpoint_refs"]
+    assert len(manifest["articles"]) == 2
+    with pytest.raises(ValueError, match="schema"):
+        edition_storage.read_record(Path(".cache", edition.READY_FILE), allowed_schemas=(1, 2))
+    _, claim = edition.claim_edition(ready, now=now)
+    monkeypatch.setattr(
+        prepared_delivery, "render_compact_publication", Mock(side_effect=AssertionError("No rerender"))
+    )
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post(API).mock(
+            return_value=httpx.Response(
+                200,
+                json={"ok": True, "result": {"message_id": 5, "chat": {"id": 12345}}},
+            )
+        )
+        result = await edition.send_prepared_edition(ready, claim, enabled=True, bot_username="mybot", now=now)
+    assert result.complete and result.sent == 2 and len(result.article_source_map) == 2
+    assert all(len(identity) == 32 for identity in result.article_source_map)
+    assert [json.loads(call.request.content) for call in route.calls] == manifest["payloads"]
+    edition.mark_applied(ready)
+    saved = json.loads(Path(pending.attempt).read_text())
+    assert saved["supplement_status"] == "consumed"
+    assert json.loads(Path(".cache", edition.RECEIPTS_FILE).read_text())["applied"] is True
+    consumption = Path(pending.attempt).read_bytes()
+    edition.mark_applied(ready)
+    assert Path(pending.attempt).read_bytes() == consumption
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["fragment_incomplete", "later_unknown", "consume_write_failure"])
+async def test_fragment_consumption_is_required_before_applied_and_independent_of_later_uncertainty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    from unittest.mock import patch
+
+    pending, manifest, ready, now = await supplement_edition(tmp_path, monkeypatch)
+    _, claim = edition.claim_edition(ready, now=now)
+    last_fragment_chunk = manifest["supplement"]["coverage"]["covering_chunks"][-1]
+    prefix = last_fragment_chunk if outcome == "fragment_incomplete" else last_fragment_chunk + 1
+    assert prefix < len(manifest["payloads"])
+    receipts = {
+        "schema": 1,
+        "ready_sha256": ready,
+        "claim_sha256": claim,
+        "state": "unknown",
+        "attempted": prefix + 1,
+        "applied": False,
+        "confirmed": [
+            {"chunk": index, "message_id": index + 1, "owner_sha256": manifest["owner_sha256"]}
+            for index in range(prefix)
+        ],
+    }
+    path = Path(".cache", edition.RECEIPTS_FILE)
+    edition_storage.write_record(path, receipts)
+    if outcome == "consume_write_failure":
+        with patch("digest.application.supplement.storage.save_attempt", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                edition.mark_applied(ready)
+    elif outcome == "fragment_incomplete":
+        with pytest.raises(ValueError, match="not completely confirmed"):
+            edition.mark_applied(ready)
+    else:
+        edition.mark_applied(ready)
+    assert json.loads(path.read_text())["applied"] is (outcome == "later_unknown")
+    saved = json.loads(Path(pending.attempt).read_text())
+    assert saved["supplement_status"] == ("consumed" if outcome == "later_unknown" else "included_ready")
+    assert edition.inspect_edition(now=now)[2] == "held"
+
+
+@pytest.mark.asyncio
+async def test_expired_unclaimed_fragment_releases_before_replacement_then_expires_day_four(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import asdict
+    from unittest.mock import patch
+
+    from digest.application.supplement import pending_fragment
+
+    pending, _, old_ready, now = await supplement_edition(tmp_path, monkeypatch)
+    next_day = now + timedelta(days=1)
+    reused, status = pending_fragment("digests", next_day.date(), now=next_day)
+    assert reused == pending and status == "eligible"
+    saved = json.loads(Path(pending.attempt).read_text())
+    assert saved["supplement_status"] == "pending" and saved["fragment"]["released_binding"] == {
+        "ready_sha256": old_ready,
+        "reason": "expired_unclaimed_ready",
+    }
+    original_write = edition_storage.write_record
+
+    def write(path: Path, value: dict[str, Any], **kwargs: Any) -> str:
+        if path.name == edition.READY_FILE:
+            released = json.loads(Path(pending.attempt).read_text())["fragment"]["released_binding"]
+            assert released["ready_sha256"] == old_ready
+        return original_write(path, value, **kwargs)
+
+    card = ArticleSummary("Later main", "https://example.com/later", "Source", "Tech", "Still whole.")
+    config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
+    with patch("digest.application.prepared_delivery.storage.write_record", side_effect=write):
+        _, ready = edition.prepare_edition(
+            [card],
+            config,
+            now=next_day,
+            supplement=reused,
+            canonical_metadata={"cards": [asdict(card)]},
+            presentation_metadata={"cards": [asdict(card)]},
+        )
+    rebound = json.loads(Path(pending.attempt).read_text())["fragment"]
+    assert rebound["included_ready"] == ready and ready != old_ready
+    expiry = next_day + timedelta(days=2)
+    assert pending_fragment("digests", expiry.date(), now=expiry) == (None, "no_pending_fragment")
+    terminal = json.loads(Path(pending.attempt).read_text())
+    assert terminal["supplement_status"] == "expired" and terminal["supplement_reason"] == "origin_day_plus_four_utc"
+    assert terminal["fragment"]["released_binding"]["ready_sha256"] == ready
+
+
+@pytest.mark.asyncio
+async def test_claimed_fragment_expiry_never_releases_an_uncertain_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.application.supplement import pending_fragment
+
+    pending, _, ready, now = await supplement_edition(tmp_path, monkeypatch)
+    edition.claim_edition(ready, now=now)
+    before = Path(pending.attempt).read_bytes()
+    later = now + timedelta(days=5)
+    assert pending_fragment("digests", later.date(), now=later) == (None, "unverified_pending_fragment")
+    assert Path(pending.attempt).read_bytes() == before
+    assert edition.inspect_edition(now=later)[2] == "held"
+
+
+@pytest.mark.asyncio
+async def test_frozen_fragment_corruption_blocks_claim_without_reinterpreting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending, _, ready, now = await supplement_edition(tmp_path, monkeypatch)
+    Path(pending.projection).write_text("corrupt")
+    with pytest.raises(ValueError, match="checkpoint hash mismatch"):
+        edition.claim_edition(ready, now=now)
+    assert not Path(".cache", edition.CLAIM_FILE).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["canonical_identity", "presented_order", "closer", "current_review", "coverage"])
+async def test_ready3_structural_association_rejects_rehashed_mismatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    _, manifest, _, now = await supplement_edition(tmp_path, monkeypatch)
+    if fault == "canonical_identity":
+        manifest["canonical_metadata"]["cards"][0]["source"] = "Other occurrence"
+    elif fault == "presented_order":
+        manifest["presentation_metadata"]["cards"].reverse()
+    elif fault == "closer":
+        manifest["presentation_metadata"]["closing"]["card"] = manifest["articles"][0]["card"]
+    elif fault == "current_review":
+        manifest["current_review_checkpoint"] = manifest["supplement"]["fragment"]["checkpoint"]
+    else:
+        manifest["supplement"]["coverage"]["covering_chunks"] = []
+    for name in ("canonical", "presentation"):
+        manifest[f"{name}_sha256"] = edition_storage.content_sha256(
+            edition_storage.canonical_bytes(manifest[f"{name}_metadata"]),
+        )
+    manifest["content_sha256"] = edition_storage.content_sha256(
+        edition_storage.canonical_bytes(
+            {key: value for key, value in manifest.items() if key != "content_sha256"},
+        )
+    )
+    with pytest.raises(ValueError, match="prepared edition"):
+        edition_storage.validate_manifest_record(manifest, "12345", now)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["ready_to_reservation", "reservation_to_claim"])
+async def test_fragment_reservation_crashes_hold_frozen_work_without_consuming_or_replaying(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from dataclasses import asdict
+    from unittest.mock import patch
+
+    from digest.application.supplement import pending_fragment
+    from tests.test_post_delivery import pending_supplement
+
+    monkeypatch.chdir(tmp_path)
+    pending = await pending_supplement(monkeypatch)
+    now = datetime.fromisoformat(pending.fragment.origin.publication_day).replace(tzinfo=timezone.utc) + timedelta(
+        days=1
+    )
+    config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
+    card = ArticleSummary("Next", "https://example.com/next", "Source", "Tech", "Main copy.")
+    arguments = {
+        "canonical_metadata": {"cards": [asdict(card)]},
+        "presentation_metadata": {"cards": [asdict(card)]},
+        "supplement": pending,
+        "now": now,
+    }
+    if boundary == "ready_to_reservation":
+        with patch("digest.application.supplement.storage.save_attempt", side_effect=OSError("reservation failed")):
+            with pytest.raises(OSError, match="reservation failed"):
+                edition.prepare_edition([card], config, **arguments)
+        ready = hashlib.sha256(Path(".cache", edition.READY_FILE).read_bytes()).hexdigest()
+        with pytest.raises(ValueError, match="reservation"):
+            edition.claim_edition(ready, now=now)
+        assert json.loads(Path(pending.attempt).read_text())["supplement_status"] == "pending"
+    else:
+        _, ready = edition.prepare_edition([card], config, **arguments)
+        original_write = edition_storage.write_record
+
+        def fail_after_claim(path: Path, value: dict[str, Any], **kwargs: Any) -> str:
+            original_write(path, value, **kwargs)
+            raise OSError("claim persistence barrier failed")
+
+        with patch("digest.application.prepared_delivery.storage.write_record", side_effect=fail_after_claim):
+            with pytest.raises(OSError, match="claim persistence"):
+                edition.claim_edition(ready, now=now)
+        assert pending_fragment("digests", (now + timedelta(days=1)).date(), now=now + timedelta(days=1)) == (
+            None,
+            "unverified_pending_fragment",
+        )
+        assert json.loads(Path(pending.attempt).read_text())["supplement_status"] == "included_ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["old_ready", "release_proof"])
+async def test_unclaimed_fragment_reuse_requires_retained_old_ready_and_release_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    from dataclasses import asdict
+
+    from digest.application.supplement import pending_fragment
+
+    pending, _, _, now = await supplement_edition(tmp_path, monkeypatch)
+    now += timedelta(days=1)
+    path = Path(".cache", edition.READY_FILE)
+    if missing == "old_ready":
+        original = Path(pending.attempt).read_bytes()
+        path.unlink()
+        assert pending_fragment("digests", now.date(), now=now) == (None, "unverified_pending_fragment")
+        assert Path(pending.attempt).read_bytes() == original
+    else:
+        record = json.loads(Path(pending.attempt).read_text())
+        record["supplement_status"] = "pending"
+        record["fragment"]["included_ready"] = None
+        Path(pending.attempt).write_text(json.dumps(record))
+        original_ready = path.read_bytes()
+        card = ArticleSummary("Next", "https://example.com/next", "Source", "Tech", "Main copy.")
+        config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
+        with pytest.raises(ValueError, match="release is not proven"):
+            edition.prepare_edition(
+                [card],
+                config,
+                now=now,
+                supplement=pending,
+                canonical_metadata={"cards": [asdict(card)]},
+                presentation_metadata={"cards": [asdict(card)]},
+            )
+        assert path.read_bytes() == original_ready

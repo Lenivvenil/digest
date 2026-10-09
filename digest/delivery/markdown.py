@@ -14,6 +14,7 @@ from digest.presentation.supplement import signal_text
 if TYPE_CHECKING:
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.irritator import IrritatorStatus
+    from digest.presentation.telegram import SupplementPlacement
 
 logger = logging.getLogger(__name__)
 
@@ -35,20 +36,20 @@ def _build_frontmatter(
     )
 
 
-def _build_top_articles_section(top_articles: list[Any], *, literal_passages: bool = False) -> str:
+def _build_top_articles_section(
+    top_articles: list[Any],
+    *,
+    literal_passages: bool = False,
+    heading: str = "Top Articles",
+) -> str:
     """Build Obsidian callout block for per-article LLM summaries."""
     if not top_articles:
         return ""
 
-    lines = ["\n\n## Top Articles\n"]
+    lines = [f"\n\n## {heading}\n"]
     for a in top_articles:
-        summary = ("\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages
-                   else f"> {a.summary}")
-        lines.append(
-            f"> [!note] [{a.title}]({a.link})\n"
-            f"{summary}\n"
-            f"> *{a.source} · {a.category}*\n"
-        )
+        summary = "\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages else f"> {a.summary}"
+        lines.append(f"> [!note] [{a.title}]({a.link})\n{summary}\n> *{a.source} · {a.category}*\n")
     return "\n".join(lines)
 
 
@@ -59,9 +60,7 @@ def _build_counter_signals_section(ranked_signals: list[Any]) -> str:
 
     lines = ["\n\n## \u26a0\ufe0f Counter-Signals\n"]
     for ranked in ranked_signals:
-        lines.append(
-            "> [!warning]\n" + "\n".join(f"> {line}" for line in signal_text(ranked).split("\n")) + "\n"
-        )
+        lines.append("> [!warning]\n" + "\n".join(f"> {line}" for line in signal_text(ranked).split("\n")) + "\n")
     return "\n".join(lines)
 
 
@@ -69,9 +68,11 @@ def _build_source_evidence_appendix(top_articles: list[Any], quotations: dict[st
     """Keep original quotations separate from the compact publication cards."""
     from digest.radar.collector import article_hash
 
-    lines = ["\n\n## Original source evidence (archive only)\n",
-             "Model-selected quotations and source qualifications are preserved below in their original language. "
-             "They support the reading briefs; they are not independent verification.\n"]
+    lines = [
+        "\n\n## Original source evidence (archive only)\n",
+        "Model-selected quotations and source qualifications are preserved below in their original language. "
+        "They support the reading briefs; they are not independent verification.\n",
+    ]
     for card in top_articles:
         quotation = quotations.get(article_hash(card.title, card.link))
         if quotation is None:
@@ -94,6 +95,7 @@ def write_digest(
     sources_count: int = 0,
     articles_count: int = 0,
     source_quotations: dict[str, str] | None = None,
+    supplement: SupplementPlacement | None = None,
 ) -> Path | None:
     """Write digest markdown file to the configured output directory.
 
@@ -112,9 +114,14 @@ def write_digest(
     content = f"{frontmatter}\n{summary}\n"
 
     if top_articles:
+        main = top_articles if supplement is None else top_articles[: supplement.before_article]
         content += _build_top_articles_section(
-            top_articles, literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
+            main,
+            literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
         )
+        if supplement is not None:
+            content += "\n\n## Supplementary evidence\n\n" + supplement.text + "\n"
+            content += _build_top_articles_section(top_articles[supplement.before_article :], heading="Closing story")
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)

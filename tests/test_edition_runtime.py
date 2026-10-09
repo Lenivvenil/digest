@@ -34,34 +34,63 @@ from tests.test_closing import EA_CREDIT, EA_FEED, NHS_CREDIT, NHS_FEED, NOW
 
 
 def bound_snapshot(
-    original: PreparationSnapshot, closing_card: ArticleSummary | None = None, *,
-    closing_feed: str = NHS_FEED, main_feed: str = "https://example.com/feed",
+    original: PreparationSnapshot,
+    closing_card: ArticleSummary | None = None,
+    *,
+    closing_feed: str = NHS_FEED,
+    main_feed: str = "https://example.com/feed",
 ) -> PreparationSnapshot:
     """Persist actual accepted report/occurrences; presentation tests make no model calls."""
     config = fixture_config()
     cards = [*original.top_articles, *([closing_card] if closing_card is not None else [])]
-    config.sources = [SourceConfig(
-        card.source, closing_feed if card is closing_card else main_feed, card.category, True,
-    ) for card in cards]
+    config.sources = [
+        SourceConfig(
+            card.source,
+            closing_feed if card is closing_card else main_feed,
+            card.category,
+            True,
+        )
+        for card in cards
+    ]
     if closing_card is not None:
-        config.closing = ClosingConfig(True, (ClosingSourceBinding(
-            closing_card.source, closing_feed, closing_card.category),))
+        config.closing = ClosingConfig(
+            True, (ClosingSourceBinding(closing_card.source, closing_feed, closing_card.category),)
+        )
     articles: dict[str, list[Article]] = {}
     for card in cards:
         articles.setdefault(card.category, []).append(
-            Article(card.title, card.link, "Raw evidence.", card.source, card.category, NOW))
+            Article(card.title, card.link, "Raw evidence.", card.source, card.category, NOW)
+        )
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None and len(packet.articles) == len(cards)
     by_id = {article_hash(card.title, card.link): card for card in cards}
-    selections = [EvidenceSelection(item.evidence_id, by_id[item.evidence_id].summary, item.excerpt, "high")
-                  for item in packet.evidence.items]
-    raw = json.dumps({"selections": [{key: value for key, value in asdict(item).items()
-                                     if key != "typography_normalized"} for item in selections], "limitations": [],
-                      "closing": {"schema_version": 1,
-                                  "evidence_id": article_hash(closing_card.title, closing_card.link)
-                                  if closing_card is not None else None}})
+    selections = [
+        EvidenceSelection(item.evidence_id, by_id[item.evidence_id].summary, item.excerpt, "high")
+        for item in packet.evidence.items
+    ]
+    raw = json.dumps(
+        {
+            "selections": [
+                {key: value for key, value in asdict(item).items() if key != "typography_normalized"}
+                for item in selections
+            ],
+            "limitations": [],
+            "closing": {
+                "schema_version": 1,
+                "evidence_id": article_hash(closing_card.title, closing_card.link)
+                if closing_card is not None
+                else None,
+            },
+        }
+    )
     review = ModelReview(
-        "primary", "test", "test", packet.evidence.bundle_id, packet.prompt_hash, "ok", selections=selections,
+        "primary",
+        "test",
+        "test",
+        packet.evidence.bundle_id,
+        packet.prompt_hash,
+        "ok",
+        selections=selections,
         response_sha256=hashlib.sha256(raw.encode()).hexdigest(),
     )
     report = BlindReviewReport(1, packet.evidence, [review], "incomplete", None, [], "Fixture review")
@@ -69,11 +98,138 @@ def bound_snapshot(
     freeze_packet(packet, {}, ".cache")
     decision = original.closing
     if closing_card is not None:
-        result = resolve_review(report, (ReviewAttempt(
-            review, capture_review_dispositions(report.evidence, review, raw), capture_closing(review, raw, "stop")),))
+        result = resolve_review(
+            report,
+            (
+                ReviewAttempt(
+                    review,
+                    capture_review_dispositions(report.evidence, review, raw),
+                    capture_closing(review, raw, "stop"),
+                ),
+            ),
+        )
         decision = decide_closing(result, packet, config.closing, config.sources)
         assert decision.status == "selected" and decision.card == closing_card
     return replace(original, review_report=report, closing=decision)
+
+
+@pytest.mark.asyncio
+async def test_supplement_delivery_outputs_current_review_and_applies_real_state_before_next_investigation(
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+
+    from digest import post_delivery
+    from digest.application import prepared_delivery
+    from tests.test_post_delivery import pending_supplement
+
+    config, snapshot = setup
+    config.obsidian.output_dir = str(Path("digests").resolve())
+    pending = await pending_supplement(monkeypatch)
+    next_day = datetime.fromisoformat(pending.fragment.origin.publication_day).replace(tzinfo=timezone.utc) + timedelta(
+        days=1, hours=12
+    )
+    monkeypatch.setattr(prepared_delivery, "_instant", lambda now: now or next_day)
+    snapshot = bound_snapshot(snapshot)
+    output = tmp_path / "workflow-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    with patch(
+        "digest.application.presentation.publication_presentation",
+        AsyncMock(return_value=("Current notice", snapshot.top_articles, [])),
+    ):
+        prepared = await finish_preparation(
+            snapshot, config, execution=ModelExecution(), publication_date=next_day.date()
+        )
+    manifest = json.loads(Path(".cache", READY_FILE).read_text())
+    assert manifest["current_review_checkpoint"] == prepared.review_checkpoint != pending.fragment.checkpoint
+    assert pending.fragment.checkpoint in manifest["checkpoint_refs"]
+    assert prepared.review_checkpoint in manifest["checkpoint_refs"]
+    assert await delivery_phase("claim", "config.yaml", prepared.ready_sha256, None) == 0
+    claim_sha = hashlib.sha256(Path(".cache", CLAIM_FILE).read_bytes()).hexdigest()
+    with respx.mock(assert_all_called=True) as router:
+        router.post("https://api.telegram.org/bottest-token/sendMessage").mock(
+            return_value=httpx.Response(
+                200,
+                json={"ok": True, "result": {"message_id": 88, "chat": {"id": 12345}}},
+            )
+        )
+        assert await delivery_phase("send", "config.yaml", prepared.ready_sha256, claim_sha) == 0
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert outputs["review_checkpoint"] == prepared.review_checkpoint
+    assert json.loads(Path(pending.attempt).read_text())["supplement_status"] == "consumed"
+    identity = article_hash(snapshot.top_articles[0].title, snapshot.top_articles[0].link)
+    assert identity in json.loads(Path(".cache/seen_articles.json").read_text())
+    assert load_feedback(".cache", strict=True).article_source_map == {identity: "Source"}
+    assert pending.fragment.fragment_id not in Path(".cache/source_stats.json").read_text()
+    post_config = fixture_config()
+    post_config.telegram.delivery_mode = "compact"
+    with patch("digest.post_delivery._config", return_value=post_config):
+        marker = post_delivery.prepare_post_delivery(Path("config.yaml"), Path(outputs["review_checkpoint"]))
+    assert marker is not None
+    next_origin = json.loads(marker.read_text())["delivered"]
+    assert next_origin["ready_sha256"] == prepared.ready_sha256
+    assert [card["card_id"] for card in next_origin["cards"]] == [identity]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("omission", ["corrupt_projection", "render_capacity", "split_closer"])
+async def test_optional_fragment_failure_before_freeze_preserves_main_and_closer(
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+    omission: str,
+) -> None:
+    from datetime import datetime, timedelta
+    from unittest.mock import patch
+
+    from tests.test_post_delivery import pending_supplement
+
+    config, snapshot = setup
+    url = "https://external.example/" + "_" * 2000 if omission == "render_capacity" else "https://external.example/ok"
+    if omission == "split_closer":
+        with patch("digest.application.supplement.fragment_text", return_value="x" * 3607):
+            pending = await pending_supplement(monkeypatch)
+    else:
+        pending = await pending_supplement(monkeypatch, source_url=url)
+    if omission == "corrupt_projection":
+        Path(pending.projection).write_text("corrupt optional file")
+    closer = ArticleSummary("Human story", "https://example.com/human", "NHS England", "Health", "Raw evidence.")
+    snapshot = bound_snapshot(snapshot, closer)
+    day = datetime.fromisoformat(pending.fragment.origin.publication_day).date() + timedelta(days=1)
+    with patch(
+        "digest.application.presentation.publication_presentation",
+        AsyncMock(return_value=("Current notice", snapshot.top_articles, [])),
+    ):
+        result = await finish_preparation(snapshot, config, execution=ModelExecution(), publication_date=day)
+    manifest = json.loads(Path(".cache", READY_FILE).read_text())
+    assert manifest["schema"] == 2 and len(manifest["articles"]) == 2
+    assert [item["card"]["title"] for item in manifest["articles"]] == [snapshot.top_articles[0].title, closer.title]
+    assert result.markdown_saved
+    if omission != "corrupt_projection":
+        record = json.loads(Path(pending.attempt).read_text())
+        assert record["supplement_status"] == "archive_only"
+        assert record["supplement_reason"] == "supplement_rendering_failed"
+        if omission == "split_closer":
+            from digest.presentation.telegram import SupplementPlacement, render_compact_publication
+
+            cards = [ArticleSummary(**item["card"]) for item in manifest["articles"]]
+            plain = render_compact_publication(cards, config, "Current notice")
+            shifted = render_compact_publication(
+                cards,
+                config,
+                "Current notice",
+                SupplementPlacement(
+                    pending.fragment.fragment_id,
+                    pending.fragment.text,
+                    1,
+                ),
+            )
+            assert plain.articles[-1].covering_chunks == (0,)
+            assert shifted.articles[-1].covering_chunks == (0, 1)
+    else:
+        assert manifest["presentation_metadata"]["supplement"]["status"] == "unverified_pending_fragment"
 
 
 @pytest.fixture
@@ -124,8 +280,9 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     config.review.enabled = False
     config.radar.language = "ru"
     config.sources = [SourceConfig("NHS England", NHS_FEED, "Health", True)]
-    monkeypatch.setattr("digest.application.presentation.publication_presentation",
-          AsyncMock(side_effect=AssertionError("rerender")))
+    monkeypatch.setattr(
+        "digest.application.presentation.publication_presentation", AsyncMock(side_effect=AssertionError("rerender"))
+    )
     assert (await resume_preparation(config, 0, verbose=False, execution=execution)).ready_sha256 == stats.ready_sha256
     assert await delivery_phase("claim", "config.yaml", stats.ready_sha256, None) == 0
     import hashlib
@@ -151,11 +308,19 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_file", [
-    "feedback.json", "source_stats.json", "source_state.json", "seen_articles.json",
-])
+@pytest.mark.parametrize(
+    "failed_file",
+    [
+        "feedback.json",
+        "source_stats.json",
+        "source_state.json",
+        "seen_articles.json",
+    ],
+)
 async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, failed_file: str,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+    failed_file: str,
 ) -> None:
     execution = ModelExecution()
     from digest._util import atomic_json_write
@@ -190,7 +355,7 @@ async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying
         with pytest.raises(OSError, match="application write failure"):
             await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha)
         assert route.call_count == 1
-    assert writes == write_order[:write_order.index(failed_file) + 1]
+    assert writes == write_order[: write_order.index(failed_file) + 1]
     receipts = json.loads(Path(".cache", RECEIPTS_FILE).read_text())
     assert receipts["state"] == "confirmed" and receipts["applied"] is False
     assert receipts["confirmed"][0]["message_id"] == 52
@@ -210,7 +375,7 @@ async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying
         with pytest.raises(ValueError, match="held"):
             await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha)
         assert not router.calls
-    assert writes == write_order[:write_order.index(failed_file) + 1]
+    assert writes == write_order[: write_order.index(failed_file) + 1]
     assert {path: path.read_bytes() for path in retained} == retained
 
 
@@ -231,7 +396,8 @@ async def test_empty_or_corrupt_attribution_never_sends(setup: tuple[SimpleNames
 
 @pytest.mark.asyncio
 async def test_unavailable_primary_is_not_a_reusable_empty_preparation(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.application.preparation import (
         CategoryAnalysis,
@@ -254,8 +420,10 @@ async def test_unavailable_primary_is_not_a_reusable_empty_preparation(
     work = CategoryAnalysis([], None, [], snapshot.review_report)
     collected = CollectedArticles(config, fixture_articles(), {}, False, snapshot.article_count)
     run = PreparationRun(config, execution, SourceStateStore(), {}, FeedbackStore(), True, 0)
-    monkeypatch.setattr("digest.application.investigation.run_irritator", AsyncMock(
-        return_value=([], [], IrritatorStatus("Offline fixture", "empty"))))
+    monkeypatch.setattr(
+        "digest.application.investigation.run_irritator",
+        AsyncMock(return_value=([], [], IrritatorStatus("Offline fixture", "empty"))),
+    )
     presentation = AsyncMock(side_effect=RuntimeError("late presentation failure"))
     monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
 
@@ -370,7 +538,9 @@ async def test_future_edition_archive_and_delivery_day_accounting(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("translation", ["canonical", "translated", "main_canonical_fallback"])
 async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_edition(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, translation: str,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+    translation: str,
 ) -> None:
     execution = ModelExecution()
     from digest.delivery.telegram import escape_markdownv2
@@ -388,8 +558,9 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
         assert next(item["text"] for item in fields if item["id"] == "closing.summary") == card.summary
         assert NHS_CREDIT not in json.dumps(fields)
         assert EA_CREDIT not in json.dumps(fields)
-        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
-                                             for item in fields]}), {"finish_reason": "stop"}
+        return json.dumps(
+            {"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]}
+        ), {"finish_reason": "stop"}
 
     completion = AsyncMock(side_effect=translate if translation == "translated" else RuntimeError("offline fallback"))
     monkeypatch.setattr("digest.translation.complete", completion)
@@ -400,9 +571,10 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     prefix = "Перевод: " if translation == "translated" else ""
     presented = replace(card, summary=f"{prefix}{card.summary} {NHS_CREDIT}")
-    published = [asdict(replace(original.top_articles[0],
-                               summary=f"{prefix}{original.top_articles[0].summary} {EA_CREDIT}")),
-                 asdict(presented)]
+    published = [
+        asdict(replace(original.top_articles[0], summary=f"{prefix}{original.top_articles[0].summary} {EA_CREDIT}")),
+        asdict(presented),
+    ]
     assert frozen["presentation_metadata"]["cards"] == published
     assert [item["card"] for item in frozen["articles"]] == published
     assert frozen["canonical_metadata"]["cards"] == [asdict(original.top_articles[0])]
@@ -418,10 +590,12 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     assert markdown.count(NHS_CREDIT) == 1
     assert markdown.count(EA_CREDIT) == 1
     assert _canonical(json.loads(Path(stats.review_checkpoint).read_text())) == _canonical(
-        asdict(snapshot.review_report))
+        asdict(snapshot.review_report)
+    )
     assert len(frozen["checkpoint_refs"]) == 5
-    assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == sha
-               for path, sha in frozen["checkpoint_refs"].items())
+    assert all(
+        hashlib.sha256(Path(path).read_bytes()).hexdigest() == sha for path, sha in frozen["checkpoint_refs"].items()
+    )
     closing = frozen["articles"][-1]
     assert closing["source"] == card.source and closing["full_hash"] == article_hash(card.title, card.link)
     assert set(closing["card"]) == {"title", "link", "source", "category", "summary"}
@@ -460,7 +634,8 @@ async def test_unrenderable_closing_is_omitted_before_archive_and_freeze(
 
 @pytest.mark.asyncio
 async def test_invalid_main_rendering_and_required_archive_errors_are_not_optional_failures(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     config, original = setup
@@ -508,7 +683,8 @@ async def test_closing_alone_does_not_create_a_filler_edition(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["unknown_feed", "long_closing", "credit_crosses_boundary"])
 async def test_unattributable_closing_is_omitted_and_only_unchanged_main_is_delivered(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], failure: str,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    failure: str,
 ) -> None:
     execution = ModelExecution()
     from digest.closing import attribute_closing_card
@@ -564,13 +740,18 @@ async def test_unattributable_closing_is_omitted_and_only_unchanged_main_is_deli
 @pytest.mark.asyncio
 @pytest.mark.parametrize("feed,credit", [(NHS_FEED, NHS_CREDIT), (EA_FEED, EA_CREDIT)])
 async def test_main_credit_uses_immutable_packet_even_after_source_settings_change(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], feed: str, credit: str,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    feed: str,
+    credit: str,
 ) -> None:
     execution = ModelExecution()
     config, original = setup
     snapshot = bound_snapshot(original, main_feed=feed)
-    evidence = {path: path.read_bytes() for directory in ("candidate_reports", "candidate_sources")
-                for path in Path(".cache", directory).glob("*.json")}
+    evidence = {
+        path: path.read_bytes()
+        for directory in ("candidate_reports", "candidate_sources")
+        for path in Path(".cache", directory).glob("*.json")
+    }
     config.sources = [SourceConfig("Source", "https://changed.example/feed", "Tech", False)]
     stats = await finish_preparation(snapshot, config, execution=execution)
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
@@ -586,10 +767,13 @@ async def test_main_credit_uses_immutable_packet_even_after_source_settings_chan
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["no_report", "missing_packet", "corrupt_packet", "missing_source",
-                                     "changed_identity"])
+@pytest.mark.parametrize(
+    "failure", ["no_report", "missing_packet", "corrupt_packet", "missing_source", "changed_identity"]
+)
 async def test_missing_main_attribution_proof_retains_accepted_work_before_any_translation(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, failure: str,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     execution = ModelExecution()
     from tests.test_translation import config as translation_config
@@ -622,7 +806,8 @@ async def test_missing_main_attribution_proof_retains_accepted_work_before_any_t
 
 @pytest.mark.asyncio
 async def test_corrupt_optional_packet_preserves_legacy_recovery_with_archive_disabled(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     execution = ModelExecution()
@@ -651,7 +836,8 @@ async def test_corrupt_optional_packet_preserves_legacy_recovery_with_archive_di
 
 @pytest.mark.asyncio
 async def test_main_credit_crossing_chunk_boundary_holds_accepted_work_without_discarding_it(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     from digest.delivery.telegram import _render_compact_issue
@@ -661,7 +847,8 @@ async def test_main_credit_crossing_chunk_boundary_holds_accepted_work_without_d
     snapshot = bound_snapshot(replace(original, top_articles=[card]), main_feed=NHS_FEED)
     _, uncredited = _render_compact_issue([card], config, original.combined)
     _, credited = _render_compact_issue(
-        [replace(card, summary=f"{card.summary} {NHS_CREDIT}")], config, original.combined)
+        [replace(card, summary=f"{card.summary} {NHS_CREDIT}")], config, original.combined
+    )
     assert len(uncredited[0].covering_chunks) == 1 and len(credited[0].covering_chunks) > 1
     path = save_preparation(snapshot)
     accepted = path.read_bytes()

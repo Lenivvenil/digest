@@ -4,7 +4,86 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from digest.domain.investigation.delivered import DeliveredInvestigationInput
+    from digest.irritator.evidence_stage import DeliveredNarrative, EvidenceIrritatorResult
+
+
+_FRAGMENT_LABELS = {
+    "en": {
+        "heading": "Irritator: supplementary evidence",
+        "origin": "Origin edition",
+        "investigation": "Investigation",
+        "complete": "complete",
+        "incomplete": "incomplete",
+        "assertion": "Assertion checked",
+        "title": "Canonical title",
+        "summary": "Canonical summary",
+        "source": "Original source",
+        "published": "published",
+        "unknown": "unavailable",
+        "evidence": "Original evidence",
+        "external": "External evidence",
+        "external_date": "External source date",
+        "limits": "Coverage and limitations (canonical wording)",
+    },
+    "ru": {
+        "heading": "Ирритатор: дополнительные свидетельства",
+        "origin": "Исходный выпуск",
+        "investigation": "Проверка",
+        "complete": "завершена",
+        "incomplete": "неполная",
+        "assertion": "Проверяемое утверждение",
+        "title": "Канонический заголовок",
+        "summary": "Каноническое резюме",
+        "source": "Исходный источник",
+        "published": "дата публикации",
+        "unknown": "неизвестна",
+        "evidence": "Исходное свидетельство",
+        "external": "Внешнее свидетельство",
+        "external_date": "Дата внешнего источника",
+        "limits": "Охват и ограничения (исходная формулировка)",
+    },
+}
+
+
+def fragment_text(
+    result: EvidenceIrritatorResult,
+    presented: EvidenceIrritatorResult,
+    origin: DeliveredInvestigationInput,
+    *,
+    language: str,
+    notice: str,
+    investigated_at: str,
+) -> str:
+    """Present accepted values losslessly; source quotations and qualifications stay canonical."""
+    labels = _FRAGMENT_LABELS.get(language, _FRAGMENT_LABELS["en"])
+    narrative = cast("DeliveredNarrative", result.narratives[0])
+    target = next(card for card in origin.cards if card.card_id == narrative.target_card_id)
+    lines = [
+        labels["heading"],
+        f"{labels['origin']}: {origin.publication_day}",
+        f"{labels['investigation']}: {investigated_at}; {labels[result.status]}",
+        f"{labels['assertion']}: {presented.narratives[0].claim}",
+        f"{labels[narrative.delivered_quote.field]}: {narrative.delivered_quote.text}",
+        f"{labels['source']}: {target.canonical.link}; "
+        f"{labels['published']}: {target.occurrence.published or labels['unknown']}",
+        *(f"{labels['evidence']}: {quote}" for quote in narrative.quotes.values()),
+    ]
+    for shown, canonical in zip(presented.ranked_signals, result.ranked_signals, strict=True):
+        lines.extend(
+            [
+                signal_text(shown, language),
+                f"{labels['external']}: {canonical.quote}",
+                f"{labels['external_date']}: {canonical.signal.published or labels['unknown']}",
+            ]
+        )
+    lines.extend([labels["limits"], result.coverage, *result.limitations])
+    if notice:
+        lines.append(notice)
+    return "\n\n".join(lines)
 
 
 def signal_text(ranked: Any, language: str = "en") -> str:
