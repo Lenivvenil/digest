@@ -36,6 +36,14 @@ class SearchDiagnostics:
         return self.successful + self.failed + self.unavailable
 
 
+@dataclass(frozen=True)
+class SearchBatch:
+    """Ordered source signals and outcomes for every query/source attempt."""
+
+    signals: list[Signal]
+    diagnostics: SearchDiagnostics
+
+
 def validate_search_response(response: httpx.Response, source: str) -> Any:
     """Validate a success body and return its decoded JSON or Atom root."""
     if source == "arxiv":
@@ -106,18 +114,16 @@ async def search_all_sources(
     queries: list[SearchQuery],
     config: Any,
     client: httpx.AsyncClient,
-    *,
-    diagnostics: SearchDiagnostics | None = None,
-) -> list[Signal]:
+) -> SearchBatch:
     """Search all configured sources for counter-signals.
 
     Each query fans out to every configured source adapter. Runs concurrently
     with a semaphore limit. Failures per (query, source) pair are logged and
-    skipped (graceful degradation).
+    skipped (graceful degradation). Return signals and their attempt counts together.
     """
     _import_adapters()
 
-    outcomes = diagnostics if diagnostics is not None else SearchDiagnostics()
+    outcomes = SearchDiagnostics()
     configured = sorted(config.irritator.sources)
     semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
 
@@ -158,4 +164,4 @@ async def search_all_sources(
         len(queries),
         len(configured),
     )
-    return signals
+    return SearchBatch(signals, outcomes)

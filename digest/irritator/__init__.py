@@ -105,10 +105,11 @@ async def run_irritator(
 
     # Stage 2: Query generation
     try:
-        queries_by_narrative = await generate_queries(
-            narratives, config, diagnostics=diagnostics.queries, execution=execution,
+        query_batch = await generate_queries(
+            narratives, config, execution=execution,
         )
-        all_queries = [q for qs in queries_by_narrative.values() for q in qs]
+        diagnostics.queries = query_batch.diagnostics
+        all_queries = [q for qs in query_batch.queries_by_narrative.values() for q in qs]
     except Exception as exc:
         logger.error("Irritator: query generation failed (%s)", type(exc).__name__)
         return narratives, [], outcome(
@@ -125,7 +126,9 @@ async def run_irritator(
 
     # Stage 3: Signal search
     try:
-        raw_signals = await search_all_sources(all_queries, config, client, diagnostics=diagnostics.search)
+        search_batch = await search_all_sources(all_queries, config, client)
+        diagnostics.search = search_batch.diagnostics
+        raw_signals = search_batch.signals
         raw_signal_count = len(raw_signals)
     except Exception as exc:
         logger.error("Irritator: signal search failed (%s)", type(exc).__name__)

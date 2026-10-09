@@ -24,6 +24,14 @@ class QueryDiagnostics:
     failed: int = 0
 
 
+@dataclass(frozen=True)
+class QueryBatch:
+    """Generated queries and outcomes for every narrative attempt."""
+
+    queries_by_narrative: dict[str, list[SearchQuery]]
+    diagnostics: QueryDiagnostics
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -132,31 +140,31 @@ async def generate_queries(
     narratives: list[Narrative],
     config: Config,
     *, execution: ModelExecution,
-    diagnostics: QueryDiagnostics | None = None,
-) -> dict[str, list[SearchQuery]]:
+) -> QueryBatch:
     """Generate adversarial search queries for all narratives in parallel.
 
-    Returns dict mapping narrative claim to its search queries.
-    Raises ValueError on invalid LLM response, RuntimeError if all providers fail.
+    Return a claim-to-queries mapping with per-attempt diagnostic counts.
+    Ordinary child failures are logged and counted; cancellation propagates.
     """
+    diagnostics = QueryDiagnostics()
     if not narratives:
-        return {}
+        return QueryBatch({}, diagnostics)
 
     tasks = [_generate_for_narrative(n, config, execution=execution) for n in narratives]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     queries_by_narrative: dict[str, list[SearchQuery]] = {}
     for narrative, result in zip(narratives, results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
         if isinstance(result, Exception):
-            if diagnostics is not None:
-                diagnostics.failed += 1
+            diagnostics.failed += 1
             logger.warning(
                 "Query generation failed (%s)",
                 type(result).__name__,
             )
             continue
-        if diagnostics is not None:
-            diagnostics.successful += 1
+        diagnostics.successful += 1
         queries_by_narrative[narrative.claim] = result  # type: ignore[assignment]
 
     total = sum(len(qs) for qs in queries_by_narrative.values())
@@ -166,4 +174,4 @@ async def generate_queries(
         len(queries_by_narrative),
         len(narratives),
     )
-    return queries_by_narrative
+    return QueryBatch(queries_by_narrative, diagnostics)

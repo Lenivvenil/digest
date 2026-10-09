@@ -29,7 +29,7 @@ for deployed versus local work, then the [historical model](#historical-domain-s
 for the original analysis. The [Digest requirements](../digest/overview.md#current-owner-requirements-and-acceptance-traces)
 define the primary-delivery and operating constraints.
 
-## Current status — 2026-10-07
+## Current status — 2026-10-09
 
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
@@ -48,6 +48,26 @@ Statements below that the pipeline is wholly transient
 or that nothing is persisted describe the April snapshot, not the later
 follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
 acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
+
+### Ordinary fan-out result ownership under #204
+
+`generate_queries` returns `QueryBatch(queries_by_narrative, diagnostics)` and
+`search_all_sources` returns `SearchBatch(signals, diagnostics)`. Each operation
+owns the payload and its per-attempt counts; a successful empty result is distinct
+from failure, and search also distinguishes unavailable sources. Query counts do
+not collapse when duplicate claim keys replace an earlier payload. The orchestrator
+uses those results to retain its existing tuple, status text/levels and diagnostic
+shape. Query/search order, partial results, concurrency and all-pairs ranking remain.
+
+This deliberately breaks direct exported-helper dictionary/list returns and removes
+their `diagnostics=` keyword. Names/import paths remain; callers read the batch's
+payload and `.diagnostics`, and mocks construct batches from the defining modules.
+[ADR0025](../../decisions/0025-owned-irritator-fanout-results.md#compatibility-and-migration)
+lists the exact migration. Individually cancelled query children now propagate
+`CancelledError`, matching whole-task and source cancellation, instead of the old
+accidental `TypeError` or duplicate-claim masking. The bounded evidence-stage
+deadline/partial-evidence protocol and saved formats remain unchanged. Verification
+and rollout are tracked separately in [#204](https://github.com/Lenivvenil/digest/issues/204).
 
 ### Signal validation ownership under #147
 
