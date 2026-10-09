@@ -9,10 +9,12 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from digest.domain.delivery.outcomes import ArticleCoverage, IssueDeliveryResult, project_issue_coverage
+from digest.domain.delivery.supplement import PreparedSupplement
 from digest.domain.editorial.summaries import ArticleSummary
 
 SCHEMA_VERSION = 1
 READY_SCHEMA_VERSION = 2
+SUPPLEMENT_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,12 @@ class _Edition:
     canonical_sha256: str = ""
     presentation_sha256: str = ""
     content_sha256: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class SupplementEdition(_Edition):
+    supplement: PreparedSupplement
+    current_review_checkpoint: str
 
 
 @dataclass(frozen=True)
@@ -100,7 +108,7 @@ def validate_manifest(
     fresh: bool = True,
 ) -> None:
     try:
-        if type(data.get("schema")) is not int or data["schema"] not in (1, READY_SCHEMA_VERSION):
+        if type(data.get("schema")) is not int or data["schema"] not in (1, 2, 3):
             raise ValueError
         if data["content_sha256"] != content_sha256 or data["owner_sha256"] != owner_sha256:
             raise ValueError
@@ -168,8 +176,87 @@ def validate_manifest(
                 raise ValueError
         for reference, digest in data["checkpoint_refs"].items():
             validate_checkpoint_reference(reference, digest)
+        if data["schema"] == SUPPLEMENT_SCHEMA_VERSION:
+            validate_supplement(data)
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Invalid, stale or wrong-owner prepared edition; publishing blocked.") from exc
+
+
+def validate_supplement(data: dict[str, Any]) -> None:
+    """Validate frozen references, coverage and card identities without parsing prose."""
+    import json
+
+    from digest._serialization import canonical_json_bytes, restore_dataclass
+    from digest.domain.delivery.supplement import fragment_identity, fragment_window
+
+    supplement: PreparedSupplement = restore_dataclass(
+        json.loads(canonical_json_bytes(data["supplement"])),
+        PreparedSupplement,
+    )
+    fragment = supplement.fragment
+    if (
+        fragment.fragment_id != fragment_identity(fragment)
+        or not fragment.text.strip()
+        or fragment.origin.owner_sha256 != data["owner_sha256"]
+        or fragment_window(fragment, parse_instant(data["window_start"]).date()) != "eligible"
+        or supplement.coverage.fragment_id != fragment.fragment_id
+        or supplement.attempt in data["checkpoint_refs"]
+    ):
+        raise ValueError("Invalid frozen supplement identity or window.")
+    coverage = supplement.coverage.covering_chunks
+    if (
+        not coverage
+        or coverage != tuple(sorted(set(coverage)))
+        or any(type(index) is not int or not 0 <= index < len(data["payloads"]) for index in coverage)
+    ):
+        raise ValueError("Invalid frozen supplement coverage.")
+    for path, digest in (
+        (supplement.projection, supplement.projection_sha256),
+        (fragment.result, fragment.result_sha256),
+        (fragment.checkpoint, fragment.origin.checkpoint_sha256),
+    ):
+        validate_checkpoint_reference(path, digest)
+        if data["checkpoint_refs"].get(path) != digest:
+            raise ValueError("Frozen supplement lacks an immutable reference.")
+    validate_checkpoint_reference(supplement.attempt, supplement.projection_sha256)
+    current_review = data["current_review_checkpoint"]
+    if (
+        not isinstance(current_review, str)
+        or current_review
+        and (
+            not current_review.endswith(".review.json")
+            or current_review not in data["checkpoint_refs"]
+            or current_review == fragment.checkpoint
+        )
+    ):
+        raise ValueError("Invalid current publication review checkpoint.")
+    identities = [article["full_hash"] for article in data["articles"]]
+    canonical = list(data["canonical_metadata"]["cards"])
+    main_count = len(canonical)
+    presentation = data["presentation_metadata"]
+    closing = presentation.get("closing")
+    if isinstance(closing, dict) and closing.get("card") is not None:
+        canonical.append(data["canonical_metadata"]["closing"]["card"])
+        if closing["card"] != data["articles"][-1]["card"]:
+            raise ValueError("Presented closing card differs from its ordered publication.")
+    if (
+        not 0 < main_count <= len(identities) <= main_count + 1
+        or len(canonical) != len(identities)
+        or presentation["cards"] != [article["card"] for article in data["articles"]]
+    ):
+        raise ValueError("Invalid supplement publication order.")
+    from digest.domain.catalog.articles import article_hash
+
+    for original, article in zip(canonical, data["articles"], strict=True):
+        card = restore_dataclass(original, ArticleSummary)
+        shown = article["card"]
+        if article_hash(card.title, card.link) != article["full_hash"] or (
+            card.title,
+            card.link,
+            card.source,
+            card.category,
+        ) != tuple(shown[key] for key in ("title", "link", "source", "category")):
+            raise ValueError("Canonical and presented article identities differ.")
 
 
 def validate_claim(claim: Claim, ready_sha: str, owner_sha: str) -> None:
@@ -235,7 +322,7 @@ def validate_dispatch_identity(data: Edition) -> None:
 
 
 def project_result(data: Edition, receipts: Receipts) -> IssueDeliveryResult:
-    if data.schema not in (1, READY_SCHEMA_VERSION):
+    if data.schema not in (1, 2, 3):
         raise ValueError("Unsupported prepared edition schema.")
     return project_issue_coverage(
         (

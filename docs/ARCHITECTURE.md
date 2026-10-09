@@ -108,7 +108,8 @@ the eligible subset.
 | `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |
 
 `RunStats` is the terminal public/reporting projection, not the internal work model.
-These values add no persisted state machine or new schema. Supported CLI and run
+These scenario outcome values add no persisted state machine or new schema. The
+separate supplementary-publication ready3 contract is described below. Supported CLI and run
 entrypoints remain stable; deliberate internal API retirements are listed in the
 [changelog](../CHANGELOG.md#unreleased--reliability-rehabilitation).
 
@@ -151,6 +152,8 @@ boolean. The code entrypoints below identify the implemented owners.
 | Presentation → frozen edition | Bind payloads, article coverage, recipient, publication window and archive references together. | [edition domain](../digest/domain/delivery/edition.py), [prepared application](../digest/application/prepared_delivery.py) |
 | Ready → claim → transport | Require the exact remote ready/claim hashes. Persist attempted count before each POST and each known confirmation afterward. | [prepared application](../digest/application/prepared_delivery.py), [storage](../digest/adapters/storage/edition.py), [Telegram adapter](../digest/adapters/telegram/prepared.py) |
 | Receipts → applied outcome | Apply only known complete article coverage; mark receipts applied after the ordered operational writes succeed. | [coverage projection](../digest/domain/delivery/outcomes.py), [outcome application](../digest/application/delivery.py) |
+| Confirmed publication → later supplementary evidence | Freeze canonical delivered targets and source occurrences; the evidence producer retains narrative/ranking authority. Preserve one immutable projection and per-attempt disposition. | [origin application](../digest/application/investigation_origin.py), [delivered values](../digest/domain/investigation/delivered.py), [evidence stage](../digest/irritator/evidence_stage.py), [supplement application](../digest/application/supplement.py) |
+| Fragment coverage → consumption | Separate supplement chunks from article attribution. Consume only complete positive owner-matching coverage before `mark_applied` writes the applied marker. | [supplement values](../digest/domain/delivery/supplement.py), [prepared application](../digest/application/prepared_delivery.py) |
 
 ## Cache architecture
 
@@ -165,6 +168,26 @@ different jobs; a filename's presence alone never proves the later stages happen
 | `.cache/prepared_edition.json` | Frozen `Edition`: exact payloads, article chunk ranges, owner/bot binding, UTC window, canonical/presentation hashes and referenced archive/evidence hashes. | The runtime must persist and verify these exact file bytes before claiming. |
 | `.cache/prepared_edition_claim.json` | One immutable claim bound to the ready-file SHA-256 and owner. | The runtime must persist and verify the claim and ready file from the same remote revision before first dispatch. |
 | `.cache/prepared_edition_receipts.json` | Ready/claim binding, attempted chunk count, known chunk confirmations, terminal transport state and `applied`. | Persist the known send outcome and apply its complete article coverage. Existing uncertain or unapplied state holds later automatic publication. |
+
+Main-only editions retain ready schema 2. A `SupplementEdition` uses schema 3 with
+an immutable fragment, separate `SupplementCoverage`,
+and an explicit current-review checkpoint. The older origin review remains a reference,
+never a filename-order inference for the next optional investigation. Claims and
+receipts keep their existing schema because the exact ready hash binds the extension.
+
+The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
+references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
+expired dispositions; mutable state is not a ready checkpoint reference. This adds no
+central queue, index, worker or retry loop. Normal preparation reuses a verified eligible
+fragment without model/source work. The shared lossless renderer inserts it before the
+closer; sender validation checks frozen hashes, identities and coverage bounds
+without rendering or parsing publication prose. See [ADR0007](decisions/0007-compact-issue-reservation.md)
+for D+1..D+3 eligibility, actual-clock expiry and proof-bound unclaimed-ready release.
+
+Consumption is an ordered application write, so the runtime receipt barrier must persist
+the existing attempt under `digests/` together with `.cache/` applied receipts. The existing
+post-prepare step also needs the private owner ID; no bot/model key is needed there.
+These are deployment prerequisites, not additional jobs, requests or operating capacity.
 
 Legacy snapshot counters need care: in this preparation path, `article_count` counts
 admitted packet articles, while `source_count` is the number of category groups
@@ -253,11 +276,11 @@ record or a change to the prepared-edition policy.
 | --- | --- | --- |
 | Mutable input | Reload current feedback, delivered cache and statistics; reload lifecycle state only when adaptation is enabled. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
 | Delivery identity | Full article hashes enter deduplication only after complete confirmed chunk coverage. Empty coverage returns before state reads or writes. | Confirmed Telegram hashes qualify. Cards mode additionally consumes summarized-category articles and top articles after a saved Markdown output when Telegram is optional or complete. That consumption does not imply Telegram confirmation. Direct compact never treats Markdown as delivered coverage. |
-| Attribution | Merge confirmed vote-token/source mappings: full article identities for ready v2, original short tokens for ready v1. Update last-digest sources/time only when the whole issue is complete. | New delivery uses full article vote identities. Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
+| Attribution | Merge confirmed vote-token/source mappings: full article identities for ready v2/v3, original short tokens for ready v1. Supplement coverage adds no article identity. Update last-digest sources/time only when the whole issue is complete. | New delivery uses full article vote identities. Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
 | Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
 | Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
 | Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
-| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; caller then marks receipts applied. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
+| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; `mark_applied` consumes complete ready3 supplement coverage before writing the applied receipt marker. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
 | Failure policy | Feedback/cache validation fails closed. All application writes propagate failures. Statistics and lifecycle reads retain their existing permissive loaders; strict writes do not imply strict reads. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
 
 After a successful prepared application, inclusion counters and existing deduplication
@@ -277,7 +300,7 @@ applied marker fails, the held receipt prevents blind replay.
 | Category/legacy execution | Category summaries, optional perspectives and direct output. It retains its own guard, Markdown consumption and retry/error behavior. |
 | Independent comparison/resume | Review slots assess identical evidence independently. Report-only or supplementary output does not create a new primary edition. |
 | Source discovery | Propose, validate, persist and request approval; source activation requires a separately verified operator decision. |
-| Supplementary investigation | Search external sources from saved evidence under its own reservation. Compact mode archives the result. |
+| Supplementary investigation | Search external sources from frozen evidence under its own attempt. New compact attempts bind actually delivered canonical cards and may retain one accepted fragment for a later ordinary edition; unbound standalone results have no fragment eligibility. |
 | Experimental source preparation | Optional source-bound acquisition/analysis with its own technical handoff and uncertainty holds; it does not publish a concatenated prototype as an edition. |
 
 <a id="stage-5-first-telegram-delivery-ownership-slice"></a>
@@ -289,7 +312,7 @@ turn a legacy direct call into the persisted prepared protocol.
 | --- | --- |
 | Legacy cards, status and counter-signals | HTTP success is sufficient; no Telegram `ok` or message-ID validation is added. HTTP 400 triggers the existing plaintext fallback. The existing three attempts, Retry-After/backoff, per-card continuation and 0.5-second spacing remain. Supplement dispatch retains its 90-second total bound and status-dependent notification. |
 | Direct compact | Render every chunk before `before_send`, which remains immediately before dispatch. A 30-second total bound and per-request timeout remain. HTTP 4xx or explicit `ok: false` fails; other non-200/malformed receipts and transport uncertainty become unknown. HTTP 200 plus `ok: true` confirms without message-ID/chat validation. No retry or fallback; only complete confirmed article coverage is attributed. |
-| Post-delivery supplement | Missing/disabled destination returns `not_configured` before rendering/client creation. Each silent chunk gets one POST with a 30-second total bound and per-request timeout. HTTP success plus explicit `ok: true` is required; errors propagate to the existing unknown marker. No retry, plaintext fallback or receipt-validation strengthening. |
+| Legacy standalone post-delivery supplement | Missing/disabled destination returns `not_configured` before rendering/client creation. Each silent chunk gets one POST with a 30-second total bound and per-request timeout. HTTP success plus explicit `ok: true` is required; errors propagate to the existing unknown marker. New compact target-bound material instead enters a later ordinary ready3 edition. |
 
 
 Prepared transport additionally requires a positive message ID and exact matching

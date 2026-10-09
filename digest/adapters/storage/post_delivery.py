@@ -7,6 +7,7 @@ neither mechanism makes the marker and archives a multi-file transaction.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -74,6 +75,40 @@ def save_attempt(marker: Path, record: dict[str, Any]) -> None:
 
 def save_result(result: Path, payload: dict[str, Any]) -> None:
     atomic_json_write(result, payload)
+
+
+def read_attempt(marker: Path) -> dict[str, Any]:
+    from digest._serialization import unique_object
+
+    record = json.loads(safe_checkpoint_path(marker).read_text(), object_pairs_hook=unique_object)
+    if not isinstance(record, dict):
+        raise ValueError("Invalid post-delivery attempt record.")
+    return record
+
+
+def attempt_paths(directory: str) -> list[Path]:
+    return sorted(safe_checkpoint_path(Path(directory)).glob("*.post-attempt.json"))
+
+
+def read_projection(path: str, expected: str) -> Any:
+    from digest._serialization import restore_dataclass, unique_object
+    from digest.domain.delivery.supplement import SupplementFragment, fragment_identity
+
+    content = safe_checkpoint_path(Path(path)).read_bytes()
+    if hashlib.sha256(content).hexdigest() != expected:
+        raise ValueError("Frozen supplement projection hash mismatch.")
+    fragment: SupplementFragment = restore_dataclass(
+        json.loads(content, object_pairs_hook=unique_object), SupplementFragment
+    )
+    if fragment.fragment_id != fragment_identity(fragment):
+        raise ValueError("Frozen supplement identity mismatch.")
+    for reference, digest in (
+        (fragment.result, fragment.result_sha256),
+        (fragment.checkpoint, fragment.origin.checkpoint_sha256),
+    ):
+        if hashlib.sha256(safe_checkpoint_path(Path(reference)).read_bytes()).hexdigest() != digest:
+            raise ValueError("Frozen supplement evidence reference changed.")
+    return fragment
 
 
 def save_markdown_archive(markdown: Path, content: str) -> None:

@@ -28,14 +28,16 @@ from digest.domain.delivery.edition import (
     Edition,
     PreparedArticle,
     Receipts,
+    SupplementEdition,
     parse_instant,
     project_result,
     validate_dispatch_identity,
     validate_owner,
 )
 from digest.domain.delivery.outcomes import IssueDeliveryResult
+from digest.domain.delivery.supplement import PendingSupplement, PreparedSupplement
 from digest.domain.editorial.summaries import ArticleSummary
-from digest.presentation.telegram import render_compact_issue
+from digest.presentation.telegram import SupplementPlacement, render_compact_publication
 
 _DISPATCH_SECONDS = 30.0
 
@@ -75,6 +77,8 @@ def prepare_edition(
     now: datetime | None = None,
     expires_at: datetime | None = None,
     publication_date: date | None = None,
+    supplement: PendingSupplement | None = None,
+    current_review_checkpoint: str = "",
 ) -> tuple[Path, str]:
     """Freeze an edition once; return the file and hash the runtime must persist."""
     instant = _instant(now)
@@ -101,9 +105,21 @@ def prepare_edition(
                 raise ValueError("Existing claimed edition is held or confirmed today; publishing blocked.")
         elif storage.exists(cache / RECEIPTS_FILE) or instant < parse_instant(previous.expires_at):
             raise ValueError("An eligible ready edition already exists; publishing blocked.")
+        elif isinstance(previous, SupplementEdition):
+            from digest.application.supplement import release_replaced_fragment
+
+            release_replaced_fragment(previous, previous_sha, instant, cache)
     elif storage.exists(cache / CLAIM_FILE) or storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Orphaned edition claim or receipts; publishing blocked.")
-    chunks, ranges = render_compact_issue(articles, config, notice)
+    placement = (
+        SupplementPlacement(
+            supplement.fragment.fragment_id, supplement.fragment.text, len((canonical_metadata or {})["cards"])
+        )
+        if supplement is not None
+        else None
+    )
+    rendered = render_compact_publication(articles, config, notice, placement)
+    chunks, ranges = rendered.chunks, rendered.articles
     end = start + timedelta(days=1)
     payloads = []
     for chunk in chunks:
@@ -135,9 +151,37 @@ def prepare_edition(
             for item, card in zip(ranges, articles, strict=True)
         ],
     )
+    if supplement is not None:
+        assert rendered.supplement is not None
+        from dataclasses import replace
+
+        data = SupplementEdition(
+            **{**asdict(data), "schema": 3, "articles": data.articles},
+            supplement=PreparedSupplement(
+                supplement.fragment,
+                supplement.projection,
+                supplement.projection_sha256,
+                supplement.attempt,
+                rendered.supplement,
+            ),
+            current_review_checkpoint=current_review_checkpoint,
+        )
+        data = replace(
+            data,
+            checkpoint_refs={
+                **data.checkpoint_refs,
+                supplement.projection: supplement.projection_sha256,
+                supplement.fragment.result: supplement.fragment.result_sha256,
+                supplement.fragment.checkpoint: supplement.fragment.origin.checkpoint_sha256,
+            },
+        )
     data = storage.freeze_hashes(data)
     storage.validate_manifest_record(asdict(data), owner, instant, fresh=False)
     digest = storage.write_record(path, asdict(data))
+    if supplement is not None:
+        from digest.application.supplement import reserve_fragment
+
+        reserve_fragment(supplement, digest)
     # Publish new ready first: interruption during cleanup then fails closed on old bindings.
     storage.remove_previous_dispatch(cache)
     return path, digest
@@ -156,6 +200,10 @@ def claim_edition(
     _legacy_guard(cache, instant)
     data, digest = storage.load_edition(cache / READY_FILE, owner, instant, expected_ready_sha256, fresh=True)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
+    if isinstance(data, SupplementEdition):
+        from digest.application.supplement import verify_fragment_reservation
+
+        verify_fragment_reservation(data, digest)
     if storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Edition receipts already exist; automatic replay is blocked.")
     validate_dispatch_identity(data)
@@ -191,6 +239,10 @@ async def send_prepared_edition(
     storage.validate_manifest_record(asdict(data), owner, instant)
     validate_dispatch_identity(data)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
+    if isinstance(data, SupplementEdition):
+        from digest.application.supplement import verify_fragment_reservation
+
+        verify_fragment_reservation(data, ready_sha)
     _legacy_guard(cache, instant)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
@@ -286,5 +338,9 @@ def mark_applied(expected_ready_sha256: str, *, cache_dir: str | Path = ".cache"
     receipts = storage.load_receipts(cache, claim.ready_sha256, claim_sha, len(data.payloads), owner_sha)
     if receipts is None:
         raise ValueError("Cannot apply an edition without transport receipts.")
+    if isinstance(data, SupplementEdition):
+        from digest.application.supplement import consume_fragment
+
+        consume_fragment(data, ready_sha, receipts)
     receipts.applied = True
     storage.write_record(cache / RECEIPTS_FILE, asdict(receipts))

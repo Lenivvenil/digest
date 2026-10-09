@@ -172,14 +172,39 @@ async def _present_snapshot(
     """Shared presentation implementation; editorial acceptance belongs to the caller."""
     from digest.application.prepared_delivery import prepare_edition
     from digest.application.publication import assemble_publication
+    from digest.application.supplement import archive_fragment, pending_fragment
     from digest.delivery import write_digest
     from digest.preparation import clear_preparation
+    from digest.presentation.telegram import SupplementPlacement, render_compact_publication
 
     review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
         logger.info("Edition preparation: no selected articles; no ready edition created")
         return NoEdition("no_ready", review_status)
     publication = await assemble_publication(snapshot, config, execution=execution, verbose=verbose)
+    pending, supplement_reason = pending_fragment(
+        config.obsidian.output_dir,
+        publication_date or datetime.now(timezone.utc).date(),
+    )
+    placement = None
+    if pending is not None and supplement_reason == "eligible":
+        placement = SupplementPlacement(
+            pending.fragment.fragment_id, pending.fragment.text, len(publication.main_cards)
+        )
+        try:
+            rendered = render_compact_publication(publication.cards, config, publication.combined, placement)
+            if (
+                publication.closing is not None
+                and publication.closing.card is not None
+                and len(rendered.articles[-1].covering_chunks) != 1
+            ):
+                raise ValueError("Supplement would split the closing article's required source credit.")
+        except ValueError:
+            supplement_reason = "supplement_rendering_failed"
+            archive_fragment(pending, supplement_reason)
+            pending, placement = None, None
+    else:
+        pending = None
     archive = write_digest(
         publication.combined,
         config,
@@ -190,11 +215,13 @@ async def _present_snapshot(
         sources_count=snapshot.source_count,
         articles_count=snapshot.article_count,
         date=datetime.combine(publication_date, datetime.min.time(), timezone.utc) if publication_date else None,
+        supplement=placement,
     )
     # An enabled but failed archive is a preparation failure, never sender eligibility.
     if config.obsidian.enabled and archive is None:
         raise ValueError("Edition archive persistence failed; canonical preparation remains resumable.")
     references: dict[str, Any] = {}
+    current_review = ""
     if archive is not None:
         paths = [archive]
         if snapshot.review_report is not None:
@@ -211,7 +238,11 @@ async def _present_snapshot(
         for path in paths:
             relative = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
             references[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            if path == archive.with_suffix(".review.json"):
+                current_review = relative
     canonical, presentation = publication.metadata()
+    if supplement_reason != "no_pending_fragment":
+        presentation["supplement"] = {"status": "included" if pending is not None else supplement_reason}
     _, digest = prepare_edition(
         publication.cards,
         config,
@@ -221,6 +252,8 @@ async def _present_snapshot(
         checkpoint_refs=references,
         producing_engine=_engine_provenance(),
         publication_date=publication_date,
+        supplement=pending,
+        current_review_checkpoint=current_review,
     )
     clear_preparation()
     future_window = publication_date and publication_date > datetime.now(timezone.utc).date()
@@ -230,7 +263,7 @@ async def _present_snapshot(
         review_status,
         len(publication.combined),
         archive,
-        str(archive.with_suffix(".review.json")) if archive is not None and snapshot.review_report is not None else "",
+        current_review,
     )
 
 
@@ -294,7 +327,11 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
     mark_applied(ready_sha)
     checkpoint = ""
     if result.complete:
-        checkpoint = next((name for name in manifest["checkpoint_refs"] if name.endswith(".review.json")), "")
+        checkpoint = (
+            manifest["current_review_checkpoint"]
+            if manifest["schema"] == 3
+            else next((name for name in manifest["checkpoint_refs"] if name.endswith(".review.json")), "")
+        )
     publish_outputs(edition_status="confirmed" if result.complete else result.outcome, review_checkpoint=checkpoint)
     return 0 if result.complete else 1
 

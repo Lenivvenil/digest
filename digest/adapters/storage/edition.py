@@ -14,18 +14,19 @@ from digest.adapters.storage.issue_paths import safe_issue_path as _safe
 from digest.delivery.issue_guard import ISSUE_FILE, _Record
 from digest.delivery.issue_guard import _read as _read_legacy
 from digest.domain.delivery.edition import (
-    READY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     ChunkReceipt,
     Claim,
     Edition,
     PreparedArticle,
     Receipts,
+    SupplementEdition,
     validate_checkpoint_reference,
     validate_claim,
     validate_manifest,
     validate_receipts,
 )
+from digest.domain.delivery.supplement import PreparedSupplement
 from digest.domain.editorial.summaries import ArticleSummary
 
 READY_FILE = "prepared_edition.json"
@@ -107,7 +108,7 @@ def load_edition(
     *,
     fresh: bool = False,
 ) -> tuple[Edition, str]:
-    data, digest = read_record(path, expected, allowed_schemas=(1, READY_SCHEMA_VERSION))
+    data, digest = read_record(path, expected, allowed_schemas=(1, 2, 3))
     validate_manifest_record(data, owner, now, fresh=fresh)
     try:
         fields = dict(data)
@@ -115,6 +116,11 @@ def load_edition(
             PreparedArticle(item["full_hash"], item["source"], item["covering_chunks"], ArticleSummary(**item["card"]))
             for item in data["articles"]
         ]
+        if data["schema"] == 3:
+            from digest._serialization import restore_dataclass
+
+            fields["supplement"] = restore_dataclass(data["supplement"], PreparedSupplement)
+            return SupplementEdition(**fields), digest
         return Edition(**fields), digest
     except TypeError as exc:
         raise ValueError("Invalid prepared edition record; publishing blocked.") from exc
@@ -139,11 +145,19 @@ def load_claim(
     return decode_claim(data, ready_sha, owner_sha), digest
 
 
-def load_receipts(cache: Path, ready_sha: str, claim_sha: str, total: int, owner_sha: str) -> Receipts | None:
+def load_receipts(
+    cache: Path,
+    ready_sha: str,
+    claim_sha: str,
+    total: int,
+    owner_sha: str,
+    *,
+    expected: str | None = None,
+) -> Receipts | None:
     path = cache / RECEIPTS_FILE
     if not path.exists():
         return None
-    value, _ = read_record(path)
+    value, _ = read_record(path, expected)
     try:
         validate_receipts(value, ready_sha, claim_sha, total, owner_sha)
         fields = dict(value)
