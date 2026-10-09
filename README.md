@@ -125,6 +125,8 @@ operational delivery need their own evidence.
 - [Documentation map](docs/README.md): operator, contributor and architecture routes
 - [Operator guide](docs/BLIND_REVIEW.md): configuration, CLI, publication and recovery
 - [Architecture](docs/ARCHITECTURE.md): lifecycle, persisted records and code ownership
+- [Target architecture and migration](docs/ARCHITECTURE.md#target-architecture-and-migration):
+  editable diagram, ownership boundaries and staged exit evidence
 - [Digest domain model](docs/domain/digest/overview.md) and
   [Irritator model](docs/domain/irritator/overview.md): purpose, identities and invariants
 - [Prior README](docs/history/readme-2026-10-08.md): retained examples, decisions and

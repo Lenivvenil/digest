@@ -76,3 +76,23 @@ A successful CI run is necessary but does not establish architectural completene
 semantic quality. The implementing PR records remaining cycles and ownership debt.
 Rollback is a reviewed code revert or the previous compatible engine pin; no runtime
 state reset, receipt deletion or historical reclassification is required.
+
+## Target ownership continuation — 2026-10-09
+
+Accepted direction under [#164](https://github.com/Lenivvenil/digest/issues/164);
+implementation and runtime acceptance remain tracked separately. The canonical
+[target architecture and staged migration](../ARCHITECTURE.md#target-architecture-and-migration)
+own the editable diagram, boundaries and exit criteria.
+
+Continue the existing modular monolith rather than introduce services or a generic
+workflow framework. Prepare owns the verified accepted editorial result; publication
+owns the prepared receipt-to-application lifecycle. Category/no-news policy remains
+distinct, and legacy/direct/optional scenarios keep their current guarantees until
+explicitly migrated. Shared trust-boundary repairs precede deeper ownership changes.
+
+This decision does not itself change code, persisted formats, command contracts,
+transport behavior or accounting recovery. In particular, strict prepared accounting
+preflight is a planned amendment to ADR0017, not its current implemented policy.
+Each implementing change must retire its former authority, preserve wire/rollback
+compatibility and document any intentional behavior change. Reviewed release evidence
+and ordinary product acceptance are separate requirements.
