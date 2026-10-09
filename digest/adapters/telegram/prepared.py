@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 import httpx
 
+from digest.adapters.telegram.diagnostics import request as telegram_request
+
 
 def accepted_message_id(response: httpx.Response, owner: str) -> int | None:
     value = response.json()
@@ -29,7 +31,8 @@ async def send_prepared_chunk(
     timeout_seconds: float,
 ) -> tuple[Literal["confirmed", "failed", "unknown"], int | None]:
     """One POST only; the application persists attempted/confirmed progress around it."""
-    response = await client.post(
+    response = await telegram_request(
+        client, "POST",
         f"https://api.telegram.org/bot{token}/sendMessage",
         json=payload,
         timeout=timeout_seconds,

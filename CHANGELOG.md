@@ -2,6 +2,13 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Share credential-safe Telegram diagnostics across prepared, direct/legacy,
+  supplementary, discovery and feedback operations (#219), preserving their distinct
+  retries, receipt interpretation and persistence barriers. Response/error request
+  metadata is now a token-free diagnostic copy; sent request bytes are unchanged.
+  Safe errors omit raw response reason/Location/body, and feedback no longer temporarily
+  changes global HTTP logger levels. See the [ADR0017 continuation](docs/decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09).
+
 - Record the accepted [target architecture and staged migration](docs/ARCHITECTURE.md#target-architecture-and-migration)
   under #164, with an editable diagram and explicit ownership, compatibility and
   acceptance boundaries. This documentation change does not implement the target

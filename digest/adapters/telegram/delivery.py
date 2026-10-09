@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from digest.adapters.telegram.diagnostics import raise_for_status
+from digest.adapters.telegram.diagnostics import request as telegram_request
 from digest.domain.catalog.articles import article_hash
 from digest.domain.delivery.outcomes import (
     ArticleCoverage,
@@ -63,21 +65,24 @@ async def _send_chunk(
 
     for attempt in range(_MAX_RETRIES):
         try:
-            resp = await client.post(api_url, json=payload, timeout=30.0)
+            resp = await telegram_request(client, "POST", api_url, json=payload, timeout=30.0)
             if resp.status_code == 400:
                 # Fallback: strip escapes and send as plain text
                 logger.warning("MarkdownV2 rejected, falling back to plain text")
                 plain = re.sub(r"\\(.)", r"\1", md2_text)
                 payload["text"] = plain
                 payload.pop("parse_mode", None)
-                resp = await client.post(api_url, json=payload, timeout=30.0)
-            resp.raise_for_status()
+                resp = await telegram_request(client, "POST", api_url, json=payload, timeout=30.0)
+            raise_for_status(resp)
             return
         except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
             if attempt == _MAX_RETRIES - 1:
                 raise
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
-                retry_after = int(exc.response.headers.get("Retry-After", 2))
+                try:
+                    retry_after = int(exc.response.headers.get("Retry-After", 2))
+                except ValueError:
+                    raise ValueError("Invalid Telegram Retry-After header") from None
                 await asyncio.sleep(retry_after)
             else:
                 await asyncio.sleep(2**attempt)
@@ -240,7 +245,9 @@ async def send_compact_issue(
             async with asyncio.timeout(_COMPACT_DISPATCH_SECONDS):
                 for payload in payloads:
                     result.attempted_chunks += 1
-                    response = await client.post(api_url, json=payload, timeout=_COMPACT_DISPATCH_SECONDS)
+                    response = await telegram_request(
+                        client, "POST", api_url, json=payload, timeout=_COMPACT_DISPATCH_SECONDS,
+                    )
                     if 400 <= response.status_code < 500:
                         result.outcome = "failed"
                         break
@@ -333,7 +340,8 @@ async def send_post_delivery_supplement(result: EvidenceIrritatorResult, config:
     # Never retry an uncertain POST: Telegram has no idempotency key for sendMessage.
     async with asyncio.timeout(_POST_DELIVERY_DISPATCH_SECONDS), httpx.AsyncClient() as client:
         for text in chunks:
-            response = await client.post(
+            response = await telegram_request(
+                client, "POST",
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={
                     "chat_id": chat,
@@ -343,7 +351,7 @@ async def send_post_delivery_supplement(result: EvidenceIrritatorResult, config:
                 },
                 timeout=30.0,
             )
-            response.raise_for_status()
+            raise_for_status(response)
             body = response.json()
             if not isinstance(body, dict) or body.get("ok") is not True:
                 raise ValueError("Telegram did not confirm the supplement.")

@@ -26,7 +26,6 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-sha256", help="SHA256 of feedback.json from the successfully pushed Git commit")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     owner = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not owner:
