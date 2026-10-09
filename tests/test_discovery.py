@@ -29,23 +29,13 @@ from digest.discovery import (
 # ---------------------------------------------------------------------------
 
 
-def test_source_hash_deterministic() -> None:
-    url = "https://example.com/feed"
-    assert source_hash(url) == source_hash(url)
-
-
-def test_source_hash_length() -> None:
-    assert len(source_hash("https://example.com/feed")) == 8
-
-
-def test_source_hash_different_urls() -> None:
-    assert source_hash("https://a.com/feed") != source_hash("https://b.com/feed")
-
-
-@pytest.mark.parametrize("url,expected", [
-    ("https://example.com/feed", "ca7a0f39"),
-    ("https://example.com/café?q=1", "386024ef"),
-])
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://example.com/feed", "ca7a0f39"),
+        ("https://example.com/café?q=1", "386024ef"),
+    ],
+)
 def test_source_hash_preserves_existing_ids_without_security_use(url: str, expected: str) -> None:
     import hashlib
 
@@ -114,7 +104,8 @@ def test_resolve_pending_proposal_rejects_invalid_timestamp() -> None:
 
 @pytest.mark.parametrize("field_name", ["name", "url", "category", "discovered_at"])
 def test_resolve_pending_proposal_rejects_non_string_fields(
-    field_name: str, monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _fresh_proposal()
     monkeypatch.setattr(source, field_name, None)
@@ -169,7 +160,9 @@ def test_load_pending_strict_accepts_empty_and_expired_or_future_entries(tmp_pat
     assert load_pending(str(tmp_path), strict=True) == []
     entries = [
         {
-            "name": "Test", "url": "https://test.com/feed", "category": "Tech",
+            "name": "Test",
+            "url": "https://test.com/feed",
+            "category": "Tech",
             "discovered_at": timestamp,
         }
         for timestamp in ("2000-01-01T00:00:00+00:00", "2999-01-01T00:00:00+00:00")
@@ -189,8 +182,11 @@ def test_load_pending_strict_rejects_invalid_json_or_envelope(tmp_path: Path, co
 @pytest.mark.parametrize("field_name", ["name", "url", "category", "discovered_at", "source_hash"])
 def test_load_pending_strict_rejects_malformed_item_fields(tmp_path: Path, field_name: str) -> None:
     entry = {
-        "name": "Test", "url": "https://test.com/feed", "category": "Tech",
-        "discovered_at": "2026-10-02T00:00:00+00:00", "source_hash": "abcdef12",
+        "name": "Test",
+        "url": "https://test.com/feed",
+        "category": "Tech",
+        "discovered_at": "2026-10-02T00:00:00+00:00",
+        "source_hash": "abcdef12",
     }
     malformed: dict[str, object] = {**entry, field_name: None}
     (tmp_path / "pending_sources.json").write_text(json.dumps({"pending": [entry, malformed]}), encoding="utf-8")
@@ -235,11 +231,6 @@ def test_save_pending_prunes_old_entries(tmp_path: Path) -> None:
     assert loaded[0].name == "Fresh"
 
 
-def test_load_pending_invalid_json(tmp_path: Path) -> None:
-    (tmp_path / "pending_sources.json").write_text("not json", encoding="utf-8")
-    assert load_pending(str(tmp_path)) == []
-
-
 def test_load_pending_skips_malformed_entries(tmp_path: Path) -> None:
     data = {
         "pending": [
@@ -264,7 +255,8 @@ def test_load_pending_skips_malformed_entries(tmp_path: Path) -> None:
 
 
 def test_save_pending_strict_propagates_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = _fresh_proposal()
     save_pending([original], str(tmp_path))
@@ -348,9 +340,7 @@ async def test_send_source_approval_message_network_error() -> None:
         discovered_at="2026-03-27T10:00:00+00:00",
     )
 
-    respx.post(f"https://api.telegram.org/bot{token}/sendMessage").mock(
-        side_effect=httpx.ConnectError("refused")
-    )
+    respx.post(f"https://api.telegram.org/bot{token}/sendMessage").mock(side_effect=httpx.ConnectError("refused"))
 
     result = await send_source_approval_message(ps, token, chat_id)
     assert result.status == "unknown" and result.message_id is None
@@ -370,9 +360,9 @@ def _make_config(tmp_path: Path, content: str) -> str:
 def test_add_source_to_config_appends_trial_block(tmp_path: Path) -> None:
     config_content = (
         "sources:\n"
-        "  - name: \"Existing\"\n"
-        "    url: \"https://existing.com/feed\"\n"
-        "    category: \"Tech\"\n"
+        '  - name: "Existing"\n'
+        '    url: "https://existing.com/feed"\n'
+        '    category: "Tech"\n'
         "    enabled: true\n"
         "    priority: 3\n"
     )
@@ -385,6 +375,8 @@ def test_add_source_to_config_appends_trial_block(tmp_path: Path) -> None:
         discovered_at="2026-03-27T10:00:00+00:00",
     )
     add_source_to_config(config_path, ps)
+    assert not (tmp_path / "config.yaml.tmp").exists()
+    assert not (tmp_path / "config.yaml.bak").exists()
 
     result = Path(config_path).read_text(encoding="utf-8")
     assert "The New Stack" in result
@@ -399,9 +391,9 @@ def test_add_source_to_config_appends_trial_block(tmp_path: Path) -> None:
 def test_add_source_to_config_no_duplicate(tmp_path: Path) -> None:
     config_content = (
         "sources:\n"
-        "  - name: \"Existing\"\n"
-        "    url: \"https://thenewstack.io/feed/\"\n"
-        "    category: \"Tech\"\n"
+        '  - name: "Existing"\n'
+        '    url: "https://thenewstack.io/feed/"\n'
+        '    category: "Tech"\n'
         "    enabled: true\n"
         "    priority: 3\n"
     )
@@ -422,29 +414,6 @@ def test_add_source_to_config_no_duplicate(tmp_path: Path) -> None:
     assert "The New Stack" not in result
 
 
-def test_add_source_no_tmp_file_left(tmp_path: Path) -> None:
-    config_content = (
-        "sources:\n"
-        "  - name: \"A\"\n"
-        "    url: \"https://a.com/feed\"\n"
-        "    category: \"X\"\n"
-        "    enabled: true\n"
-        "    priority: 3\n"
-    )
-    config_path = _make_config(tmp_path, config_content)
-
-    ps = PendingSource(
-        name="B",
-        url="https://b.com/feed",
-        category="Y",
-        discovered_at="2026-03-27T10:00:00+00:00",
-    )
-    add_source_to_config(config_path, ps)
-
-    assert not (tmp_path / "config.yaml.tmp").exists()
-    assert not (tmp_path / "config.yaml.bak").exists()
-
-
 def test_add_source_preserves_yaml_sections_and_escapes_fields(tmp_path: Path) -> None:
     config_path = _make_config(
         tmp_path,
@@ -458,24 +427,28 @@ def test_add_source_preserves_yaml_sections_and_escapes_fields(tmp_path: Path) -
     config = yaml.safe_load(first_write)
     assert config["telegram"] == {"enabled": False}
     assert config["filters"] == {"blocklist_keywords": ["example"]}
-    assert config["sources"] == [{
-        "name": source.name,
-        "url": source.url,
-        "category": source.category,
-        "enabled": True,
-        "priority": 3,
-        "trial": True,
-        "trial_days": 14,
-    }]
+    assert config["sources"] == [
+        {
+            "name": source.name,
+            "url": source.url,
+            "category": source.category,
+            "enabled": True,
+            "priority": 3,
+            "trial": True,
+            "trial_days": 14,
+        }
+    ]
 
 
 @pytest.mark.parametrize("inline", [False, True])
 def test_add_source_preserves_operator_comments_and_unrelated_formatting(
-    tmp_path: Path, inline: bool,
+    tmp_path: Path,
+    inline: bool,
 ) -> None:
     source_section = (
-        "sources: []  # Trial feeds go here\n" if inline else
-        "sources:  # Trial feeds go here\n"
+        "sources: []  # Trial feeds go here\n"
+        if inline
+        else "sources:  # Trial feeds go here\n"
         "  # Existing feed must stay enabled\n"
         '  - name: "Existing"\n'
         "    url: https://existing.com/feed  # Stable RSS endpoint\n"
@@ -501,7 +474,8 @@ def test_add_source_preserves_final_line_without_newline(tmp_path: Path) -> None
 
 
 def test_add_source_backup_failure_raises_without_mutation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = "sources: []\ntelegram:\n  enabled: false\n"
     config_path = _make_config(tmp_path, original)
@@ -517,7 +491,8 @@ def test_add_source_backup_failure_raises_without_mutation(
 
 
 def test_add_source_config_replace_failure_preserves_backup_and_original(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = "sources: []\ntelegram:\n  enabled: false\n"
     config_path = _make_config(tmp_path, original)

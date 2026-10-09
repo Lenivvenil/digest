@@ -35,7 +35,7 @@ MINIMAL_CONFIG = """
 """
 
 
-def test_load_minimal_config(tmp_path: Path) -> None:
+def test_defaults_applied(tmp_path: Path) -> None:
     cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
     config = load_config(cfg_path)
 
@@ -47,11 +47,6 @@ def test_load_minimal_config(tmp_path: Path) -> None:
     assert config.llm.providers[0].role == ["summarize"]
     assert len(config.sources) == 1
     assert config.sources[0].name == "Test Feed"
-
-
-def test_defaults_applied(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, MINIMAL_CONFIG)
-    config = load_config(cfg_path)
 
     assert config.radar.language == "ru"
     assert config.radar.max_articles_per_category == 5
@@ -65,13 +60,19 @@ def test_defaults_applied(tmp_path: Path) -> None:
     assert config.obsidian.output_dir == "digests"
     assert config.filters.blocklist_keywords == []
     assert config.discovery.exploration_areas == [
-        "fintech/banking/architecture", "science", "society/institutions", "history/culture", "environment", "design",
+        "fintech/banking/architecture",
+        "science",
+        "society/institutions",
+        "history/culture",
+        "environment",
+        "design",
     ]
 
 
 def test_discovery_configuration_does_not_change_professional_sources(tmp_path: Path) -> None:
-    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG)
-                         + "\ndiscovery:\n  exploration_areas: ['  history  ', 'biology']\n")
+    path = _write_config(
+        tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ndiscovery:\n  exploration_areas: ['  history  ', 'biology']\n"
+    )
     config = load_config(path)
     assert config.discovery.exploration_areas == ["history", "biology"]
     assert config.sources[0].category == "Test"
@@ -80,8 +81,18 @@ def test_discovery_configuration_does_not_change_professional_sources(tmp_path: 
     assert "art" not in DiscoveryConfig().exploration_areas
 
 
-@pytest.mark.parametrize("value", ["[]", "science", "[null]", "['  ']", "[science, SCIENCE]",
-                                  "['" + "a" * 81 + "']", "[" + ",".join(str(n) for n in range(17)) + "]"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "[]",
+        "science",
+        "[null]",
+        "['  ']",
+        "[science, SCIENCE]",
+        "['" + "a" * 81 + "']",
+        "[" + ",".join(str(n) for n in range(17)) + "]",
+    ],
+)
 def test_discovery_configuration_rejects_invalid_areas(tmp_path: Path, value: str) -> None:
     path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f"\ndiscovery:\n  exploration_areas: {value}\n")
     with pytest.raises(ValueError, match="discovery.exploration_areas"):
@@ -89,7 +100,9 @@ def test_discovery_configuration_rejects_invalid_areas(tmp_path: Path, value: st
 
 
 def test_provider_roles(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -106,7 +119,8 @@ def test_provider_roles(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert len(config.llm.providers) == 3
     assert config.llm.providers[0].role == ["summarize", "extract_narratives"]
@@ -114,7 +128,9 @@ def test_provider_roles(tmp_path: Path) -> None:
 
 
 def test_irritator_custom_config(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -132,7 +148,8 @@ def test_irritator_custom_config(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert config.irritator.max_narratives == 3
     assert config.irritator.queries_per_narrative == 2
@@ -144,7 +161,9 @@ def test_irritator_custom_config(tmp_path: Path) -> None:
 
 
 def test_irritator_check_liveness_true(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -157,13 +176,16 @@ def test_irritator_check_liveness_true(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert config.irritator.check_liveness is True
 
 
 def test_irritator_check_liveness_invalid(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -176,13 +198,16 @@ def test_irritator_check_liveness_invalid(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="check_liveness"):
         load_config(cfg_path)
 
 
 def test_filters_and_delivery(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -201,7 +226,8 @@ def test_filters_and_delivery(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert config.filters.blocklist_keywords == ["trump", "election", "sports"]
     assert config.telegram.enabled is False
@@ -211,7 +237,9 @@ def test_filters_and_delivery(tmp_path: Path) -> None:
 
 
 def test_source_fields(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -228,7 +256,8 @@ def test_source_fields(tmp_path: Path) -> None:
             url: https://example.org/rss
             category: Cloud
             enabled: false
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert len(config.sources) == 2
     assert config.sources[0].priority == 5
@@ -239,7 +268,9 @@ def test_source_fields(tmp_path: Path) -> None:
 
 
 def test_enabled_sources_property(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -254,7 +285,8 @@ def test_enabled_sources_property(tmp_path: Path) -> None:
             url: https://example.org/feed
             category: Tech
             enabled: false
-    """)
+    """,
+    )
     config = load_config(cfg_path)
     assert len(config.enabled_sources) == 1
     assert config.enabled_sources[0].name == "Active"
@@ -266,19 +298,24 @@ def test_enabled_sources_property(tmp_path: Path) -> None:
 
 
 def test_missing_llm_section(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         sources:
           - name: Feed
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="llm"):
         load_config(cfg_path)
 
 
 def test_invalid_provider_name(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: invalidprovider
@@ -289,13 +326,16 @@ def test_invalid_provider_name(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="invalidprovider"):
         load_config(cfg_path)
 
 
 def test_invalid_role(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -306,13 +346,16 @@ def test_invalid_role(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="invalid_role"):
         load_config(cfg_path)
 
 
 def test_no_summarize_or_fallback_role(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -323,13 +366,16 @@ def test_no_summarize_or_fallback_role(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="summarize.*fallback|fallback.*summarize"):
         load_config(cfg_path)
 
 
 def test_duplicate_provider(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -343,13 +389,16 @@ def test_duplicate_provider(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="[Dd]uplicate"):
         load_config(cfg_path)
 
 
 def test_invalid_radar_language(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -362,13 +411,16 @@ def test_invalid_radar_language(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="fr"):
         load_config(cfg_path)
 
 
 def test_invalid_summary_style(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -381,13 +433,16 @@ def test_invalid_summary_style(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="verbose"):
         load_config(cfg_path)
 
 
 def test_invalid_irritator_source(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -400,13 +455,16 @@ def test_invalid_irritator_source(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="twitter"):
         load_config(cfg_path)
 
 
 def test_irritator_signal_score_out_of_range(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -419,38 +477,47 @@ def test_irritator_signal_score_out_of_range(tmp_path: Path) -> None:
             url: https://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="11"):
         load_config(cfg_path)
 
 
 def test_missing_sources(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
               model: llama
               role: [summarize]
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="sources"):
         load_config(cfg_path)
 
 
 def test_empty_sources(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
               model: llama
               role: [summarize]
         sources: []
-    """)
+    """,
+    )
     with pytest.raises(ValueError):
         load_config(cfg_path)
 
 
 def test_invalid_url_scheme(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -461,13 +528,16 @@ def test_invalid_url_scheme(tmp_path: Path) -> None:
             url: ftp://example.com/feed
             category: Tech
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="[Uu]RL|scheme"):
         load_config(cfg_path)
 
 
 def test_priority_out_of_range(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -479,13 +549,16 @@ def test_priority_out_of_range(tmp_path: Path) -> None:
             category: Tech
             enabled: true
             priority: 6
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="priority"):
         load_config(cfg_path)
 
 
 def test_duplicate_source_name(tmp_path: Path) -> None:
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -500,7 +573,8 @@ def test_duplicate_source_name(tmp_path: Path) -> None:
             url: https://example.org/feed
             category: Cloud
             enabled: true
-    """)
+    """,
+    )
     with pytest.raises(ValueError, match="[Dd]uplicate"):
         load_config(cfg_path)
 
@@ -528,7 +602,9 @@ def test_effective_sources_filters_demoted(tmp_path: Path) -> None:
     """Config.effective_sources excludes sources marked demoted in cache."""
     from digest.source_scorer import SourceStateStore
 
-    cfg_path = _write_config(tmp_path, """
+    cfg_path = _write_config(
+        tmp_path,
+        """
         llm:
           providers:
             - name: groq
@@ -543,7 +619,8 @@ def test_effective_sources_filters_demoted(tmp_path: Path) -> None:
             url: https://example.com/other
             category: Test
             enabled: true
-    """)
+    """,
+    )
     config = load_config(cfg_path)
 
     store = SourceStateStore()
@@ -567,10 +644,16 @@ def test_effective_sources_empty_state_same_as_enabled(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("max_concurrent_requests", 0), ("max_concurrent_requests", 21),
-     ("max_retries", -1), ("max_retries", 4),
-     ("min_request_interval_seconds", -1), ("min_request_interval_seconds", float("nan")),
-     ("retry_max_wait_seconds", float("inf")), ("retry_max_wait_seconds", 301)],
+    [
+        ("max_concurrent_requests", 0),
+        ("max_concurrent_requests", 21),
+        ("max_retries", -1),
+        ("max_retries", 4),
+        ("min_request_interval_seconds", -1),
+        ("min_request_interval_seconds", float("nan")),
+        ("retry_max_wait_seconds", float("inf")),
+        ("retry_max_wait_seconds", 301),
+    ],
 )
 def test_invalid_llm_limits_rejected(key: str, value: object) -> None:
     from digest.config import _load_llm_limits
@@ -628,29 +711,34 @@ def test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes(tmp_pa
     import yaml
 
     base = yaml.safe_load(textwrap.dedent(MINIMAL_CONFIG))
-    path = tmp_path / 'config.yaml'
+    path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(base))
     assert not load_config(path).reading_brief.enabled
-    base.update({
-        'radar': {'language': 'en'},
-        'review': {'enabled': True, 'review_led_only': True,
-                   'primary': {'provider': 'gemini', 'model': 'gemini-3.8-flash'}},
-        'reading_brief': {'enabled': True, 'provider': 'gemini', 'model': 'gemini-3.8-flash'},
-    })
+    base.update(
+        {
+            "radar": {"language": "en"},
+            "review": {
+                "enabled": True,
+                "review_led_only": True,
+                "primary": {"provider": "gemini", "model": "gemini-3.8-flash"},
+            },
+            "reading_brief": {"enabled": True, "provider": "gemini", "model": "gemini-3.8-flash"},
+        }
+    )
     path.write_text(yaml.safe_dump(base))
     loaded = load_config(path)
     settings = loaded.reading_brief
     assert settings.max_requests_per_run == 10 and settings.max_output_tokens == 2048
-    assert (settings.provider, settings.model) == ('gemini', 'gemini-3.8-flash')
-    base['reading_brief']['model'] = 'unconfigured-model'
+    assert (settings.provider, settings.model) == ("gemini", "gemini-3.8-flash")
+    base["reading_brief"]["model"] = "unconfigured-model"
     path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValueError, match='explicit existing'):
+    with pytest.raises(ValueError, match="explicit existing"):
         load_config(path)
-    base['reading_brief']['model'] = 'gemini-3.8-flash'
-    base['review'].pop('primary')
+    base["reading_brief"]["model"] = "gemini-3.8-flash"
+    base["review"].pop("primary")
     path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValueError, match='explicit existing'):
+    with pytest.raises(ValueError, match="explicit existing"):
         load_config(path)
-    base['reading_brief']['enabled'] = False
+    base["reading_brief"]["enabled"] = False
     path.write_text(yaml.safe_dump(base))
     assert not load_config(path).reading_brief.enabled

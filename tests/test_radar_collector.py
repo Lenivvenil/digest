@@ -40,10 +40,13 @@ from digest.radar.collector import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("title,link,expected", [
-    ("Test Article", "https://example.com/article", "ac36d73068dc3b021b42302614323b25"),
-    ("Заголовок café", "https://example.com/путь?q=1", "02c0db6f6b4a1e88c27f3b38fe81575d"),
-])
+@pytest.mark.parametrize(
+    "title,link,expected",
+    [
+        ("Test Article", "https://example.com/article", "ac36d73068dc3b021b42302614323b25"),
+        ("Заголовок café", "https://example.com/путь?q=1", "02c0db6f6b4a1e88c27f3b38fe81575d"),
+    ],
+)
 def test_article_hash_preserves_existing_ids_without_security_use(title: str, link: str, expected: str) -> None:
     import hashlib
 
@@ -194,14 +197,6 @@ class TestStripHtml:
         assert _strip_html("") == ""
 
 
-class TestArticleHash:
-    def test_deterministic(self) -> None:
-        assert article_hash("Title", "https://x.com") == article_hash("Title", "https://x.com")
-
-    def test_different_for_different_inputs(self) -> None:
-        assert article_hash("A", "B") != article_hash("C", "D")
-
-
 class TestParsePubDate:
     def test_parses_published_parsed(self) -> None:
         entry = MagicMock()
@@ -229,7 +224,11 @@ class TestIsRecent:
     def test_recent_article(self) -> None:
         now = datetime.now(tz=timezone.utc)
         article = Article(
-            title="T", link="L", description="", source="S", category="C",
+            title="T",
+            link="L",
+            description="",
+            source="S",
+            category="C",
             pub_date=now - timedelta(hours=12),
         )
         assert _is_recent(article, now - timedelta(hours=24))
@@ -237,7 +236,11 @@ class TestIsRecent:
     def test_old_article(self) -> None:
         now = datetime.now(tz=timezone.utc)
         article = Article(
-            title="T", link="L", description="", source="S", category="C",
+            title="T",
+            link="L",
+            description="",
+            source="S",
+            category="C",
             pub_date=now - timedelta(hours=48),
         )
         assert not _is_recent(article, now - timedelta(hours=24))
@@ -245,7 +248,11 @@ class TestIsRecent:
     def test_no_date_is_included(self) -> None:
         now = datetime.now(tz=timezone.utc)
         article = Article(
-            title="T", link="L", description="", source="S", category="C",
+            title="T",
+            link="L",
+            description="",
+            source="S",
+            category="C",
             pub_date=None,
         )
         assert _is_recent(article, now - timedelta(hours=24))
@@ -286,9 +293,8 @@ def make_http_response(content: bytes, status_code: int = 200) -> MagicMock:
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         import httpx
-        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "error", request=MagicMock(), response=resp
-        )
+
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=resp)
     return resp
 
 
@@ -310,6 +316,11 @@ async def test_collect_rss_feed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert len(articles) == 2
     assert articles[0].title == "Article One"
     assert "<" not in articles[0].description
+    assert all(
+        "<" not in article.description and ">" not in article.description
+        for category_articles in result.values()
+        for article in category_articles
+    )
 
 
 @pytest.mark.asyncio
@@ -350,9 +361,7 @@ async def test_collect_deduplication(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_collect_malformed_feed_continues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_malformed_feed_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed feed should not crash; other sources still processed."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -378,9 +387,7 @@ async def test_collect_malformed_feed_continues(
 
 
 @pytest.mark.asyncio
-async def test_collect_http_error_continues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_http_error_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP error on one feed should not crash if another feed succeeds."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -401,9 +408,7 @@ async def test_collect_http_error_continues(
 
 
 @pytest.mark.asyncio
-async def test_collect_all_feeds_http_error_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_all_feeds_http_error_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When all feeds fail with HTTP errors, AllFeedsFailedError is raised."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -419,9 +424,7 @@ async def test_collect_all_feeds_http_error_raises(
 
 
 @pytest.mark.asyncio
-async def test_collect_timeout_continues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_timeout_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Timeout on one feed should not crash if another feed succeeds."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -444,9 +447,7 @@ async def test_collect_timeout_continues(
 
 
 @pytest.mark.asyncio
-async def test_collect_all_feeds_timeout_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_all_feeds_timeout_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When all feeds time out, AllFeedsFailedError is raised."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -464,9 +465,7 @@ async def test_collect_all_feeds_timeout_raises(
 
 
 @pytest.mark.asyncio
-async def test_collect_respects_max_per_category(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_respects_max_per_category(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """max_articles_per_category=1 should limit a single-category run to 1 article."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -483,17 +482,12 @@ async def test_collect_respects_max_per_category(
 
 
 @pytest.mark.asyncio
-async def test_collect_respects_total_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_respects_total_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """total_budget = max_articles_per_category * n_categories; enforced across all sources."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
-    sources = [
-        make_source(name=f"S{i}", url=f"https://s{i}.example.com/feed", category="Tech")
-        for i in range(3)
-    ]
+    sources = [make_source(name=f"S{i}", url=f"https://s{i}.example.com/feed", category="Tech") for i in range(3)]
     # 3 sources, 1 category → total_budget = max_per_cat * 1 = 3
     config = _make_config(sources=sources, max_articles_per_category=3)
 
@@ -534,9 +528,7 @@ async def test_collect_respects_total_budget(
 
 
 @pytest.mark.asyncio
-async def test_collect_filters_old_articles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_filters_old_articles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Articles older than 24h should be excluded unless pub_date is missing."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -568,9 +560,7 @@ async def test_collect_filters_old_articles(
 
 
 @pytest.mark.asyncio
-async def test_collect_groups_by_category(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_groups_by_category(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
 
@@ -604,27 +594,6 @@ async def test_collect_groups_by_category(
 
     assert "Tech" in result
     assert "Finance" in result
-
-
-@pytest.mark.asyncio
-async def test_collect_html_stripped_in_description(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    config = _make_config(sources=[make_source()])
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(RSS_SAMPLE.encode())
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    for articles in result.values():
-        for article in articles:
-            assert "<" not in article.description
-            assert ">" not in article.description
 
 
 # ---------------------------------------------------------------------------
@@ -681,9 +650,7 @@ class TestAllocateSlots:
 
 
 @pytest.mark.asyncio
-async def test_collect_respects_priority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_respects_priority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """High-priority source should receive more article slots than low-priority source."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -725,9 +692,7 @@ async def test_collect_respects_priority(
 
 
 @pytest.mark.asyncio
-async def test_collect_redistributes_unused_slots(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_redistributes_unused_slots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unused slots from a quiet high-priority source must flow to active lower-priority sources."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -779,9 +744,7 @@ async def test_collect_redistributes_unused_slots(
 
 
 @pytest.mark.asyncio
-async def test_collect_blocklist_filters_by_title(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_blocklist_filters_by_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Articles whose title matches a blocklist keyword must be excluded."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -821,9 +784,7 @@ async def test_collect_blocklist_filters_by_title(
 
 
 @pytest.mark.asyncio
-async def test_collect_blocklist_filters_by_description(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_blocklist_filters_by_description(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Articles whose description matches a blocklist keyword must be excluded."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -862,28 +823,7 @@ async def test_collect_blocklist_filters_by_description(
 
 
 @pytest.mark.asyncio
-async def test_collect_empty_blocklist_passes_all(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Empty blocklist should not filter any articles."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    config = _make_config(sources=[make_source()], blocklist_keywords=[])
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(RSS_SAMPLE.encode())
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    assert len(result.get("Tech", [])) == 2
-
-
-@pytest.mark.asyncio
-async def test_collect_blocklist_case_insensitive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_blocklist_case_insensitive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Blocklist matching must be case-insensitive."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -918,22 +858,6 @@ async def test_collect_blocklist_case_insensitive(
 # ---------------------------------------------------------------------------
 
 
-def test_atomic_json_write_round_trip(tmp_path: Path) -> None:
-    """atomic_json_write writes correct JSON and leaves no .tmp file."""
-    import json
-
-    from digest._util import atomic_json_write
-
-    target = tmp_path / "data.json"
-    data = {"key": "value", "num": 42}
-    atomic_json_write(target, data)
-
-    assert target.exists()
-    assert not (tmp_path / "data.json.tmp").exists()
-    loaded = json.loads(target.read_text(encoding="utf-8"))
-    assert loaded == data
-
-
 def test_atomic_json_write_overwrites_existing(tmp_path: Path) -> None:
     """atomic_json_write replaces an existing file atomically."""
     import json
@@ -942,6 +866,9 @@ def test_atomic_json_write_overwrites_existing(tmp_path: Path) -> None:
 
     target = tmp_path / "data.json"
     atomic_json_write(target, {"v": 1})
+    assert target.exists()
+    assert json.loads(target.read_text(encoding="utf-8")) == {"v": 1}
+    assert not (tmp_path / "data.json.tmp").exists()
     atomic_json_write(target, {"v": 2})
 
     loaded = json.loads(target.read_text(encoding="utf-8"))
@@ -1040,16 +967,12 @@ def make_http_response_with_headers(
     resp.headers = headers or {}
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
-        resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
-            "error", request=MagicMock(), response=resp
-        )
+        resp.raise_for_status.side_effect = _httpx.HTTPStatusError("error", request=MagicMock(), response=resp)
     return resp
 
 
 @pytest.mark.asyncio
-async def test_fetch_feed_429_retry_after_honoured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fetch_feed_429_retry_after_honoured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP 429 with Retry-After within limit: waits and retries once."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -1069,8 +992,9 @@ async def test_fetch_feed_429_retry_after_honoured(
     async def fake_sleep(secs: float) -> None:
         sleep_calls.append(secs)
 
-    with patch("asyncio.sleep", side_effect=fake_sleep), patch(
-        "httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)
+    with (
+        patch("asyncio.sleep", side_effect=fake_sleep),
+        patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)),
     ):
         result, _ = await collect(config)
 
@@ -1080,9 +1004,7 @@ async def test_fetch_feed_429_retry_after_honoured(
 
 
 @pytest.mark.asyncio
-async def test_fetch_feed_429_retry_after_exceeds_limit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fetch_feed_429_retry_after_exceeds_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP 429 with Retry-After exceeding _MAX_RETRY_AFTER_SECS: source skipped immediately."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -1100,8 +1022,9 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(
     async def fake_sleep(secs: float) -> None:
         sleep_calls.append(secs)
 
-    with patch("asyncio.sleep", side_effect=fake_sleep), patch(
-        "httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)
+    with (
+        patch("asyncio.sleep", side_effect=fake_sleep),
+        patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)),
     ):
         with pytest.raises(AllFeedsFailedError):
             await collect(config)
@@ -1111,9 +1034,7 @@ async def test_fetch_feed_429_retry_after_exceeds_limit(
 
 
 @pytest.mark.asyncio
-async def test_fetch_feed_ssrf_unsafe_url_skipped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fetch_feed_ssrf_unsafe_url_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """_fetch_feed returns None immediately when _validate_url returns None."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -1136,9 +1057,7 @@ async def test_fetch_feed_ssrf_unsafe_url_skipped(
 
 
 @pytest.mark.asyncio
-async def test_fetch_feed_ssrf_valid_url_proceeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_fetch_feed_ssrf_valid_url_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """_fetch_feed fetches URLs that pass SSRF validation (autouse mock covers DNS)."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -1163,9 +1082,7 @@ async def test_fetch_feed_ssrf_valid_url_proceeds(
 
 
 @pytest.mark.asyncio
-async def test_collect_per_source_recency_hours(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_per_source_recency_hours(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Source with recency_hours=168 should include 48h-old articles that default 24h window would reject."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".cache").mkdir()
@@ -1205,42 +1122,9 @@ async def test_collect_per_source_recency_hours(
 
 
 @pytest.mark.asyncio
-async def test_collect_default_recency_rejects_48h_old(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Default recency_hours=24 should reject articles older than 24h."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".cache").mkdir()
-
-    config = _make_config(sources=[make_source()])
-
-    old_rss = textwrap.dedent(f"""\
-        <?xml version="1.0" encoding="UTF-8"?>
-        <rss version="2.0">
-          <channel>
-            <title>Test Feed</title>
-            <item>
-              <title>Old Article</title>
-              <link>https://example.com/old</link>
-              <description>Published 48 hours ago</description>
-              <pubDate>{_rfc2822(hours_ago=48)}</pubDate>
-            </item>
-          </channel>
-        </rss>
-    """)
-
-    async def fake_get(url: str, timeout: float) -> MagicMock:
-        return make_http_response(old_rss.encode())
-
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
-        result, _ = await collect(config)
-
-    assert result.get("Tech", []) == []
-
-
-@pytest.mark.asyncio
 async def test_collect_reports_fetch_metrics_without_mutating_source_stats(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.radar.collector import SourceFetchMetrics
 
@@ -1259,20 +1143,22 @@ async def test_collect_reports_fetch_metrics_without_mutating_source_stats(
 
 @pytest.mark.asyncio
 async def test_feedback_allocation_changes_candidates_seen_by_review(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.application.review_request import build_evidence_bundle
     from digest.config import ReviewConfig
 
     monkeypatch.chdir(tmp_path)
-    sources = [make_source(name="A", url="https://example.com/a"),
-               make_source(name="B", url="https://example.com/b")]
+    sources = [make_source(name="A", url="https://example.com/a"), make_source(name="B", url="https://example.com/b")]
     config = _make_config(sources=sources, max_articles_per_category=3)
     now = datetime.now(timezone.utc)
 
     async def fetched(_client, source):
-        return [Article(f"{source.name}{i}", f"{source.url}/{i}", "Evidence", source.name, source.category, now)
-                for i in range(3)]
+        return [
+            Article(f"{source.name}{i}", f"{source.url}/{i}", "Evidence", source.name, source.category, now)
+            for i in range(3)
+        ]
 
     with patch("digest.radar.collector._fetch_feed", side_effect=fetched):
         neutral, _ = await collect(config)
@@ -1284,7 +1170,8 @@ async def test_feedback_allocation_changes_candidates_seen_by_review(
 
 @pytest.mark.asyncio
 async def test_inventory_preserves_preallocation_candidates_and_legacy_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.radar.collector import CollectionInventory
 
@@ -1317,20 +1204,23 @@ async def test_inventory_preserves_preallocation_candidates_and_legacy_result(
 
 @pytest.mark.asyncio
 async def test_inventory_records_exclusions_failures_and_resets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.radar.collector import CollectionInventory
 
     monkeypatch.chdir(tmp_path)
-    config = _make_config(sources=[make_source(name="A"), make_source(name="B")],
-                          blocklist_keywords=["blocked"])
+    config = _make_config(sources=[make_source(name="A"), make_source(name="B")], blocklist_keywords=["blocked"])
     now = datetime.now(timezone.utc)
-    excluded = Article("blocked", "https://example.com/old", "evidence", "A", "Tech",
-                       now - timedelta(days=3))
+    excluded = Article("blocked", "https://example.com/old", "evidence", "A", "Tech", now - timedelta(days=3))
     identity = article_hash(excluded.title, excluded.link)
     inventory = CollectionInventory()
-    with patch("digest.radar.collector._load_cache", return_value={identity: now.isoformat()}), patch(
-        "digest.radar.collector._fetch_feed", AsyncMock(side_effect=[[excluded], None]),
+    with (
+        patch("digest.radar.collector._load_cache", return_value={identity: now.isoformat()}),
+        patch(
+            "digest.radar.collector._fetch_feed",
+            AsyncMock(side_effect=[[excluded], None]),
+        ),
     ):
         grouped, _ = await collect(config, inventory=inventory)
     assert grouped == {}
@@ -1349,14 +1239,17 @@ async def test_inventory_records_exclusions_failures_and_resets(
 
 @pytest.mark.asyncio
 async def test_inventory_reports_parser_bound_without_inventing_candidates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from digest.radar.collector import FEED_ENTRY_LIMIT, CollectionInventory
 
     monkeypatch.chdir(tmp_path)
     config = _make_config(sources=[make_source()], max_articles_per_category=1)
-    items = "".join(f"<item><title>Article {i}</title><link>https://example.com/{i}</link></item>"
-                    for i in range(FEED_ENTRY_LIMIT + 3))
+    items = "".join(
+        f"<item><title>Article {i}</title><link>https://example.com/{i}</link></item>"
+        for i in range(FEED_ENTRY_LIMIT + 3)
+    )
     rss = f"<rss version='2.0'><channel><title>Feed</title>{items}</channel></rss>".encode()
     inventory = CollectionInventory()
     with patch("httpx.AsyncClient.get", AsyncMock(return_value=make_http_response(rss))):

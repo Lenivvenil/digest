@@ -21,6 +21,8 @@ from digest.source_scorer import SourceStateStore, load_source_state, save_sourc
 def test_roundtrip_multiple_sources(tmp_path: Path) -> None:
     """Multiple sources with different states all survive round-trip."""
     store = load_source_state(str(tmp_path))
+    assert isinstance(store, SourceStateStore)
+    assert store.sources == {}
     store.set_trial_started("A", "2026-03-01")
     store.set_trial_started("B", "2026-01-01")
     store.mark_graduated("B")
@@ -63,25 +65,35 @@ def test_source_compatibility_identity_and_dataclass_restoration() -> None:
     ]
     for value in values:
         owner = type(value)
-        alias = getattr(config if owner in {sources.SourceConfig, sources.AdaptiveConfig} else source_scorer,
-                        owner.__name__)
+        alias = getattr(
+            config if owner in {sources.SourceConfig, sources.AdaptiveConfig} else source_scorer, owner.__name__
+        )
         assert alias is owner
         restored = restore_dataclass(asdict(value), alias)
         assert type(restored) is owner
         assert restored == value
-    for name in ("load_stats", "save_stats", "load_source_state", "save_source_state",
-                 "load_source_category_map", "save_source_category_map"):
+    for name in (
+        "load_stats",
+        "save_stats",
+        "load_source_state",
+        "save_source_state",
+        "load_source_category_map",
+        "save_source_category_map",
+    ):
         assert getattr(source_scorer, name) is getattr(storage, name)
 
 
 def test_source_writers_preserve_exact_bytes_and_non_ascii_order(tmp_path: Path) -> None:
-    state = sources.SourceStateStore(sources={
-        "Zürich": sources.SourceStateEntry("2026-10-01", demoted=True),
-        "Alpha": sources.SourceStateEntry(graduated=True),
-    })
+    state = sources.SourceStateStore(
+        sources={
+            "Zürich": sources.SourceStateEntry("2026-10-01", demoted=True),
+            "Alpha": sources.SourceStateEntry(graduated=True),
+        }
+    )
     stats = {
-        "Zürich": sources.SourceStats("Zürich", 2, 1, 3, 1, 98.5, "2026-10-07",
-                                      [sources.DailySnapshot("2026-10-07", 3, 1, True)]),
+        "Zürich": sources.SourceStats(
+            "Zürich", 2, 1, 3, 1, 98.5, "2026-10-07", [sources.DailySnapshot("2026-10-07", 3, 1, True)]
+        ),
         "Alpha": sources.SourceStats("Alpha"),
     }
     storage.save_source_state(state, str(tmp_path))
@@ -133,8 +145,11 @@ def test_legacy_source_writers_only_catch_atomic_write_failures(tmp_path: Path, 
 def test_prepared_source_writers_do_not_create_directories_prune_or_swallow(tmp_path: Path, kind: str) -> None:
     stats = {name: sources.SourceStats(name) for name in ("Active", "Stale")}
     state = sources.SourceStateStore(sources={"Stale": sources.SourceStateEntry(demoted=True)})
-    value, writer = ((stats, delivery_state.save_delivery_source_stats) if kind == "stats"
-                     else (state, delivery_state.save_delivery_source_state))
+    value, writer = (
+        (stats, delivery_state.save_delivery_source_stats)
+        if kind == "stats"
+        else (state, delivery_state.save_delivery_source_state)
+    )
     with pytest.raises(FileNotFoundError):
         writer(value, str(tmp_path / "missing"))
     assert not (tmp_path / "missing").exists()

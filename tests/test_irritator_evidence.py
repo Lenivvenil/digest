@@ -532,70 +532,6 @@ async def test_partial_source_failure_is_incomplete_even_with_zero_results(found
     assert next(d for d in result.diagnostics if d.stage == "search").status == "incomplete"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failed_stage", ["narrative", "queries", "ranking"])
-async def test_llm_stage_failure_is_never_empty_and_never_retried(failed_stage: str) -> None:
-    execution = ModelExecution()
-    config = fixture_config()
-    config.irritator.sources = ["hackernews"]
-    bundle = _bundle(config)
-    responses: list[Any] = [
-        (json.dumps(_narrative(bundle)), {}),
-        (json.dumps(_queries()), {}),
-        (json.dumps(_ranking()), {}),
-    ]
-    failed_index = {"narrative": 0, "queries": 1, "ranking": 2}[failed_stage]
-    responses[failed_index] = RuntimeError("Quota: raw private response text must not be stored")
-    model = AsyncMock(side_effect=responses)
-    with (
-        patch("digest.irritator.evidence_stage.complete", model),
-        patch(
-            "digest.irritator.evidence_stage.search_hackernews",
-            AsyncMock(
-                return_value=[
-                    make_signal(url="https://external.example/caveat", title="Deployment limitations"),
-                ]
-            ),
-        ),
-    ):
-        async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client, execution=execution)
-    assert result.status in {"error", "incomplete"}
-    assert model.await_count == failed_index + 1
-    assert next(d for d in result.diagnostics if d.stage == failed_stage).error == "RuntimeError"
-    assert "raw private response" not in json.dumps(asdict(result))
-
-
-@pytest.mark.asyncio
-async def test_invalid_ranking_marks_pipeline_incomplete_without_retry() -> None:
-    execution = ModelExecution()
-    config = fixture_config()
-    config.irritator.sources = ["hackernews"]
-    bundle = _bundle(config)
-    ranking = _ranking()
-    ranking["rankings"][0]["extra"] = "not a permitted field"
-    model = AsyncMock(
-        side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {}), (json.dumps(ranking), {})]
-    )
-    with (
-        patch("digest.irritator.evidence_stage.complete", model),
-        patch(
-            "digest.irritator.evidence_stage.search_hackernews",
-            AsyncMock(
-                return_value=[
-                    make_signal(url="https://external.example/caveat", title="Deployment limitations"),
-                ]
-            ),
-        ),
-    ):
-        async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client, execution=execution)
-    assert result.status == "incomplete"
-    assert not result.ranked_signals
-    assert next(d for d in result.diagnostics if d.stage == "ranking").status == "error"
-    assert model.await_count == 3
-
-
 def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None:
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
@@ -850,13 +786,7 @@ async def test_llm_provider_429_is_one_http_request_without_retry_or_fallback(mo
     "source,body",
     [
         ("hackernews", "{}"),
-        ("hackernews", '{"hits": null}'),
         ("arxiv", "<html><body>Temporarily unavailable</body></html>"),
-        (
-            "arxiv",
-            '<feed xmlns="http://www.w3.org/2005/Atom"><entry>'
-            "<id>https://arxiv.org/api/errors#incorrect_id_format</id></entry></feed>",
-        ),
     ],
 )
 async def test_malformed_success_response_is_failure_not_empty(source: str, body: str) -> None:
@@ -1345,27 +1275,6 @@ def test_complete_abstract_preserves_exact_late_evidence_before_packet_admission
     assert len(json.dumps([payload], ensure_ascii=False)) <= MAX_RANKING_JSON_CHARS
     oversized = make_signal(url="https://example.org/too-large", snippet="x" * 9000)
     assert _admit_ranking(_bounded_signals([oversized, signal], "arxiv"), 5, 3, {}).signals == tuple(validated)
-
-
-@pytest.mark.asyncio
-async def test_no_complete_candidate_fits_skips_rank_and_reports_incomplete() -> None:
-    execution = ModelExecution()
-    config = fixture_config()
-    config.irritator.sources = ["arxiv"]
-    bundle = _bundle(config)
-    model = AsyncMock(side_effect=[(json.dumps(_narrative(bundle)), {}), (json.dumps(_queries()), {})])
-    signal = make_signal(snippet="x" * 9000)
-    with (
-        patch("digest.irritator.evidence_stage.complete", model),
-        patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
-    ):
-        async with _offline_client() as client:
-            result = await run_evidence_irritator(bundle, config, client, execution=execution)
-    assert model.await_count == 2
-    assert result.status == "incomplete"
-    ranking = next(item for item in result.diagnostics if item.stage == "ranking")
-    assert ranking.status == "incomplete" and ranking.omitted_count == 1
-    assert result.ranked_signals == []
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 """Provider-independent source admission and bounded route recovery contracts."""
+
 from __future__ import annotations
 
 import asyncio
@@ -50,9 +51,11 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
         usage["finish_reason"] = "stop"
         return text, usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         identity = state.selection.identity
         state, original = ready_brief_evidence(tmp_path, identity)
@@ -60,8 +63,9 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
         assert original.text == source
         result = state.pages[0].result
         assert result is not None and result.qualification_span_ids == [2]
-        assert [original.text[span.start:span.end] for span in original.spans
-                if span.id in result.qualification_span_ids] == ["FINAL QUALIFICATION: pilot only."]
+        assert [
+            original.text[span.start : span.end] for span in original.spans if span.id in result.qualification_span_ids
+        ] == ["FINAL QUALIFICATION: pilot only."]
         assert not state.exact_counts and len(state.admissions) == 1
         record = next(iter(state.admissions.values()))
         assert record["method"] == ESTIMATOR_VERSION
@@ -78,7 +82,9 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interval,code", [(20.0, 429), (90.0, 503)])
 async def test_known_provider_failure_falls_back_without_resetting_runtime_or_retrying(
-    tmp_path: Path, code: int, interval: float,
+    tmp_path: Path,
+    code: int,
+    interval: float,
 ) -> None:
     model_execution = ModelExecution()
     cfg = config()
@@ -103,10 +109,12 @@ async def test_known_provider_failure_falls_back_without_resetting_runtime_or_re
         usage["finish_reason"] = "stop"
         return text, usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm._call_provider", side_effect=provider_call),
-          patch("digest.llm._pace_request", AsyncMock()) as pace):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", side_effect=count),
+        patch("digest.llm._call_provider", side_effect=provider_call),
+        patch("digest.llm._pace_request", AsyncMock()) as pace,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state, _ = ready_brief_evidence(tmp_path, state.selection.identity)
     assert state.status == "ready" and state.attempts == 1
@@ -116,23 +124,34 @@ async def test_known_provider_failure_falls_back_without_resetting_runtime_or_re
     assert state.route.provider == "gemini" and state.pages[0].route.provider == "groq"
     assert len(state.exact_counts) == len(state.admissions) == 1
     assert [(item.kind, item.route.provider, item.status) for item in state.pages[0].request_attempts] == [
-        ("count", "gemini", "accepted"), ("generate", "gemini", "definite_failed"), ("generate", "groq", "accepted"),
+        ("count", "gemini", "accepted"),
+        ("generate", "gemini", "definite_failed"),
+        ("generate", "groq", "accepted"),
     ]
     assert all(item.source_sha256 == state.source_sha256 for item in state.pages[0].request_attempts)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [TimeoutError("deadline"), RuntimeError("HTTP 500 code=unknown"),
-                                     ValueError("invalid output"), httpx.ReadTimeout("read timeout")])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("deadline"),
+        RuntimeError("HTTP 500 code=unknown"),
+        ValueError("invalid output"),
+        httpx.ReadTimeout("read timeout"),
+    ],
+)
 async def test_unknown_or_ambiguous_failure_does_not_fallback(tmp_path: Path, failure: Exception) -> None:
     model_execution = ModelExecution()
     cfg = config()
     cfg.llm.providers = [GROQ]
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", AsyncMock(side_effect=failure)) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", AsyncMock(side_effect=failure)) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         before = load_state(tmp_path, identity)
         state = load_state(tmp_path, identity)
@@ -163,8 +182,10 @@ async def test_groq_incomplete_endings_never_emit_or_fallback(tmp_path: Path, en
         usage["finish_reason"] = ending
         return text, usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == "pending" and state.pages[0].result is None and call.call_count == 1
@@ -189,10 +210,12 @@ async def test_changed_primary_resumes_immutable_source_and_keeps_completed_page
         usage["finish_reason"] = "stop" if kwargs["provider_override"].name == "groq" else "STOP"
         return text, usage
 
-    with (patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
-          patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))) as fetch,
-          patch("digest.llm.count_gemini_tokens", side_effect=count),
-          patch("digest.llm.complete", side_effect=generate)):
+    with (
+        patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))) as fetch,
+        patch("digest.llm.count_gemini_tokens", side_effect=count),
+        patch("digest.llm.complete", side_effect=generate),
+    ):
         state = saved_brief_state(tmp_path, cfg)
         identity = state.selection.identity
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
@@ -209,8 +232,9 @@ async def test_changed_primary_resumes_immutable_source_and_keeps_completed_page
     result = after.pages[1].result
     assert result is not None and result.qualification_span_ids == [2]
     assert after.pages[1].route is not None and after.pages[1].route.provider == "groq"
-    assert [original.text[span.start:span.end] for span in original.spans
-            if span.id in result.qualification_span_ids] == ["FINAL QUALIFICATION: pilot only."]
+    assert [
+        original.text[span.start : span.end] for span in original.spans if span.id in result.qualification_span_ids
+    ] == ["FINAL QUALIFICATION: pilot only."]
 
 
 @pytest.mark.asyncio
@@ -218,12 +242,15 @@ async def test_legacy_v1_exact_cache_without_new_fields_remains_readable(tmp_pat
     model_execution = ModelExecution()
     cfg = config()
     state = saved_brief_state(tmp_path, cfg)
+
     async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         identity = state.selection.identity
         first, original = ready_brief_evidence(tmp_path, identity)
@@ -259,10 +286,18 @@ async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_
         usage["finish_reason"] = "stop"
         return text, usage
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         first = await prepare_selected_sources(
-            progress, packet, report, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution,
+            progress,
+            packet,
+            report,
+            cfg,
+            tmp_path,
+            time.monotonic() + 1000,
+            execution=model_execution,
         )
         held = load_state(tmp_path, identity)
         assert first.pending == 1 and first.technical_complete == 0
@@ -270,7 +305,13 @@ async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_
         assert fetch.call_count == call.call_count == 0
         cfg.reading_brief = replace(cfg.reading_brief, model=GROQ.model)
         resumed = await prepare_selected_sources(
-            progress, packet, report, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution,
+            progress,
+            packet,
+            report,
+            cfg,
+            tmp_path,
+            time.monotonic() + 1000,
+            execution=model_execution,
         )
     assert resumed.pending == 0 and resumed.technical_complete == 1
     assert fetch.call_count == call.call_count == 1
@@ -281,7 +322,8 @@ async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid_json", [True, False])
 async def test_accepted_invalid_generation_is_persisted_before_validation_and_never_replayed(
-    tmp_path: Path, invalid_json: bool,
+    tmp_path: Path,
+    invalid_json: bool,
 ) -> None:
     model_execution = ModelExecution()
     cfg = config()
@@ -291,15 +333,29 @@ async def test_accepted_invalid_generation_is_persisted_before_validation_and_ne
 
     async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
         text, usage = response(messages)
-        return ("unparseable private output" if invalid_json else text,
-                {**usage, "finish_reason": "STOP" if invalid_json else "MAX_TOKENS", "prompt_tokens": 100,
-                 "completion_tokens": 99, "total_tokens": 199, "thoughts": "private thoughts"})
+        return (
+            "unparseable private output" if invalid_json else text,
+            {
+                **usage,
+                "finish_reason": "STOP" if invalid_json else "MAX_TOKENS",
+                "prompt_tokens": 100,
+                "completion_tokens": 99,
+                "total_tokens": 199,
+                "thoughts": "private thoughts",
+            },
+        )
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         first = load_state(tmp_path, identity)
+        if not invalid_json:
+            assert first.pages[0].result is None
+            with pytest.raises(ValueError, match="brief_not_ready"):
+                ready_brief_evidence(tmp_path, identity)
         state = load_state(tmp_path, identity)
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         second = load_state(tmp_path, identity)
@@ -321,7 +377,8 @@ async def test_accepted_invalid_generation_is_persisted_before_validation_and_ne
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interrupt_after_response", [False, True])
 async def test_interrupted_generation_intent_prevents_new_invocation(
-    tmp_path: Path, interrupt_after_response: bool,
+    tmp_path: Path,
+    interrupt_after_response: bool,
 ) -> None:
     model_execution = ModelExecution()
     cfg = config()
@@ -331,8 +388,10 @@ async def test_interrupted_generation_intent_prevents_new_invocation(
     identity = state.selection.identity
 
     def save_or_interrupt(state_dir: Path, state: BriefState) -> None:
-        if interrupt_after_response and state.pages and any(
-            item.kind == "generate" and item.status == "accepted" for item in state.pages[0].request_attempts
+        if (
+            interrupt_after_response
+            and state.pages
+            and any(item.kind == "generate" and item.status == "accepted" for item in state.pages[0].request_attempts)
         ):
             raise asyncio.CancelledError
         save_state(state_dir, state)
@@ -344,11 +403,15 @@ async def test_interrupted_generation_intent_prevents_new_invocation(
             raise asyncio.CancelledError
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.complete", side_effect=generate) as call,
-          patch("digest.llm.count_gemini_tokens", AsyncMock()) as count):
-        with (patch("digest.reading_brief.save_state", side_effect=save_or_interrupt),
-              pytest.raises(asyncio.CancelledError)):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.complete", side_effect=generate) as call,
+        patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
+    ):
+        with (
+            patch("digest.reading_brief.save_state", side_effect=save_or_interrupt),
+            pytest.raises(asyncio.CancelledError),
+        ):
             await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         cfg.reading_brief = replace(cfg.reading_brief, provider="gemini", model="gemini-3.8-flash")
         state = load_state(tmp_path, identity)
@@ -363,7 +426,8 @@ async def test_interrupted_generation_intent_prevents_new_invocation(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy", [False, True])
 async def test_unknown_count_is_not_repeated_but_supported_local_admission_can_resume(
-    tmp_path: Path, legacy: bool,
+    tmp_path: Path,
+    legacy: bool,
 ) -> None:
     model_execution = ModelExecution()
     cfg = config()
@@ -374,9 +438,11 @@ async def test_unknown_count_is_not_repeated_but_supported_local_admission_can_r
         assert kwargs["provider_override"].name == "groq"
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         first = load_state(tmp_path, identity)
         if legacy:
@@ -397,9 +463,14 @@ async def test_unknown_count_is_not_repeated_but_supported_local_admission_can_r
     state, _ = ready_brief_evidence(tmp_path, identity)
     assert state.status == "ready" and state.attempts == 3
     assert fetch.call_count == count.call_count == call.call_count == 1
-    expected = [("generate", "accepted")] if legacy else [
-        ("count", "unknown"), ("generate", "accepted"),
-    ]
+    expected = (
+        [("generate", "accepted")]
+        if legacy
+        else [
+            ("count", "unknown"),
+            ("generate", "accepted"),
+        ]
+    )
     assert [(item.kind, item.status) for item in state.pages[0].request_attempts] == expected
     assert not state.exact_counts and len(state.admissions) == 1
 
@@ -407,7 +478,8 @@ async def test_unknown_count_is_not_repeated_but_supported_local_admission_can_r
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["gemini", "groq"])
 async def test_legacy_admitted_unfinished_page_cannot_replay_its_unrecorded_generation(
-    tmp_path: Path, provider: str,
+    tmp_path: Path,
+    provider: str,
 ) -> None:
     model_execution = ModelExecution()
     cfg = config()
@@ -415,9 +487,11 @@ async def test_legacy_admitted_unfinished_page_cannot_replay_its_unrecorded_gene
         cfg.reading_brief = replace(cfg.reading_brief, provider=GROQ.name, model=GROQ.model)
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
-          patch("digest.llm.complete", AsyncMock(side_effect=TimeoutError)) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+        patch("digest.llm.complete", AsyncMock(side_effect=TimeoutError)) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         first = load_state(tmp_path, identity)
         path = state_root(tmp_path) / f"{identity}.json"
@@ -455,9 +529,11 @@ async def test_new_page_with_no_request_intent_can_resume_after_budget_deferral(
     async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         state = load_state(tmp_path, identity)
         assert state.status == "pending" and count.call_count == call.call_count == 0
@@ -476,12 +552,15 @@ async def test_completed_generation_must_match_its_accepted_attempt(tmp_path: Pa
     model_execution = ModelExecution()
     cfg = config()
     state = saved_brief_state(tmp_path, cfg)
+
     async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         identity = state.selection.identity
         state, _ = ready_brief_evidence(tmp_path, identity)
@@ -515,9 +594,11 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
             raise status_error(503)
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
-          patch("digest.llm.complete", side_effect=generate) as call):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
+        patch("digest.llm.complete", side_effect=generate) as call,
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         path = state_root(tmp_path) / f"{identity}.json"
         envelope = json.loads(path.read_text())
@@ -530,8 +611,9 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
         path.write_text(json.dumps(envelope))
         cfg.llm.providers = [GROQ]
         state = load_state(tmp_path, identity)
-        await _advance(state, cfg, tmp_path, time.monotonic() + (20 if failure == "deadline" else 1000),
-                       execution=model_execution)
+        await _advance(
+            state, cfg, tmp_path, time.monotonic() + (20 if failure == "deadline" else 1000), execution=model_execution
+        )
         saved = load_state(tmp_path, path.stem)
         assert saved.status == "pending" and saved.pages[0].request_history_version == 1
         assert saved.pages[0].legacy_count_request_sha256 == original_prompt
@@ -557,8 +639,10 @@ async def test_shared_budget_predispatch_failure_remains_resumable(tmp_path: Pat
     cfg.reading_brief = replace(cfg.reading_brief, provider=GROQ.name, model=GROQ.model)
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
-          patch("digest.llm.complete", side_effect=ModelBudgetError("Local usage write failed before dispatch"))):
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.llm.complete", side_effect=ModelBudgetError("Local usage write failed before dispatch")),
+    ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state = load_state(tmp_path, identity)
     assert state.status == "pending" and state.error_class == "technical_quota_or_budget"

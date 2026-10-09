@@ -65,6 +65,8 @@ def test_save_and_load_round_trip(tmp_path: Path) -> None:
         )
     }
     save_stats(stats, str(tmp_path))
+    assert (tmp_path / "source_stats.json").exists()
+    assert not (tmp_path / "source_stats.json.tmp").exists()
     loaded = load_stats(str(tmp_path))
     assert loaded == stats
     assert "Feed A" in loaded
@@ -96,23 +98,9 @@ def test_load_stats_non_dict(tmp_path: Path) -> None:
 # --- update_stats ---
 
 
-def test_update_stats_new_source() -> None:
-    stats: dict[str, SourceStats] = {}
-    update_stats(stats, "New Feed", fetch_ok=True, articles_found=5,
-                 articles_included=2, avg_desc_len=150.0)
-    assert "New Feed" in stats
-    s = stats["New Feed"]
-    assert s.total_fetches == 1
-    assert s.successful_fetches == 1
-    assert s.total_articles_found == 5
-    assert s.avg_description_length == 150.0
-    assert len(s.history) == 1
-
-
 def test_update_stats_failed_fetch() -> None:
     stats: dict[str, SourceStats] = {}
-    update_stats(stats, "Bad Feed", fetch_ok=False, articles_found=0,
-                 articles_included=0, avg_desc_len=0.0)
+    update_stats(stats, "Bad Feed", fetch_ok=False, articles_found=0, articles_included=0, avg_desc_len=0.0)
     s = stats["Bad Feed"]
     assert s.total_fetches == 1
     assert s.successful_fetches == 0
@@ -126,15 +114,13 @@ def test_update_stats_caps_history_at_30() -> None:
         "Feed": SourceStats(
             name="Feed",
             history=[
-                DailySnapshot(date=f"2026-02-{i:02d}", articles_found=1,
-                              articles_included=0, fetch_ok=True)
+                DailySnapshot(date=f"2026-02-{i:02d}", articles_found=1, articles_included=0, fetch_ok=True)
                 for i in range(1, 31)  # 30 entries
             ],
         )
     }
     assert len(stats["Feed"].history) == 30
-    update_stats(stats, "Feed", fetch_ok=True, articles_found=3,
-                 articles_included=1, avg_desc_len=100.0)
+    update_stats(stats, "Feed", fetch_ok=True, articles_found=3, articles_included=1, avg_desc_len=100.0)
     assert len(stats["Feed"].history) == 30  # Still capped at 30
 
 
@@ -206,8 +192,7 @@ def test_detect_trending_flat_history() -> None:
         "Stable": SourceStats(
             name="Stable",
             history=[
-                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5,
-                              articles_included=2, fetch_ok=True)
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=2, fetch_ok=True)
                 for i in range(1, 15)  # 14 days of flat data
             ],
         )
@@ -219,18 +204,14 @@ def test_detect_trending_flat_history() -> None:
 def test_detect_trending_rising_history() -> None:
     """Rising articles_found in recent window should be detected as trending."""
     previous = [
-        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2,
-                      articles_included=1, fetch_ok=True)
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2, articles_included=1, fetch_ok=True)
         for i in range(1, 8)  # days 1-7: 2 articles/day = 14 total
     ]
     recent = [
-        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5,
-                      articles_included=3, fetch_ok=True)
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=3, fetch_ok=True)
         for i in range(8, 15)  # days 8-14: 5 articles/day = 35 total (150% increase)
     ]
-    stats = {
-        "Rising": SourceStats(name="Rising", history=previous + recent)
-    }
+    stats = {"Rising": SourceStats(name="Rising", history=previous + recent)}
     result = detect_trending_sources(stats, window=7)
     assert "Rising" in result
 
@@ -240,10 +221,7 @@ def test_detect_trending_insufficient_history() -> None:
     stats = {
         "New": SourceStats(
             name="New",
-            history=[
-                DailySnapshot(date="2026-03-01", articles_found=10,
-                              articles_included=5, fetch_ok=True)
-            ],
+            history=[DailySnapshot(date="2026-03-01", articles_found=10, articles_included=5, fetch_ok=True)],
         )
     }
     result = detect_trending_sources(stats, window=7)
@@ -254,14 +232,19 @@ def test_detect_trending_insufficient_history() -> None:
 
 
 def _make_source(name: str, priority: int = 3) -> SourceConfig:
-    return SourceConfig(name=name, url="https://x.com", category="Tech",
-                        enabled=True, priority=priority)
+    return SourceConfig(name=name, url="https://x.com", category="Tech", enabled=True, priority=priority)
 
 
 def _default_adaptive() -> AdaptiveConfig:
-    return AdaptiveConfig(enabled=True, feedback_weight=0.3, score_weight=0.5,
-                          base_weight=0.2, trial_slots=2, min_priority=1,
-                          max_priority=5)
+    return AdaptiveConfig(
+        enabled=True,
+        feedback_weight=0.3,
+        score_weight=0.5,
+        base_weight=0.2,
+        trial_slots=2,
+        min_priority=1,
+        max_priority=5,
+    )
 
 
 def test_effective_priorities_high_score_bad_feedback() -> None:
@@ -270,9 +253,13 @@ def test_effective_priorities_high_score_bad_feedback() -> None:
     sources = [_make_source("A", priority=3)]
     stats = {
         "A": SourceStats(
-            name="A", total_fetches=10, successful_fetches=10,
-            total_articles_found=50, articles_included_in_digest=50,
-            avg_description_length=200.0, last_seen=today,
+            name="A",
+            total_fetches=10,
+            successful_fetches=10,
+            total_articles_found=50,
+            articles_included_in_digest=50,
+            avg_description_length=200.0,
+            last_seen=today,
             history=[
                 DailySnapshot(date=f"2026-03-{i:02d}", articles_found=5, articles_included=5, fetch_ok=True)
                 for i in range(1, 8)
@@ -292,9 +279,13 @@ def test_effective_priorities_low_score_good_feedback() -> None:
     sources = [_make_source("B", priority=3)]
     stats = {
         "B": SourceStats(
-            name="B", total_fetches=10, successful_fetches=2,
-            total_articles_found=10, articles_included_in_digest=1,
-            avg_description_length=20.0, last_seen=None,
+            name="B",
+            total_fetches=10,
+            successful_fetches=2,
+            total_articles_found=10,
+            articles_included_in_digest=1,
+            avg_description_length=20.0,
+            last_seen=None,
         )
     }
     feedback = {"B": 0.9}  # good feedback
@@ -306,29 +297,39 @@ def test_effective_priorities_trending_bonus() -> None:
     """Trending source should get +1 bonus."""
     sources = [_make_source("T", priority=1)]
     previous = [
-        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2,
-                      articles_included=1, fetch_ok=True)
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=2, articles_included=1, fetch_ok=True)
         for i in range(1, 8)
     ]
     recent = [
-        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10,
-                      articles_included=5, fetch_ok=True)
+        DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10, articles_included=5, fetch_ok=True)
         for i in range(8, 15)
     ]
     stats = {
-        "T": SourceStats(name="T", total_fetches=14, successful_fetches=14,
-                         total_articles_found=84, articles_included_in_digest=42,
-                         avg_description_length=150.0, last_seen="2026-03-14",
-                         history=previous + recent)
+        "T": SourceStats(
+            name="T",
+            total_fetches=14,
+            successful_fetches=14,
+            total_articles_found=84,
+            articles_included_in_digest=42,
+            avg_description_length=150.0,
+            last_seen="2026-03-14",
+            history=previous + recent,
+        )
     }
     adaptive = _default_adaptive()
 
     # Calculate without trending (use flat history)
     flat_stats = {
-        "T": SourceStats(name="T", total_fetches=14, successful_fetches=14,
-                         total_articles_found=84, articles_included_in_digest=42,
-                         avg_description_length=150.0, last_seen="2026-03-14",
-                         history=previous + previous)  # flat = no trend
+        "T": SourceStats(
+            name="T",
+            total_fetches=14,
+            successful_fetches=14,
+            total_articles_found=84,
+            articles_included_in_digest=42,
+            avg_description_length=150.0,
+            last_seen="2026-03-14",
+            history=previous + previous,
+        )  # flat = no trend
     }
     no_trend = calculate_effective_priorities(sources, flat_stats, {}, adaptive)
     with_trend = calculate_effective_priorities(sources, stats, {}, adaptive)
@@ -355,13 +356,16 @@ def test_effective_priorities_trending_bonus_capped_at_max() -> None:
     # Perfect score
     stats = {
         "HighScore": SourceStats(
-            name="HighScore", total_fetches=10, successful_fetches=10,
-            total_articles_found=50, articles_included_in_digest=50,
-            avg_description_length=200.0, last_seen=today,
+            name="HighScore",
+            total_fetches=10,
+            successful_fetches=10,
+            total_articles_found=50,
+            articles_included_in_digest=50,
+            avg_description_length=200.0,
+            last_seen=today,
             # Add trending history
             history=[
-                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10,
-                              articles_included=8, fetch_ok=True)
+                DailySnapshot(date=f"2026-03-{i:02d}", articles_found=10, articles_included=8, fetch_ok=True)
                 for i in range(8, 15)
             ],
         )
@@ -377,9 +381,13 @@ def test_effective_priorities_trend_bonus_capped_at_min() -> None:
     sources = [_make_source("LowScore", priority=1)]
     stats = {
         "LowScore": SourceStats(
-            name="LowScore", total_fetches=10, successful_fetches=1,
-            total_articles_found=5, articles_included_in_digest=0,
-            avg_description_length=10.0, last_seen=None,
+            name="LowScore",
+            total_fetches=10,
+            successful_fetches=1,
+            total_articles_found=5,
+            articles_included_in_digest=0,
+            avg_description_length=10.0,
+            last_seen=None,
         )
     }
     feedback = {}
@@ -393,8 +401,13 @@ def test_effective_priorities_trend_bonus_capped_at_min() -> None:
 
 def _make_trial_source(name: str, trial_days: int = 7) -> SourceConfig:
     return SourceConfig(
-        name=name, url="https://x.com", category="Tech",
-        enabled=True, priority=3, trial=True, trial_days=trial_days,
+        name=name,
+        url="https://x.com",
+        category="Tech",
+        enabled=True,
+        priority=3,
+        trial=True,
+        trial_days=trial_days,
     )
 
 
@@ -411,9 +424,13 @@ def test_evaluate_trial_not_expired() -> None:
     today = "2026-03-18"  # only 3 days elapsed
     stats = {
         "New": SourceStats(
-            name="New", total_fetches=3, successful_fetches=3,
-            total_articles_found=10, articles_included_in_digest=10,
-            avg_description_length=200.0, last_seen="2026-03-18",
+            name="New",
+            total_fetches=3,
+            successful_fetches=3,
+            total_articles_found=10,
+            articles_included_in_digest=10,
+            avg_description_length=200.0,
+            last_seen="2026-03-18",
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -429,9 +446,13 @@ def test_evaluate_trial_promote_high_score() -> None:
     today = "2026-03-18"
     stats = {
         "Good": SourceStats(
-            name="Good", total_fetches=10, successful_fetches=10,
-            total_articles_found=50, articles_included_in_digest=50,
-            avg_description_length=200.0, last_seen=today,
+            name="Good",
+            total_fetches=10,
+            successful_fetches=10,
+            total_articles_found=50,
+            articles_included_in_digest=50,
+            avg_description_length=200.0,
+            last_seen=today,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -447,9 +468,13 @@ def test_evaluate_trial_demote_low_score() -> None:
     today = "2026-03-18"
     stats = {
         "Bad": SourceStats(
-            name="Bad", total_fetches=10, successful_fetches=1,
-            total_articles_found=5, articles_included_in_digest=0,
-            avg_description_length=10.0, last_seen=None,
+            name="Bad",
+            total_fetches=10,
+            successful_fetches=1,
+            total_articles_found=5,
+            articles_included_in_digest=0,
+            avg_description_length=10.0,
+            last_seen=None,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -465,9 +490,13 @@ def test_evaluate_trial_middling_score_no_action() -> None:
     today = "2026-03-18"
     stats = {
         "Mid": SourceStats(
-            name="Mid", total_fetches=10, successful_fetches=5,
-            total_articles_found=20, articles_included_in_digest=5,
-            avg_description_length=80.0, last_seen=today,
+            name="Mid",
+            total_fetches=10,
+            successful_fetches=5,
+            total_articles_found=20,
+            articles_included_in_digest=5,
+            avg_description_length=80.0,
+            last_seen=today,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -492,9 +521,13 @@ def test_evaluate_trial_invalid_date_format() -> None:
     today = "2026-03-18"
     stats = {
         "BadDate": SourceStats(
-            name="BadDate", total_fetches=10, successful_fetches=10,
-            total_articles_found=50, articles_included_in_digest=50,
-            avg_description_length=200.0, last_seen=today,
+            name="BadDate",
+            total_fetches=10,
+            successful_fetches=10,
+            total_articles_found=50,
+            articles_included_in_digest=50,
+            avg_description_length=200.0,
+            last_seen=today,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -530,9 +563,13 @@ def test_evaluate_trial_boundary_just_above_0_6_promoted() -> None:
     today = "2026-03-18"
     stats = {
         "JustGood": SourceStats(
-            name="JustGood", total_fetches=10, successful_fetches=10,
-            total_articles_found=50, articles_included_in_digest=40,
-            avg_description_length=150.0, last_seen=today,
+            name="JustGood",
+            total_fetches=10,
+            successful_fetches=10,
+            total_articles_found=50,
+            articles_included_in_digest=40,
+            avg_description_length=150.0,
+            last_seen=today,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -570,9 +607,13 @@ def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
     today = "2026-03-18"
     stats = {
         "JustBad": SourceStats(
-            name="JustBad", total_fetches=10, successful_fetches=2,
-            total_articles_found=5, articles_included_in_digest=0,
-            avg_description_length=10.0, last_seen=None,
+            name="JustBad",
+            total_fetches=10,
+            successful_fetches=2,
+            total_articles_found=5,
+            articles_included_in_digest=0,
+            avg_description_length=10.0,
+            last_seen=None,
         )
     }
     promote, demote, needs_start = evaluate_trial_sources(sources, stats, today, state)
@@ -580,13 +621,6 @@ def test_evaluate_trial_boundary_just_below_0_3_demoted() -> None:
 
 
 # --- SourceStateStore and apply_trial_decisions_to_cache ---
-
-
-def test_load_source_state_missing_file(tmp_path: Path) -> None:
-    """load_source_state returns empty store when file does not exist."""
-    store = load_source_state(str(tmp_path))
-    assert isinstance(store, SourceStateStore)
-    assert store.sources == {}
 
 
 def test_load_source_state_corrupted_json(tmp_path: Path) -> None:
@@ -606,6 +640,7 @@ def test_load_source_state_unknown_schema_version(tmp_path: Path) -> None:
 def test_load_source_state_non_dict_entry_skipped(tmp_path: Path) -> None:
     """A non-dict source entry (e.g. bare string) is skipped; valid entries still load."""
     import json
+
     data = {
         "schema_version": 1,
         "sources": {
@@ -681,29 +716,14 @@ def test_evaluate_trial_skips_demoted() -> None:
 def test_update_stats_deduplicates_same_day() -> None:
     """Calling update_stats twice on the same day should update the snapshot, not append."""
     stats: dict[str, SourceStats] = {}
-    update_stats(stats, "Feed", fetch_ok=True, articles_found=5,
-                 articles_included=0, avg_desc_len=100.0)
+    update_stats(stats, "Feed", fetch_ok=True, articles_found=5, articles_included=0, avg_desc_len=100.0)
     assert len(stats["Feed"].history) == 1
 
-    update_stats(stats, "Feed", fetch_ok=True, articles_found=8,
-                 articles_included=3, avg_desc_len=120.0)
+    update_stats(stats, "Feed", fetch_ok=True, articles_found=8, articles_included=3, avg_desc_len=120.0)
     # Should still be 1 snapshot (updated in place), not 2
     assert len(stats["Feed"].history) == 1
     assert stats["Feed"].history[0].articles_found == 8
     assert stats["Feed"].history[0].articles_included == 3
-
-
-def test_save_stats_atomic_write(tmp_path: Path) -> None:
-    """save_stats writes via tmp file and leaves no .tmp artifact."""
-    from digest.source_scorer import SourceStats, save_stats
-
-    stats: dict[str, SourceStats] = {"Feed": SourceStats(name="Feed")}
-    save_stats(stats, str(tmp_path))
-
-    stats_file = tmp_path / "source_stats.json"
-    tmp_file = tmp_path / "source_stats.json.tmp"
-    assert stats_file.exists(), "source_stats.json should exist after save_stats"
-    assert not tmp_file.exists(), ".tmp file should be removed after atomic rename"
 
 
 def test_load_stats_skips_bad_snapshot(tmp_path: Path) -> None:
@@ -813,10 +833,12 @@ def test_source_scoring_samples_only_valid_recency_and_each_eligible_trial(monke
     from digest.application import source_scoring
     from digest.domain.catalog import source_rules
 
-    observations = iter([
-        datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
-        datetime(2026, 10, 14, tzinfo=timezone.utc),
-    ])
+    observations = iter(
+        [
+            datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
+            datetime(2026, 10, 14, tzinfo=timezone.utc),
+        ]
+    )
     sampled = []
 
     class ObservedClock(datetime):
@@ -836,9 +858,12 @@ def test_source_scoring_samples_only_valid_recency_and_each_eligible_trial(monke
     state = SourceStateStore()
     state.set_trial_started("First", "2026-09-01")
     state.set_trial_started("Second", "2026-09-01")
-    stats = {name: SourceStats(name, total_fetches=1, successful_fetches=1,
-                              avg_description_length=100, last_seen="2026-10-04")
-             for name in ("First", "Second", "Fresh")}
+    stats = {
+        name: SourceStats(
+            name, total_fetches=1, successful_fetches=1, avg_description_length=100, last_seen="2026-10-04"
+        )
+        for name in ("First", "Second", "Fresh")
+    }
     assert evaluate_trial_sources([first, fresh, second], stats, "2026-10-07", state) == (["First"], [], ["Fresh"])
     assert len(sampled) == 2
     factors = source_rules.source_score_factors(stats["First"])
@@ -849,10 +874,12 @@ def test_source_scoring_samples_only_valid_recency_and_each_eligible_trial(monke
 def test_fetch_accounting_uses_each_explicit_observation_across_midnight(monkeypatch: pytest.MonkeyPatch) -> None:
     from digest.application import source_scoring
 
-    observations = iter([
-        datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
-        datetime(2026, 10, 8, tzinfo=timezone.utc),
-    ])
+    observations = iter(
+        [
+            datetime(2026, 10, 7, 23, 59, tzinfo=timezone.utc),
+            datetime(2026, 10, 8, tzinfo=timezone.utc),
+        ]
+    )
 
     class ObservedClock(datetime):
         @classmethod
@@ -862,6 +889,12 @@ def test_fetch_accounting_uses_each_explicit_observation_across_midnight(monkeyp
     monkeypatch.setattr(source_scoring, "datetime", ObservedClock)
     stats = {}
     update_stats(stats, "Feed", True, 4, 1, 100)
+    assert "Feed" in stats
+    assert stats["Feed"].total_fetches == 1
+    assert stats["Feed"].successful_fetches == 1
+    assert stats["Feed"].total_articles_found == 4
+    assert stats["Feed"].avg_description_length == 100
+    assert len(stats["Feed"].history) == 1
     update_stats(stats, "Feed", True, 2, 1, 200)
     assert [item.date for item in stats["Feed"].history] == ["2026-10-07", "2026-10-08"]
     assert stats["Feed"].avg_description_length == 130

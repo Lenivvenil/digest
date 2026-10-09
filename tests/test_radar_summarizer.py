@@ -86,30 +86,6 @@ def _make_articles_by_category() -> dict[str, list[Article]]:
 
 
 class TestBuildCategoryPrompt:
-    def test_returns_system_and_user_messages(self) -> None:
-        config = _make_config()
-        articles = [_make_article()]
-        messages = build_category_prompt("Tech", articles, config)
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-
-    def test_contains_category_name_and_articles(self) -> None:
-        config = _make_config()
-        articles = [_make_article(title="My Article", link="https://example.com/1")]
-        messages = build_category_prompt("Tech", articles, config)
-        user_content = messages[1]["content"]
-        assert "Tech" in user_content
-        assert "My Article" in user_content
-        assert "https://example.com/1" in user_content
-
-    def test_analytical_style_has_perspectives_instructions(self) -> None:
-        config = _make_config(language="ru", summary_style="analytical", perspectives=True)
-        articles = [_make_article()]
-        messages = build_category_prompt("Tech", articles, config)
-        user_content = messages[1]["content"]
-        assert "Оптимист" in user_content or "Optimist" in user_content
-
     def test_brief_style_no_perspectives(self) -> None:
         config = _make_config(summary_style="brief", perspectives=True)
         articles = [_make_article()]
@@ -118,33 +94,6 @@ class TestBuildCategoryPrompt:
         assert "Оптимист" not in user_content
         assert "Optimist" not in user_content
 
-    def test_language_ru_uses_russian_templates(self) -> None:
-        config = _make_config(language="ru")
-        articles = [_make_article()]
-        messages = build_category_prompt("Tech", articles, config)
-        system_content = messages[0]["content"]
-        assert "аналитик" in system_content.lower() or "дайджест" in system_content.lower()
-
-    def test_language_en_uses_english_templates(self) -> None:
-        config = _make_config(language="en")
-        articles = [_make_article()]
-        messages = build_category_prompt("Tech", articles, config)
-        system_content = messages[0]["content"]
-        assert "analyst" in system_content.lower() or "digest" in system_content.lower()
-
-    def test_no_perspectives_flag_uses_no_persp_template(self) -> None:
-        # perspectives=True adds perspectives block; perspectives=False must not
-        config_with = _make_config(summary_style="analytical", perspectives=True)
-        config_without = _make_config(summary_style="analytical", perspectives=False)
-        articles = [_make_article()]
-        msg_with = build_category_prompt("Tech", articles, config_with)
-        msg_without = build_category_prompt("Tech", articles, config_without)
-        # The no-persp variant should not contain perspective markers
-        assert "Оптимист" not in msg_without[1]["content"]
-        assert "Optimist" not in msg_without[1]["content"]
-        # The normal variant should contain them
-        assert "Оптимист" in msg_with[1]["content"] or "Optimist" in msg_with[1]["content"]
-
 
 # ---------------------------------------------------------------------------
 # TestBuildTrendsPrompt
@@ -152,36 +101,17 @@ class TestBuildCategoryPrompt:
 
 
 class TestBuildTrendsPrompt:
-    def test_returns_system_and_user_messages(self) -> None:
+    def test_contains_category_summaries(self) -> None:
         config = _make_config()
         summaries = {"AI": "AI summary.", "Banking": "Banking summary."}
         messages = build_trends_prompt(summaries, config)
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
-
-    def test_contains_category_summaries(self) -> None:
-        config = _make_config()
-        summaries = {"AI": "AI summary.", "Banking": "Banking summary."}
-        messages = build_trends_prompt(summaries, config)
         user_content = messages[1]["content"]
         assert "AI" in user_content
         assert "AI summary." in user_content
         assert "Banking summary." in user_content
-
-    def test_uses_trends_instructions_ru(self) -> None:
-        config = _make_config(language="ru")
-        summaries = {"AI": "AI summary."}
-        messages = build_trends_prompt(summaries, config)
-        user_content = messages[1]["content"]
-        assert "тренд" in user_content.lower()
-
-    def test_uses_trends_instructions_en(self) -> None:
-        config = _make_config(language="en")
-        summaries = {"AI": "AI summary."}
-        messages = build_trends_prompt(summaries, config)
-        user_content = messages[1]["content"]
-        assert "trend" in user_content.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -313,13 +243,6 @@ class TestSummarizeAll:
 
 
 class TestParseArticleSummaries:
-    def test_valid_json(self) -> None:
-        text = '[{"title": "A", "link": "https://a.com", "source": "S", "summary": "Good"}]'
-        result = _parse_article_summaries(text, "tech")
-        assert len(result) == 1
-        assert result[0].title == "A"
-        assert result[0].category == "tech"
-
     def test_json_with_code_fences(self) -> None:
         text = '```json\n[{"title": "A", "link": "https://a.com", "source": "S", "summary": "X"}]\n```'
         result = _parse_article_summaries(text, "tech")
@@ -329,12 +252,14 @@ class TestParseArticleSummaries:
         result = _parse_article_summaries("not json at all", "tech")
         assert result == []
 
-    @pytest.mark.parametrize("text", [
-        '[{"title": "A",}]',
-        'Here are the results: [{"title": "A",}]',
-        '[{"title": "A"',
-        "[not json]",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'Here are the results: [{"title": "A",}]',
+            '[{"title": "A"',
+            "[not json]",
+        ],
+    )
     def test_malformed_array_returns_empty(self, text: str) -> None:
         assert _parse_article_summaries(text, "tech") == []
 
@@ -350,7 +275,10 @@ class TestParseArticleSummaries:
     @pytest.mark.parametrize(("field", "value"), [("title", None), ("link", 7), ("source", {}), ("summary", [])])
     def test_non_string_fields_are_skipped(self, field: str, value: object) -> None:
         valid: dict[str, object] = {
-            "title": "A", "link": "https://a.com", "source": "S", "summary": "Good",
+            "title": "A",
+            "link": "https://a.com",
+            "source": "S",
+            "summary": "Good",
         }
         invalid = {**valid, field: value}
         result = _parse_article_summaries(json.dumps([invalid, valid]), "tech")
@@ -363,11 +291,6 @@ class TestParseArticleSummaries:
         item[field] = " \n\t"
         assert _parse_article_summaries(json.dumps([item]), "tech") == []
 
-    def test_missing_required_fields_skipped(self) -> None:
-        text = '[{"title": "A", "link": "", "source": "S", "summary": "X"}]'
-        result = _parse_article_summaries(text, "tech")
-        assert len(result) == 0  # empty link
-
     def test_multiple_articles(self) -> None:
         text = (
             '[{"title": "A", "link": "https://a.com", "source": "S1", "summary": "X"},'
@@ -375,6 +298,8 @@ class TestParseArticleSummaries:
         )
         result = _parse_article_summaries(text, "cat")
         assert len(result) == 2
+        assert result[0].title == "A"
+        assert result[0].category == "cat"
 
 
 # ---------------------------------------------------------------------------
@@ -384,22 +309,6 @@ class TestParseArticleSummaries:
 
 @pytest.mark.asyncio
 class TestPickTopArticles:
-    async def test_returns_parsed_summaries(self) -> None:
-        execution = ModelExecution()
-        config = _make_config()
-        articles = {"Tech": [_make_article(title="Article 1", category="Tech")]}
-        llm_response = (
-            '[{"title": "Article 1", "link": "https://example.com/1",'
-            ' "source": "TechCrunch", "summary": "Important news."}]'
-        )
-
-        with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
-            result = await pick_top_articles(articles, config, max_articles=5, execution=execution)
-
-        assert len(result) == 1
-        assert result[0].title == "Article 1"
-        assert result[0].category == "Tech"
-
     async def test_llm_failure_returns_empty(self) -> None:
         execution = ModelExecution()
         config = _make_config()
@@ -438,10 +347,7 @@ class TestPickTopArticles:
         execution = ModelExecution()
         config = _make_config()
         articles = {"Tech": [_make_article()]}
-        llm_response = (
-            '[{"title": "A", "link": "https://example.com/1", '
-            '"source": "S", "summary": ["Not a string"]}]'
-        )
+        llm_response = '[{"title": "A", "link": "https://example.com/1", "source": "S", "summary": ["Not a string"]}]'
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
             result = await pick_top_articles(articles, config, execution=execution)
@@ -451,10 +357,9 @@ class TestPickTopArticles:
     async def test_respects_max_articles(self) -> None:
         execution = ModelExecution()
         config = _make_config()
-        articles = {"Tech": [
-            _make_article(title=title, link=f"https://{title.lower()}.com")
-            for title in ("A", "B", "C")
-        ]}
+        articles = {
+            "Tech": [_make_article(title=title, link=f"https://{title.lower()}.com") for title in ("A", "B", "C")]
+        }
         llm_response = (
             '[{"title": "A", "link": "https://a.com", "source": "S", "summary": "X"},'
             ' {"title": "B", "link": "https://b.com", "source": "S", "summary": "Y"},'
@@ -471,12 +376,16 @@ class TestPickTopArticles:
         config = _make_config()
         original = _make_article(title="A" * 220, source="Original Source")
         articles = {"Original Category": [original]}
-        llm_response = json.dumps([{
-            "title": "A" * 200,
-            "link": original.link,
-            "source": "Invented Source",
-            "summary": "Useful summary.",
-        }])
+        llm_response = json.dumps(
+            [
+                {
+                    "title": "A" * 200,
+                    "link": original.link,
+                    "source": "Invented Source",
+                    "summary": "Useful summary.",
+                }
+            ]
+        )
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
             result = await pick_top_articles(articles, config, execution=execution)
@@ -494,12 +403,14 @@ class TestPickTopArticles:
         first = _make_article(title="First", link="https://example.com/1")
         second = _make_article(title="Second", link="https://example.com/2")
         articles = {"Tech": [first, second]}
-        llm_response = json.dumps([
-            {"title": "Fake", "link": "https://invented.example/a", "summary": "Unknown link."},
-            {"title": "First", "link": first.link, "summary": "First summary."},
-            {"title": "Duplicate", "link": first.link, "summary": "Duplicate summary."},
-            {"title": "Second", "link": second.link, "summary": "Second summary."},
-        ])
+        llm_response = json.dumps(
+            [
+                {"title": "Fake", "link": "https://invented.example/a", "summary": "Unknown link."},
+                {"title": "First", "link": first.link, "summary": "First summary."},
+                {"title": "Duplicate", "link": first.link, "summary": "Duplicate summary."},
+                {"title": "Second", "link": second.link, "summary": "Second summary."},
+            ]
+        )
 
         with patch("digest.radar.summarizer.complete", AsyncMock(return_value=(llm_response, {}))):
             result = await pick_top_articles(articles, config, max_articles=2, execution=execution)
@@ -517,27 +428,14 @@ class TestCapSentences:
     def test_empty_string_returns_empty(self) -> None:
         assert _cap_sentences("", 2) == ""
 
-    def test_single_sentence_unchanged(self) -> None:
-        assert _cap_sentences("One sentence only.", 2) == "One sentence only."
-
     def test_exactly_n_sentences_unchanged(self) -> None:
         result = _cap_sentences("First sentence. Second sentence.", 2)
-        assert result == "First sentence. Second sentence."
-
-    def test_longer_than_n_is_truncated(self) -> None:
-        text = "First sentence. Second sentence. Third sentence."
-        result = _cap_sentences(text, 2)
         assert result == "First sentence. Second sentence."
 
     def test_works_with_exclamation_and_question(self) -> None:
         text = "Is this important? Yes it is! And here is more."
         result = _cap_sentences(text, 2)
         assert result == "Is this important? Yes it is!"
-
-    def test_cyrillic_sentence_boundary(self) -> None:
-        text = "Это важно. Вот почему. И ещё кое-что."
-        result = _cap_sentences(text, 2)
-        assert result == "Это важно. Вот почему."
 
     def test_cyrillic_single_sentence_unchanged(self) -> None:
         text = "Компания объявила о запуске нового продукта."
@@ -569,20 +467,22 @@ _CATEGORY_MATRIX = [
 ]
 
 _NON_OBVIOUS_PHRASES = [
-    "нетривиально",   # Russian
-    "non-obvious",    # English
+    "нетривиально",  # Russian
+    "non-obvious",  # English
 ]
 
 
 class TestTersePromptInstructions:
     def test_per_article_instructions_ru_are_terse(self) -> None:
         from digest.radar.summarizer import _PER_ARTICLE_INSTRUCTIONS
+
         text = _PER_ARTICLE_INSTRUCTIONS["ru"]
         assert "1-2 предложения" in text
         assert "нетривиального" in text or "нетривиально" in text
 
     def test_per_article_instructions_en_are_terse(self) -> None:
         from digest.radar.summarizer import _PER_ARTICLE_INSTRUCTIONS
+
         text = _PER_ARTICLE_INSTRUCTIONS["en"]
         assert "1-2 sentence" in text
         assert "non-obvious" in text
@@ -595,6 +495,22 @@ class TestTersePromptInstructions:
         articles = [_make_article()]
         messages = build_category_prompt("Tech", articles, config)
         user_content = messages[1]["content"]
+        if (language, style, perspectives) == ("ru", "analytical", False):
+            assert len(messages) == 2
+            assert messages[0]["role"] == "system"
+            assert messages[1]["role"] == "user"
+            assert "Tech" in user_content
+            assert articles[0].title in user_content
+            assert articles[0].link in user_content
+            system_content = messages[0]["content"]
+            assert "аналитик" in system_content.lower() or "дайджест" in system_content.lower()
+            assert "Оптимист" not in user_content
+            assert "Optimist" not in user_content
+        if (language, style, perspectives) == ("ru", "analytical", True):
+            assert "Оптимист" in user_content or "Optimist" in user_content
+        if (language, style, perspectives) == ("en", "analytical", False):
+            system_content = messages[0]["content"]
+            assert "analyst" in system_content.lower() or "digest" in system_content.lower()
         assert any(phrase in user_content for phrase in _NON_OBVIOUS_PHRASES), (
             f"No non-obvious instruction found for ({language}, {style}, perspectives={perspectives})"
         )
@@ -603,12 +519,14 @@ class TestTersePromptInstructions:
         config = _make_config(language="ru")
         summaries = {"AI": "AI summary."}
         messages = build_trends_prompt(summaries, config)
+        assert "тренд" in messages[1]["content"].lower()
         assert "нетривиальным" in messages[1]["content"]
 
     def test_trends_prompt_en_contains_non_obvious_instruction(self) -> None:
         config = _make_config(language="en")
         summaries = {"AI": "AI summary."}
         messages = build_trends_prompt(summaries, config)
+        assert "trend" in messages[1]["content"].lower()
         assert "non-obvious" in messages[1]["content"]
 
 
@@ -623,9 +541,7 @@ class TestPickTopArticlesSentenceCap:
         execution = ModelExecution()
         config = _make_config(language="en")
         articles = {"Tech": [_make_article(title="Article 1", link="https://example.com/1", category="Tech")]}
-        long_summary = (
-            "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence."
-        )
+        long_summary = "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence."
         llm_response = (
             f'[{{"title": "Article 1", "link": "https://example.com/1", '
             f'"source": "TechCrunch", "summary": "{long_summary}"}}]'

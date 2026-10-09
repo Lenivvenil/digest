@@ -28,9 +28,7 @@ from digest.source_scorer import (
 _NOW = datetime(2026, 4, 28, 10, 0, 0, tzinfo=timezone.utc)
 
 
-def _make_stats(
-    name: str, included_per_day: list[int]
-) -> SourceStats:
+def _make_stats(name: str, included_per_day: list[int]) -> SourceStats:
     history = [
         DailySnapshot(
             date=f"2026-04-{i + 1:02d}",
@@ -55,9 +53,7 @@ def _rating(rating: int, days_ago: int = 0) -> ArticleFeedback:
     # 14-day window uses datetime.now() — anchoring to a fixed past date
     # would make the test silently rot once the suite runs on a later day.
     ts = (datetime.now(tz=timezone.utc) - timedelta(days=days_ago)).isoformat()
-    return ArticleFeedback(
-        article_hash="abc", source_name="S", rating=rating, timestamp=ts
-    )
+    return ArticleFeedback(article_hash="abc", source_name="S", rating=rating, timestamp=ts)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +139,8 @@ def test_compute_bubble_report_known_diversity() -> None:
     report = compute_bubble_report(store, stats, state)
     assert "Diverse" in report
     assert "100/100" in report
+    assert "2026-04-28 06:00 UTC" in report
+    assert "h ago" in report
 
 
 def test_compute_bubble_report_feedback_14d_window() -> None:
@@ -158,13 +156,6 @@ def test_compute_bubble_report_feedback_14d_window() -> None:
     assert "2 votes" in report
     assert "+2" in report
     assert "-0" in report
-
-
-def test_compute_bubble_report_last_digest_time_parsed() -> None:
-    store = FeedbackStore(last_digest_time="2026-04-28 06:00 UTC")
-    report = compute_bubble_report(store, {}, SourceStateStore())
-    assert "2026-04-28 06:00 UTC" in report
-    assert "h ago" in report
 
 
 def test_compute_bubble_report_last_digest_time_invalid() -> None:
@@ -190,20 +181,11 @@ def test_compute_bubble_report_source_health() -> None:
 def test_compute_bubble_report_output_under_4096_chars() -> None:
     """Even with many sources, output must fit in one Telegram message."""
     stats = {f"Source{i}": _make_stats(f"Source{i}", [i + 1] * 7) for i in range(50)}
-    store = FeedbackStore(
-        ratings=[_rating(1, days_ago=1) for _ in range(200)]
-    )
-    state = SourceStateStore(
-        sources={f"Source{i}": SourceStateEntry(graduated=True) for i in range(50)}
-    )
+    store = FeedbackStore(ratings=[_rating(1, days_ago=1) for _ in range(200)])
+    state = SourceStateStore(sources={f"Source{i}": SourceStateEntry(graduated=True) for i in range(50)})
     report = compute_bubble_report(store, stats, state)
     assert len(report) < 4096
-
-
-def test_compute_bubble_report_top_sources_capped_at_5() -> None:
-    stats = {f"S{i}": _make_stats(f"S{i}", [i + 1] * 7) for i in range(10)}
-    report = compute_bubble_report(FeedbackStore(), stats, SourceStateStore())
-    assert report.count("  S") <= 5
+    assert report.count("  Source") <= 5
 
 
 def test_compute_bubble_report_with_category_map_shows_topics() -> None:
@@ -247,6 +229,7 @@ def test_compute_bubble_report_empty_category_map_falls_back_to_sources() -> Non
 
 def test_save_load_source_category_map_round_trip(tmp_path: Path) -> None:
     from digest.config import SourceConfig
+
     sources = [
         SourceConfig(name="HN", url="https://hn.com", category="Tech", enabled=True),
         SourceConfig(name="PYMNTS", url="https://pymnts.com", category="FinTech", enabled=True),
@@ -283,9 +266,7 @@ def _bubble_update(chat_id: int = 999) -> dict[str, object]:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_bubble_command_sends_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_feedback_bubble_command_sends_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Receiving /bubble from the owner should trigger a sendMessage with a non-empty report."""
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "999")
     token = "tok"
@@ -309,6 +290,7 @@ async def test_collect_feedback_bubble_command_sends_report(
     assert send_mock.called
     sent_body = send_mock.calls[0].request.content
     import json as _json
+
     payload = _json.loads(sent_body)
     assert payload["chat_id"] == "999"
     assert "Filter Bubble Report" in payload["text"]
@@ -317,9 +299,7 @@ async def test_collect_feedback_bubble_command_sends_report(
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_bubble_unknown_chat_id_ignored(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_feedback_bubble_unknown_chat_id_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A /bubble from an unknown chat_id must be silently dropped — no sendMessage."""
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1111")  # owner is 1111
     token = "tok_auth"
@@ -346,9 +326,7 @@ async def test_collect_feedback_bubble_unknown_chat_id_ignored(
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_bubble_empty_cache_no_crash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_feedback_bubble_empty_cache_no_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Empty cache_dir must not crash — sends a report with 'No data'."""
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
     token = "tok2"
@@ -371,6 +349,7 @@ async def test_collect_feedback_bubble_empty_cache_no_crash(
 
     assert send_mock.called
     import json as _json
+
     payload = _json.loads(send_mock.calls[0].request.content)
     assert "Filter Bubble Report" in payload["text"]
 
@@ -416,9 +395,7 @@ def _status_update(chat_id: int = 999) -> dict[str, object]:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_collect_feedback_status_unknown_chat_id_ignored(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_collect_feedback_status_unknown_chat_id_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A /status from an unknown chat_id must be silently dropped — no sendMessage."""
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1111")
     token = "tok_status_auth"

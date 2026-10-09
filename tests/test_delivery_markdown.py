@@ -17,6 +17,7 @@ from tests.factories import make_ranked_signal
 # _build_counter_signals_section
 # ---------------------------------------------------------------------------
 
+
 def _make_ranked_signal(
     title: str = "Counter evidence",
     url: str = "https://example.com/a",
@@ -25,8 +26,11 @@ def _make_ranked_signal(
     narrative_claim: str = "AI is perfect" * 20,
 ) -> Any:
     return make_ranked_signal(
-        url=url, title=title, score=score,
-        reasoning=reasoning, narrative_claim=narrative_claim,
+        url=url,
+        title=title,
+        score=score,
+        reasoning=reasoning,
+        narrative_claim=narrative_claim,
     )
 
 
@@ -34,30 +38,19 @@ class TestBuildCounterSignalsSection:
     def test_empty_signals(self) -> None:
         assert _build_counter_signals_section([]) == ""
 
-    def test_multiple_signals(self) -> None:
-        signals = [
-            _make_ranked_signal(title="Signal A", score=9),
-            _make_ranked_signal(title="Signal B", score=7),
-        ]
-        result = _build_counter_signals_section(signals)
-        assert "Counter-Signals" in result
-        assert "Signal A" in result
-        assert "Signal B" in result
-        assert "https://example.com/a" in result
-        assert "9/10" in result and "7/10" in result
-        assert signals[0].narrative_claim in result
-        assert signals[0].reasoning in result
-
 
 # ---------------------------------------------------------------------------
 # write_digest
 # ---------------------------------------------------------------------------
 
+
 def _make_config(enabled: bool = True, output_dir: str = "digests") -> Any:
     class ObsidianCfg:
         pass
+
     class Cfg:
         obsidian = ObsidianCfg()
+
     Cfg.obsidian.enabled = enabled  # type: ignore[attr-defined]
     Cfg.obsidian.output_dir = output_dir  # type: ignore[attr-defined]
     return Cfg()
@@ -97,7 +90,10 @@ class TestWriteDigest:
         from digest.irritator import IrritatorStatus
 
         config = _make_config(output_dir=str(tmp_path))
-        signals = [_make_ranked_signal()]
+        signals = [
+            _make_ranked_signal(score=9),
+            _make_ranked_signal(title="Signal B", score=7),
+        ]
         result = write_digest(
             "Summary",
             config,
@@ -111,6 +107,11 @@ class TestWriteDigest:
         assert "articles_count: 0" in text
         assert "Counter-Signals" in text
         assert "Counter evidence" in text
+        assert "Signal B" in text
+        assert "https://example.com/a" in text
+        assert "9/10" in text and "7/10" in text
+        assert signals[0].narrative_claim in text
+        assert signals[0].reasoning in text
         assert "Irritator status: incomplete" in text
         assert "One source unavailable; valid counter-evidence retained" in text
 
@@ -122,15 +123,14 @@ class TestWriteDigest:
 
     def test_invalid_dir_returns_none(self) -> None:
         config = _make_config(output_dir="/dev/null/impossible/path")
-        result = write_digest(
-            "text", config, date=datetime(2026, 1, 1, tzinfo=timezone.utc)
-        )
+        result = write_digest("text", config, date=datetime(2026, 1, 1, tzinfo=timezone.utc))
         assert result is None
 
 
 # ---------------------------------------------------------------------------
 # _build_top_articles_section
 # ---------------------------------------------------------------------------
+
 
 def _make_article_summary(
     title: str = "Big AI News",
@@ -140,6 +140,7 @@ def _make_article_summary(
     summary: str = "This is a critical development for architects.",
 ) -> Any:
     from digest.radar.summarizer import ArticleSummary
+
     return ArticleSummary(title=title, link=link, source=source, category=category, summary=summary)
 
 
@@ -147,27 +148,13 @@ class TestBuildTopArticlesSection:
     def test_empty_returns_empty_string(self) -> None:
         assert _build_top_articles_section([]) == ""
 
-    def test_multiple_articles(self) -> None:
-        articles = [
-            _make_article_summary(title="First", source="HN"),
-            _make_article_summary(title="Second", source="Reddit"),
-        ]
-        result = _build_top_articles_section(articles)
-        assert "## Top Articles" in result
-        assert "First" in result
-        assert "Second" in result
-        assert "https://example.com/ai" in result
-        assert "HN" in result
-        assert "Reddit" in result
-        assert "AI & LLM" in result
-        assert articles[0].summary in result
-
 
 class TestWriteDigestWithTopArticles:
     def test_with_top_articles_adds_section(self, tmp_path: Path) -> None:
         config = _make_config(output_dir=str(tmp_path))
         articles = [
-            _make_article_summary(title="Key Story", summary="Why architects care."),
+            _make_article_summary(title="Key Story", source="HN", summary="Why architects care."),
+            _make_article_summary(title="Second", source="Reddit"),
         ]
         result = write_digest(
             "# Overview",
@@ -179,6 +166,11 @@ class TestWriteDigestWithTopArticles:
         text = result.read_text(encoding="utf-8")
         assert "## Top Articles" in text
         assert "Key Story" in text
+        assert "Second" in text
+        assert "https://example.com/ai" in text
+        assert "HN" in text
+        assert "Reddit" in text
+        assert "AI & LLM" in text
         assert "Why architects care." in text
 
     def test_without_top_articles_no_section(self, tmp_path: Path) -> None:
@@ -225,8 +217,9 @@ def test_reading_appendix_preserves_original_qualifications_and_safe_fences(tmp_
     config.obsidian.output_dir = str(tmp_path)
     config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
     card = _make_article_summary(summary="Substantive brief. Only pilot clients; source conflict is unresolved.")
-    original = ("[S1] Original claim.\n```\n[S2] QUALIFICATION: only pilot clients.\n"
-                "[S3] Contradictory source statement.")
+    original = (
+        "[S1] Original claim.\n```\n[S2] QUALIFICATION: only pilot clients.\n[S3] Contradictory source statement."
+    )
     quotations = {article_hash(card.title, card.link): original}
     path = write_digest("Global status.", config, top_articles=[card], source_quotations=quotations)
     assert path is not None

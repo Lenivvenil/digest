@@ -16,11 +16,13 @@ from digest.irritator.query_generator import (
     _parse_queries,
     generate_queries,
 )
+from digest.llm import LLMRole
 from tests.factories import make_narrative
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_narrative(
     claim: str = "AI will replace all developers",
@@ -50,8 +52,10 @@ def _make_config(
 ) -> Any:
     class IrritatorCfg:
         pass
+
     class RadarCfg:
         pass
+
     class Cfg:
         irritator = IrritatorCfg()
         radar = RadarCfg()
@@ -65,6 +69,7 @@ def _make_config(
 # ---------------------------------------------------------------------------
 # _build_prompt tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildPrompt:
     def test_russian_prompt(self) -> None:
@@ -122,6 +127,7 @@ class TestBuildPrompt:
 # _parse_queries tests
 # ---------------------------------------------------------------------------
 
+
 class TestParseQueries:
     def test_valid_json(self) -> None:
         raw = _valid_query_dicts(3)
@@ -154,6 +160,7 @@ class TestParseQueries:
 # generate_queries (async) tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestGenerateQueries:
     async def test_success(self) -> None:
@@ -178,10 +185,14 @@ class TestGenerateQueries:
     async def test_multiple_narratives_parallel(self) -> None:
         execution = ModelExecution()
         dicts = _valid_query_dicts(2)
-        mock_complete = AsyncMock(side_effect=[
-            (json.dumps(dicts), {}), (json.dumps(dicts[:1]), {}),
-            ("[]", {}), RuntimeError("Provider failed"),
-        ])
+        mock_complete = AsyncMock(
+            side_effect=[
+                (json.dumps(dicts), {}),
+                (json.dumps(dicts[:1]), {}),
+                ("[]", {}),
+                RuntimeError("Provider failed"),
+            ]
+        )
 
         n1 = _make_narrative("Claim A")
         n2 = _make_narrative("Claim B")
@@ -217,18 +228,6 @@ class TestGenerateQueries:
         assert "private" not in caplog.text
         assert "credential" not in caplog.text
 
-    async def test_uses_correct_role(self) -> None:
-        execution = ModelExecution()
-        from digest.llm import LLMRole
-
-        dicts = _valid_query_dicts(1)
-        mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
-
-        with patch("digest.irritator.query_generator.complete", mock_complete):
-            await generate_queries([_make_narrative()], _make_config(), execution=execution)
-
-        assert mock_complete.call_args[0][0] == LLMRole.GENERATE_QUERIES
-
     async def test_all_fail_returns_empty(self) -> None:
         execution = ModelExecution()
         mock_complete = AsyncMock(side_effect=RuntimeError("All failed"))
@@ -261,6 +260,7 @@ class TestGenerateQueries:
             await generate_queries([narrative], _make_config(language="en"), execution=execution)
 
         call_args = mock_complete.call_args
+        assert call_args.args[0] == LLMRole.GENERATE_QUERIES
         messages = call_args[0][1]
         user_content = next(m["content"] for m in messages if m["role"] == "user")
         assert narrative.claim in user_content
