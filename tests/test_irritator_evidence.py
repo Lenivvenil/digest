@@ -363,20 +363,6 @@ async def test_invalid_ranking_marks_pipeline_incomplete_without_retry() -> None
     assert model.await_count == 3
 
 
-@pytest.mark.parametrize("relation", ["supports", "context", "insufficient"])
-def test_high_scoring_non_counter_relations_excluded(relation: str) -> None:
-    bundle = _bundle(fixture_config())
-    narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]
-    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
-    ranking = _ranking()
-    ranking["rankings"][0].update(relation=relation, score=10)
-    admission = _admit_ranking([signal], 1, 3, {})
-    response = _parse_rankings(json.dumps(ranking), admission, narrative)
-    assert response.ranked_signals == []
-    counts = ", ".join(f"{label}={int(label == relation)}" for label in ("supports", "context", "insufficient"))
-    assert response.limitations == [f"Ranking omitted non-counter signals: {counts}."]
-
-
 def test_mixed_relations_preserve_genuine_complication_and_exact_quote() -> None:
     bundle = _bundle(fixture_config())
     narrative = _parse_narrative(json.dumps(_narrative(bundle)), bundle)[0][0]

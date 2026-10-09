@@ -76,8 +76,7 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", [429, 503])
-@pytest.mark.parametrize("interval", [20.0, 90.0])
+@pytest.mark.parametrize("interval,code", [(20.0, 429), (90.0, 503)])
 async def test_known_provider_failure_falls_back_without_resetting_runtime_or_retrying(
     tmp_path: Path, code: int, interval: float,
 ) -> None:

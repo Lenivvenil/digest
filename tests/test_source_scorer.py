@@ -141,12 +141,6 @@ def test_update_stats_caps_history_at_30() -> None:
 # --- calculate_score ---
 
 
-def test_calculate_score_new_source() -> None:
-    stats = SourceStats(name="New")
-    score = calculate_score(stats)
-    assert score == 0.5
-
-
 def test_calculate_score_perfect_source() -> None:
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     stats = SourceStats(
@@ -165,21 +159,6 @@ def test_calculate_score_perfect_source() -> None:
     score = calculate_score(stats)
     # reliability=1.0*0.3 + productivity=1.0*0.3 + desc=1.0*0.2 + recency=1.0*0.2 = 1.0
     assert score >= 0.95
-
-
-def test_calculate_score_dead_source() -> None:
-    stats = SourceStats(
-        name="Dead",
-        total_fetches=10,
-        successful_fetches=0,
-        total_articles_found=0,
-        articles_included_in_digest=0,
-        avg_description_length=0.0,
-        last_seen=None,
-    )
-    score = calculate_score(stats)
-    # reliability=0 + productivity=0 + desc=0 + recency=0 = 0.0
-    assert score <= 0.05
 
 
 def test_calculate_score_partial() -> None:

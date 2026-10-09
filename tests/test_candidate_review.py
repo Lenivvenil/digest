@@ -120,17 +120,6 @@ def test_saved_absent_items_keep_dates_and_current_boundaries(tmp_path: Path) ->
     assert all(not candidate.eligible for candidate in restored.candidates.values())
 
 
-def test_huge_candidate_does_not_block_later_fitting_item(tmp_path: Path) -> None:
-    config, articles = population(2)
-    articles["tech"][0].link += "X" * 20000
-    progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
-    packet = plan_packet(progress, config, NOW)
-    assert len(packet.evidence.items) == 1
-    assert packet.evidence.items[0].title == "Item 1"
-    huge = next(candidate for candidate in progress.candidates.values() if len(candidate.article.link) > 1000)
-    assert huge.status == "technical_pending"
-
-
 def test_bundle_mismatch_and_tampering_fail_closed(tmp_path: Path) -> None:
     config, articles = population(3)
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)

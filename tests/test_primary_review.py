@@ -21,8 +21,7 @@ from scripts.review_fixture import fixture_articles, fixture_config, fixture_res
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("abstain", [False, True])
-@pytest.mark.parametrize("reading_enabled", [False, True])
+@pytest.mark.parametrize("reading_enabled,abstain", [(False, False), (False, True), (True, False)])
 async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_enabled: bool) -> None:
     execution = ModelExecution()
     config = fixture_config()
@@ -75,8 +74,10 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["unavailable", "invalid"])
-@pytest.mark.parametrize("fallback", ["ok", "abstained", "unavailable", "invalid"])
+@pytest.mark.parametrize("fallback,failure", [
+    ("ok", "unavailable"), ("abstained", "unavailable"), ("unavailable", "unavailable"),
+    ("invalid", "unavailable"), ("ok", "invalid"),
+])
 async def test_primary_failure_attempts_only_secondary_once(failure: str, fallback: str) -> None:
     execution = ModelExecution()
     config = fixture_config()

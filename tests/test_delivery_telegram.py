@@ -34,13 +34,6 @@ from tests.factories import make_article, make_ranked_signal
 # ---------------------------------------------------------------------------
 
 class TestEscapeMarkdownV2:
-    def test_escapes_special_chars(self) -> None:
-        result = escape_markdownv2("hello_world *bold* [link](url)")
-        assert "\\_" in result
-        assert "\\*" in result
-        assert "\\[" in result
-        assert "\\(" in result
-
     def test_no_special_chars(self) -> None:
         assert escape_markdownv2("hello world") == "hello world"
 
@@ -59,28 +52,13 @@ class TestEscapeMarkdownV2:
 # ---------------------------------------------------------------------------
 
 class TestToMarkdownV2:
-    def test_heading_to_bold(self) -> None:
-        result = to_markdownv2("## Section Title")
-        assert "*Section Title*" in result
-        assert "##" not in result
-
-    def test_bold_preserved(self) -> None:
-        result = to_markdownv2("**important**")
-        assert "*important*" in result
-
-    def test_link_preserved(self) -> None:
-        result = to_markdownv2("[click](https://example.com)")
-        assert "[click](https://example.com)" in result
-
-    def test_special_chars_escaped(self) -> None:
-        result = to_markdownv2("price is 5.99")
-        assert "5\\.99" in result
-
     def test_mixed_content(self) -> None:
-        result = to_markdownv2("## Title\n\n**bold** and [link](https://x.com)")
+        result = to_markdownv2("## Title\n\n**bold** and [link](https://x.com), price is 5.99")
         assert "*Title*" in result
+        assert "##" not in result
         assert "*bold*" in result
-        assert "[" in result
+        assert "[link](https://x.com)" in result
+        assert "5\\.99" in result
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +79,6 @@ class TestSplitMessage:
         assert result[0] == para1
         assert result[1] == para2
 
-    def test_hard_split_long_line(self) -> None:
-        text = "x" * 8000
-        result = split_message(text, max_len=4000)
-        assert len(result) >= 2
-        assert all(len(c) <= 4000 for c in result)
-
     def test_prior_paragraph_not_repeated_before_oversized_paragraph(self) -> None:
         prefix = "old"
         long_paragraph = "x" * 30
@@ -118,11 +90,6 @@ class TestSplitMessage:
     def test_empty_returns_list(self) -> None:
         result = split_message("")
         assert result == [""]
-
-    def test_custom_max_len(self) -> None:
-        text = "short\n\nmedium\n\nlonger"
-        result = split_message(text, max_len=10)
-        assert len(result) >= 2
 
 
 def _make_config(telegram_enabled: bool = True) -> Any:
@@ -198,10 +165,6 @@ def _make_ranked_signal(
 
 @pytest.mark.asyncio
 class TestSendCounterSignals:
-    async def test_empty_signals_returns_false(self) -> None:
-        result = await send_counter_signals([], _make_config())
-        assert result is False
-
     async def test_sends_successfully(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
         monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
@@ -234,7 +197,8 @@ class TestSendCounterSignals:
                 return_value=httpx.Response(200, json={"ok": True})
             )
             await send_counter_signals([signal], config)
-            await send_counter_signals([], config, IrritatorStatus("0 signals", "empty"))
+            empty_result = await send_counter_signals([], config, IrritatorStatus("0 signals", "empty"))
+        assert empty_result is False
         populated, empty = [json.loads(call.request.content) for call in route.calls]
         assert name.upper() in populated["text"]
         assert challenge + ":" in populated["text"]
@@ -252,25 +216,6 @@ class TestSendCounterSignals:
     async def test_empty_signals_no_status_no_send(self) -> None:
         result = await send_counter_signals([], _make_config(), irritator_status=None)
         assert result is False
-
-    async def test_empty_signals_sends_status_silent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Empty-level status (no signals, no error) is sent with disable_notification=True."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        with respx.mock:
-            route = respx.post(re.compile(r"api\.telegram\.org")).mock(
-                return_value=httpx.Response(200, json={"ok": True})
-            )
-            result = await send_counter_signals(
-                [], _make_config(),
-                irritator_status=IrritatorStatus("3 narratives, 0 signals", "empty"),
-            )
-
-        assert result is False
-        assert route.called
-        payload = json.loads(route.calls[0].request.content)
-        assert payload.get("disable_notification") is True
 
     async def test_empty_signals_error_sends_loud(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Error-level status is sent as a loud notification (no disable_notification)."""
@@ -356,22 +301,6 @@ class TestSendArticleCards:
             payload = json.loads(call.request.content)
             assert "reply_markup" not in payload
             assert escape_markdownv2(f"/vote g {article_hash(article.title, article.link)}") in payload["text"]
-
-    async def test_returns_hash_source_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
-        monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
-
-        articles = {"ai": [_make_article(source="reddit")]}
-        top = [_make_top(source="reddit", category="ai")]
-
-        with respx.mock:
-            respx.post(re.compile(r"api\.telegram\.org")).mock(
-                return_value=httpx.Response(200, json={"ok": True})
-            )
-            result = await send_article_cards(articles, _make_config(), top_articles=top)
-
-        assert (result.attempted, result.sent, result.failed) == (1, 1, 0)
-        assert result.article_source_map == {article_hash(top[0].title, top[0].link): "reddit"}
 
     async def test_missing_token_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)

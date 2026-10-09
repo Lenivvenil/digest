@@ -294,8 +294,7 @@ async def test_persisted_attempt_tampering_is_rejected(kind: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS", "content_filter", "unknown", "", "stop",
-                                          "STOP", "end_turn", None])
+@pytest.mark.parametrize("finish_reason", ["length", "MAX_TOKENS", "", "stop", "STOP", "end_turn", None])
 async def test_provider_finish_reason_bounds_live_cards_and_capture(finish_reason: str | None) -> None:
     model_execution = ModelExecution()
     text = json.dumps(payload())

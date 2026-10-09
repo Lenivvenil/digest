@@ -119,6 +119,9 @@ def test_every_valid_returned_judgment_is_auditable(relation: str, score: int, d
     actual = _parse_rankings(response, admission, narrative)
     audit = actual.audit
     assert bool(actual.ranked_signals) == (disposition == "accepted")
+    if disposition == "non_counter":
+        counts = ", ".join(f"{label}={int(label == relation)}" for label in ("supports", "context", "insufficient"))
+        assert actual.limitations == [f"Ranking omitted non-counter signals: {counts}."]
     assert audit is not admission.audit and asdict(admission.audit) == pending
     assert audit.response_validated
     first, missing = audit.candidates

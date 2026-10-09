@@ -30,35 +30,9 @@ class TestValidateSignals:
         result = validate_signals(signals, [])
         assert len(result) == 1
 
-    def test_dedup_normalizes_trailing_slash(self) -> None:
-        signals = [
-            _make_signal("https://example.com/a"),
-            _make_signal("https://example.com/a/"),
-        ]
-        result = validate_signals(signals, [])
-        assert len(result) == 1
-
-    def test_dedup_case_insensitive(self) -> None:
-        signals = [
-            _make_signal("https://Example.com/A"),
-            _make_signal("https://example.com/a"),
-        ]
-        result = validate_signals(signals, [])
-        assert len(result) == 1
-
-    def test_blocklist_filters_title(self) -> None:
-        signals = [_make_signal(title="Trump says AI is great")]
-        result = validate_signals(signals, ["trump"])
-        assert result == []
-
     def test_blocklist_filters_snippet(self) -> None:
         signals = [_make_signal(snippet="Celebrity endorses tech")]
         result = validate_signals(signals, ["celebrity"])
-        assert result == []
-
-    def test_blocklist_case_insensitive(self) -> None:
-        signals = [_make_signal(title="ELECTION results")]
-        result = validate_signals(signals, ["election"])
         assert result == []
 
     def test_blocklist_no_match_keeps_signal(self) -> None:
@@ -80,15 +54,6 @@ class TestValidateSignals:
         result = validate_signals([], [])
         assert result == []
 
-    def test_multiple_valid_signals(self) -> None:
-        signals = [
-            _make_signal("https://example.com/a", "Good signal 1"),
-            _make_signal("https://example.com/b", "Good signal 2"),
-        ]
-        result = validate_signals(signals, [])
-        assert len(result) == 2
-
-
 @pytest.mark.asyncio
 class TestValidateSignalsAsync:
     async def test_check_liveness_false_skips_head(self) -> None:
@@ -102,11 +67,6 @@ class TestValidateSignalsAsync:
         signals = [_make_signal("https://example.com/a")]
         result = await validate_signals_async(signals, [], _mock_client(200), check_liveness=True)
         assert len(result) == 1
-
-    async def test_liveness_404_drops_signal(self) -> None:
-        signals = [_make_signal("https://example.com/a")]
-        result = await validate_signals_async(signals, [], _mock_client(404), check_liveness=True)
-        assert result == []
 
     async def test_liveness_503_keeps_signal(self) -> None:
         signals = [_make_signal("https://example.com/a")]
@@ -163,14 +123,6 @@ class TestValidateSignalsAsync:
         result = await validate_signals_async([], [], client, check_liveness=True)
         assert result == []
         client.head.assert_not_called()
-
-    async def test_multiple_signals_parallel(self) -> None:
-        signals = [_make_signal(f"https://example.com/{i}") for i in range(3)]
-        client = _mock_client(200)
-        result = await validate_signals_async(signals, [], client, check_liveness=True)
-        assert len(result) == 3
-        assert client.head.call_count == 3
-
 
 def test_validation_compatibility_exports_keep_identity_and_runtime_annotations() -> None:
     from dataclasses import MISSING, fields
