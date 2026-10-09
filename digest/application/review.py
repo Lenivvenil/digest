@@ -10,10 +10,10 @@ from typing import Any
 
 from digest.adapters.models.execution import ModelExecution
 from digest.adapters.models.review import groq_review_response_format
-from digest.application.review_request import build_evidence_bundle, build_review_messages
+from digest.application.review_request import build_evidence_bundle, build_review_messages, eligible_ids
 from digest.config import Config, ProviderConfig, ReviewModelConfig
 from digest.domain.catalog.articles import Article
-from digest.domain.editorial.attempts import ResolvedReview, ReviewAttempt, capture_closing, resolve_review
+from digest.domain.editorial.attempts import ResolvedReview, ReviewAttempt, capture_closing_selection, resolve_review
 from digest.domain.editorial.dispositions import capture_review_dispositions
 from digest.domain.editorial.reviews import (
     SCHEMA_VERSION,
@@ -73,10 +73,31 @@ async def _review_slot(
     closing_enabled = getattr(getattr(config, "closing", None), "enabled", False)
 
     def attempt() -> ReviewAttempt:
+        closing = None
+        if closing_enabled:
+            closing, selection = capture_closing_selection(
+                result,
+                text,
+                finish_reason,
+                bundle,
+                eligible=set(eligible_ids(bundle, config.closing, config.sources)),
+                max_detailed_selections=config.review.max_detailed_selections,
+            )
+            if selection is not None:
+                result.selections.append(selection)
+                if result.status == "abstained":
+                    result.status = "ok"
         return ReviewAttempt(
             result,
-            capture_review_dispositions(bundle, result, text, finish_reason=finish_reason),
-            capture_closing(result, text, finish_reason) if closing_enabled else None,
+            capture_review_dispositions(
+                bundle,
+                result,
+                text,
+                finish_reason=finish_reason,
+                derive_selected=closing_enabled,
+                rejected_optional_ids=closing.rejected_evidence_ids if closing is not None else (),
+            ),
+            closing,
         )
 
     options: dict[str, Any] = {}

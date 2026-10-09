@@ -2,6 +2,17 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Closing-enabled RSS reviews now request a complete optional v2 card separately
+  from professional selections, within the existing shared detail allowance
+  ([#127](https://github.com/Lenivvenil/digest/issues/127)). Selected dispositions
+  derive from validated cards; contradictory residuals remain unresolved. Invalid
+  optional output preserves main cards and fallback behavior. Disabled request
+  bytes and historical v1 records remain compatible; translation and publication
+  use the existing path without extra model calls or token allowances. See the
+  [contract amendment](docs/decisions/0014-optional-humane-closing-item.md#complete-optional-response-card--2026-10-09-amendment).
+  Synthetic coverage does not establish the remaining ordinary runtime editorial
+  acceptance or activate any source.
+
 - Ordinary Irritator query/search fan-out owns its payload and diagnostic counts
   together (#204). This is a deliberate exported Python API break: `generate_queries`
   now returns `QueryBatch` (`.queries_by_narrative`, `.diagnostics`), and

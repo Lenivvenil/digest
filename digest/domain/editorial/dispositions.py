@@ -155,15 +155,26 @@ def validate_disposition_attempt(
 
 
 def _parse_dispositions(
-    text: str, known: set[str], selected: set[str], rejected: set[str],
+    text: str,
+    known: set[str],
+    selected: set[str],
+    rejected: set[str],
+    *,
+    derive_selected: bool = False,
 ) -> tuple[dict[str, CandidateDisposition], list[str]]:
+    parsed = (
+        {identity: CandidateDisposition(identity, "selected") for identity in selected - rejected}
+        if derive_selected
+        else {}
+    )
     raw = _extract_json(text)
     if not isinstance(raw, dict) or "dispositions" not in raw:
-        return {}, ["missing per-item dispositions (legacy response)"]
+        return parsed, [
+            "missing residual dispositions" if derive_selected else "missing per-item dispositions (legacy response)"
+        ]
     values = raw["dispositions"]
     if not isinstance(values, list) or len(values) > len(known):
         return {}, ["invalid disposition count"]
-    parsed: dict[str, CandidateDisposition] = {}
     seen: set[str] = set()
     invalid: set[str] = set()
     errors: list[str] = []
@@ -177,6 +188,8 @@ def _parse_dispositions(
                 seen.add(identity)
             if isinstance(identity, str) and identity in rejected:
                 raise ValueError("disposition evidence id has rejected selection output")
+            if derive_selected and isinstance(value, dict) and value.get("status") == "selected":
+                raise ValueError("selected disposition must be derived from a validated card")
             item = _entry(value, known, selected)
             parsed[item.evidence_id] = item
         except ValueError as exc:
@@ -197,15 +210,23 @@ def _parse_dispositions(
 
 
 def capture_review_dispositions(
-    bundle: EvidenceBundle, review: ModelReview, text: str | None,
-    *, finish_reason: str | None = None,
+    bundle: EvidenceBundle,
+    review: ModelReview,
+    text: str | None,
+    *,
+    finish_reason: str | None = None,
+    derive_selected: bool = False,
+    rejected_optional_ids: tuple[str, ...] = (),
 ) -> CandidateDispositionAttempt:
     """Capture only validated same-response decisions and exact provenance hashes."""
     known = {item.evidence_id for item in bundle.items}
     parsed: dict[str, CandidateDisposition] = {}
     errors: list[str] = []
-    if (review.bundle_id != bundle.bundle_id
-            or text is not None and hashlib.sha256(text.encode()).hexdigest() != review.response_sha256):
+    if (
+        review.bundle_id != bundle.bundle_id
+        or text is not None
+        and hashlib.sha256(text.encode()).hexdigest() != review.response_sha256
+    ):
         errors.append("disposition evidence or response binding mismatch")
     elif finish_reason is not None and finish_reason not in {"stop", "STOP", "end_turn"}:
         errors.append("provider reported unfinished response")
@@ -214,18 +235,34 @@ def capture_review_dispositions(
     else:
         try:
             parsed, errors = _parse_dispositions(
-                text, known, {item.evidence_id for item in review.selections},
-                {item.evidence_id for item in review.rejected_items if item.evidence_id in known},
+                text,
+                known,
+                {item.evidence_id for item in review.selections},
+                {item.evidence_id for item in review.rejected_items if item.evidence_id in known}
+                | set(rejected_optional_ids),
+                derive_selected=derive_selected,
             )
         except (ValueError, TypeError, KeyError):
             errors.append("invalid disposition envelope")
+    if rejected_optional_ids:
+        errors.append("optional closing selection invalid")
     if review.status == "partial":
         errors.append("selection response partially invalid")
-    unresolved = tuple(item.evidence_id for item in bundle.items
-                       if item.evidence_id not in parsed or parsed[item.evidence_id].status == "deferred")
+    unresolved = tuple(
+        item.evidence_id
+        for item in bundle.items
+        if item.evidence_id not in parsed or parsed[item.evidence_id].status == "deferred"
+    )
     return CandidateDispositionAttempt(
-        review.slot, review.provider, review.model, bundle.bundle_id, review.prompt_hash, review.response_sha256,
+        review.slot,
+        review.provider,
+        review.model,
+        bundle.bundle_id,
+        review.prompt_hash,
+        review.response_sha256,
         "incomplete" if unresolved or errors else "complete",
         tuple(parsed[item.evidence_id] for item in bundle.items if item.evidence_id in parsed),
-        unresolved, tuple(errors), finish_reason,
+        unresolved,
+        tuple(errors),
+        finish_reason,
     )
