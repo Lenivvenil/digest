@@ -15,9 +15,8 @@ from typing import Any, Literal
 import feedparser
 import httpx
 
-from digest._dns_pinning import pin_dns as _pin_dns
-from digest._dns_pinning import validate_url as _validate_url
 from digest._util import atomic_json_write
+from digest.adapters.http.public_fetch import PublicResponse, UnsafePublicURL, fetch_public
 from digest.config import Config
 from digest.domain.catalog.articles import Article as Article
 from digest.domain.catalog.articles import article_hash as article_hash
@@ -34,6 +33,8 @@ class AllFeedsFailedError(RuntimeError):
 
 
 FEED_TIMEOUT = 15.0
+MAX_FEED_BYTES = 2 * 1024 * 1024
+MAX_FEED_REDIRECTS = 3
 USER_AGENT = "DailyDigestBot/1.0 (https://github.com/lenivvenil/digest)"
 CACHE_MAX_AGE_DAYS = 7
 CACHE_MAX_ENTRIES = 5000
@@ -232,7 +233,7 @@ _MAX_RETRY_AFTER_SECS = 300
 
 
 async def _fetch_feed(
-    client: httpx.AsyncClient, source: SourceConfig,
+    source: SourceConfig,
     *, outcome: SourceCollectionOutcome | None = None,
 ) -> list[Article] | None:
     """Fetch and parse a single RSS/Atom feed.
@@ -243,24 +244,22 @@ async def _fetch_feed(
     _MAX_RETRY_AFTER_SECS) and retries once; if the requested wait exceeds
     the maximum, the source is skipped for this run.
     """
-    validated = _validate_url(source.url)
-    if validated is None:
-        logger.warning(
-            "Skipping feed '%s': URL '%s' failed SSRF validation "
-            "(non-global or otherwise unsafe address)",
-            source.name,
-            source.url,
-        )
-        return None
-
-    response: httpx.Response | None = None
+    response: PublicResponse | None = None
     for attempt in range(2):
         try:
-            with _pin_dns(validated.hostname, validated.pinned_addrinfos):
-                response = await client.get(source.url, timeout=FEED_TIMEOUT)
+            response = await fetch_public(
+                source.url, timeout=FEED_TIMEOUT, max_bytes=MAX_FEED_BYTES,
+                max_redirects=MAX_FEED_REDIRECTS, headers={"User-Agent": USER_AGENT},
+            )
             response.raise_for_status()
             break
-        except httpx.TimeoutException:
+        except UnsafePublicURL:
+            logger.warning(
+                "Skipping feed '%s': URL '%s' failed public-address safety validation",
+                source.name, source.url,
+            )
+            return None
+        except (TimeoutError, httpx.TimeoutException):
             if attempt == 0:
                 logger.info("Timeout fetching '%s', retrying...", source.name)
                 await asyncio.sleep(2)
@@ -469,18 +468,16 @@ async def collect(
             for s in config.enabled_sources
         ]
 
-    headers = {"User-Agent": USER_AGENT}
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
-        sem = asyncio.Semaphore(20)
+    sem = asyncio.Semaphore(20)
 
-        async def _limited(index: int, src: SourceConfig) -> list[Article] | None:
-            async with sem:
-                if inventory is not None:
-                    return await _fetch_feed(client, src, outcome=inventory.sources[index])
-                return await _fetch_feed(client, src)
+    async def _limited(index: int, src: SourceConfig) -> list[Article] | None:
+        async with sem:
+            if inventory is not None:
+                return await _fetch_feed(src, outcome=inventory.sources[index])
+            return await _fetch_feed(src)
 
-        tasks = [_limited(index, source) for index, source in enumerate(config.enabled_sources)]
-        results = await asyncio.gather(*tasks)
+    tasks = [_limited(index, source) for index, source in enumerate(config.enabled_sources)]
+    results = await asyncio.gather(*tasks)
 
     if inventory is not None:
         _capture_candidates(inventory, config.enabled_sources, results, cache, now, blocklist, effective_priorities)

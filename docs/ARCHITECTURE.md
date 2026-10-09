@@ -598,19 +598,43 @@ RSS review. Their invariants are not silently unified by this layout.
 
 ## Security
 
-[`radar/collector.py`](../digest/radar/collector.py) validates the initial configured
-feed URL and pins that hostname's resolved addresses. Its HTTP client follows redirects
-automatically; a redirect to another hostname uses ordinary DNS resolution without
-that initial URL validation/pinning guard. [`discovery_feed.py`](../digest/discovery_feed.py)
-and optional article acquisition in [`article_source.py`](../digest/article_source.py)
-instead follow bounded redirects explicitly and validate/pin each requested hop,
-rejecting non-global destinations. These are distinct acquisition boundaries, not a
-universal outbound-HTTP guarantee. The fixed-endpoint Hacker News, Reddit and arXiv
-[search clients](../digest/irritator/sources/) use their own HTTP requests; optional
-signal URL liveness checks are separate in
-[`application/signal_validation.py`](../digest/application/signal_validation.py) and
-[`adapters/http/signal_liveness.py`](../digest/adapters/http/signal_liveness.py);
-`irritator/validator.py` preserves compatibility imports.
+The small [public-fetch operation](../digest/adapters/http/public_fetch.py) owns
+untrusted feed, discovery, article and optional signal-liveness acquisition (#218).
+Collector and CLI probes use the same operation. Every requested hop rejects unsafe
+syntax and every DNS address must be global, non-multicast, non-reserved and not IPv6
+site-local. Reserved IPv6 translation prefixes are deliberately excluded. Connections
+use a validated IP with the logical origin's HTTP Host and TLS SNI/certificate hostname;
+default certificate verification stays enabled. Fresh clients for each address/hop
+avoid cross-origin pooling. There is no process-global DNS override or ambient proxy.
+
+GET has at most three redirects and separate 2 MiB raw/decoded caps. One total fetch
+budget includes DNS awaits, address attempts, redirects and body consumption: 15 seconds
+for collector/probes/discovery and 20 seconds for articles. TCP and TLS establishment each have
+at most three seconds (roughly six combined); another validated address is attempted
+only if total time remains. Slow DNS can leave no fallback opportunity. Read/status
+failures do not trigger address fallback. Collector alone retains its existing second
+attempt and bounded backoff, so its whole-source envelope can exceed 15 seconds.
+Discovery and article retain their existing outer budgets across fetching and parsing.
+Await timeouts cannot stop an OS resolver or parser worker already running; bounded
+synchronous decoding/article extraction is checked on return, not preempted mid-call.
+
+Identity, gzip/x-gzip and zlib/raw deflate are supported with bounded decompression.
+Unsupported/chained encodings, concatenated compressed members, truncated bodies and
+invalid/oversized Content-Length fail technically, without returning partial evidence.
+HTTPX may read ahead one bounded raw chunk before the accumulator rejects overflow.
+Error statuses and HEAD never consume response bodies. Liveness performs one public-only
+HEAD without redirects, drops 404/410 and failed acquisition, and retains other statuses.
+Article-specific standard-port, URL-length, content-type and completeness policies stay
+in the article caller; feed parsing remains separate. Logical source/final URLs are
+preserved rather than replaced with connection IPs.
+
+These deliberate acquisition restrictions and fresh-connection costs are recorded in
+[ADR0026](decisions/0026-public-acquisition-boundary.md). No persistence, editorial,
+CLI or delivery contract changes. This is not a universal outbound-HTTP guarantee:
+fixed-endpoint Hacker News, Reddit, arXiv and other [search clients](../digest/irritator/sources/)
+keep their own HTTP policies. Boundary tests use synthetic DNS/transports and the real
+HTTPX/httpcore request path, including original-host TLS verification configuration;
+they are not evidence of live exploit testing or publisher availability.
 
 All Telegram adapters use the small [diagnostic boundary](../digest/adapters/telegram/diagnostics.py)
 for HTTP requests and safe status errors (#219). It adds no retry, receipt or result

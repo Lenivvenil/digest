@@ -1,4 +1,4 @@
-"""Sequential SSRF-safe acquisition of complete normalized public article text.
+"""SSRF-safe acquisition of complete normalized public article text.
 
 Technical limits hold work incomplete; they never judge editorial relevance.
 No text windows, model calls, file writes, article-count quotas or age-out rules.
@@ -12,11 +12,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urldefrag, urlparse
 
-import httpx
-
-from digest._dns_pinning import pin_dns, validate_url
+from digest.adapters.http.public_fetch import PublicFetchError, fetch_public
 from digest.radar.collector import USER_AGENT
 
 MAX_HTML_BYTES = 2 * 1024 * 1024
@@ -31,18 +29,9 @@ _SKIP_TAGS = {"script", "style", "nav", "footer", "header", "aside", "form", "bu
               "input", "select", "textarea", "svg", "canvas", "video", "audio", "object", "embed"}
 _SKIP_NAMES = {"navigation", "navbar", "menu", "comments", "comment", "related", "newsletter", "cookie",
                "cookies", "consent", "share", "social", "advertisement", "advertisements", "breadcrumb", "breadcrumbs"}
-_FETCH_LOCK: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 # Exact React queued-boundary bootstrap bytes, excluding its terminal literal call.
 # Unknown framework versions remain incomplete rather than being interpreted as JS.
 _REACT_STREAM_BOOTSTRAP_HASHES = frozenset({"7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646"})
-
-
-def _sequential_lock() -> asyncio.Lock:
-    global _FETCH_LOCK
-    loop = asyncio.get_running_loop()
-    if _FETCH_LOCK is None or _FETCH_LOCK[0] is not loop:
-        _FETCH_LOCK = (loop, asyncio.Lock())
-    return _FETCH_LOCK[1]
 
 
 @dataclass
@@ -515,62 +504,36 @@ def _url_syntax(url: str) -> str:
     return urldefrag(url)[0]
 
 
-async def _fetch_with_client(client: httpx.AsyncClient, url: str) -> FetchedArticle:
-    current = _url_syntax(url)
-    async with asyncio.timeout(FETCH_SECONDS):
-        for redirects in range(MAX_REDIRECTS + 1):
-            validated = await asyncio.to_thread(validate_url, current)
-            if validated is None:
-                raise ValueError("unsafe_url")
-            with pin_dns(validated.hostname, validated.pinned_addrinfos):
-                async with client.stream("GET", current, follow_redirects=False, timeout=FETCH_SECONDS) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        target = response.headers.get("location")
-                        if not target or redirects == MAX_REDIRECTS:
-                            raise ValueError("redirect_limit_or_missing_target")
-                        current = _url_syntax(urljoin(current, target))
-                        continue
-                    response.raise_for_status()
-                    if response.status_code != 200 or "content-range" in response.headers:
-                        raise ValueError("partial_or_nonarticle_response")
-                    media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                    if media_type not in {"text/html", "application/xhtml+xml"}:
-                        raise ValueError("unsupported_content_type")
-                    declared_size = response.headers.get("content-length")
-                    if declared_size is not None and (
-                        not declared_size.isdigit() or int(declared_size) > MAX_HTML_BYTES
-                    ):
-                        raise ValueError("oversized_or_invalid_content_length")
-                    chunks: list[bytes] = []
-                    size = 0
-                    async for chunk in response.aiter_bytes():
-                        size += len(chunk)
-                        if size > MAX_HTML_BYTES:
-                            raise ValueError("oversized_html")
-                        chunks.append(chunk)
-                    if (declared_size is not None and not response.headers.get("content-encoding")
-                            and size != int(declared_size)):
-                        raise ValueError("clipped_http_body")
-                    html = b"".join(chunks).decode(response.encoding or "utf-8", errors="strict")
-                    extracted = extract_html(html)
-                    return FetchedArticle(
-                        extracted.text, str(response.url), _now().isoformat(), extracted.source_published,
-                        extracted.extraction_status, extracted.coverage_notes,
-                    )
-    raise ValueError("redirect_limit_or_missing_target")
-
-
-
 async def fetch_article(url: str) -> FetchedArticle:
-    """Fetch one article. Failed or ambiguous acquisition raises a technical error.
+    """Fetch one complete article within one acquisition and extraction budget.
 
-    The process-wide sequential lock protects the existing DNS-pinning helper.
-    Queue execution limits belong to the caller, independently of body length.
+    Requests do not share clients or mutate process DNS, so callers may overlap.
+    Synchronous extraction cannot be preempted, but its elapsed time is checked.
     """
-    async with _sequential_lock(), httpx.AsyncClient(
-        follow_redirects=False, trust_env=False, timeout=FETCH_SECONDS,
-        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-        headers={"User-Agent": USER_AGENT, "Accept": "text/html, application/xhtml+xml",
-                 "Accept-Encoding": "identity"},
-    ) as client:
-        return await _fetch_with_client(client, url)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + FETCH_SECONDS
+    async with asyncio.timeout(FETCH_SECONDS):
+        try:
+            response = await fetch_public(
+                url, timeout=FETCH_SECONDS, max_bytes=MAX_HTML_BYTES,
+                max_redirects=MAX_REDIRECTS, validate_hop=_url_syntax,
+                headers={"User-Agent": USER_AGENT, "Accept": "text/html, application/xhtml+xml"},
+            )
+        except PublicFetchError as exc:
+            if str(exc) == "oversized_body":
+                raise ValueError("oversized_html") from exc
+            raise
+        response.raise_for_status()
+        if response.status_code != 200 or "content-range" in response.headers:
+            raise ValueError("partial_or_nonarticle_response")
+        media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type not in {"text/html", "application/xhtml+xml"}:
+            raise ValueError("unsupported_content_type")
+        html = response.content.decode(response.encoding, errors="strict")
+        extracted = extract_html(html)
+        if loop.time() >= deadline:
+            raise TimeoutError("Article acquisition and extraction timed out.")
+        return FetchedArticle(
+            extracted.text, response.url, _now().isoformat(), extracted.source_published,
+            extracted.extraction_status, extracted.coverage_notes,
+        )

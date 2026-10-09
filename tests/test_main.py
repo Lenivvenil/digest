@@ -210,35 +210,22 @@ class TestCleanSummary:
 @pytest.mark.asyncio
 class TestCheckConfig:
     async def test_valid_config(self) -> None:
-        cfg = _mock_config()
-        # Patch feed probing to return OK for all sources
-        mock_client = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.text = "<rss><channel><item><title>A</title></item></channel></rss>"
-        mock_response.raise_for_status = lambda: None
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        import httpx
 
+        from digest.adapters.http.public_fetch import PublicResponse
+
+        response = PublicResponse(
+            "https://example.com/feed", 200, httpx.Headers(),
+            b"<rss><channel><item><title>A</title></item></channel></rss>", "utf-8",
+        )
         with (
-            patch("digest.config.load_config", return_value=cfg),
-            patch("httpx.AsyncClient", return_value=mock_client),
-            patch(
-                "digest._dns_pinning.validate_url",
-                return_value=type(
-                    "V",
-                    (),
-                    {
-                        "hostname": "example.com",
-                        "pinned_addrinfos": [],
-                        "url": "https://example.com/feed",
-                    },
-                )(),
-            ),
-            patch("digest._dns_pinning.pin_dns", MagicMock()),
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(return_value=response)) as fetch,
         ):
             result = await check_config("config.yaml")
         assert result == 0
+        assert all(call.kwargs == {"timeout": 15.0, "max_bytes": 2 * 1024 * 1024, "max_redirects": 3}
+                   for call in fetch.await_args_list)
 
     async def test_invalid_config(self) -> None:
         with patch("digest.config.load_config", side_effect=FileNotFoundError("nope")):
@@ -246,38 +233,66 @@ class TestCheckConfig:
         assert result == 1
 
     async def test_warns_missing_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        from digest.adapters.http.public_fetch import PublicResponse
+
         cfg = _mock_config()
         cfg.telegram.enabled = True
         monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
         monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-
-        mock_client = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.text = "<rss><channel></channel></rss>"
-        mock_response.raise_for_status = lambda: None
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
-
+        response = PublicResponse(
+            "https://example.com/feed", 200, httpx.Headers(), b"<rss><channel></channel></rss>", "utf-8",
+        )
         with (
             patch("digest.config.load_config", return_value=cfg),
-            patch("httpx.AsyncClient", return_value=mock_client),
-            patch(
-                "digest._dns_pinning.validate_url",
-                return_value=type(
-                    "V",
-                    (),
-                    {
-                        "hostname": "example.com",
-                        "pinned_addrinfos": [],
-                        "url": "https://example.com/feed",
-                    },
-                )(),
-            ),
-            patch("digest._dns_pinning.pin_dns", MagicMock()),
+            patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(return_value=response)),
         ):
             result = await check_config("config.yaml")
         assert result == 0
+
+    async def test_unsafe_url_is_blocked(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from digest.adapters.http.public_fetch import UnsafePublicURL
+
+        with (
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(side_effect=UnsafePublicURL())),
+        ):
+            assert await check_config("config.yaml") == 1
+        assert "[BLOCKED]" in capsys.readouterr().out
+
+    async def test_deadline_is_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with (
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(side_effect=TimeoutError)),
+        ):
+            assert await check_config("config.yaml") == 1
+        output = capsys.readouterr().out
+        assert "[FAIL  ]" in output and "timeout" in output
+
+    async def test_body_failure_is_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from digest.adapters.http.public_fetch import PublicFetchError
+
+        with (
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.adapters.http.public_fetch.fetch_public",
+                  AsyncMock(side_effect=PublicFetchError("oversized_body"))),
+        ):
+            assert await check_config("config.yaml") == 1
+        assert "oversized_body" in capsys.readouterr().out
+
+    async def test_parser_failure_is_warning(self, capsys: pytest.CaptureFixture[str]) -> None:
+        import httpx
+
+        from digest.adapters.http.public_fetch import PublicResponse
+
+        response = PublicResponse("https://example.com/feed", 200, httpx.Headers(), b"<not xml", "utf-8")
+        with (
+            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(return_value=response)),
+        ):
+            assert await check_config("config.yaml") == 0
+        assert "[WARN  ]" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

@@ -42,12 +42,15 @@ def mock_http(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any], list[httpx.Req
 
         async def dispatch(request: httpx.Request) -> httpx.Response:
             requests.append(request)
-            # Every request, including a redirect, must occur while its DNS is pinned.
-            infos = socket.getaddrinfo(request.url.raw_host, 443)
-            assert infos[0][4] == (PUBLIC_IP, 443)
+            # The connection URL is the validated address; origin routing stays logical.
+            assert request.url.host == PUBLIC_IP
+            assert request.extensions["sni_hostname"] == request.headers["host"]
             result = handler(request)
             if asyncio.iscoroutine(result):
-                return await result  # type: ignore[no-any-return]
+                result = await result
+            if result.is_stream_consumed:
+                result = httpx.Response(result.status_code, headers=result.headers,
+                                        stream=httpx.ByteStream(result.content))
             return result  # type: ignore[no-any-return]
 
         def client(**kwargs: Any) -> httpx.AsyncClient:
@@ -67,7 +70,7 @@ async def test_valid_empty_feeds_preserve_url_identity(mock_http: Any, body: byt
     url = "https://example.com/Feed/?category=A&token=x%2Fy&category=B"
     requests = mock_http(lambda _: httpx.Response(200, content=body))
     assert await validate_feed_url(url) == url
-    assert str(requests[0].url) == url
+    assert str(requests[0].url.copy_with(host="example.com")) == url
 
 
 @pytest.mark.parametrize(
@@ -94,7 +97,7 @@ async def test_html_media_type_is_rejected(mock_http: Any) -> None:
         await validate_feed_url("https://example.com/feed")
 
 
-async def test_redirects_revalidate_and_pin_each_hop(mock_http: Any, mock_dns: Mock) -> None:
+async def test_redirects_revalidate_and_address_each_hop(mock_http: Any, mock_dns: Mock) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/start":
             return httpx.Response(301, headers={"Location": "/next"})
@@ -115,7 +118,7 @@ async def test_redirects_revalidate_and_pin_each_hop(mock_http: Any, mock_dns: M
 async def test_idn_uses_the_same_hostname_for_validation_and_fetch(mock_http: Any, mock_dns: Mock) -> None:
     requests = mock_http(lambda _: httpx.Response(200, content=RSS))
     assert await validate_feed_url("https://faß.example/Feed/") == "https://xn--fa-hia.example/Feed/"
-    assert mock_dns.call_args.args[0] == requests[0].url.raw_host.decode("ascii") == "xn--fa-hia.example"
+    assert mock_dns.call_args.args[0] == requests[0].headers["host"] == "xn--fa-hia.example"
 
 
 @pytest.mark.parametrize(
@@ -200,7 +203,7 @@ class ChunkStream(httpx.AsyncByteStream):
 
 
 async def test_stream_size_limit_stops_reading_and_closes_response(mock_http: Any) -> None:
-    stream = ChunkStream([b"x" * discovery_feed.MAX_FEED_BYTES, b"x", b"never read"])
+    stream = ChunkStream([b"x" * discovery_feed.MAX_FEED_BYTES, b"x" * 65536, b"never read"])
     mock_http(lambda _: httpx.Response(200, stream=stream))
     with pytest.raises(FeedValidationError, match="2 MiB"):
         await validate_feed_url("https://example.com/feed")
@@ -213,7 +216,7 @@ async def test_exact_size_limit_is_allowed(mock_http: Any) -> None:
     url = "https://example.com/Feed/?category=A&token=x%2Fy&category=B"
     requests = mock_http(lambda _: httpx.Response(200, stream=ChunkStream([raw])))
     assert await validate_feed_url(url) == url
-    assert str(requests[0].url) == url
+    assert str(requests[0].url.copy_with(host="example.com")) == url
 
 
 @pytest.mark.parametrize("status", [403, 429, 503])
@@ -248,10 +251,10 @@ async def test_aggregate_deadline_includes_dns(mock_http: Any, monkeypatch: pyte
     monkeypatch.setattr(discovery_feed, "FEED_VALIDATION_SECONDS", 0.01)
     release = threading.Event()
 
-    def slow_dns(_: str) -> None:
+    def slow_dns(*_args: Any, **_kwargs: Any) -> None:
         release.wait(timeout=1)
 
-    monkeypatch.setattr(discovery_feed, "validate_url", slow_dns)
+    monkeypatch.setattr(socket, "getaddrinfo", slow_dns)
     requests = mock_http(lambda _: pytest.fail("Timed-out DNS must not be followed by HTTP"))
     try:
         with pytest.raises(FeedValidationTimeout):
@@ -275,3 +278,32 @@ async def test_aggregate_deadline_covers_the_whole_redirect_chain(
     with pytest.raises(FeedValidationTimeout):
         await validate_feed_url("https://example.com/0")
     assert len(requests) < 4
+
+
+async def test_aggregate_deadline_also_bounds_parser_thread(
+    mock_http: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discovery_feed, "FEED_VALIDATION_SECONDS", 0.05)
+    mock_http(lambda _: httpx.Response(200, content=RSS))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_parse(_: bytes) -> None:
+        entered.set()
+        release.wait(timeout=1)
+
+    monkeypatch.setattr(discovery_feed, "_check_feed_bytes", slow_parse)
+    try:
+        with pytest.raises(FeedValidationTimeout):
+            await validate_feed_url("https://example.com/feed")
+        assert entered.is_set()
+    finally:
+        release.set()
+
+
+async def test_invalid_content_encoding_has_a_technical_feed_error(mock_http: Any) -> None:
+    mock_http(lambda _: httpx.Response(
+        200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"invalid compressed body"),
+    ))
+    with pytest.raises(FeedValidationError, match="invalid or incomplete content encoding"):
+        await validate_feed_url("https://example.com/feed")

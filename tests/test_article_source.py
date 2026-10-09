@@ -8,7 +8,7 @@ import socket
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -50,10 +50,20 @@ def _offline_dns(monkeypatch: pytest.MonkeyPatch) -> None:
 @contextmanager
 def _http(handler: Any) -> Any:
     real_client = httpx.AsyncClient
+
+    async def dispatch(request: httpx.Request) -> httpx.Response:
+        result = handler(request)
+        if asyncio.iscoroutine(result):
+            result = await result
+        if result.is_stream_consumed:
+            result = httpx.Response(result.status_code, headers=result.headers,
+                                    stream=httpx.ByteStream(result.content))
+        return result
+
     with patch(
-        "digest.article_source.httpx.AsyncClient",
+        "digest.adapters.http.public_fetch.httpx.AsyncClient",
         side_effect=lambda **kwargs: real_client(
-            transport=httpx.MockTransport(handler),
+            transport=httpx.MockTransport(dispatch),
             **kwargs,
         ),
     ) as factory:
@@ -179,7 +189,7 @@ async def test_unsafe_url_is_rejected_before_http(url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_every_redirect_is_revalidated_and_pinned_dns_is_used() -> None:
+async def test_every_redirect_is_revalidated_and_addressed_directly() -> None:
     calls = []
     dns_calls = []
 
@@ -189,7 +199,9 @@ async def test_every_redirect_is_revalidated_and_pinned_dns_is_used() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        assert socket.getaddrinfo(request.url.host, 443)[0][4] == ("93.184.216.34", 443)
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] in {"public.example", "second.example"}
+        assert request.extensions["sni_hostname"] == request.headers["host"]
         if len(calls) == 1:
             return httpx.Response(302, headers={"location": "https://second.example/final"})
         return _response()
@@ -252,7 +264,7 @@ async def test_technical_response_limits_never_return_a_partial_body(kind: str) 
 
 
 @pytest.mark.asyncio
-async def test_public_fetches_are_sequential_even_when_called_concurrently() -> None:
+async def test_public_fetches_can_overlap_without_mutating_dns() -> None:
     active = maximum = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -265,7 +277,7 @@ async def test_public_fetches_are_sequential_even_when_called_concurrently() -> 
 
     with _http(handler):
         results = await asyncio.gather(*(fetch_article(f"https://public.example/{index}") for index in range(8)))
-    assert len(results) == 8 and maximum == 1
+    assert len(results) == 8 and maximum > 1
 
 
 @pytest.mark.asyncio
@@ -515,4 +527,70 @@ async def test_mixed_public_private_dns_answers_are_rejected_without_request() -
         patch("socket.getaddrinfo", return_value=addresses),
     ):
         with pytest.raises(ValueError, match="unsafe_url"):
+            await fetch_article("https://public.example/article")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["https://second.example:8443/final", "https://second.example/" + "a" * 2048])
+async def test_redirect_keeps_article_specific_url_policy(target: str) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"location": target})
+
+    with _http(handler):
+        with pytest.raises(ValueError, match="unsafe_url"):
+            await fetch_article("https://public.example/start")
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_article_fragment_is_removed_from_request_and_provenance() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _response()
+
+    with _http(handler):
+        result = await fetch_article("https://public.example/article#section")
+    assert result.final_url == "https://public.example/article"
+    assert requests[0].url.fragment == ""
+
+
+@pytest.mark.asyncio
+async def test_synchronous_extraction_elapsed_time_is_checked_before_return() -> None:
+    import time
+
+    from digest.adapters.http.public_fetch import PublicResponse
+
+    def slow_extract(html: str) -> Any:
+        result = extract_html(html)
+        time.sleep(0.03)
+        return result
+
+    response = PublicResponse(
+        "https://public.example/article", 200, httpx.Headers({"content-type": "text/html"}),
+        _html().encode(), "utf-8",
+    )
+    with (
+        patch("digest.article_source.fetch_public", AsyncMock(return_value=response)),
+        patch("digest.article_source.FETCH_SECONDS", 0.02),
+        patch("digest.article_source.extract_html", side_effect=slow_extract),
+    ):
+        with pytest.raises(TimeoutError, match="extraction timed out"):
+            await fetch_article("https://public.example/article")
+
+
+@pytest.mark.asyncio
+async def test_oversized_decoded_html_retains_article_failure_reason() -> None:
+    import gzip
+
+    compressed = gzip.compress(b"x" * (MAX_HTML_BYTES + 1))
+    with _http(lambda _: httpx.Response(
+        200, headers={"content-type": "text/html", "content-encoding": "gzip"},
+        stream=httpx.ByteStream(compressed),
+    )):
+        with pytest.raises(ValueError, match="oversized_html"):
             await fetch_article("https://public.example/article")
