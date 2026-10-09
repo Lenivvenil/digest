@@ -46,11 +46,11 @@ configured capacity, not actual evidence-character fit, provider completion or a
 guaranteed number of useful cards.
 
 The Groq GPT-OSS strict schema adds its closed `closing` property only while
-closing is enabled; the valid no-story value has `evidence_id: null`. Disabled
+closing is enabled; fresh v2 uses `selection: null` for no suitable story. Disabled
 mode retains the current three-field response schema and request behavior. Local
 ID, source eligibility, quote, detail-budget and unfinished-response checks remain.
 
-Add a versioned `closing` designation to the existing primary/fallback review
+The initial v1 contract added a versioned `closing` designation to the existing primary/fallback review
 response: `{"schema_version": 1, "evidence_id": "selected ID"}` or an ID of `null`.
 Only a normally validated selected ID already admitted to that bounded evidence
 packet can qualify. The existing reason and exact quote provide the content; no
@@ -62,6 +62,59 @@ abstention. A failed whole response remains a normal primary-review failure.
 Malformed, conflicting, missing or unsupported optional metadata preserves valid
 main selections. The designation always comes from the delivery-used slot;
 a failed primary cannot supply a fallback's closing story.
+
+### Complete optional response card — 2026-10-09 amendment
+
+An ID-only designation cannot publish a candidate whose detailed card was omitted
+or deferred after professional items exhausted the response allowance. Fresh
+closing-enabled requests now explicitly require contract v2:
+`{"schema_version": 2, "selection": CARD_OR_NULL}`. A card has the ordinary
+`evidence_id`, `reason`, exact `quote` and `confidence` fields. The professional
+cards remain in `selections`; the optional card is separate and source-eligible.
+
+The prompt exposes dynamic main publication capacity M (`max_main_selections`)
+and total detail capacity D (`max_detailed_selections`). At most D−1 professional
+details and one closer fit; null permits all D professional details. M is applied
+later to publication. The raw main-entry count consumes D even for rejected
+entries. A full main envelope retains its existing validation and fallback rules;
+an over-capacity, missing, malformed, wrong-version, unknown, ineligible,
+duplicate or ungrounded optional card only omits closing. Non-null invalid output
+is incomplete; explicit null means no suitable story. Empty main selections
+still require limitations. A valid optional card passes the same direct live item
+validator, including typography alignment and escaped-size checks, before it is
+appended after accepted main cards in the canonical review. Optional failure adds
+no main rejected item and does not trigger a fallback.
+
+Fresh v2 derives selected dispositions once from validated, unconflicted cards.
+The model supplies only residual `not_selected`, `deferred` or `duplicate` entries;
+the enabled strict Groq schema excludes the selected residual variant. A residual
+that contradicts a valid card leaves the card intact but its accounting unresolved.
+A known rejected optional ID cannot be terminally dismissed by another field;
+an independently valid main card with that ID remains valid. An unreadable
+optional identity or ambiguous duplicate JSON fields conservatively leave all
+remaining identities unresolved, while preserving independently valid main
+cards. Only the exact v2 null contract asserts no proposal. Missing residuals stay unresolved;
+duplicate retention requires a derived valid selected target, without chains.
+
+The changed enabled prompt hash excludes old exact-request reuse. Disabled
+prompt, request and schema bytes are unchanged. The internal closing capture
+carries contract version 2 into the existing provenance field; readers accept
+exact integer versions 1 and 2. Wire shapes for reports, packets, article cards,
+disposition records and the outer closing sidecar remain unchanged. Historical v1 raw
+responses, existing terminal sidecars and frozen editions are not reinterpreted
+or rewritten. Existing sole-card and missing-sidecar recovery can retain a valid
+humane card as an ordinary main card; this change does not promise stronger role
+isolation. Translation, attribution, final ordering and freezing use the existing
+path, with no extra requests, larger output-token allowance, provider changes or source activation.
+Synthetic tests establish mechanics; [#127](https://github.com/Lenivvenil/digest/issues/127)
+still requires ordinary runtime editorial acceptance of a suitable story.
+
+Rollback builds must retain the v2 closing-provenance reader while an accepted
+preparation containing a selected v2 closer remains unfinished. Older engines
+reject that snapshot; recover it with a compatible reader rather than clearing or
+rewriting retained work. Already frozen editions retain their existing payload
+and receipt path. Every sender and feedback poller must also retain
+[ADR0024](0024-full-article-vote-identity.md) ready-v2/full32 compatibility.
 
 <a id="bounded-closing-source-opportunity"></a>
 

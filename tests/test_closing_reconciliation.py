@@ -67,11 +67,16 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     if enabled:
         assert schema["properties"].pop("closing") == {
             "type": "object", "additionalProperties": False,
-            "required": ["schema_version", "evidence_id"],
-            "properties": {"schema_version": {"type": "integer", "enum": [1]},
-                           "evidence_id": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+            "required": ["schema_version", "selection"],
+            "properties": {"schema_version": {"type": "integer", "enum": [2]},
+                           "selection": {"anyOf": [schema["properties"]["selections"]["items"], {"type": "null"}]}},
         }
         schema["required"].remove("closing")
+        variants = schema["properties"]["dispositions"]["items"]["anyOf"]
+        assert [variant["properties"]["status"]["enum"] for variant in variants] == [
+            ["not_selected", "deferred"], ["duplicate"]]
+        variants.insert(0, groq_review_response_format()["json_schema"]["schema"]["properties"][
+            "dispositions"]["items"]["anyOf"][0])
     else:
         bundle = build_evidence_bundle(articles, config.review)
         assert request.args[1] == build_review_messages(bundle, config.review, "en", sources=config.sources)
@@ -95,9 +100,60 @@ async def test_live_review_keeps_detail_bound_with_either_closing_flag(
     monkeypatch.setattr("digest.application.review.complete", complete)
     result = await run_primary_review(articles, config, execution=model_execution)
     report = result.report
-    assert complete.await_count == 2
-    assert all(review.status == "invalid" and review.error == "invalid selection count"
-               and not review.selections for review in report.reviews)
+    if enabled:
+        assert complete.await_count == 1
+        assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 5
+        assert result.chosen.closing is not None and result.chosen.closing.status == "incomplete"
+        assert set(result.chosen.closing.rejected_evidence_ids) <= set(result.disposition_attempts[0].unresolved_ids)
+    else:
+        assert complete.await_count == 2
+        assert all(review.status == "invalid" and review.error == "invalid selection count"
+                   and not review.selections for review in report.reviews)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("main_cap,details,main_count,closer,rejected", [
+    (2, 5, 4, True, False), (5, 6, 6, False, False),
+    (5, 6, 6, True, False), (5, 6, 6, True, True), (5, 6, 5, True, True),
+])
+async def test_dynamic_shared_detail_capacity_counts_raw_rejected_main_entries(
+    monkeypatch: pytest.MonkeyPatch, main_cap: int, details: int, main_count: int, closer: bool, rejected: bool,
+) -> None:
+    config, articles = six_articles()
+    articles["Society"].append(replace(articles["Society"][0], title="Item 6", link="https://example.com/6"))
+    config.review.max_selections = main_cap
+    config.review.max_detailed_selections = details
+
+    async def complete(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
+        task = json.loads(messages[1]["content"])
+        assert (task["max_main_selections"], task["max_detailed_selections"]) == (main_cap, details)
+        raw = json.loads(response(messages, "missing"))
+        cards = raw["selections"]
+        raw["selections"] = cards[:main_count]
+        raw["closing"] = {"schema_version": 2, "selection": cards[-1] if closer else None}
+        raw["dispositions"] = [
+            {"evidence_id": card["evidence_id"], "status": "not_selected", "reason": "No useful development."}
+            for card in cards[main_count:] if not closer or card is not cards[-1]
+        ]
+        if rejected:
+            raw["selections"][0]["quote"] = "Invented source text"
+        return json.dumps(raw), {}
+
+    completion = AsyncMock(side_effect=complete)
+    monkeypatch.setattr("digest.application.review.complete", completion)
+    result = await run_primary_review(articles, config, execution=ModelExecution())
+    review, capture = result.chosen.review, result.chosen.closing
+    assert capture is not None
+    accepted_closer = closer and main_count < details
+    assert capture.status == ("selected" if accepted_closer else "incomplete" if closer else "unavailable")
+    assert review.status == ("partial" if rejected else "ok")
+    assert len(review.selections) == main_count - int(rejected) + int(accepted_closer)
+    assert len(review.rejected_items) == int(rejected)
+    assert review.selections[-1].evidence_id == (
+        result.report.evidence.items[-1 if accepted_closer else main_count - 1].evidence_id)
+    if closer and not accepted_closer:
+        assert result.report.evidence.items[-1].evidence_id in result.disposition_attempts[0].unresolved_ids
+    completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -155,7 +211,10 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     assert closing.card.link not in {card.link for card in main_cards}
     completion.assert_awaited_once()
     assert completion.call_args.kwargs["max_output_tokens"] == 4096
-    assert json.loads(completion.call_args.args[1][1]["content"])["max_detailed_selections"] == 6
+    task = json.loads(completion.call_args.args[1][1]["content"])
+    assert (task["max_main_selections"], task["max_detailed_selections"], task["closing_contract_version"]) == (5, 6, 2)
+    assert closing.provenance.contract_version == 2
+    assert reviewed.result.disposition_attempts[0].status == "complete"
     canonical = (asdict(report), [asdict(card) for card in main_cards], asdict(closing))
 
     async def translate(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
@@ -214,7 +273,8 @@ async def test_enabled_closing_preserves_technical_empty_status_and_complete_abs
     async def model(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
         if outcome == "truncated":
             return '{"selections":[', {"finish_reason": "length"}
-        raw = json.loads(response(messages, {"schema_version": 1, "evidence_id": None}))
+        raw = json.loads(response(messages, {"schema_version": 2, "selection": None}))
+        raw["dispositions"] = [{"evidence_id": item["evidence_id"]} for item in raw["selections"]]
         raw["selections"] = []
         raw["dispositions"] = [{**item, "status": "deferred" if outcome == "deferred" else "not_selected",
                                 "reason": "Offline fixture explanation"} for item in raw["dispositions"]]

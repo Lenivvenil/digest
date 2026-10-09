@@ -16,8 +16,10 @@ from digest._serialization import extract_json as _extract_json
 from digest.domain.editorial.dispositions import CandidateDispositionAttempt, validate_disposition_attempt
 from digest.domain.editorial.reviews import (
     BlindReviewReport,
+    EvidenceBundle,
     EvidenceSelection,
     ModelReview,
+    _parse_live_selection,
     validated_cached_selections,
 )
 
@@ -33,6 +35,8 @@ class ClosingAttempt:
     status: Literal["selected", "unavailable", "incomplete"]
     reason: str
     evidence_id: str | None = None
+    contract_version: int = 1
+    rejected_evidence_ids: tuple[str, ...] = ()
 
 
 def _unique_designation(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -45,6 +49,7 @@ def _unique_designation(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def capture_closing(review: ModelReview, text: str | None, finish_reason: str | None) -> ClosingAttempt:
+    """Historical v1 designation; fresh enabled requests explicitly use v2 below."""
     status: Literal["selected", "unavailable", "incomplete"] = "incomplete"
     reason, identity = "missing_or_invalid_closing_designation", None
     if (
@@ -87,6 +92,113 @@ def capture_closing(review: ModelReview, text: str | None, finish_reason: str | 
         reason,
         identity,
     )
+
+
+def capture_closing_selection(
+    review: ModelReview,
+    text: str | None,
+    finish_reason: str | None,
+    bundle: EvidenceBundle,
+    *,
+    eligible: set[str],
+    max_detailed_selections: int,
+) -> tuple[ClosingAttempt, EvidenceSelection | None]:
+    """Validate the fresh v2 optional card without changing the main review outcome.
+
+    Rejected optional identities are transient accounting evidence, never main
+    rejections. Main raw entries consume detail capacity even when rejected.
+    """
+    status: Literal["selected", "unavailable", "incomplete"] = "incomplete"
+    reason = "missing_or_invalid_closing_selection"
+    selection = None
+    rejected_ids: tuple[str, ...] = ()
+    if (
+        text is not None
+        and review.status in {"ok", "partial", "abstained"}
+        and hashlib.sha256(text.encode()).hexdigest() == review.response_sha256
+        and finish_reason in {None, "stop", "STOP", "end_turn"}
+    ):
+        try:
+            raw = _extract_json(text)
+            closing = raw.get("closing") if isinstance(raw, dict) else None
+            proposed = closing.get("selection") if isinstance(closing, dict) else None
+            identity = proposed.get("evidence_id") if isinstance(proposed, dict) else None
+            wrapper_identity = closing.get("evidence_id") if isinstance(closing, dict) else None
+            known = {item.evidence_id: item for item in bundle.items}
+            main_ids = {item.evidence_id for item in review.selections}
+            rejected_main = {item.evidence_id for item in review.rejected_items}
+            # Invalid old/mixed wrappers can still propose identities. These
+            # block terminal accounting only; they never supply a v2 card.
+            proposed_ids = {
+                value for value in (identity, wrapper_identity) if isinstance(value, str) and value in known
+            }
+            explicit_null = (
+                isinstance(closing, dict)
+                and set(closing) == {"schema_version", "selection"}
+                and type(closing["schema_version"]) is int
+                and closing["schema_version"] == 2
+                and proposed is None
+            )
+            untrusted_identity = (
+                proposed is not None
+                and (not isinstance(identity, str) or identity not in known)
+                or wrapper_identity is not None
+                and (not isinstance(wrapper_identity, str) or wrapper_identity not in known)
+            )
+            # An unreadable proposal cannot safely identify which residual
+            # candidate it concerns. Only the exact null contract asserts that
+            # no closing item was proposed.
+            rejected_ids = tuple(
+                item.evidence_id
+                for item in bundle.items
+                if (item.evidence_id in proposed_ids or untrusted_identity or not proposed_ids and not explicit_null)
+                and item.evidence_id not in main_ids - rejected_main
+            )
+            try:
+                unique, _ = json.JSONDecoder(object_pairs_hook=_unique_designation).raw_decode(text[text.index("{") :])
+            except ValueError:
+                # A last-wins decode cannot identify every conflicting optional
+                # proposal. Preserve main cards, but do not terminally dismiss
+                # any remaining candidate using this ambiguous envelope.
+                rejected_ids = tuple(
+                    item.evidence_id for item in bundle.items if item.evidence_id not in main_ids - rejected_main
+                )
+                raise
+            if raw != unique:
+                raise ValueError("Closing selection differs from the accepted review envelope.")
+            if (
+                not isinstance(closing, dict)
+                or set(closing) != {"schema_version", "selection"}
+                or type(closing["schema_version"]) is not int
+                or closing["schema_version"] != 2
+            ):
+                raise ValueError("Expected closing selection contract v2.")
+            if proposed is None:
+                status, reason = "unavailable", "no_suitable_item_in_packet"
+            elif len(raw["selections"]) >= min(len(bundle.items), max_detailed_selections):
+                raise ValueError("Closing selection exceeds the shared detail allowance.")
+            elif not isinstance(identity, str) or identity in main_ids | rejected_main:
+                raise ValueError("Closing selection must have its own unconflicted identity.")
+            elif identity not in eligible:
+                reason = "source_not_eligible_for_closing"
+            else:
+                selection = _parse_live_selection(proposed, known, review.limitations)
+                status, reason, rejected_ids = "selected", "same_response_selection", ()
+        except (ValueError, TypeError, KeyError):
+            pass
+    return ClosingAttempt(
+        review.slot,
+        review.provider,
+        review.model,
+        review.bundle_id,
+        review.prompt_hash,
+        review.response_sha256,
+        status,
+        reason,
+        selection.evidence_id if selection is not None else None,
+        2,
+        rejected_ids,
+    ), selection
 
 
 class HistoricalDispositions(Enum):

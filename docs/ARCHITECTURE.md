@@ -71,7 +71,9 @@ recoverable work or a hold, according to the boundary already crossed.
    Planning does not prove that a provider received a request.
 6. **Resolve the response, then accept projected cards.** One response-owned result
    binds the chosen primary/fallback review to its dispositions and optional closing
-   designation. Consumers do not independently reselect a review slot. The comparison
+   capture. Fresh enabled v2 validates a separate closing card through the same live
+   item owner, appends it after main cards, then derives selected dispositions and
+   validates residual accounting. Consumers do not independently reselect a review slot. The comparison
    report remains an audit artifact and can still be incomplete. Valid projected
    cards, including accepted partial results, can advance. A valid primary abstention requires resolved disposition
    evidence when recorded attempts carry it, as fresh candidate packets do. Older
@@ -100,7 +102,7 @@ the eligible subset.
 | --- | --- | --- |
 | `recover_preparation` | `ExistingEdition`, `AcceptedPreparation` or `FreshPreparation.REQUIRED` | Return an existing edition outcome, resume locally verified accepted content, or collect fresh work. `held` remains the inspector’s conservative summary, not a detailed receipt diagnosis. |
 | Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Ordinary candidate work carries progress, packet and one resolved review; category and empty outcomes remain separate. |
-| Editorial authority | `ReviewAttempt` → `ResolvedReview` | One response owns its review, dispositions and optional closing designation. The resolver chooses authority; the unchanged comparison report is its audit projection. |
+| Editorial authority | `ReviewAttempt` → `ResolvedReview` | One response owns its review, dispositions and optional closing capture. The resolver chooses authority; the unchanged comparison report is its audit projection. |
 | `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | One policy decides whether ordinary work is acceptable, saves it and verifies the exact restored snapshot before handoff. |
 | `assemble_publication` | `PublicationAssembly` | Resolve required provenance, present main content and decide whether the optional closer can accompany it. Final card order and existing metadata derive from this result. |
 | `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |

@@ -15,11 +15,13 @@ from digest.domain.editorial.reviews import SCHEMA_VERSION, EvidenceBundle
 
 
 def build_evidence_bundle(
-    articles_by_category: dict[str, list[Article]], settings: ReviewConfig,
+    articles_by_category: dict[str, list[Article]],
+    settings: ReviewConfig,
 ) -> EvidenceBundle:
     """Apply configured request limits to the deterministic evidence builder."""
     return _build_evidence_bundle(
-        articles_by_category, max_evidence_articles=settings.max_evidence_articles,
+        articles_by_category,
+        max_evidence_articles=settings.max_evidence_articles,
         max_excerpt_chars=settings.max_excerpt_chars,
     )
 
@@ -44,7 +46,8 @@ def _configured_category_interests(bundle: EvidenceBundle, sources: Sequence[Sou
 
 
 def closing_source_bindings(
-    settings: ClosingConfig, sources: Sequence[SourceConfig],
+    settings: ClosingConfig,
+    sources: Sequence[SourceConfig],
 ) -> frozenset[tuple[str, str, str]]:
     """Resolve exact approved feeds; sanitized name/category collisions grant none."""
     bindings: dict[tuple[str, str], list[SourceConfig]] = {}
@@ -54,23 +57,33 @@ def closing_source_bindings(
     approved = {(binding.name, binding.url, binding.category) for binding in settings.approved_sources}
     return frozenset(
         (source.name, source.url, source.category)
-        for matches in bindings.values() if len(matches) == 1
-        for source in matches if source.enabled and (source.name, source.url, source.category) in approved
+        for matches in bindings.values()
+        if len(matches) == 1
+        for source in matches
+        if source.enabled and (source.name, source.url, source.category) in approved
     )
 
 
 def eligible_ids(
-    bundle: EvidenceBundle, settings: ClosingConfig, sources: Sequence[SourceConfig],
+    bundle: EvidenceBundle,
+    settings: ClosingConfig,
+    sources: Sequence[SourceConfig],
 ) -> list[str]:
     """Use the same unambiguous approved feeds for admission and review eligibility."""
-    bindings = {(sanitize_article("", "", name)[2], category[:200])
-                for name, _, category in closing_source_bindings(settings, sources)}
+    bindings = {
+        (sanitize_article("", "", name)[2], category[:200])
+        for name, _, category in closing_source_bindings(settings, sources)
+    }
     return [item.evidence_id for item in bundle.items if (item.source, item.category) in bindings]
 
 
 def build_review_messages(
-    bundle: EvidenceBundle, settings: ReviewConfig, language: str,
-    *, sources: Sequence[SourceConfig] = (), closing: ClosingConfig | None = None,
+    bundle: EvidenceBundle,
+    settings: ReviewConfig,
+    language: str,
+    *,
+    sources: Sequence[SourceConfig] = (),
+    closing: ClosingConfig | None = None,
 ) -> list[dict[str, str]]:
     """One bounded, config-aware prompt; no earlier judgments or new source data."""
     system = (
@@ -102,11 +115,26 @@ def build_review_messages(
         '"quote":"<literal source text>","confidence":"high"}. Do not copy placeholder values. '
         "limitations belongs only at the top level, never inside a selection. "
         "limitations is a list of at most 5 short strings. If selecting nothing, explain why in limitations. "
-        "Keep all text concise to fit the existing output allowance. dispositions contains exactly one entry for "
-        "EVERY supplied evidence_id. Each entry has evidence_id and status: "
-        "selected, not_selected, duplicate or deferred. "
-        "selected has no other fields and must exactly match a valid entry in selections. Other statuses require "
-        "a specific RSS-evidence reason of at most 240 characters. duplicate also requires retained_id, naming a "
+        "Keep all text concise to fit the existing output allowance. "
+    )
+    if closing is not None and closing.enabled:
+        system += (
+            "dispositions contains exactly one residual entry for EVERY supplied evidence_id without a detailed "
+            "card in selections or closing.selection. Its status is not_selected, duplicate or deferred, never "
+            "selected. Selected dispositions are derived from validated cards. Do not repeat a card ID in "
+            "dispositions. Each residual entry requires evidence_id, status and a specific RSS-evidence reason "
+            "of at most 240 characters. "
+        )
+    else:
+        system += (
+            "dispositions contains exactly one entry for "
+            "EVERY supplied evidence_id. Each entry has evidence_id and status: "
+            "selected, not_selected, duplicate or deferred. "
+            "selected has no other fields and must exactly match a valid entry in selections. Other statuses require "
+            "a specific RSS-evidence reason of at most 240 characters. "
+        )
+    system += (
+        "duplicate also requires retained_id, naming a "
         "different supplied ID with a validated selected disposition (no chains or cycles). Explain the actual "
         "redundancy; a shared topic or URL alone does not establish semantic duplication. Preserve materially contrary "
         "reports as eligible. not_selected means an explicit metadata selection judgment, never full-source reading "
@@ -119,15 +147,20 @@ def build_review_messages(
     )
     if closing is not None and closing.enabled:
         system += (
-            " Closing contract v1: additionally return closing as {schema_version: 1, evidence_id: ID or null}. "
-            "Designate at most one validated selection from closing_eligible_ids as a humane final story outside "
+            " Closing contract v2: return closing as {schema_version: 2, selection: CARD or null}. "
+            "CARD uses the ordinary evidence_id, reason, quote and confidence fields. Keep professional cards in "
+            "selections; choose at most one separate closing_eligible_ids card as a humane final story outside "
             "the usual professional agenda: concrete kindness, relief, community connection, restored access or "
-            "everyday wonder supported by the supplied evidence. Use its ordinary selection reason and quote. "
+            "everyday wonder supported by the evidence. max_main_selections (M) caps main publication; "
+            "max_detailed_selections (D) caps total detailed cards. Raw selections count plus non-null "
+            "closing.selection must not exceed D: up to D-1 professional details plus one closer, or D "
+            "professional details with null. Never duplicate a main ID in closing. Supply a suitable closer's "
+            "complete card even when M main slots are full; do not merely name or defer it. "
             "Preserve caveats and distinguish announced plans from achieved outcomes. Reject promotion, speculative "
             "benefits, misleading optimism and stale or unsupported events. A translation/update date is not proof "
             "of a fresh original event. Feed membership alone is no evidence of a humane result. Do not force a "
-            "choice; null means no suitable story in this packet. This optional designation does not reduce main "
-            "publication capacity. Do not add a second reason or invented facts."
+            "choice; null means no suitable story in this packet. Explain empty main selections in limitations "
+            "even with a closer. Main publication capacity is unchanged."
         )
     task = {
         "schema_version": SCHEMA_VERSION,
@@ -138,12 +171,17 @@ def build_review_messages(
     }
     if settings.editorial_context:
         task["operator_editorial_context"] = settings.editorial_context
-        system += (" Operator editorial context states the reader's relevance priorities; apply it without "
-                   "treating it as factual source evidence or a publication quota. Do not require architecture "
-                   "detail when the stated priority is business, regulatory or operational relevance. "
-                   "Still assess the supplied evidence; an announcement is not automatically useful.")
+        system += (
+            " Operator editorial context states the reader's relevance priorities; apply it without "
+            "treating it as factual source evidence or a publication quota. Do not require architecture "
+            "detail when the stated priority is business, regulatory or operational relevance. "
+            "Still assess the supplied evidence; an announcement is not automatically useful."
+        )
     if closing is not None and closing.enabled:
-        task["closing_contract_version"] = 1
+        task["closing_contract_version"] = 2
+        task["max_main_selections"] = settings.max_selections
         task["closing_eligible_ids"] = eligible_ids(bundle, closing, sources)
-    return [{"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)}]
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(task, ensure_ascii=False, sort_keys=True)},
+    ]

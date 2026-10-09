@@ -76,9 +76,18 @@ they share a topic.
 ### A response owns its decision evidence
 
 An ordinary review attempt returns the model review, per-item dispositions and
-optional closing designation together. One resolver chooses the usable
+optional closing capture together. One resolver chooses the usable
 primary/fallback attempt. Independent comparison status describes a different
 question and does not decide whether primary cards can be used.
+
+Fresh closing-enabled responses supply one complete optional card separately from
+professional selections. Main entries and a non-null closer share the configured
+detail allowance; publication applies its own main-card cap afterward. Accepted
+cards supply selected dispositions; the model accounts only for residual items.
+Conflicting residuals leave accounting unresolved without removing a valid card.
+An invalid optional card preserves main selections and cannot be silently consumed
+as a terminal rejection. Historical captures retain their recorded contract; see
+[ADR0014's v2 amendment](../../decisions/0014-optional-humane-closing-item.md#complete-optional-response-card--2026-10-09-amendment).
 
 This result describes raw editorial selections. Projection still decides which
 main cards fit, whether approved closing evidence remains eligible and whether
