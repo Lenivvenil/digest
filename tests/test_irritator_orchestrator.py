@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,9 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.irritator import IrritatorStatus, run_irritator
+from digest.irritator.query_generator import QueryBatch, QueryDiagnostics, generate_queries
 from digest.irritator.ranker import MAX_RANKING_JSON_CHARS
+from digest.irritator.sources import SearchBatch, SearchDiagnostics
 from tests.factories import make_narrative, make_ranked_signal, make_signal
 
 
@@ -38,7 +41,7 @@ class TestRunIrritator:
     ) -> None:
         execution = ModelExecution()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         raw = [make_signal(snippet="x" * MAX_RANKING_JSON_CHARS)]
         if include_small:
             raw.append(make_signal(url="https://example.com/admitted"))
@@ -47,7 +50,9 @@ class TestRunIrritator:
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=SearchBatch(
+                raw, SearchDiagnostics(successful=1),
+            ))),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
             patch("digest.irritator.ranker.complete", model),
         ):
@@ -92,13 +97,32 @@ class TestRunIrritator:
         assert narratives == [narrative]
         assert ranked == []
 
+    async def test_cancelled_query_child_propagates_despite_later_duplicate_success(self) -> None:
+        from scripts.review_fixture import fixture_config
+
+        narrative = make_narrative()
+        model = AsyncMock(side_effect=[asyncio.CancelledError(), ("[]", {})])
+        search = AsyncMock()
+        with (
+            patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative, narrative])),
+            patch(f"{_MODULE}.generate_queries", generate_queries),
+            patch("digest.irritator.query_generator.complete", model),
+            patch(f"{_MODULE}.search_all_sources", search),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await run_irritator([], fixture_config(), _make_client(), execution=ModelExecution())
+        assert model.await_count == 2
+        search.assert_not_awaited()
+
     async def test_empty_queries_returns_empty(self) -> None:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
-            patch(f"{_MODULE}.generate_queries", AsyncMock(return_value={})),
+            patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=QueryBatch(
+                {narrative.claim: []}, QueryDiagnostics(successful=1),
+            ))),
         ):
             narratives, ranked, status = await run_irritator([], cfg, _make_client(), execution=execution)
         assert status.level == "empty"
@@ -107,7 +131,7 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
@@ -125,15 +149,13 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
-        async def search(_queries, _config, _client, *, diagnostics):
-            diagnostics.successful, diagnostics.failed, diagnostics.unavailable = successful, failed, unavailable
-            return []
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
+        search = SearchBatch([], SearchDiagnostics(successful, failed, unavailable))
 
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(side_effect=search)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=search)),
         ):
             _, ranked, status = await run_irritator([], cfg, _make_client(), execution=execution)
         assert status.level == expected
@@ -143,12 +165,14 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         raw = [make_signal()]
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=SearchBatch(
+                raw, SearchDiagnostics(successful=1),
+            ))),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=[])),
         ):
             _, ranked, status = await run_irritator([], cfg, _make_client(), execution=execution)
@@ -159,13 +183,15 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         raw = [make_signal()]
         ranked_signal = make_ranked_signal()
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=SearchBatch(
+                raw, SearchDiagnostics(successful=1),
+            ))),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
             patch(f"{_MODULE}.rank_signals", AsyncMock(return_value=[ranked_signal])),
         ):
@@ -178,12 +204,14 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         raw = [make_signal()]
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=raw)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=SearchBatch(
+                raw, SearchDiagnostics(successful=1),
+            ))),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
             patch(f"{_MODULE}.rank_signals", AsyncMock(side_effect=RuntimeError("rank fail"))),
         ):
@@ -196,17 +224,17 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narratives = [make_narrative(), make_narrative(claim="Second source-backed hypothesis")]
-        queries = {item.claim: [MagicMock()] for item in narratives}
+        queries = QueryBatch(
+            {item.claim: [MagicMock()] for item in narratives}, QueryDiagnostics(successful=2),
+        )
         raw, ranked_signal = [make_signal()], make_ranked_signal()
 
-        async def search(_queries, _config, _client, *, diagnostics):
-            diagnostics.successful, diagnostics.failed = 1, 1
-            return raw
+        search = SearchBatch(raw, SearchDiagnostics(successful=1, failed=1))
 
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=narratives)),
             patch(f"{_MODULE}.generate_queries", AsyncMock(return_value=queries)),
-            patch(f"{_MODULE}.search_all_sources", AsyncMock(side_effect=search)),
+            patch(f"{_MODULE}.search_all_sources", AsyncMock(return_value=search)),
             patch(f"{_MODULE}.validate_signals_async", AsyncMock(return_value=raw)),
             patch(f"{_MODULE}.rank_signals", AsyncMock(side_effect=[RuntimeError("synthetic"), [ranked_signal]])),
         ):
@@ -220,10 +248,10 @@ class TestRunIrritator:
         execution = ModelExecution()
         cfg = _make_config()
         narrative = make_narrative()
-        queries = {narrative.claim: [MagicMock()]}
+        queries = QueryBatch({narrative.claim: [MagicMock()]}, QueryDiagnostics(successful=1))
         raw = [make_signal()]
         client = _make_client()
-        mock_search = AsyncMock(return_value=raw)
+        mock_search = AsyncMock(return_value=SearchBatch(raw, SearchDiagnostics(successful=1)))
         mock_validate = AsyncMock(return_value=raw)
         with (
             patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=[narrative])),
@@ -243,7 +271,6 @@ async def test_invalid_generated_query_remains_incomplete_through_legacy_pipelin
     execution = ModelExecution()
     import json
 
-    from digest.irritator.query_generator import generate_queries
     from scripts.review_fixture import fixture_config
 
     narratives = [make_narrative(claim="First claim")]
@@ -257,7 +284,7 @@ async def test_invalid_generated_query_remains_incomplete_through_legacy_pipelin
             "query": '"AI agents" limitations', "intent": "Find limitations",
         }]), {}))
     model = AsyncMock(side_effect=responses)
-    search = AsyncMock(return_value=[])
+    search = AsyncMock(return_value=SearchBatch([], SearchDiagnostics(successful=1)))
     with (
         patch(f"{_MODULE}.extract_narratives", AsyncMock(return_value=narratives)),
         patch(f"{_MODULE}.generate_queries", generate_queries),

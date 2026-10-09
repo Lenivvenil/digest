@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -10,7 +11,6 @@ import pytest
 
 from digest.irritator.query_generator import SearchQuery
 from digest.irritator.sources import (
-    SearchDiagnostics,
     SourceUnavailableError,
     _import_adapters,
     search_all_sources,
@@ -54,9 +54,10 @@ class TestSearchAllSources:
             clear=True,
         ):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
+                batch = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
 
-        assert len(signals) == 2
+        assert len(batch.signals) == 2
+        assert asdict(batch.diagnostics) == {"successful": 2, "failed": 0, "unavailable": 0}
         mock_hn.assert_called_once()
         mock_reddit.assert_called_once()
 
@@ -71,10 +72,13 @@ class TestSearchAllSources:
             clear=True,
         ):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
+                batch = await search_all_sources(
+                    queries, _make_config(["reddit", "hackernews", "hackernews"]), client,
+                )
 
-        assert len(signals) == 4
-        assert mock_hn.call_count == 2
+        assert [signal.source_name for signal in batch.signals] == ["hackernews", "hackernews", "reddit"] * 2
+        assert asdict(batch.diagnostics) == {"successful": 6, "failed": 0, "unavailable": 0}
+        assert mock_hn.call_count == 4
         assert mock_reddit.call_count == 2
 
     async def test_unconfigured_source_adapter_not_called(self) -> None:
@@ -88,9 +92,10 @@ class TestSearchAllSources:
         ):
             async with httpx.AsyncClient() as client:
                 # config only has hackernews — arxiv is registered but not configured
-                signals = await search_all_sources(queries, _make_config(["hackernews"]), client)
+                batch = await search_all_sources(queries, _make_config(["hackernews"]), client)
 
-        assert signals == []
+        assert batch.signals == []
+        assert asdict(batch.diagnostics) == {"successful": 0, "failed": 0, "unavailable": 1}
         mock_arxiv.assert_not_called()
 
     async def test_graceful_degradation_on_failure(self) -> None:
@@ -104,22 +109,21 @@ class TestSearchAllSources:
             clear=True,
         ):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
+                batch = await search_all_sources(queries, _make_config(["hackernews", "reddit"]), client)
 
-        assert len(signals) == 1
-        assert signals[0].source_name == "hackernews"
+        assert len(batch.signals) == 1
+        assert batch.signals[0].source_name == "hackernews"
+        assert asdict(batch.diagnostics) == {"successful": 1, "failed": 1, "unavailable": 0}
 
     async def test_empty_queries(self) -> None:
-        diagnostics = SearchDiagnostics()
         async with httpx.AsyncClient() as client:
-            signals = await search_all_sources([], _make_config(), client, diagnostics=diagnostics)
-        assert signals == []
-        assert diagnostics.total == 0
+            batch = await search_all_sources([], _make_config(), client)
+        assert batch.signals == []
+        assert batch.diagnostics.total == 0
 
     async def test_outcomes_distinguish_valid_empty_failed_and_unavailable(
         self, caplog: pytest.LogCaptureFixture,
     ) -> None:
-        diagnostics = SearchDiagnostics()
         adapters = {
             "hackernews": AsyncMock(return_value=[_make_signal("hackernews")]),
             "arxiv": AsyncMock(return_value=[]),
@@ -128,12 +132,13 @@ class TestSearchAllSources:
         }
         with patch.dict("digest.irritator.sources._ADAPTERS", adapters, clear=True):
             async with httpx.AsyncClient() as client:
-                signals = await search_all_sources(
+                batch = await search_all_sources(
                     [_make_query("private search query"), _make_query("second private query")],
-                    _make_config([*adapters, "unknown"]), client, diagnostics=diagnostics,
+                    _make_config([*adapters, "unknown"]), client,
                 )
 
-        assert len(signals) == 2
+        assert len(batch.signals) == 2
+        diagnostics = batch.diagnostics
         assert diagnostics.successful == 4
         assert diagnostics.failed == 2
         assert diagnostics.unavailable == 4

@@ -164,39 +164,44 @@ class TestGenerateQueries:
         with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
-        assert len(result) == 1
+        assert len(result.queries_by_narrative) == 1
         claim = _make_narrative().claim
-        assert claim in result
-        assert len(result[claim]) == 3
+        assert len(result.queries_by_narrative[claim]) == 3
+        assert asdict(result.diagnostics) == {"successful": 1, "failed": 0}
 
     async def test_empty_narratives(self) -> None:
         execution = ModelExecution()
         result = await generate_queries([], _make_config(), execution=execution)
-        assert result == {}
+        assert result.queries_by_narrative == {}
+        assert asdict(result.diagnostics) == {"successful": 0, "failed": 0}
 
     async def test_multiple_narratives_parallel(self) -> None:
         execution = ModelExecution()
         dicts = _valid_query_dicts(2)
-        mock_complete = AsyncMock(return_value=(json.dumps(dicts), {}))
+        mock_complete = AsyncMock(side_effect=[
+            (json.dumps(dicts), {}), (json.dumps(dicts[:1]), {}),
+            ("[]", {}), RuntimeError("Provider failed"),
+        ])
 
         n1 = _make_narrative("Claim A")
         n2 = _make_narrative("Claim B")
 
         with patch("digest.irritator.query_generator.complete", mock_complete):
-            result = await generate_queries([n1, n2], _make_config(), execution=execution)
+            result = await generate_queries([n1, n2, n1, n2], _make_config(), execution=execution)
 
-        assert len(result) == 2
-        assert "Claim A" in result
-        assert "Claim B" in result
-        assert mock_complete.call_count == 2
+        assert list(result.queries_by_narrative) == ["Claim A", "Claim B"]
+        assert result.queries_by_narrative["Claim A"] == []
+        assert [asdict(query) for query in result.queries_by_narrative["Claim B"]] == dicts[:1]
+        assert asdict(result.diagnostics) == {"successful": 3, "failed": 1}
+        assert mock_complete.call_count == 4
 
-    async def test_partial_failure_continues(self) -> None:
+    async def test_partial_failure_continues(self, caplog: pytest.LogCaptureFixture) -> None:
         execution = ModelExecution()
         dicts = _valid_query_dicts(2)
         mock_complete = AsyncMock(
             side_effect=[
                 (json.dumps(dicts), {}),
-                RuntimeError("Provider failed"),
+                RuntimeError("private response credential"),
             ]
         )
 
@@ -206,8 +211,11 @@ class TestGenerateQueries:
         with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([n1, n2], _make_config(), execution=execution)
 
-        assert len(result) == 1
-        assert "Good claim" in result
+        assert list(result.queries_by_narrative) == ["Good claim"]
+        assert asdict(result.diagnostics) == {"successful": 1, "failed": 1}
+        assert "Query generation failed (RuntimeError)" in caplog.text
+        assert "private" not in caplog.text
+        assert "credential" not in caplog.text
 
     async def test_uses_correct_role(self) -> None:
         execution = ModelExecution()
@@ -228,7 +236,8 @@ class TestGenerateQueries:
         with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
-        assert result == {}
+        assert result.queries_by_narrative == {}
+        assert asdict(result.diagnostics) == {"successful": 0, "failed": 1}
 
     async def test_json_in_markdown_fence(self) -> None:
         execution = ModelExecution()
@@ -239,7 +248,7 @@ class TestGenerateQueries:
         with patch("digest.irritator.query_generator.complete", mock_complete):
             result = await generate_queries([_make_narrative()], _make_config(), execution=execution)
 
-        assert len(list(result.values())[0]) == 2
+        assert len(list(result.queries_by_narrative.values())[0]) == 2
 
     async def test_prompt_sent_to_llm_excludes_narrative_hypotheses(self) -> None:
         execution = ModelExecution()

@@ -131,3 +131,7 @@ historical recovery remain distinct contracts.
 votes, ready-only schema 2, preserved historical feedback and the compatible-reader
 floor for both sending and polling. Legacy ambiguity and mixed-token scoring remain
 explicit limitations rather than a guessed history migration.
+
+[0025](0025-owned-irritator-fanout-results.md) records #204's owned ordinary query
+and search batches, exported-helper return/keyword migration and explicit query-child
+cancellation correction. Public run status and bounded persisted evidence remain separate.

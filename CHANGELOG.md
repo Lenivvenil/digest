@@ -2,6 +2,17 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Ordinary Irritator query/search fan-out owns its payload and diagnostic counts
+  together (#204). This is a deliberate exported Python API break: `generate_queries`
+  now returns `QueryBatch` (`.queries_by_narrative`, `.diagnostics`), and
+  `search_all_sources` returns `SearchBatch` (`.signals`, `.diagnostics`); both remove
+  `diagnostics=`. Names/import paths remain; the
+  [migration map](docs/decisions/0025-owned-irritator-fanout-results.md#compatibility-and-migration)
+  lists destinations. Individually cancelled query children now propagate
+  `CancelledError` instead of accidental `TypeError` or duplicate-claim masking.
+  Non-cancelled `run_irritator` status and bounded persisted evidence remain unchanged.
+  Rollback must retain ADR0024-compatible sender and poller readers and saved state.
+
 - Editorial selection validation now shares one item-rule owner (#202). Live
   salvage validates items directly instead of reparsing synthetic responses or
   branching on exception text. Strict literal quotes, narrow live typography
