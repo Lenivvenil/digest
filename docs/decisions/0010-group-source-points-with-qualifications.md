@@ -1,6 +1,6 @@
 # 0010. Group source points with their material qualifications
 
-Status: proposed; offline prototype only
+Status: proposed; offline prototype retired under #207 (2026-10-09)
 
 Refs [#55](https://github.com/Lenivvenil/digest/issues/55),
 [ADR0009](0009-selected-source-admission.md), and
@@ -180,3 +180,25 @@ recovery move from the old wrapper to their live engine/application owner. Only
 assertions about the retired renderer, its global backlog scanner and its independent
 delivery acknowledgment are retired. No replacement scanner is introduced in test
 helpers, and the optional source-reading feature remains disabled by default.
+
+## Retire the unused grouped-point prototype — 2026-10-09
+
+[#207](https://github.com/Lenivvenil/digest/issues/207) explicitly amends the
+2026-10-05 instruction to preserve experimental code: preserve its exact historical
+implementation and findings, but remove the unintegrated production module and its
+two dedicated test files. Repository application, CLI and script reachability found
+no callers. Direct Python imports were possible and now break; there is no shim or
+replacement grouped-point API.
+
+The immutable baseline keeps the original
+[module](https://github.com/Lenivvenil/digest/blob/f8ad6811879c2233c17ece6b3abcdac57056c791/digest/reading_points.py),
+[representation tests](https://github.com/Lenivvenil/digest/blob/f8ad6811879c2233c17ece6b3abcdac57056c791/tests/test_reading_points.py)
+and [projection tests](https://github.com/Lenivvenil/digest/blob/f8ad6811879c2233c17ece6b3abcdac57056c791/tests/test_point_projection.py).
+Their 54 cases retire with that mechanism. The decisions, failed research findings,
+word counts, source fixtures and private research archives remain evidence, not a
+publication algorithm. This amendment does not erase or rehabilitate any result above.
+
+Candidate-bound full-source acquisition, page reading, qualification retention,
+technical handoffs and reconciliation remain supported. Source reading stays optional
+and disabled by default; no prompt, persisted schema, runtime activation or semantic
+acceptance changes. Reconciliation's own authority migration is recorded in ADR0009.

@@ -44,7 +44,9 @@ throughput acceptance remain separate and open.
 and technical handoff under #122; it does not approve semantic publication or runtime activation.
 
 [0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
-source-point representation for #55. It does not approve a new prompt or publication path.
+source-point representation for #55, with its unused prototype explicitly retired under
+#207 and preserved at an immutable historical revision. It does not approve a new
+prompt or publication path.
 
 [0011](0011-source-anchored-investigation-queries.md) revises the unaccepted mandatory
 literal-query guard into optional provenance diagnostics for bounded RSS and full-source

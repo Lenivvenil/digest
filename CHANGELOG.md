@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Retired the unintegrated grouped-point prototype `digest.reading_points` (#207)
+  and its two dedicated test files. Direct Python imports now fail; no replacement
+  shim is supplied. [ADR0010](docs/decisions/0010-group-source-points-with-qualifications.md#retire-the-unused-grouped-point-prototype--2026-10-09)
+  preserves exact historical code/test links and the failed research findings.
+  Supported optional source reading, qualification evidence and source fixtures remain.
+
 - Primary review now shares the caller's same-loop semaphore, spacing lock and
   timestamps, provider/model cooldowns, local cap and spent-attempt count with
   later translation even when full-source reading is disabled (#215). Existing
