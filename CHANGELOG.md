@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Editorial selection validation now shares one item-rule owner (#202). Live
+  salvage validates items directly instead of reparsing synthetic responses or
+  branching on exception text. Strict literal quotes, narrow live typography
+  alignment, duplicate/error ordering and both ASCII-escaped size gates remain;
+  checkpoint revalidation keeps its separate persisted-trust boundary.
+
 - Retired the root RSS import bridges `digest.review`, `digest.candidate_dispositions`,
   `digest.candidate_storage` and `digest.candidate_review` (#194). Python consumers
   must import their canonical domain/application/storage/presentation owners; no

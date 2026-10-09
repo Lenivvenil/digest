@@ -197,6 +197,28 @@ def _parse_review_envelope(
     return selections, limitations
 
 
+def _validated_selection(
+    item: object,
+    known: dict[str, EvidenceItem],
+    seen: set[str],
+) -> EvidenceSelection:
+    """Own common item rules, preserving strict schema-to-confidence error order."""
+    if not isinstance(item, dict) or set(item) != {"evidence_id", "reason", "quote", "confidence"}:
+        raise ValueError("invalid selection schema")
+    identity, reason, quote, confidence = (item[k] for k in ["evidence_id", "reason", "quote", "confidence"])
+    if not all(isinstance(v, str) for v in [identity, reason, quote, confidence]):
+        raise ValueError("selection fields must be strings")
+    if identity not in known:
+        raise ValueError("unknown evidence id")
+    if identity in seen:
+        raise ValueError("duplicated evidence id")
+    if not reason.strip() or len(reason) > 600 or not quote.strip() or len(quote) > 200:
+        raise ValueError("invalid selection text budget")
+    if confidence not in {"low", "medium", "high"}:
+        raise ValueError("invalid confidence")
+    return EvidenceSelection(identity, reason.strip(), quote, confidence)
+
+
 def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelection], list[str]]:
     """Strict accepted-selection contract, including when revalidating checkpoints."""
     selections, limitations = _parse_review_envelope(text, len(bundle.items))
@@ -204,24 +226,12 @@ def _parse_review(text: str, bundle: EvidenceBundle) -> tuple[list[EvidenceSelec
     seen: set[str] = set()
     parsed: list[EvidenceSelection] = []
     for item in selections:
-        if not isinstance(item, dict) or set(item) != {"evidence_id", "reason", "quote", "confidence"}:
-            raise ValueError("invalid selection schema")
-        identity, reason, quote, confidence = (item[k] for k in ["evidence_id", "reason", "quote", "confidence"])
-        if not all(isinstance(v, str) for v in [identity, reason, quote, confidence]):
-            raise ValueError("selection fields must be strings")
-        if identity not in known:
-            raise ValueError("unknown evidence id")
-        if identity in seen:
-            raise ValueError("duplicated evidence id")
-        if not reason.strip() or len(reason) > 600 or not quote.strip() or len(quote) > 200:
-            raise ValueError("invalid selection text budget")
-        if confidence not in {"low", "medium", "high"}:
-            raise ValueError("invalid confidence")
-        evidence = known[identity]
-        if quote not in evidence.title and quote not in evidence.excerpt:
+        selection = _validated_selection(item, known, seen)
+        evidence = known[selection.evidence_id]
+        if selection.quote not in evidence.title and selection.quote not in evidence.excerpt:
             raise ValueError("quote is not in supplied evidence")
-        seen.add(identity)
-        parsed.append(EvidenceSelection(identity, reason.strip(), quote, confidence))
+        seen.add(selection.evidence_id)
+        parsed.append(selection)
     return parsed, limitations
 
 
@@ -239,20 +249,28 @@ def canonical_evidence_quote(quote: str, title: str, excerpt: str, *, max_length
     raise ValueError("quote is not in supplied evidence")
 
 
-def _parse_live_selection(item: object, bundle: EvidenceBundle, limitations: list[str]) -> EvidenceSelection:
-    """Align narrow typography only after schema, types and budgets validate."""
-    text = json.dumps({"selections": [item], "limitations": limitations})
-    try:
-        return _parse_review(text, bundle)[0][0]
-    except ValueError as exc:
-        # The strict parser checks schema, types and length before quote matching.
-        if str(exc) != "quote is not in supplied evidence" or not isinstance(item, dict):
-            raise
-        evidence = next(evidence for evidence in bundle.items if evidence.evidence_id == item["evidence_id"])
-        quote, normalized = canonical_evidence_quote(item["quote"], evidence.title, evidence.excerpt)
-        canonical = {**item, "quote": quote}
-        parsed = _parse_review(json.dumps({"selections": [canonical], "limitations": limitations}), bundle)
-        return replace(parsed[0][0], typography_normalized=normalized)
+def _validate_live_selection_budget(item: object, limitations: list[str]) -> None:
+    """Retain the one-item envelope's default ASCII escapes and JSON spaces."""
+    if len(json.dumps({"selections": [item], "limitations": limitations})) > 32000:
+        raise ValueError("response exceeds review budget")
+
+
+def _parse_live_selection(
+    item: object,
+    known: dict[str, EvidenceItem],
+    limitations: list[str],
+) -> EvidenceSelection:
+    """Validate directly, then align only narrow typography to exact source text."""
+    _validate_live_selection_budget(item, limitations)
+    # Live duplicate consumption precedes item validation in the response loop.
+    selection = _validated_selection(item, known, set())
+    evidence = known[selection.evidence_id]
+    quote, normalized = canonical_evidence_quote(selection.quote, evidence.title, evidence.excerpt)
+    if normalized:
+        assert isinstance(item, dict)  # Established by the common item validator.
+        # Measure original fields, including untrimmed reason, after quote alignment.
+        _validate_live_selection_budget({**item, "quote": quote}, limitations)
+    return replace(selection, quote=quote, typography_normalized=normalized)
 
 
 def _parse_live_review(
@@ -265,7 +283,7 @@ def _parse_live_review(
     """Salvage individual entries only after the complete envelope is valid."""
     limit = len(bundle.items) if max_detailed_selections is None else min(len(bundle.items), max_detailed_selections)
     selections, limitations = _parse_review_envelope(text, limit, allow_closing=allow_closing)
-    known = {item.evidence_id for item in bundle.items}
+    known = {item.evidence_id: item for item in bundle.items}
     accepted: list[EvidenceSelection] = []
     rejected: list[RejectedSelection] = []
     seen: set[str] = set()
@@ -277,7 +295,7 @@ def _parse_live_review(
                 raise ValueError("duplicated evidence id")
             if known_identity is not None:
                 seen.add(known_identity)
-            accepted.append(_parse_live_selection(item, bundle, limitations))
+            accepted.append(_parse_live_selection(item, known, limitations))
         except (ValueError, TypeError, KeyError) as exc:
             reason, _, _ = _rejected_output_diagnostics("", exc)
             rejected.append(RejectedSelection(index, reason, known_identity))

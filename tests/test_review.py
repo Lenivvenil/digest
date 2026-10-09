@@ -109,8 +109,15 @@ def _valid_output() -> tuple:
     return bundle, data
 
 
-@pytest.mark.parametrize("kind", ["unknown", "duplicate", "invented_quote", "wrong_type", "extra", "too_many"])
-def test_invalid_entry_rejects_whole_review(kind: str) -> None:
+@pytest.mark.parametrize(("kind", "error"), [
+    ("unknown", "unknown evidence id"),
+    ("duplicate", "duplicated evidence id"),
+    ("invented_quote", "quote is not in supplied evidence"),
+    ("wrong_type", "selection fields must be strings"),
+    ("extra", "invalid selection schema"),
+    ("too_many", "invalid selection count"),
+])
+def test_invalid_entry_rejects_whole_review(kind: str, error: str) -> None:
     bundle, data = _valid_output()
     item = data["selections"][0]
     if kind == "unknown":
@@ -125,7 +132,8 @@ def test_invalid_entry_rejects_whole_review(kind: str) -> None:
         item["url"] = "https://invented.example"
     else:
         data["selections"] *= 6
-    with pytest.raises(ValueError, match="duplicated" if kind == "duplicate" else None):
+    # Strict parsing raises even after an accepted prefix; it never salvages it.
+    with pytest.raises(ValueError, match=f"^{error}$"):
         _parse_review(json.dumps(data), bundle)
 
 
