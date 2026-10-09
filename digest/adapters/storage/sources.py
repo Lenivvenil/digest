@@ -1,7 +1,8 @@
-"""Source JSON codecs and permissive legacy persistence.
+"""Source JSON codecs with explicit strict prepared reads and permissive legacy I/O.
 
 Setup, pruning and encoding precede the caught atomic-write failure boundary.
-Prepared delivery reuses the encoders with its own strict write policy.
+Prepared delivery reuses the declared values and encoders, without reconstructing
+invalid existing accounting history before strict writes.
 """
 
 from __future__ import annotations
@@ -9,10 +10,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+from digest._serialization import restore_dataclass, unique_object
 from digest._util import atomic_json_write
+from digest.adapters.storage.issue_paths import safe_issue_path
 from digest.domain.catalog.sources import (
     SOURCE_STATE_SCHEMA_VERSION,
     DailySnapshot,
@@ -44,9 +48,37 @@ def encode_source_category_map(sources: list[SourceConfig]) -> dict[str, str]:
     return {source.name: source.category for source in sources}
 
 
-def load_source_state(cache_dir: str) -> SourceStateStore:
-    """Load source runtime state from JSON cache. Return empty store if missing or corrupt."""
+def _strict_source_record(path: Path) -> dict[str, Any] | None:
+    """Only missing files are fresh state; unsafe paths and read errors hold work."""
+    path = safe_issue_path(path)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    value = json.loads(content, object_pairs_hook=unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("Invalid source accounting object; prepared application blocked.")
+    return value
+
+
+def _accounting_day(value: str | None) -> None:
+    if value is not None and date.fromisoformat(value).isoformat() != value:
+        raise ValueError("Invalid source accounting calendar day.")
+
+
+def load_source_state(cache_dir: str, *, strict: bool = False) -> SourceStateStore:
+    """Restore source lifecycle; strict prepared reads never reset corrupt history."""
     path = Path(cache_dir) / SOURCE_STATE_FILE
+    if strict:
+        value = _strict_source_record(path)
+        if value is None:
+            return SourceStateStore()
+        store: SourceStateStore = restore_dataclass(value, SourceStateStore)
+        if store.schema_version != SOURCE_STATE_SCHEMA_VERSION:
+            raise ValueError("Unsupported source lifecycle schema; prepared application blocked.")
+        for entry in store.sources.values():
+            _accounting_day(entry.trial_started)
+        return store
     if not path.exists():
         return SourceStateStore()
     try:
@@ -119,9 +151,24 @@ def load_source_category_map(cache_dir: str) -> dict[str, str]:
     return {}
 
 
-def load_stats(cache_dir: str) -> dict[str, SourceStats]:
-    """Load source statistics from JSON file. Return empty dict if missing."""
+def load_stats(cache_dir: str, *, strict: bool = False) -> dict[str, SourceStats]:
+    """Restore statistics; legacy reads retain their permissive partial-load policy."""
     path = Path(cache_dir) / STATS_FILE
+    if strict:
+        value = _strict_source_record(path)
+        if value is None:
+            return {}
+        stats: dict[str, SourceStats] = restore_dataclass(value, dict[str, SourceStats])
+        for source in stats.values():
+            if min(source.total_fetches, source.successful_fetches, source.total_articles_found,
+                   source.articles_included_in_digest, source.avg_description_length) < 0:
+                raise ValueError("Negative source accounting value; prepared application blocked.")
+            _accounting_day(source.last_seen)
+            for snapshot in source.history:
+                _accounting_day(snapshot.date)
+                if min(snapshot.articles_found, snapshot.articles_included) < 0:
+                    raise ValueError("Negative source history value; prepared application blocked.")
+        return stats
     if not path.exists():
         return {}
     try:
