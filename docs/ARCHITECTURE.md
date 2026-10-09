@@ -612,6 +612,23 @@ signal URL liveness checks are separate in
 [`adapters/http/signal_liveness.py`](../digest/adapters/http/signal_liveness.py);
 `irritator/validator.py` preserves compatibility imports.
 
+All Telegram adapters use the small [diagnostic boundary](../digest/adapters/telegram/diagnostics.py)
+for HTTP requests and safe status errors (#219). It adds no retry, receipt or result
+policy. Sent URLs and payloads remain unchanged; returned response/exception request
+metadata is a separate token-free diagnostic request with no body or original headers.
+Retries still use the original local URL, never that redacted metadata. HTTP status,
+response body and headers remain available to the existing protocol decisions.
+
+The boundary filters the concrete emitting HTTPX/httpcore 1.0.9 loggers before
+handlers retain records, retaining method/status evidence while redacting credentials
+in ordinary, DEBUG and exception diagnostics. A per-request context keeps overlapping
+requests separate; no temporary process-global logger levels are changed. Safe status
+errors do not interpolate response reason, redirect Location or body. This is verified
+for the reviewed dependency graph, not a claim about arbitrary future logger names,
+third-party log sinks or deliberate logging of raw response objects. Review the
+[ADR0017 continuation](decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09)
+when changing the HTTP dependencies or transport entrypoints.
+
 Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
 entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
 an excerpt into a full article or guarantee immunity to all malicious instructions.

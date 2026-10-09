@@ -7,13 +7,14 @@ import hashlib
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, cast
 
 import httpx
 
+from digest.adapters.telegram.diagnostics import raise_for_status
+from digest.adapters.telegram.diagnostics import request as telegram_request
 from digest.domain.catalog.proposals import PendingSource
 from digest.domain.feedback.rules import (
     is_replayed_feedback,
@@ -183,21 +184,6 @@ def collect_update(
     return outcome
 
 
-@asynccontextmanager
-async def _telegram_client() -> AsyncIterator[httpx.AsyncClient]:
-    """Keep token-bearing request URLs out of HTTP client diagnostics."""
-    loggers = [logging.getLogger(name) for name in ("httpx", "httpcore")]
-    levels = [item.level for item in loggers]
-    try:
-        for item in loggers:
-            item.setLevel(max(item.getEffectiveLevel(), logging.WARNING))
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            yield client
-    finally:
-        for item, level in zip(loggers, levels, strict=True):
-            item.setLevel(level)
-
-
 def fresh_cursor(store: FeedbackStore, *, now: datetime) -> bool:
     """Telegram may choose a new ID generation after a week without updates."""
     try:
@@ -214,9 +200,9 @@ def fresh_cursor(store: FeedbackStore, *, now: datetime) -> bool:
 async def poll_updates(bot_token: str, *, offset: int | None) -> list[dict[str, Any]]:
     """Check the webhook, poll once and validate the complete update envelope."""
     api_url = f"https://api.telegram.org/bot{bot_token}"
-    async with _telegram_client() as client:
-        response = await client.get(f"{api_url}/getWebhookInfo", timeout=10.0)
-        response.raise_for_status()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await telegram_request(client, "GET", f"{api_url}/getWebhookInfo", timeout=10.0)
+        raise_for_status(response)
         info = response.json()
         if (
             not isinstance(info, dict)
@@ -234,8 +220,8 @@ async def poll_updates(bot_token: str, *, offset: int | None) -> list[dict[str, 
         }
         if offset is not None:
             body["offset"] = offset
-        response = await client.post(f"{api_url}/getUpdates", json=body)
-        response.raise_for_status()
+        response = await telegram_request(client, "POST", f"{api_url}/getUpdates", json=body)
+        raise_for_status(response)
         data = response.json()
     if not isinstance(data, dict) or data.get("ok") is not True or not isinstance(data.get("result"), list):
         raise ValueError("Invalid Telegram updates response")
@@ -274,12 +260,13 @@ async def send_replies(
         replies.append(vote_replies[0])
     api_url = f"https://api.telegram.org/bot{bot_token}"
     try:
-        async with asyncio.timeout(30.0), _telegram_client() as client:
+        async with asyncio.timeout(30.0), httpx.AsyncClient(timeout=30.0) as client:
             for reply in replies:
                 counts["attempted"] += 1
                 try:
                     if reply.kind == "callback":
-                        response = await client.post(
+                        response = await telegram_request(
+                            client, "POST",
                             f"{api_url}/answerCallbackQuery",
                             json={"callback_query_id": reply.identifier, "text": reply.text},
                             timeout=5.0,
@@ -292,12 +279,13 @@ async def send_replies(
                             if reply.kind == "source"
                             else command_reply(reply.identifier)
                         )
-                        response = await client.post(
+                        response = await telegram_request(
+                            client, "POST",
                             f"{api_url}/sendMessage",
                             json={"chat_id": owner, "text": text},
                             timeout=5.0,
                         )
-                    response.raise_for_status()
+                    raise_for_status(response)
                     result = response.json()
                     if not isinstance(result, dict) or result.get("ok") is not True:
                         raise ValueError("Telegram reply rejected")

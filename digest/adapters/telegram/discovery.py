@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from digest.adapters.telegram.diagnostics import raise_for_status
+from digest.adapters.telegram.diagnostics import request as telegram_request
 from digest.domain.catalog.exploration import ProposalDelivery as ProposalDelivery
 from digest.domain.catalog.proposals import PendingSource
 
@@ -53,11 +55,12 @@ async def send_source_approval_message(
         }
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
+            resp = await telegram_request(
+                client, "POST",
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                 json=payload,
             )
-            resp.raise_for_status()
+            raise_for_status(resp)
             result = resp.json()
             if result.get("ok") is False:
                 return ProposalDelivery("rejected")

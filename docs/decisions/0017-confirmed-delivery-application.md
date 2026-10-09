@@ -186,3 +186,32 @@ and initial-marker byte/fsync ordering. Synthetic old/new byte and effect compar
 supports parity; root and independent review remain required before publication.
 Rollback remains a compatible code revert or prior engine pin, preserving all runtime
 state, claims and receipts without reset or replay.
+
+## Telegram diagnostic boundary — 2026-10-09
+
+Implementation scope [#219](https://github.com/Lenivvenil/digest/issues/219) adds a
+shared diagnostic operation to prepared, legacy/direct, standalone/post-delivery,
+discovery and feedback adapters. It does not merge their transport policies. The
+[architecture security section](../ARCHITECTURE.md#security) records the current
+mechanism and its dependency-graph limit.
+
+The original request still goes to Telegram unchanged. Response and HTTP-error
+request metadata is replaced only after transport by a token-free diagnostic copy,
+without original body, headers or extensions. This is an intentional internal metadata
+change: callers must not reuse the diagnostic request for transport. Existing callers
+retry with their own original URL. Status and response body/headers still drive the same acceptance/rejection/unknown
+and retry decisions. Fresh safe errors preserve HTTPX transport types and existing
+ValueError/TimeoutError/OSError catch categories. Unexpected structured errors become
+RuntimeError with only the original class name; they remain outside automatic retry
+or prepared-unknown catches, retaining an uncaught hold. Raw exception chains are suppressed in diagnostics; original notes are omitted. Safe HTTP status
+errors omit untrusted reason/Location/body strings; malformed Retry-After still raises
+ValueError, now with a fixed message. Cancellation propagates unchanged.
+
+Concrete dependency logger filters retain useful formatted method/status/trace evidence
+while removing token-bearing raw LogRecord arguments and exception references. The
+old feedback-only temporary logger-level suppression retires. Offline real-HTTPX
+MockTransport checks cover all entrypoints, concurrent/cancelled requests, rejection,
+timeout and traceback paths without a live token or Telegram send. Existing regressions
+retain payloads, request counts, status interpretation, prepared holds and persistence
+ordering. Release/rollout evidence belongs to the implementing issue; no wire format,
+provider route, additional request or runtime-state migration is introduced.
