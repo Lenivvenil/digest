@@ -16,7 +16,16 @@ from digest.adapters.models.execution import ModelExecution
 from digest.application.review import _review_slot, run_evidence_review, run_primary_review
 from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.domain.editorial.attempts import restore_review
-from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, canonical_evidence_quote
+from digest.domain.editorial.reviews import (
+    BlindReviewReport,
+    EvidenceBundle,
+    ModelReview,
+    RejectedSelection,
+    _parse_live_review,
+    _parse_review,
+    canonical_evidence_quote,
+    validated_cached_selections,
+)
 from digest.presentation.review import primary_cards
 from digest.radar.collector import Article
 from digest.review_checkpoint import load_review_checkpoint
@@ -114,6 +123,64 @@ async def test_unknown_duplicates_and_invalid_items_are_rejected_individually() 
     ]
     assert [item.index for item in review.rejected_items] == [1, 2, 3]
     assert [item.evidence_id for item in review.rejected_items] == [valid["evidence_id"], None, None]
+
+
+def test_live_invalid_known_item_consumes_identity_before_common_validation() -> None:
+    bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
+    valid = _valid_selection(bundle)
+    raw = json.dumps({"selections": [{**valid, "reason": []}, valid], "limitations": []})
+    with pytest.raises(ValueError, match="^selection fields must be strings$"):
+        _parse_review(raw, bundle)
+    accepted, _, rejected = _parse_live_review(raw, bundle)
+    assert accepted == []
+    assert rejected == [
+        RejectedSelection(0, "selection fields must be strings", valid["evidence_id"]),
+        RejectedSelection(1, "duplicated evidence id", valid["evidence_id"]),
+    ]
+
+
+def test_live_escaped_item_budget_is_distinct_from_strict_and_cached_budgets() -> None:
+    bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
+    valid = _valid_selection(bundle)
+    limitations = ["😀" * 600] * 5
+    payload = {"selections": [valid], "limitations": limitations}
+    raw = json.dumps(payload, ensure_ascii=False)
+    assert len(raw) < 32000 < len(json.dumps(payload))
+    selections, _ = _parse_review(raw, bundle)
+    review = ModelReview("primary", "fixture", "fixture", bundle.bundle_id, "hash", "ok",
+                         selections=selections, limitations=limitations)
+    assert validated_cached_selections(review, bundle) == (selections, limitations)
+    accepted, actual_limitations, rejected = _parse_live_review(raw, bundle)
+    assert accepted == [] and actual_limitations == limitations
+    assert rejected == [RejectedSelection(0, "response exceeds review budget", valid["evidence_id"])]
+
+    # The escaped-size gate also precedes the common validator's unknown-ID check.
+    payload = {"selections": [{**valid, "evidence_id": "Ж" * 5400}], "limitations": []}
+    raw = json.dumps(payload, ensure_ascii=False)
+    assert len(raw) < 32000 < len(json.dumps(payload))
+    with pytest.raises(ValueError, match="^unknown evidence id$"):
+        _parse_review(raw, bundle)
+    accepted, _, rejected = _parse_live_review(raw, bundle)
+    assert accepted == []
+    assert rejected == [RejectedSelection(0, "response exceeds review budget", None)]
+
+
+def test_live_quote_alignment_rechecks_escaped_budget_before_reason_trimming() -> None:
+    bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
+    evidence = replace(bundle.items[0], title="multi\u2011AZ")
+    bundle = replace(bundle, items=(evidence, *bundle.items[1:]))
+    valid = {**_valid_selection(bundle), "quote": "multi-AZ", "reason": "  Useful evidence  "}
+    limitations = ["😀" * 600] * 4 + ["😀" * 250]
+    payload = {"selections": [valid], "limitations": limitations}
+    limitations[-1] += "a" * (31999 - len(json.dumps(payload)))
+    canonical = {"selections": [{**valid, "quote": evidence.title}], "limitations": limitations}
+    assert len(json.dumps(payload)) == 31999
+    assert len(json.dumps(canonical)) == 32004
+    raw = json.dumps(payload, ensure_ascii=False)
+    assert len(raw) < 32000
+    accepted, _, rejected = _parse_live_review(raw, bundle)
+    assert accepted == []
+    assert rejected == [RejectedSelection(0, "response exceeds review budget", valid["evidence_id"])]
 
 
 @pytest.mark.asyncio

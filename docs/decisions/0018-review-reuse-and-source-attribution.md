@@ -85,3 +85,32 @@ Closing sidecar persistence, candidate scheduling, provider/configuration separa
 and broader presentation/transport ownership remain staged work. Named subclasses
 and compatibility exports remain explicit debt for #147/#148. Rollback uses a
 compatible code revert or engine pin while retaining all evidence and runtime state.
+
+## Direct selection validation — 2026-10-09
+
+[#202](https://github.com/Lenivvenil/digest/issues/202) removes the live one-item
+JSON → strict response parser → exception-text comparison → normalized JSON →
+strict response parser protocol in `domain/editorial/reviews.py`.
+`_validated_selection` now owns selection schema, string types, known identity,
+strict duplicate ordering, text bounds and confidence. Strict response parsing
+checks literal source quotes and returns only a completely valid selection list.
+Live response parsing validates the envelope first, consumes recognized identities
+before validating their items, and retains each rejection while applying the
+existing narrow typography alignment to valid items.
+
+The former reparses enforced two default-ASCII JSON size gates. Explicit checks
+retain their exact encoding and order: before item validation and, when typography
+changes, after alignment using the original fields and untrimmed reason. These
+checks still include limitations. The raw envelope limit and its count,
+limitations and abstention rules remain separate. Live selection validation no
+longer decodes synthetic responses.
+
+Cached review reconstruction still uses compact non-ASCII JSON and the strict
+parser, followed by its status, rejected-item and provenance checks. As in
+[ADR0023](0023-response-owned-editorial-outcome.md), this persisted-trust boundary
+is necessary validation, independent of live salvage. Request bytes, hashes,
+canonical types, saved formats and delivery behavior do not change. Existing
+partial-review, checkpoint, capacity and quality safeguards remain at their owning
+boundaries; finite before/after traces cover the characterized escaped-size and
+duplicate-precedence cases. This is structural verification, not new model-quality
+or unattended-delivery acceptance.
