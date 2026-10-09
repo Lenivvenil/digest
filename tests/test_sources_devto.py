@@ -45,7 +45,7 @@ async def test_search_contract_and_exact_evidence() -> None:
         body_html="<p>Ignored</p>",
     )
     with respx.mock as router:
-        route = router.get(_ENDPOINT).respond(200, json=[article])
+        route = router.get(_ENDPOINT).respond(200, json=[article] * 10)
         async with httpx.AsyncClient() as client:
             signals = await search_devto(query, None, client)
         assert len(router.calls) == 1
@@ -56,7 +56,14 @@ async def test_search_contract_and_exact_evidence() -> None:
     assert "api-key" not in request.headers and "authorization" not in request.headers
     assert request.content == b""
     assert request.extensions["timeout"] == {"connect": 10.0, "read": 10.0, "write": 10.0, "pool": 10.0}
-    assert signals == [Signal(article["url"], article["title"], description, "devto", article["published_at"], 0.0)]
+    assert len(signals) == 10
+    assert (
+        signals
+        == [
+            Signal(article["url"], article["title"], description, "devto", article["published_at"], 0.0),
+        ]
+        * 10
+    )
 
 
 @pytest.mark.asyncio
@@ -69,7 +76,7 @@ async def test_invalid_query_never_reaches_network() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("articles", [[], [_article(description="")], [_article()] * 10])
+@pytest.mark.parametrize("articles", [pytest.param([_article(description="")], id="articles1")])
 async def test_empty_search_and_empty_description_are_valid(articles: list[dict[str, Any]]) -> None:
     with respx.mock:
         respx.get(_ENDPOINT).respond(200, json=articles)

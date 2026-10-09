@@ -167,7 +167,10 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
         assert all(
             call.kwargs["max_output_tokens"] == config.review.max_output_tokens for call in complete.call_args_list
         )
+    assert resumed.evidence == primary.evidence and resumed.status == "complete"
     assert resumed.reviews[0].reused_from_checkpoint
+    assert resumed.reviews[0].attempted_at == primary.reviews[0].attempted_at
+    assert all(review.attempted_at for review in resumed.reviews)
     changed = deepcopy(config)
     changed.sources.append(SourceConfig("Unrelated", "https://private.example/unused", "Unseen", True))
     assert _reusable_slots(resumed.evidence, resumed.reviews, changed) == {"primary", "secondary"}
@@ -177,7 +180,7 @@ async def test_primary_and_resume_share_context_without_extra_attempts() -> None
     assert _reusable_slots(resumed.evidence, resumed.reviews, changed) == set()
     assert all(
         review.prompt_hash == hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest()
-        for review in resumed.reviews
+        for review in primary.reviews + resumed.reviews
     )
 
 
@@ -199,7 +202,8 @@ async def test_saved_old_prompt_remains_readable_and_is_not_relabelled_on_resume
     bundle, cached = load_review_checkpoint(path, config)
     assert [asdict(review) for review in cached] == [asdict(review) for review in old.reviews]
     assert primary_cards(restore_review(old), fixture_articles(), "en") == primary_cards(
-        original_result, fixture_articles(), "en")
+        original_result, fixture_articles(), "en"
+    )
     assert _reusable_slots(bundle, cached, config) == set()
     with (
         patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP forbidden")),

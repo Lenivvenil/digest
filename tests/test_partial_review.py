@@ -46,9 +46,16 @@ async def _slot(payload: Any) -> Any:
     bundle = build_evidence_bundle(fixture_articles(), config.review)
     raw = json.dumps(payload)
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))):
-        return (await _review_slot("primary", config.review.primary, bundle,
-                                  build_review_messages(bundle, config.review, "en"), config,
-                                  execution=model_execution)).review
+        return (
+            await _review_slot(
+                "primary",
+                config.review.primary,
+                bundle,
+                build_review_messages(bundle, config.review, "en"),
+                config,
+                execution=model_execution,
+            )
+        ).review
 
 
 @pytest.mark.asyncio
@@ -59,9 +66,16 @@ async def test_captured_response_retains_four_exact_source_selections_and_one_re
     raw = old_reviews[1].rejected_output
     assert raw is not None
     with patch("digest.application.review.complete", AsyncMock(return_value=(raw, {}))) as complete:
-        review = (await _review_slot("secondary", config.review.secondary, bundle,
-                                    build_review_messages(bundle, config.review, "en"), config,
-                                        execution=model_execution)).review
+        review = (
+            await _review_slot(
+                "secondary",
+                config.review.secondary,
+                bundle,
+                build_review_messages(bundle, config.review, "en"),
+                config,
+                execution=model_execution,
+            )
+        ).review
     complete.assert_awaited_once()
     assert review.status == "partial"
     assert len(review.selections) == 4
@@ -78,21 +92,40 @@ async def test_captured_response_retains_four_exact_source_selections_and_one_re
     assert "Databricks" in known[review.selections[-1].evidence_id].excerpt
     articles = {}
     for item in bundle.items:
-        articles.setdefault(item.category, []).append(Article(
-            title=item.title, link=item.url, description=item.excerpt, source=item.source,
-            category=item.category, pub_date=None,
-        ))
+        articles.setdefault(item.category, []).append(
+            Article(
+                title=item.title,
+                link=item.url,
+                description=item.excerpt,
+                source=item.source,
+                category=item.category,
+                pub_date=None,
+            )
+        )
     report = BlindReviewReport(
-        1, bundle, [old_reviews[0], review], "incomplete", None, [], "pending_independent_review",
+        1,
+        bundle,
+        [old_reviews[0], review],
+        "incomplete",
+        None,
+        [],
+        "pending_independent_review",
     )
     cards = primary_cards(restore_review(report), articles, "en")
     assert len(cards) == 4
     assert all("groq/openai/gpt-oss-120b" in card.summary for card in cards)
 
 
-@pytest.mark.parametrize("output_hyphen,source_hyphen", [
-    ("-", "-"), ("-", "\u2010"), ("-", "\u2011"), ("\u2010", "-"), ("\u2011", "-"),
-])
+@pytest.mark.parametrize(
+    "output_hyphen,source_hyphen",
+    [
+        ("-", "-"),
+        ("-", "\u2010"),
+        ("-", "\u2011"),
+        ("\u2010", "-"),
+        ("\u2011", "-"),
+    ],
+)
 def test_only_narrow_hyphens_align_to_original_source(source_hyphen: str, output_hyphen: str) -> None:
     source = f"Multi{source_hyphen}AZ architecture"
     returned, normalized = canonical_evidence_quote(f"Multi{output_hyphen}AZ", "unrelated", source)
@@ -100,13 +133,21 @@ def test_only_narrow_hyphens_align_to_original_source(source_hyphen: str, output
     assert normalized is (source_hyphen != output_hyphen)
 
 
-@pytest.mark.parametrize("quote,source", [
-    ("cost−benefit", "cost-benefit"), ("cost–benefit", "cost-benefit"),
-    ("cost—benefit", "cost-benefit"), ("Cost-benefit", "cost-benefit"),
-    ("foo…bar", "foo...bar"), ("foo bar", "foo  bar"),
-    ("a fast decision engine", "an engine that makes quick decisions"),
-    ("ｆｏｏ", "foo"), ("x" * 201, "x" * 201), ("", "anything"),
-])
+@pytest.mark.parametrize(
+    "quote,source",
+    [
+        ("cost−benefit", "cost-benefit"),
+        ("cost–benefit", "cost-benefit"),
+        ("cost—benefit", "cost-benefit"),
+        ("Cost-benefit", "cost-benefit"),
+        ("foo…bar", "foo...bar"),
+        ("foo bar", "foo  bar"),
+        ("a fast decision engine", "an engine that makes quick decisions"),
+        ("ｆｏｏ", "foo"),
+        ("x" * 201, "x" * 201),
+        ("", "anything"),
+    ],
+)
 def test_no_semantic_minus_general_normalization_paraphrase_or_budget_bypass(quote: str, source: str) -> None:
     with pytest.raises(ValueError):
         canonical_evidence_quote(quote, "", source)
@@ -116,11 +157,14 @@ def test_no_semantic_minus_general_normalization_paraphrase_or_budget_bypass(quo
 async def test_unknown_duplicates_and_invalid_items_are_rejected_individually() -> None:
     bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
     valid = _valid_selection(bundle)
-    review = await _slot({"selections": [valid, deepcopy(valid), {**valid, "evidence_id": "untrusted-id"}, 5],
-                          "limitations": []})
+    review = await _slot(
+        {"selections": [valid, deepcopy(valid), {**valid, "evidence_id": "untrusted-id"}, 5], "limitations": []}
+    )
     assert review.status == "partial" and len(review.selections) == 1
     assert [item.reason for item in review.rejected_items] == [
-        "duplicated evidence id", "unknown evidence id", "invalid selection schema",
+        "duplicated evidence id",
+        "unknown evidence id",
+        "invalid selection schema",
     ]
     assert [item.index for item in review.rejected_items] == [1, 2, 3]
     assert [item.evidence_id for item in review.rejected_items] == [valid["evidence_id"], None, None]
@@ -148,8 +192,9 @@ def test_live_escaped_item_budget_is_distinct_from_strict_and_cached_budgets() -
     raw = json.dumps(payload, ensure_ascii=False)
     assert len(raw) < 32000 < len(json.dumps(payload))
     selections, _ = _parse_review(raw, bundle)
-    review = ModelReview("primary", "fixture", "fixture", bundle.bundle_id, "hash", "ok",
-                         selections=selections, limitations=limitations)
+    review = ModelReview(
+        "primary", "fixture", "fixture", bundle.bundle_id, "hash", "ok", selections=selections, limitations=limitations
+    )
     assert validated_cached_selections(review, bundle) == (selections, limitations)
     accepted, actual_limitations, rejected = _parse_live_review(raw, bundle)
     assert accepted == [] and actual_limitations == limitations
@@ -209,16 +254,22 @@ async def test_invalid_global_envelope_rejects_every_item(bad: str) -> None:
 async def test_all_invalid_is_invalid_and_preserves_all_reasons() -> None:
     bundle = build_evidence_bundle(fixture_articles(), fixture_config().review)
     valid = _valid_selection(bundle)
-    review = await _slot({"selections": [{**valid, "quote": "invented paraphrase"},
-                                          {**valid, "evidence_id": "unknown"}], "limitations": []})
+    review = await _slot(
+        {
+            "selections": [{**valid, "quote": "invented paraphrase"}, {**valid, "evidence_id": "unknown"}],
+            "limitations": [],
+        }
+    )
     assert review.status == "invalid" and not review.selections
     assert [item.reason for item in review.rejected_items] == [
-        "quote is not in supplied evidence", "unknown evidence id",
+        "quote is not in supplied evidence",
+        "unknown evidence id",
     ]
 
 
 async def _partial_primary() -> Any:
     model_execution = ModelExecution()
+
     async def response(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> tuple:
         text, usage = await fixture_response(role, messages, config, **kwargs)
         raw = json.loads(text)
@@ -233,17 +284,12 @@ async def _partial_primary() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_partial_primary_delivers_without_secondary_fallback() -> None:
-    report = await _partial_primary()
-    assert report.status == "incomplete" and report.reviews[0].status == "partial"
-    assert report.reviews[1].attempted_at is None
-    assert len(primary_cards(restore_review(report), fixture_articles(), "en")) == 1
-
-
-@pytest.mark.asyncio
 async def test_partial_checkpoint_reuses_valid_entries_without_third_or_complete_claim(tmp_path: Path) -> None:
     model_execution = ModelExecution()
     original = await _partial_primary()
+    assert original.status == "incomplete" and original.reviews[0].status == "partial"
+    assert original.reviews[1].attempted_at is None
+    assert len(primary_cards(restore_review(original), fixture_articles(), "en")) == 1
     path = tmp_path / "partial.json"
     path.write_text(json.dumps(asdict(original)))
     config = fixture_config()

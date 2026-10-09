@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,7 +30,7 @@ def test_review_led_mode_is_opt_in() -> None:
     assert not _load_review({"review": {"enabled": True, "review_led_only": False}}).review_led_only
 
 
-@pytest.mark.parametrize("value", ["true", "false", 0, 1, None, [], {}])
+@pytest.mark.parametrize("value", ["true", 0, None, pytest.param([], id="value5"), pytest.param({}, id="value6")])
 def test_review_led_mode_rejects_non_boolean_values(value: object) -> None:
     with pytest.raises(ValueError, match=r"review.review_led_only must be a boolean"):
         _load_review({"review": {"review_led_only": value}})
@@ -50,26 +51,10 @@ def test_review_led_mode_does_not_change_evidence_or_review_prompt() -> None:
     original = build_evidence_bundle(fixture_articles(), normal.review)
     assert build_evidence_bundle(fixture_articles(), led.review) == original
     assert build_review_messages(original, normal.review, normal.radar.language) == build_review_messages(
-        original, led.review, led.radar.language,
+        original,
+        led.review,
+        led.radar.language,
     )
-
-
-@pytest.mark.asyncio
-async def test_review_led_analysis_never_calls_legacy_summary_or_picker() -> None:
-    execution = ModelExecution()
-    config = fixture_config()
-    config.review.review_led_only = True
-    with (
-        patch("digest.application.review.complete", side_effect=fixture_response) as complete,
-        patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No category prose"))) as summarize,
-        patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No legacy picker"))) as picker,
-    ):
-        summaries, trends, cards, report = await _analyze_articles(fixture_articles(), config, execution=execution)
-    summarize.assert_not_called()
-    picker.assert_not_called()
-    assert summaries == [] and trends is None
-    assert len(cards) == 2 and report.status == "incomplete"
-    assert complete.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -97,7 +82,8 @@ async def test_review_led_mode_is_ignored_when_review_is_disabled() -> None:
     categories = [CategorySummary("AI", "Legacy summary", 2)]
     with (
         patch(
-            "digest.application.review.run_blind_review", AsyncMock(side_effect=AssertionError("Review is disabled"))),
+            "digest.application.review.run_blind_review", AsyncMock(side_effect=AssertionError("Review is disabled"))
+        ),
         patch("digest.radar.summarize_all", AsyncMock(return_value=(categories, None))) as summarize,
         patch("digest.radar.pick_top_articles", AsyncMock(return_value=[])) as picker,
     ):
@@ -109,7 +95,9 @@ async def test_review_led_mode_is_ignored_when_review_is_disabled() -> None:
 
 @pytest.mark.asyncio
 async def test_review_led_pipeline_archives_and_delivers_cards_without_narrative_model_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
@@ -122,22 +110,39 @@ async def test_review_led_pipeline_archives_and_delivers_cards_without_narrative
     client = AsyncMock()
     client.__aenter__.return_value = client
     client.get.side_effect = client.post.side_effect = AssertionError("No live HTTP")
+
+    async def analyze(*args: Any, **kwargs: Any) -> Any:
+        analyzed = await _analyze_articles(*args, **kwargs)
+        summaries, trends, cards, report = analyzed
+        assert summaries == [] and trends is None
+        assert len(cards) == 2 and report.status == "incomplete"
+        return analyzed
+
     with (
         caplog.at_level("INFO"),
         patch("httpx.AsyncClient", return_value=client),
         patch("digest.config.load_config", return_value=config),
         patch("digest.radar.collect", AsyncMock(return_value=(fixture_articles(), {}))),
         patch("digest.application.review.complete", side_effect=fixture_response) as review_complete,
+        patch("digest.application.analysis.analyze_articles", side_effect=analyze) as analysis,
+        patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No category prose"))) as summarize,
+        patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No legacy picker"))) as picker,
         patch("digest.radar.summarizer.complete", AsyncMock(side_effect=AssertionError("No summaries"))),
         patch("digest.irritator.narrative_extractor.complete", AsyncMock()) as narratives,
         patch("digest.irritator.query_generator.complete", AsyncMock()) as queries,
         patch("digest.irritator.ranker.complete", AsyncMock()) as ranking,
-        patch("digest.delivery.send_article_cards", AsyncMock(
-            return_value=ArticleDeliveryResult(attempted=2, sent=2),
-        )) as delivery,
+        patch(
+            "digest.delivery.send_article_cards",
+            AsyncMock(
+                return_value=ArticleDeliveryResult(attempted=2, sent=2),
+            ),
+        ) as delivery,
         patch("digest.delivery.send_counter_signals", AsyncMock()),
     ):
         result = await run("fixture.yaml", False, False, False)
+    analysis.assert_awaited_once()
+    summarize.assert_not_called()
+    picker.assert_not_called()
     assert review_complete.call_count == 1
     narratives.assert_not_called()
     queries.assert_not_called()

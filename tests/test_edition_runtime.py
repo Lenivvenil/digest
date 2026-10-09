@@ -554,7 +554,9 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     canonical = _canonical(asdict(snapshot))
 
     async def translate(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
-        fields = json.loads(messages[1]["content"])["fields"]
+        request = json.loads(messages[1]["content"])
+        assert request["target_language"] == "ru"
+        fields = request["fields"]
         assert next(item["text"] for item in fields if item["id"] == "closing.summary") == card.summary
         assert NHS_CREDIT not in json.dumps(fields)
         assert EA_CREDIT not in json.dumps(fields)

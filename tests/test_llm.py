@@ -26,10 +26,7 @@ def _make_config(providers: list[dict[str, Any]]) -> Any:
     """Build a minimal config-like object with the given providers."""
     from digest.config import LLMConfig, ProviderConfig
 
-    provider_objs = [
-        ProviderConfig(name=p["name"], model=p["model"], role=p.get("role", []))
-        for p in providers
-    ]
+    provider_objs = [ProviderConfig(name=p["name"], model=p["model"], role=p.get("role", [])) for p in providers]
 
     class _Cfg:
         llm = LLMConfig(providers=provider_objs)
@@ -76,31 +73,25 @@ def test_extract_json_strips_whitespace() -> None:
 
 
 def test_providers_for_role_matching() -> None:
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-        {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize", "fallback"]},
+            {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
+        ]
+    )
     providers = _providers_for_role(LLMRole.SUMMARIZE, config)
     assert [p.name for p in providers] == ["groq", "deepseek"]
 
 
 def test_providers_for_role_fallback_only() -> None:
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-        {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize"]},
+            {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
+        ]
+    )
     providers = _providers_for_role(LLMRole.GENERATE_QUERIES, config)
     assert [p.name for p in providers] == ["deepseek"]
-
-
-def test_providers_for_role_deduplication() -> None:
-    """Provider in matching should not appear again in fallback list."""
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize", "fallback"]},
-    ])
-    providers = _providers_for_role(LLMRole.SUMMARIZE, config)
-    names = [p.name for p in providers]
-    assert names.count("groq") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -110,35 +101,14 @@ def test_providers_for_role_deduplication() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_complete_openai_compat_success() -> None:
-    model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "groq", "model": "llama-3.3-70b", "role": ["summarize"]},
-    ])
-    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "choices": [{"message": {"content": "Hello from Groq"}}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-            },
-        )
-    )
-    messages = [{"role": "user", "content": "Summarize this"}]
-    with patch.dict("os.environ", {"GROQ_API_KEY": "test-key"}):
-        text, usage = await complete(LLMRole.SUMMARIZE, messages, config, execution=model_execution)
-    assert text == "Hello from Groq"
-    assert usage["completion_tokens"] == 5
-
-
-@pytest.mark.asyncio
-@respx.mock
 async def test_complete_falls_back_on_500() -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-        {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize"]},
+            {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
+        ]
+    )
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
         return_value=httpx.Response(500, text="Internal Server Error")
     )
@@ -160,13 +130,16 @@ async def test_complete_falls_back_on_500() -> None:
 @pytest.mark.asyncio
 async def test_complete_skips_missing_api_key() -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize"]},
+        ]
+    )
     messages = [{"role": "user", "content": "test"}]
     with patch.dict("os.environ", {}, clear=True):
         # Remove GROQ_API_KEY from env
         import os
+
         env = {k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"}
         with patch.dict("os.environ", env, clear=True):
             with pytest.raises(RuntimeError, match="All providers failed"):
@@ -176,9 +149,11 @@ async def test_complete_skips_missing_api_key() -> None:
 @pytest.mark.asyncio
 async def test_complete_raises_when_no_providers_for_role() -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize"]},
+        ]
+    )
     messages = [{"role": "user", "content": "test"}]
     with pytest.raises(RuntimeError, match="No providers configured"):
         await complete(LLMRole.RANK_SIGNALS, messages, config, execution=model_execution)
@@ -186,48 +161,18 @@ async def test_complete_raises_when_no_providers_for_role() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_complete_gemini_success() -> None:
-    model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "gemini", "model": "gemini-2.5-flash", "role": ["generate_queries"]},
-    ])
-    respx.post(
-        url__startswith="https://generativelanguage.googleapis.com"
-    ).mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "candidates": [
-                    {"content": {"parts": [{"text": "Gemini response"}]}}
-                ],
-                "usageMetadata": {
-                    "promptTokenCount": 20,
-                    "candidatesTokenCount": 10,
-                },
-            },
-        )
-    )
-    messages = [{"role": "user", "content": "Generate queries"}]
-    with patch.dict("os.environ", {"GEMINI_API_KEY": "gemini-key"}):
-        text, usage = await complete(LLMRole.GENERATE_QUERIES, messages, config, execution=model_execution)
-    assert text == "Gemini response"
-    assert usage["completion_tokens"] == 10
-
-
-@pytest.mark.asyncio
-@respx.mock
 async def test_complete_all_providers_fail_raises() -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "groq", "model": "llama", "role": ["summarize"]},
-        {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "llama", "role": ["summarize"]},
+            {"name": "deepseek", "model": "ds-chat", "role": ["fallback"]},
+        ]
+    )
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
         return_value=httpx.Response(429, text="Rate limited")
     )
-    respx.post("https://api.deepseek.com/v1/chat/completions").mock(
-        return_value=httpx.Response(500, text="Error")
-    )
+    respx.post("https://api.deepseek.com/v1/chat/completions").mock(return_value=httpx.Response(500, text="Error"))
     messages = [{"role": "user", "content": "test"}]
     with patch.dict("os.environ", {"GROQ_API_KEY": "k1", "DEEPSEEK_API_KEY": "k2"}):
         with pytest.raises(RuntimeError, match="All providers failed"):
@@ -254,20 +199,26 @@ async def test_transient_error_retries_with_server_delay() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [401, 402, 403, 404])
+@pytest.mark.parametrize("status", [401, 403])
 async def test_permanent_errors_fall_back_without_retry_and_redact_body(
-    status: int, caplog: pytest.LogCaptureFixture,
+    status: int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
-    cfg = _make_config([
-        {"name": "groq", "model": "old", "role": ["summarize"]},
-        {"name": "gemini", "model": "working", "role": ["fallback"]},
-    ])
+    cfg = _make_config(
+        [
+            {"name": "groq", "model": "old", "role": ["summarize"]},
+            {"name": "gemini", "model": "working", "role": ["fallback"]},
+        ]
+    )
     cfg.llm.max_retries = 2
-    response = httpx.Response(status, json={"error": {"code": "model_not_found", "message": "SECRET_PROMPT"}},
-                              request=httpx.Request("POST", "https://example.com"))
+    response = httpx.Response(
+        status,
+        json={"error": {"code": "model_not_found", "message": "SECRET_PROMPT"}},
+        request=httpx.Request("POST", "https://example.com"),
+    )
     error = httpx.HTTPStatusError("SECRET_CREDENTIAL", request=response.request, response=response)
     with (
         patch("digest.llm._call_provider", AsyncMock(side_effect=[error, ("Fallback", {})])) as call,
@@ -279,27 +230,6 @@ async def test_permanent_errors_fall_back_without_retry_and_redact_body(
     sleep.assert_not_awaited()
     assert "model_not_found" in caplog.text
     assert "SECRET" not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_excessive_retry_after_falls_back_without_shortening_server_wait() -> None:
-    model_execution = ModelExecution()
-    from unittest.mock import AsyncMock
-
-    cfg = _make_config([
-        {"name": "groq", "model": "busy", "role": ["summarize"]},
-        {"name": "gemini", "model": "working", "role": ["fallback"]},
-    ])
-    cfg.llm.max_retries = 2
-    response = httpx.Response(429, headers={"retry-after": "3600"}, request=httpx.Request("POST", "https://example.com"))
-    error = httpx.HTTPStatusError("limited", request=response.request, response=response)
-    with (
-        patch("digest.llm._call_provider", AsyncMock(side_effect=[error, ("Fallback", {})])) as call,
-        patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
-    ):
-        assert (await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution))[0] == "Fallback"
-    assert call.await_count == 2
-    sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -321,11 +251,12 @@ async def test_parallel_pipeline_calls_respect_shared_concurrency_limit() -> Non
         return "ok", {}
 
     with patch("digest.llm._call_provider", side_effect=provider):
-        results = await asyncio.gather(*(
-            complete(role, [], cfg,
-                     execution=model_execution)
-            for role in [LLMRole.SUMMARIZE, LLMRole.GENERATE_QUERIES, LLMRole.RANK_SIGNALS]
-        ))
+        results = await asyncio.gather(
+            *(
+                complete(role, [], cfg, execution=model_execution)
+                for role in [LLMRole.SUMMARIZE, LLMRole.GENERATE_QUERIES, LLMRole.RANK_SIGNALS]
+            )
+        )
     assert high_water == 1
     assert len(results) == 3
 
@@ -355,29 +286,48 @@ async def test_request_spacing_is_shared_and_deterministic() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [402, 404, 429])
-async def test_provider_failures_are_shared_across_subsequent_calls(status: int) -> None:
+async def test_provider_failures_are_shared_across_subsequent_calls(
+    status: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
-    cfg = _make_config([
-        {"name": "groq", "model": "unavailable", "role": ["summarize"]},
-        {"name": "gemini", "model": "working", "role": ["fallback"]},
-    ])
-    cfg.llm.max_retries = 1
-    response = httpx.Response(status, headers={"retry-after": "3600"},
-                              request=httpx.Request("POST", "https://example.com"))
-    error = httpx.HTTPStatusError("unavailable", request=response.request, response=response)
-    with patch("digest.llm._call_provider", AsyncMock(side_effect=[error, ("first", {}), ("second", {})])) as call:
+    cfg = _make_config(
+        [
+            {"name": "groq", "model": "unavailable", "role": ["summarize"]},
+            {"name": "gemini", "model": "working", "role": ["fallback"]},
+        ]
+    )
+    cfg.llm.max_retries = 2
+    response = httpx.Response(
+        status,
+        headers={"retry-after": "3600"} if status == 429 else {},
+        json={"error": {"code": "model_not_found", "message": "SECRET_PROMPT"}},
+        request=httpx.Request("POST", "https://example.com"),
+    )
+    error = httpx.HTTPStatusError("SECRET_CREDENTIAL", request=response.request, response=response)
+    with (
+        patch("digest.llm._call_provider", AsyncMock(side_effect=[error, ("first", {}), ("second", {})])) as call,
+        patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
+    ):
+        text, _ = await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution)
+        assert text == "first"
+        assert call.await_count == 2
+        sleep.assert_not_awaited()
+        assert "model_not_found" in caplog.text
+        assert "SECRET" not in caplog.text
         await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution)
-        await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution)
+    sleep.assert_not_awaited()
     assert [c.args[1].name for c in call.await_args_list] == ["groq", "gemini", "gemini"]
 
 
 def test_machine_error_code_does_not_echo_arbitrary_response_strings() -> None:
     from digest.llm import _safe_provider_error
 
-    response = httpx.Response(404, json={"error": {"code": "sk-secret-token"}},
-                              request=httpx.Request("POST", "https://example.com"))
+    response = httpx.Response(
+        404, json={"error": {"code": "sk-secret-token"}}, request=httpx.Request("POST", "https://example.com")
+    )
     error = httpx.HTTPStatusError("secret", request=response.request, response=response)
     assert _safe_provider_error(error) == "HTTP 404 code=unknown"
 
@@ -389,10 +339,12 @@ async def test_queued_call_rechecks_cooldown_after_waiting_for_request_slot() ->
 
     from digest.llm import _request_state
 
-    cfg = _make_config([
-        {"name": "groq", "model": "busy", "role": ["summarize"]},
-        {"name": "gemini", "model": "working", "role": ["fallback"]},
-    ])
+    cfg = _make_config(
+        [
+            {"name": "groq", "model": "busy", "role": ["summarize"]},
+            {"name": "gemini", "model": "working", "role": ["fallback"]},
+        ]
+    )
     state = _request_state(cfg, model_execution)
     calls = 0
 
@@ -418,14 +370,21 @@ async def test_explicit_review_model_never_uses_configured_fallback() -> None:
 
     from digest.config import ProviderConfig
 
-    config = _make_config([
-        {"name": "gemini", "model": "primary", "role": ["fallback"]},
-        {"name": "deepseek", "model": "paid", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "gemini", "model": "primary", "role": ["fallback"]},
+            {"name": "deepseek", "model": "paid", "role": ["fallback"]},
+        ]
+    )
     with patch("digest.llm._call_provider", AsyncMock(side_effect=ValueError("invalid response"))) as call:
         with pytest.raises(RuntimeError):
-            await complete(LLMRole.REVIEW_EVIDENCE, [], config, execution=model_execution,
-                           provider_override=ProviderConfig("groq", "openai/gpt-oss-120b"))
+            await complete(
+                LLMRole.REVIEW_EVIDENCE,
+                [],
+                config,
+                execution=model_execution,
+                provider_override=ProviderConfig("groq", "openai/gpt-oss-120b"),
+            )
     assert call.await_count == 1
     assert call.await_args.args[1].name == "groq"
 
@@ -438,11 +397,14 @@ async def test_review_output_budget_reaches_all_provider_transports() -> None:
 
     with respx.mock:
         groq = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-            return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}))
+            return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        )
         gemini = respx.post("https://generativelanguage.googleapis.com/v1beta/models/fixture:generateContent").mock(
-            return_value=httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}))
+            return_value=httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+        )
         anthropic = respx.post("https://api.anthropic.com/v1/messages").mock(
-            return_value=httpx.Response(200, json={"content": [{"text": "ok"}]}))
+            return_value=httpx.Response(200, json={"content": [{"text": "ok"}]})
+        )
         async with httpx.AsyncClient() as client:
             await _openai_compat_call(client, "https://api.groq.com/openai/v1", "fake", "fixture", [], 0.2, 2048)
             await _gemini_call(client, "fake", "fixture", [], 0.2, 2048)
@@ -474,13 +436,25 @@ async def test_gemini_preflight_counts_the_exact_generation_request() -> None:
         {"role": "user", "content": "Full source text without truncation"},
     ]
     with patch.dict("os.environ", {"GEMINI_API_KEY": "fixture-key"}):
-        assert await count_gemini_tokens(
-            messages, config,
-                execution=model_execution, provider_override=provider, temperature=0.15, max_output_tokens=3456,
-        ) == 123
+        assert (
+            await count_gemini_tokens(
+                messages,
+                config,
+                execution=model_execution,
+                provider_override=provider,
+                temperature=0.15,
+                max_output_tokens=3456,
+            )
+            == 123
+        )
         await complete(
-            LLMRole.REVIEW_EVIDENCE, messages, config, execution=model_execution, provider_override=provider,
-            temperature=0.15, max_output_tokens=3456,
+            LLMRole.REVIEW_EVIDENCE,
+            messages,
+            config,
+            execution=model_execution,
+            provider_override=provider,
+            temperature=0.15,
+            max_output_tokens=3456,
         )
     generated = json.loads(generate_route.calls.last.request.content)
     counted = json.loads(count_route.calls.last.request.content)
@@ -502,8 +476,19 @@ async def test_gemini_preflight_counts_the_exact_generation_request() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-@pytest.mark.parametrize("body", [None, [], {}, {"totalTokens": 0}, {"totalTokens": -1},
-                                  {"totalTokens": True}, {"totalTokens": "12"}, {"totalTokens": 1.5}])
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        [],
+        {},
+        {"totalTokens": 0},
+        {"totalTokens": -1},
+        {"totalTokens": True},
+        {"totalTokens": "12"},
+        {"totalTokens": 1.5},
+    ],
+)
 async def test_gemini_preflight_rejects_invalid_count_without_retry(body: Any) -> None:
     model_execution = ModelExecution()
     config = _make_config([{"name": "gemini", "model": "fixture", "role": ["fallback"]}])
@@ -515,7 +500,9 @@ async def test_gemini_preflight_rejects_invalid_count_without_retry(body: Any) -
     with patch.dict("os.environ", {"GEMINI_API_KEY": "fixture-key"}):
         with pytest.raises(RuntimeError, match="Gemini token preflight failed: (ValueError|JSONDecodeError)"):
             await count_gemini_tokens(
-                [{"role": "user", "content": "Nonempty source"}], config, execution=model_execution,
+                [{"role": "user", "content": "Nonempty source"}],
+                config,
+                execution=model_execution,
                 provider_override=config.llm.providers[0],
             )
     assert route.call_count == 1
@@ -526,13 +513,16 @@ async def test_gemini_preflight_rejects_invalid_count_without_retry(body: Any) -
 @respx.mock
 @pytest.mark.parametrize("status", [404, 429, 503])
 async def test_gemini_preflight_failure_has_no_retry_fallback_or_sensitive_error(
-    status: int, caplog: pytest.LogCaptureFixture,
+    status: int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "gemini", "model": "fixture", "role": ["summarize"]},
-        {"name": "deepseek", "model": "fallback", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "gemini", "model": "fixture", "role": ["summarize"]},
+            {"name": "deepseek", "model": "fallback", "role": ["fallback"]},
+        ]
+    )
     config.llm.max_retries = 3
     route = respx.post(
         "https://generativelanguage.googleapis.com/v1beta/models/fixture:countTokens",
@@ -540,14 +530,17 @@ async def test_gemini_preflight_failure_has_no_retry_fallback_or_sensitive_error
     with patch.dict("os.environ", {"GEMINI_API_KEY": "SECRET_KEY"}):
         with pytest.raises(RuntimeError) as error:
             await count_gemini_tokens(
-                [{"role": "user", "content": "SECRET_PROMPT"}], config, execution=model_execution,
+                [{"role": "user", "content": "SECRET_PROMPT"}],
+                config,
+                execution=model_execution,
                 provider_override=config.llm.providers[0],
             )
         assert str(error.value) == f"Gemini token preflight failed: HTTP {status} code=unknown"
         if status in {404, 429}:
             with pytest.raises(RuntimeError, match="All providers failed"):
-                await complete(LLMRole.SUMMARIZE, [], config,
-                    execution=model_execution, provider_override=config.llm.providers[0])
+                await complete(
+                    LLMRole.SUMMARIZE, [], config, execution=model_execution, provider_override=config.llm.providers[0]
+                )
     assert route.call_count == 1
     assert len(respx.calls) == 1
     assert "SECRET" not in caplog.text
@@ -593,10 +586,12 @@ async def test_request_cap_counts_failed_attempts_and_prevents_retry_and_fallbac
     model_execution = ModelExecution()
     from unittest.mock import AsyncMock
 
-    config = _make_config([
-        {"name": "groq", "model": "fixture", "role": ["summarize"]},
-        {"name": "gemini", "model": "fallback", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "groq", "model": "fixture", "role": ["summarize"]},
+            {"name": "gemini", "model": "fallback", "role": ["fallback"]},
+        ]
+    )
     config.llm.max_retries = 2
     route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(503)
     set_request_limit(config, model_execution, 2)
@@ -644,10 +639,14 @@ async def test_gemini_preflight_shares_semaphore_and_rechecks_cooldown_after_pac
 
     with patch("digest.llm._pace_request", AsyncMock(side_effect=pace)) as pacing:
         async with state.semaphore:
-            task = asyncio.create_task(count_gemini_tokens(
-                [{"role": "user", "content": "source"}], config,
-                    execution=model_execution, provider_override=config.llm.providers[0],
-            ))
+            task = asyncio.create_task(
+                count_gemini_tokens(
+                    [{"role": "user", "content": "source"}],
+                    config,
+                    execution=model_execution,
+                    provider_override=config.llm.providers[0],
+                )
+            )
             await asyncio.sleep(0)
             pacing.assert_not_awaited()
         with pytest.raises(RuntimeError, match="unavailable"):
@@ -661,22 +660,26 @@ async def test_gemini_preflight_shares_semaphore_and_rechecks_cooldown_after_pac
 @respx.mock
 async def test_gemini_preflight_rejects_missing_credentials_and_empty_or_wrong_provider_requests() -> None:
     model_execution = ModelExecution()
-    config = _make_config([
-        {"name": "gemini", "model": "fixture", "role": ["summarize"]},
-        {"name": "groq", "model": "fixture", "role": ["fallback"]},
-    ])
+    config = _make_config(
+        [
+            {"name": "gemini", "model": "fixture", "role": ["summarize"]},
+            {"name": "groq", "model": "fixture", "role": ["fallback"]},
+        ]
+    )
     set_request_limit(config, model_execution, 1)
     messages = [{"role": "user", "content": "source"}]
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="nonempty request"):
             await count_gemini_tokens([], config, execution=model_execution, provider_override=config.llm.providers[0])
         with pytest.raises(ValueError, match="configured Gemini"):
-            await count_gemini_tokens(messages, config,
-                execution=model_execution, provider_override=config.llm.providers[1])
+            await count_gemini_tokens(
+                messages, config, execution=model_execution, provider_override=config.llm.providers[1]
+            )
         assert request_budget_remaining(config, model_execution) == 1
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY not set"):
-            await count_gemini_tokens(messages, config,
-                execution=model_execution, provider_override=config.llm.providers[0])
+            await count_gemini_tokens(
+                messages, config, execution=model_execution, provider_override=config.llm.providers[0]
+            )
         assert request_budget_remaining(config, model_execution) == 0
         with pytest.raises(RuntimeError, match="budget exhausted"):
             await complete(LLMRole.SUMMARIZE, messages, config, execution=model_execution)
@@ -707,25 +710,45 @@ async def test_request_wait_seconds_reports_only_current_pacing_delay() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-@pytest.mark.parametrize(("name", "url", "default"), [
-    ("groq", "https://api.groq.com/openai/v1/chat/completions", 60.0),
-    ("gemini", "https://generativelanguage.googleapis.com/v1beta/models/fixture:generateContent", 120.0),
-    ("anthropic", "https://api.anthropic.com/v1/messages", 120.0),
-])
+@pytest.mark.parametrize(
+    ("name", "url", "default"),
+    [
+        ("groq", "https://api.groq.com/openai/v1/chat/completions", 60.0),
+        ("gemini", "https://generativelanguage.googleapis.com/v1beta/models/fixture:generateContent", 120.0),
+        ("anthropic", "https://api.anthropic.com/v1/messages", 120.0),
+    ],
+)
 @pytest.mark.parametrize("requested", [None, 37.25, 999.0])
 async def test_request_timeout_reaches_transport_and_never_extends_default(
-    name: str, url: str, default: float, requested: float | None,
+    name: str,
+    url: str,
+    default: float,
+    requested: float | None,
 ) -> None:
     model_execution = ModelExecution()
     config = _make_config([{"name": name, "model": "fixture", "role": ["summarize"]}])
-    route = respx.post(url).respond(200, json={
-        "choices": [{"message": {"content": "ok"}}],
-        "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-        "content": [{"text": "ok"}],
-    })
+    route = respx.post(url).respond(
+        200,
+        json={
+            "choices": [{"message": {"content": "ok"}}],
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+            "content": [{"text": "ok"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 10},
+        },
+    )
     kwargs = {"request_timeout_seconds": requested} if requested is not None else {}
     with patch.dict("os.environ", {f"{name.upper()}_API_KEY": "fixture-key"}):
-        assert (await complete(LLMRole.SUMMARIZE, [], config, execution=model_execution, **kwargs))[0] == "ok"
+        text, usage = await complete(
+            LLMRole.SUMMARIZE,
+            [{"role": "user", "content": "Summarize this"}],
+            config,
+            execution=model_execution,
+            **kwargs,
+        )
+    assert text == "ok"
+    if name in {"groq", "gemini"}:
+        assert usage["completion_tokens"] == (5 if name == "groq" else 10)
     expected = default if requested is None else min(default, requested)
     assert set(route.calls.last.request.extensions["timeout"].values()) == {expected}
 
@@ -754,10 +777,12 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
     config.llm.max_retries = 1
     route = respx.post(
         "https://generativelanguage.googleapis.com/v1beta/models/fixture:generateContent",
-    ).mock(side_effect=[
-        httpx.ReadTimeout("fixture timeout"),
-        httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}),
-    ])
+    ).mock(
+        side_effect=[
+            httpx.ReadTimeout("fixture timeout"),
+            httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}),
+        ]
+    )
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "fixture-key"}),
         patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
@@ -769,8 +794,12 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
         else:
             with pytest.raises(RuntimeError, match="ReadTimeout"):
                 await complete(
-                    LLMRole.SUMMARIZE, [], config, execution=model_execution,
-                    provider_override=config.llm.providers[0], request_timeout_seconds=requested,
+                    LLMRole.SUMMARIZE,
+                    [],
+                    config,
+                    execution=model_execution,
+                    provider_override=config.llm.providers[0],
+                    request_timeout_seconds=requested,
                 )
             assert route.call_count == 1
             sleep.assert_not_awaited()
@@ -780,31 +809,56 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
 async def test_gemini_preserves_all_final_parts_and_omits_hidden_metadata() -> None:
     from digest.llm import _gemini_call
 
-    payload = {"candidates": [{"content": {"parts": [
-        {"text": "synthetic hidden content", "thought": True},
-        {"text": "First statement. ", "thoughtSignature": "synthetic-opaque-signature"},
-        {"thoughtSignature": "synthetic-metadata-only"},
-        {"text": "Only enrolled customers qualify.", "partMetadata": {"fixture": True}},
-    ]}, "finishReason": "STOP"}], "modelVersion": "fixture-model", "usageMetadata": {
-        "promptTokenCount": 12, "candidatesTokenCount": 8,
-    }}
-    async with httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(200, json=payload)), trust_env=False,
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": "synthetic hidden content", "thought": True},
+                        {"text": "First statement. ", "thoughtSignature": "synthetic-opaque-signature"},
+                        {"thoughtSignature": "synthetic-metadata-only"},
+                        {"text": "Only enrolled customers qualify.", "partMetadata": {"fixture": True}},
+                    ]
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "modelVersion": "fixture-model",
+        "usageMetadata": {
+            "promptTokenCount": 12,
+            "candidatesTokenCount": 8,
+        },
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
+        trust_env=False,
     ) as client:
         text, usage = await _gemini_call(client, "synthetic", "fixture", [], 0.1, 2048)
     assert text == "First statement. Only enrolled customers qualify."
-    assert usage == {"prompt_tokens": 12, "completion_tokens": 8,
-                     "finish_reason": "STOP", "resolved_model": "fixture-model"}
+    assert usage == {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "finish_reason": "STOP",
+        "resolved_model": "fixture-model",
+    }
     assert "hidden" not in text and "signature" not in text
 
 
-@pytest.mark.parametrize("parts", [
-    None, [], [{}], ["invalid"], [{"text": None}], [{"text": " "}],
-    [{"text": "synthetic hidden content", "thought": True}],
-    [{"text": "partial"}, {"functionCall": {"name": "do_not_execute"}}],
-    [{"text": "partial"}, {"inlineData": {"data": "synthetic"}}],
-    [{"text": "partial", "thought": "false"}],
-])
+@pytest.mark.parametrize(
+    "parts",
+    [
+        None,
+        [],
+        [{}],
+        ["invalid"],
+        [{"text": None}],
+        [{"text": " "}],
+        [{"text": "synthetic hidden content", "thought": True}],
+        [{"text": "partial"}, {"functionCall": {"name": "do_not_execute"}}],
+        [{"text": "partial"}, {"inlineData": {"data": "synthetic"}}],
+        [{"text": "partial", "thought": "false"}],
+    ],
+)
 def test_gemini_final_parts_fail_closed_without_disclosing_response(parts) -> None:
     from digest.llm import _gemini_final_text
 
@@ -837,8 +891,10 @@ async def test_stricter_stage_pacing_covers_previous_start_and_deadline_without_
         waits.append(delay)
         clock[0] += delay
 
-    with (patch("digest.llm.time.monotonic", side_effect=lambda: clock[0]),
-          patch("digest.llm.asyncio.sleep", side_effect=sleep)):
+    with (
+        patch("digest.llm.time.monotonic", side_effect=lambda: clock[0]),
+        patch("digest.llm.asyncio.sleep", side_effect=sleep),
+    ):
         await llm._pace_request(state, 20)
         llm._reserve_request(state)
         clock[0] = 1005

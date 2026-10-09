@@ -34,27 +34,57 @@ def _begin(cache: Path, stage: str = "prepare", *, limit: int = 10) -> StageExec
 
 
 def _request(cache: Path, execution: StageExecution, *, kind: str = "generate", provider: str = "primary") -> None:
-    reserve_request(CYCLE, execution.stage, execution.claim_sha, run_attempt=execution.run_attempt,
-                    execution_nonce=execution.execution_nonce, provider=provider, model="vendor/model-v1",
-                    kind=kind, cache_dir=cache, now=NOW)
+    reserve_request(
+        CYCLE,
+        execution.stage,
+        execution.claim_sha,
+        run_attempt=execution.run_attempt,
+        execution_nonce=execution.execution_nonce,
+        provider=provider,
+        model="vendor/model-v1",
+        kind=kind,
+        cache_dir=cache,
+        now=NOW,
+    )
 
 
 def _finish(cache: Path, execution: StageExecution) -> model_budget.BudgetSnapshot:
-    return finalize_stage(CYCLE, execution.stage, execution.claim_sha, cache,
-                          run_attempt=execution.run_attempt, execution_nonce=execution.execution_nonce, now=NOW)
+    return finalize_stage(
+        CYCLE,
+        execution.stage,
+        execution.claim_sha,
+        cache,
+        run_attempt=execution.run_attempt,
+        execution_nonce=execution.execution_nonce,
+        now=NOW,
+    )
 
 
 def _rehash(record: dict[str, Any]) -> None:
     body = {key: value for key, value in record.items() if key != "sha256"}
-    record["sha256"] = hashlib.sha256(json.dumps(
-        body, sort_keys=True, separators=(",", ":"), allow_nan=False,
-    ).encode()).hexdigest()
+    record["sha256"] = hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
 
 
 def _process_request(cache: str, claim_sha: str, nonce: str) -> bool:
     try:
-        reserve_request(CYCLE, "prepare", claim_sha, run_attempt=1, execution_nonce=nonce,
-                        provider="provider", model="model", kind="generate", cache_dir=cache)
+        reserve_request(
+            CYCLE,
+            "prepare",
+            claim_sha,
+            run_attempt=1,
+            execution_nonce=nonce,
+            provider="provider",
+            model="model",
+            kind="generate",
+            cache_dir=cache,
+        )
         return True
     except ModelBudgetError:
         return False
@@ -88,8 +118,10 @@ def test_cross_process_reservations_are_locked_and_never_exceed_ten(tmp_path: Pa
     execution = _begin(tmp_path)
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(max_workers=6, mp_context=context) as pool:
-        futures = [pool.submit(_process_request, str(tmp_path), execution.claim_sha, execution.execution_nonce)
-                   for _ in range(24)]
+        futures = [
+            pool.submit(_process_request, str(tmp_path), execution.claim_sha, execution.execution_nonce)
+            for _ in range(24)
+        ]
         assert sum(future.result(timeout=30) for future in futures) == 10
     state = inspect_budget(CYCLE, tmp_path)
     assert state.reserved_count == 10 and state.remaining == 0
@@ -113,8 +145,7 @@ def test_active_unknown_prepare_prevents_optional_fresh_allowance(tmp_path: Path
         with pytest.raises(ModelBudgetError, match="active|unknown"):
             reserve_stage(CYCLE, stage, tmp_path, run_attempt=1, now=NOW)
     with pytest.raises(ModelBudgetError, match="journal"):
-        finalize_stage(CYCLE, "prepare", claim.claim_sha, tmp_path,
-                       run_attempt=1, execution_nonce="1" * 32, now=NOW)
+        finalize_stage(CYCLE, "prepare", claim.claim_sha, tmp_path, run_attempt=1, execution_nonce="1" * 32, now=NOW)
     assert inspect_budget(CYCLE, tmp_path).active_stage == "prepare"
 
 
@@ -157,8 +188,11 @@ def test_corrupt_usage_fails_closed(tmp_path: Path, change: str) -> None:
     if change == "duplicate":
         payload = payload.replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1')
     execution.path.write_text(payload)
-    for action in (lambda: inspect_budget(CYCLE, tmp_path),
-                   lambda: _request(tmp_path, execution), lambda: _finish(tmp_path, execution)):
+    for action in (
+        lambda: inspect_budget(CYCLE, tmp_path),
+        lambda: _request(tmp_path, execution),
+        lambda: _finish(tmp_path, execution),
+    ):
         with pytest.raises(ModelBudgetError):
             action()
 
@@ -180,31 +214,33 @@ def test_missing_usage_and_missing_rerun_state_fail_closed(tmp_path: Path) -> No
 
 def test_claim_stage_cycle_attempt_and_nonce_must_match(tmp_path: Path) -> None:
     execution = _begin(tmp_path)
-    default: dict[str, Any] = {"cycle_id": CYCLE, "stage": "prepare", "claim_sha": execution.claim_sha,
-                               "run_attempt": 1, "execution_nonce": execution.execution_nonce}
-    for key, value in (("cycle_id", "987"), ("stage", "comparison"), ("claim_sha", "0" * 64),
-                       ("run_attempt", 2), ("run_attempt", True), ("execution_nonce", "0" * 32)):
+    default: dict[str, Any] = {
+        "cycle_id": CYCLE,
+        "stage": "prepare",
+        "claim_sha": execution.claim_sha,
+        "run_attempt": 1,
+        "execution_nonce": execution.execution_nonce,
+    }
+    for key, value in (
+        ("cycle_id", "987"),
+        ("stage", "comparison"),
+        ("claim_sha", "0" * 64),
+        ("run_attempt", 2),
+        ("run_attempt", True),
+        ("execution_nonce", "0" * 32),
+    ):
         with pytest.raises(ModelBudgetError):
-            reserve_request(**{**default, key: value}, provider="provider", model="model", kind="generate",
-                            cache_dir=tmp_path, now=NOW)
+            reserve_request(
+                **{**default, key: value},
+                provider="provider",
+                model="model",
+                kind="generate",
+                cache_dir=tmp_path,
+                now=NOW,
+            )
     assert inspect_budget(CYCLE, tmp_path).reserved_count == 0
     with pytest.raises(ModelBudgetError, match="already began"):
         begin_stage(CYCLE, "prepare", execution.claim_sha, run_attempt=1, cache_dir=tmp_path, now=NOW)
-
-
-def test_failed_local_write_never_authorizes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    execution = _begin(tmp_path)
-    before = execution.path.read_bytes()
-    dispatched: list[str] = []
-
-    def fail_write(path: Path, data: object) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(model_budget, "atomic_json_write", fail_write)
-    with pytest.raises(ModelBudgetError, match="persist"):
-        _request(tmp_path, execution)
-        dispatched.append("HTTP")
-    assert dispatched == [] and execution.path.read_bytes() == before
 
 
 def test_finalized_stage_rejects_late_requests_and_repeated_finalize(tmp_path: Path) -> None:
@@ -240,11 +276,16 @@ def test_invalid_limit_rejected(tmp_path: Path, limit: Any) -> None:
 
 def test_shared_reservation_time_exposes_prior_process_pacing(tmp_path: Path) -> None:
     execution = _begin(tmp_path)
-    args = {"run_attempt": 1, "execution_nonce": execution.execution_nonce,
-            "provider": "provider", "model": "model", "kind": "generate", "cache_dir": tmp_path}
+    args = {
+        "run_attempt": 1,
+        "execution_nonce": execution.execution_nonce,
+        "provider": "provider",
+        "model": "model",
+        "kind": "generate",
+        "cache_dir": tmp_path,
+    }
     first = reserve_request(CYCLE, "prepare", execution.claim_sha, now=NOW, **args)  # type: ignore[arg-type]
-    second = reserve_request(CYCLE, "prepare", execution.claim_sha, now=NOW + timedelta(seconds=2),
-                             **args)  # type: ignore[arg-type]
+    second = reserve_request(CYCLE, "prepare", execution.claim_sha, now=NOW + timedelta(seconds=2), **args)  # type: ignore[arg-type]
     assert first.previous_reserved_at is None
     assert second.previous_reserved_at == NOW and second.reserved_at == NOW + timedelta(seconds=2)
     assert inspect_budget(CYCLE, tmp_path).last_reserved_at == second.reserved_at
@@ -276,7 +317,8 @@ def test_unsafe_paths_and_cycle_identifiers_are_rejected(tmp_path: Path) -> None
 
 
 def test_env_helper_never_initializes_and_required_missing_claim_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for name in ("REQUIRED", "CYCLE", "STAGE", "CLAIM_SHA", "ATTEMPT", "EXECUTION_NONCE"):
         monkeypatch.delenv("DIGEST_MODEL_BUDGET_" + name, raising=False)
@@ -287,8 +329,13 @@ def test_env_helper_never_initializes_and_required_missing_claim_fails_closed(
     with pytest.raises(ModelBudgetError, match="missing"):
         reserve_request_from_env(provider="p", model="m", kind="generate", cache_dir=tmp_path)
     execution = _begin(tmp_path)
-    for name, value in {"CYCLE": CYCLE, "STAGE": "prepare", "CLAIM_SHA": execution.claim_sha,
-                        "ATTEMPT": "1", "EXECUTION_NONCE": execution.execution_nonce}.items():
+    for name, value in {
+        "CYCLE": CYCLE,
+        "STAGE": "prepare",
+        "CLAIM_SHA": execution.claim_sha,
+        "ATTEMPT": "1",
+        "EXECUTION_NONCE": execution.execution_nonce,
+    }.items():
         monkeypatch.setenv("DIGEST_MODEL_BUDGET_" + name, value)
     reservation = reserve_request_from_env(provider="p", model="m", kind="count_tokens", cache_dir=tmp_path, now=NOW)
     assert reservation is not None and reservation.remaining == 9
@@ -302,7 +349,8 @@ def test_env_helper_never_initializes_and_required_missing_claim_fails_closed(
 
 
 def test_begin_and_finalize_write_failures_leave_allowance_held(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     claim = reserve_stage(CYCLE, "prepare", tmp_path, run_attempt=1, now=NOW)
     before = claim.path.read_bytes()

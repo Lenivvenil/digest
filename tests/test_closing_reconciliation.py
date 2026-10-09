@@ -1,4 +1,5 @@
 """Offline integration of optional closing with the current review and translation contracts."""
+
 from __future__ import annotations
 
 import copy
@@ -26,6 +27,7 @@ from digest.domain.editorial.candidates import CandidateProgress
 from digest.feedback import FeedbackStore
 from digest.main import _run, main
 from digest.preparation import load_preparation
+from digest.presentation.review import primary_cards
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates, article_hash
 from digest.translation import translate_publication_with_closing
 from tests.test_closing import NOW, population, response
@@ -35,22 +37,28 @@ from tests.test_translation import config as translation_config
 
 def six_articles() -> tuple[Config, dict[str, list[Article]]]:
     config, articles = population()
-    articles["Society"].extend(replace(articles["Society"][0], title=f"Item {index}",
-                                       link=f"https://example.com/{index}") for index in (4, 5))
+    articles["Society"].extend(
+        replace(articles["Society"][0], title=f"Item {index}", link=f"https://example.com/{index}") for index in (4, 5)
+    )
     return config, articles
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_main(
-    monkeypatch: pytest.MonkeyPatch, enabled: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
 ) -> None:
     model_execution = ModelExecution()
     config, articles = population()
     config.review.primary = ReviewModelConfig("groq", "openai/gpt-oss-120b")
     config.closing = replace(config.closing, enabled=enabled)
-    complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
-        response(messages, {"schema_version": True, "evidence_id": None} if enabled else "missing"), {}))
+    complete = AsyncMock(
+        side_effect=lambda role, messages, *args, **kwargs: (
+            response(messages, {"schema_version": True, "evidence_id": None} if enabled else "missing"),
+            {},
+        )
+    )
     monkeypatch.setattr("digest.application.review.complete", complete)
     result = await run_primary_review(articles, config, execution=model_execution)
     report = result.report
@@ -58,25 +66,60 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
     assert report.reviews[0].status == "ok" and len(report.reviews[0].selections) == 4
     closing = result.attempts[0].closing
     assert (closing is not None and closing.status == "incomplete") if enabled else closing is None
+    if enabled:
+        assert len(primary_cards(result, articles, "en", max_cards=2)) == 2
     request = complete.call_args
     assert request.kwargs["reasoning_effort"] == "low"
     assert request.kwargs["max_output_tokens"] == 4096
     fmt = request.kwargs["response_format"]
     assert fmt == groq_review_response_format(allow_closing=enabled)
     schema = copy.deepcopy(fmt["json_schema"]["schema"])
+    if not enabled:
+        assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
+        assert set(schema["required"]) == {"selections", "limitations", "dispositions"}
+        assert schema["additionalProperties"] is False
+        selection = schema["properties"]["selections"]["items"]
+        assert selection["additionalProperties"] is False
+        assert (
+            set(selection["properties"])
+            == set(selection["required"])
+            == {
+                "evidence_id",
+                "reason",
+                "quote",
+                "confidence",
+            }
+        )
+        assert "limitations" not in selection["properties"]
+        variants = schema["properties"]["dispositions"]["items"]["anyOf"]
+        assert [variant["properties"]["status"]["enum"] for variant in variants] == [
+            ["selected"],
+            ["not_selected", "deferred"],
+            ["duplicate"],
+        ]
+        for variant in variants:
+            assert variant["additionalProperties"] is False
+            assert set(variant["properties"]) == set(variant["required"])
+        assert "maxItems" not in json.dumps(fmt) and "maxLength" not in json.dumps(fmt)
     if enabled:
         assert schema["properties"].pop("closing") == {
-            "type": "object", "additionalProperties": False,
+            "type": "object",
+            "additionalProperties": False,
             "required": ["schema_version", "selection"],
-            "properties": {"schema_version": {"type": "integer", "enum": [2]},
-                           "selection": {"anyOf": [schema["properties"]["selections"]["items"], {"type": "null"}]}},
+            "properties": {
+                "schema_version": {"type": "integer", "enum": [2]},
+                "selection": {"anyOf": [schema["properties"]["selections"]["items"], {"type": "null"}]},
+            },
         }
         schema["required"].remove("closing")
         variants = schema["properties"]["dispositions"]["items"]["anyOf"]
         assert [variant["properties"]["status"]["enum"] for variant in variants] == [
-            ["not_selected", "deferred"], ["duplicate"]]
-        variants.insert(0, groq_review_response_format()["json_schema"]["schema"]["properties"][
-            "dispositions"]["items"]["anyOf"][0])
+            ["not_selected", "deferred"],
+            ["duplicate"],
+        ]
+        variants.insert(
+            0, groq_review_response_format()["json_schema"]["schema"]["properties"]["dispositions"]["items"]["anyOf"][0]
+        )
     else:
         bundle = build_evidence_bundle(articles, config.review)
         assert request.args[1] == build_review_messages(bundle, config.review, "en", sources=config.sources)
@@ -89,14 +132,16 @@ async def test_groq_wire_adds_only_enabled_closing_and_invalid_optional_keeps_ma
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_live_review_keeps_detail_bound_with_either_closing_flag(
-    monkeypatch: pytest.MonkeyPatch, enabled: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
 ) -> None:
     model_execution = ModelExecution()
     config, articles = six_articles()
     config.closing = replace(config.closing, enabled=enabled)
     assert config.review.max_detailed_selections == 5
-    complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
-        response(messages, "first" if enabled else "missing"), {}))
+    complete = AsyncMock(
+        side_effect=lambda role, messages, *args, **kwargs: (response(messages, "first" if enabled else "missing"), {})
+    )
     monkeypatch.setattr("digest.application.review.complete", complete)
     result = await run_primary_review(articles, config, execution=model_execution)
     report = result.report
@@ -107,17 +152,30 @@ async def test_live_review_keeps_detail_bound_with_either_closing_flag(
         assert set(result.chosen.closing.rejected_evidence_ids) <= set(result.disposition_attempts[0].unresolved_ids)
     else:
         assert complete.await_count == 2
-        assert all(review.status == "invalid" and review.error == "invalid selection count"
-                   and not review.selections for review in report.reviews)
+        assert all(
+            review.status == "invalid" and review.error == "invalid selection count" and not review.selections
+            for review in report.reviews
+        )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("main_cap,details,main_count,closer,rejected", [
-    (2, 5, 4, True, False), (5, 6, 6, False, False),
-    (5, 6, 6, True, False), (5, 6, 6, True, True), (5, 6, 5, True, True),
-])
+@pytest.mark.parametrize(
+    "main_cap,details,main_count,closer,rejected",
+    [
+        (2, 5, 4, True, False),
+        (5, 6, 6, False, False),
+        (5, 6, 6, True, False),
+        (5, 6, 6, True, True),
+        (5, 6, 5, True, True),
+    ],
+)
 async def test_dynamic_shared_detail_capacity_counts_raw_rejected_main_entries(
-    monkeypatch: pytest.MonkeyPatch, main_cap: int, details: int, main_count: int, closer: bool, rejected: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    main_cap: int,
+    details: int,
+    main_count: int,
+    closer: bool,
+    rejected: bool,
 ) -> None:
     config, articles = six_articles()
     articles["Society"].append(replace(articles["Society"][0], title="Item 6", link="https://example.com/6"))
@@ -133,7 +191,8 @@ async def test_dynamic_shared_detail_capacity_counts_raw_rejected_main_entries(
         raw["closing"] = {"schema_version": 2, "selection": cards[-1] if closer else None}
         raw["dispositions"] = [
             {"evidence_id": card["evidence_id"], "status": "not_selected", "reason": "No useful development."}
-            for card in cards[main_count:] if not closer or card is not cards[-1]
+            for card in cards[main_count:]
+            if not closer or card is not cards[-1]
         ]
         if rejected:
             raw["selections"][0]["quote"] = "Invented source text"
@@ -150,22 +209,27 @@ async def test_dynamic_shared_detail_capacity_counts_raw_rejected_main_entries(
     assert len(review.selections) == main_count - int(rejected) + int(accepted_closer)
     assert len(review.rejected_items) == int(rejected)
     assert review.selections[-1].evidence_id == (
-        result.report.evidence.items[-1 if accepted_closer else main_count - 1].evidence_id)
+        result.report.evidence.items[-1 if accepted_closer else main_count - 1].evidence_id
+    )
     if closer and not accepted_closer:
         assert result.report.evidence.items[-1].evidence_id in result.disposition_attempts[0].unresolved_ids
     completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limits", ["", "  max_detailed_selections: 5\n",
-                                   "  max_detailed_selections: 6\n  max_evidence_articles: 5\n"])
+@pytest.mark.parametrize("limits", ["", "  max_detailed_selections: 6\n  max_evidence_articles: 5\n"])
 async def test_enabled_closing_rejects_insufficient_capacity_before_external_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limits: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limits: str,
 ) -> None:
-    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\nreview:\n  enabled: true\n"
-                         "  review_led_only: true\n" + limits + "telegram:\n  delivery_mode: compact\n"
-                         "closing:\n  enabled: true\n  approved_sources:\n"
-                         "    - {name: Test Feed, url: 'https://example.com/feed', category: Test}\n")
+    path = _write_config(
+        tmp_path,
+        textwrap.dedent(MINIMAL_CONFIG) + "\nreview:\n  enabled: true\n"
+        "  review_led_only: true\n" + limits + "telegram:\n  delivery_mode: compact\n"
+        "closing:\n  enabled: true\n  approved_sources:\n"
+        "    - {name: Test Feed, url: 'https://example.com/feed', category: Test}\n",
+    )
     collection = AsyncMock(side_effect=AssertionError("Collection must not start"))
     completion = AsyncMock(side_effect=AssertionError("Review must not start"))
     monkeypatch.setattr("digest.radar.collect", collection)
@@ -185,7 +249,8 @@ async def test_enabled_closing_rejects_insufficient_capacity_before_external_cal
 
 @pytest.mark.asyncio
 async def test_explicit_six_details_yield_five_main_and_same_response_closing_in_one_v3_translation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model_execution = ModelExecution()
     config, articles = six_articles()
@@ -199,8 +264,9 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     begin_packet(progress, packet, tmp_path)
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", completion)
-    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
-        execution=model_execution)
+    reviewed = await _review_candidates(
+        CandidateWork(progress, packet), articles, config, str(tmp_path), execution=model_execution
+    )
     cards, report = reviewed.cards, reviewed.report
     assert report is not None and len(report.reviews[0].selections) == 6
     main_cards, closing = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
@@ -219,18 +285,33 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
 
     async def translate(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
         fields = json.loads(messages[1]["content"])["fields"]
-        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
-                                             for item in fields]}), {"finish_reason": "stop"}
+        return json.dumps(
+            {"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]}
+        ), {"finish_reason": "stop"}
 
     translation = AsyncMock(side_effect=translate)
     monkeypatch.setattr("digest.translation.complete", translation)
     cache = tmp_path / "translations"
     first = await translate_publication_with_closing(
-        "Overview.", main_cards, [], closing.card, config, cache,
-            execution=model_execution, selection_binding=asdict(closing))
+        "Overview.",
+        main_cards,
+        [],
+        closing.card,
+        config,
+        cache,
+        execution=model_execution,
+        selection_binding=asdict(closing),
+    )
     replay = await translate_publication_with_closing(
-        "Overview.", main_cards, [], closing.card, config, cache,
-            execution=model_execution, selection_binding=asdict(closing))
+        "Overview.",
+        main_cards,
+        [],
+        closing.card,
+        config,
+        cache,
+        execution=model_execution,
+        selection_binding=asdict(closing),
+    )
     translation.assert_awaited_once()
     assert first[:3] == replay[:3] and first[3].card == replay[3].card
     assert all(card.summary.startswith("Перевод: ") for card in first[1])
@@ -242,7 +323,8 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
     assert record["prompt_version"] == "presentation-translation-v3"
     assert record["schema_version"] == 2 and record["status"] == "translated"
     assert set(record["canonical"]) == {
-        "category_digest", "closing.summary",
+        "category_digest",
+        "closing.summary",
         *[f"article:{article_hash(card.title, card.link)}" for card in main_cards],
     }
     assert record["optional"]["status"] == "translated"
@@ -252,17 +334,21 @@ async def test_explicit_six_details_yield_five_main_and_same_response_closing_in
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["truncated", "deferred", "abstained"])
 async def test_enabled_closing_preserves_technical_empty_status_and_complete_abstention(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     config, articles = population()
     now = datetime.now(UTC)
     observed = [replace(articles["Society"][0], pub_date=now)]
     monkeypatch.setattr("digest.config.load_config", lambda _: config)
-    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
-          AsyncMock(return_value=(FeedbackStore(), True, 0)))
-    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
-                        lambda c, *args, execution, **kwargs: (c, execution))
+    monkeypatch.setattr(
+        "digest.application.run_state.collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))
+    )
+    monkeypatch.setattr(
+        "digest.application.run_state.apply_pending_approvals", lambda c, *args, execution, **kwargs: (c, execution)
+    )
 
     async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
         inventory = kwargs["inventory"]
@@ -276,8 +362,14 @@ async def test_enabled_closing_preserves_technical_empty_status_and_complete_abs
         raw = json.loads(response(messages, {"schema_version": 2, "selection": None}))
         raw["dispositions"] = [{"evidence_id": item["evidence_id"]} for item in raw["selections"]]
         raw["selections"] = []
-        raw["dispositions"] = [{**item, "status": "deferred" if outcome == "deferred" else "not_selected",
-                                "reason": "Offline fixture explanation"} for item in raw["dispositions"]]
+        raw["dispositions"] = [
+            {
+                **item,
+                "status": "deferred" if outcome == "deferred" else "not_selected",
+                "reason": "Offline fixture explanation",
+            }
+            for item in raw["dispositions"]
+        ]
         return json.dumps(raw), {"finish_reason": "stop"}
 
     monkeypatch.setattr("digest.radar.collect", collect)

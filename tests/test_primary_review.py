@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.review import run_evidence_review, run_primary_review
+from digest.application.review import run_primary_review
 from digest.cli.reporting import publish_review_checkpoint as _publish_review_checkpoint
 from digest.config import ProviderConfig, ReadingBriefConfig
 from digest.delivery import ArticleDeliveryResult
@@ -74,10 +74,16 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fallback,failure", [
-    ("ok", "unavailable"), ("abstained", "unavailable"), ("unavailable", "unavailable"),
-    ("invalid", "unavailable"), ("ok", "invalid"),
-])
+@pytest.mark.parametrize(
+    "fallback,failure",
+    [
+        ("ok", "unavailable"),
+        ("abstained", "unavailable"),
+        ("unavailable", "unavailable"),
+        ("invalid", "unavailable"),
+        ("ok", "invalid"),
+    ],
+)
 async def test_primary_failure_attempts_only_secondary_once(failure: str, fallback: str) -> None:
     execution = ModelExecution()
     config = fixture_config()
@@ -111,29 +117,6 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
 
 
 @pytest.mark.asyncio
-async def test_primary_and_later_reviews_share_exact_prompt_and_bundle() -> None:
-    execution = ModelExecution()
-    config = fixture_config()
-    prompts = []
-
-    async def adapter(role: Any, messages: list[dict[str, str]], used: Any, **kwargs: Any) -> tuple:
-        prompts.append(deepcopy(messages))
-        return await fixture_response(role, messages, used, **kwargs)
-
-    with patch("digest.application.review.complete", side_effect=adapter):
-        first_result = await run_primary_review(fixture_articles(), config, execution=execution)
-        first = first_result.report
-        final = await run_evidence_review(first.evidence, config, first.reviews, execution=execution)
-    assert len(prompts) == 3
-    assert all(prompt == prompts[0] for prompt in prompts)
-    assert final.evidence == first.evidence and final.status == "complete"
-    assert len({review.prompt_hash for review in first.reviews + final.reviews}) == 1
-    assert final.reviews[0].reused_from_checkpoint
-    assert final.reviews[0].attempted_at == first.reviews[0].attempted_at
-    assert all(review.attempted_at for review in final.reviews)
-
-
-@pytest.mark.asyncio
 async def test_delivery_retries_disabled_in_real_completion_wrapper() -> None:
     execution = ModelExecution()
     import httpx
@@ -156,7 +139,9 @@ async def test_delivery_retries_disabled_in_real_completion_wrapper() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, "cards", "state"])
 async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
 ) -> None:
     from digest.source_scorer import save_source_category_map
 
@@ -176,8 +161,9 @@ async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
         assert not output.exists()
         assert len(list((tmp_path / "digests").glob("*.review.json"))) == 1
         events.append("cards")
-        return ArticleDeliveryResult(attempted=2, sent=0 if failure == "cards" else 2,
-                                     failed=2 if failure == "cards" else 0)
+        return ArticleDeliveryResult(
+            attempted=2, sent=0 if failure == "cards" else 2, failed=2 if failure == "cards" else 0
+        )
 
     def save_state(*args: Any, **kwargs: Any) -> None:
         assert not output.exists()
@@ -197,8 +183,9 @@ async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
         patch("digest.application.review.complete", side_effect=fixture_response) as complete,
         patch("digest.radar.summarize_all", AsyncMock(side_effect=AssertionError("No summaries"))) as summaries,
         patch("digest.radar.pick_top_articles", AsyncMock(side_effect=AssertionError("No picker"))) as picker,
-        patch("digest.application.investigation.run_irritator",
-              AsyncMock(side_effect=AssertionError("No Irritator"))) as irritator,
+        patch(
+            "digest.application.investigation.run_irritator", AsyncMock(side_effect=AssertionError("No Irritator"))
+        ) as irritator,
         patch("digest.delivery.send_article_cards", side_effect=cards),
         patch("digest.delivery.send_counter_signals", AsyncMock()) as counter_signals,
         patch("digest.adapters.telegram.delivery._send_chunk", AsyncMock()) as footer,
@@ -233,7 +220,9 @@ async def test_checkpoint_output_only_after_confirmed_cards_archive_and_state(
 
 @pytest.mark.parametrize("kind", ["outside", "unsafe", "not_generated", "missing", "mismatch"])
 def test_checkpoint_output_rejects_untrusted_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     work = tmp_path / "work"
     work.mkdir()
@@ -247,8 +236,9 @@ def test_checkpoint_output_rejects_untrusted_path(
     checkpoint = markdown.with_suffix(".review.json")
     if kind != "missing":
         checkpoint.write_text("{}")
-    stats = RunStats(1, 1, 1, True, False, True, str(markdown), review_status="incomplete",
-                     review_checkpoint=str(checkpoint))
+    stats = RunStats(
+        1, 1, 1, True, False, True, str(markdown), review_status="incomplete", review_checkpoint=str(checkpoint)
+    )
     if kind == "mismatch":
         stats.markdown_path = str(directory / "2026-09-29.md")
         Path(stats.markdown_path).write_text("other")

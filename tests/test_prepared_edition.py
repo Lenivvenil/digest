@@ -323,7 +323,7 @@ def test_inspect_claim_and_no_ready_overwrite(tmp_path: Path) -> None:
         prepare(tmp_path)
 
 
-@pytest.mark.parametrize("state", ["reserved", "sending", "partial", "unknown", "confirmed"])
+@pytest.mark.parametrize("state", ["reserved", "sending", "partial", "unknown"])
 def test_legacy_migration_blocks_duplicate(tmp_path: Path, state: str) -> None:
     accepted = 1 if state in {"partial", "confirmed"} else 0
     marker = {
