@@ -55,9 +55,7 @@ class TestSearchReddit:
                     await search_reddit("AI risk", _make_config(), client)
         assert respx.calls.call_count == 0
 
-    async def test_missing_one_credential_is_unavailable(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_missing_one_credential_is_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "some-id")
         monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
         with respx.mock:
@@ -66,9 +64,7 @@ class TestSearchReddit:
                     await search_reddit("AI risk", _make_config(), client)
         assert respx.calls.call_count == 0
 
-    async def test_token_fetch_failure_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_token_fetch_failure_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         with respx.mock:
@@ -79,7 +75,9 @@ class TestSearchReddit:
 
     @pytest.mark.parametrize("token_data", [[], {}, {"access_token": 1}, {"access_token": " "}])
     async def test_invalid_token_response_raises(
-        self, monkeypatch: pytest.MonkeyPatch, token_data: Any,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        token_data: Any,
     ) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
@@ -108,51 +106,28 @@ class TestSearchReddit:
                 with pytest.raises(ValueError, match=r"^Invalid Reddit search response\.$"):
                     await search_reddit("AI risk", _make_config(), client)
 
-    async def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_multiple_subreddits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         monkeypatch.setenv("REDDIT_USERNAME", "testuser")
+        cfg = _make_config(["programming", "fintech"])
         with respx.mock:
-            respx.post(_TOKEN_URL).mock(
-                return_value=httpx.Response(200, json=_token_response())
-            )
-            search_route = respx.get(_SEARCH_URL).mock(
-                return_value=httpx.Response(200, json=_reddit_response())
-            )
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json=_token_response()))
+            search_route = respx.get(_SEARCH_URL_MULTI).mock(return_value=httpx.Response(200, json=_reddit_response()))
             async with httpx.AsyncClient() as client:
-                signals = await search_reddit("AI risk", _make_config(), client)
-
+                signals = await search_reddit("test", cfg, client)
         assert len(signals) == 1
         assert signals[0].title == "Counter view on AI"
         assert signals[0].source_name == "reddit"
         assert signals[0].score == 100.0
         assert "bearer test-token-abc" in search_route.calls[0].request.headers["authorization"]
 
-    async def test_multiple_subreddits(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
-        monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
-        cfg = _make_config(["programming", "fintech"])
-        with respx.mock:
-            respx.post(_TOKEN_URL).mock(
-                return_value=httpx.Response(200, json=_token_response())
-            )
-            respx.get(_SEARCH_URL_MULTI).mock(
-                return_value=httpx.Response(200, json=_reddit_response())
-            )
-            async with httpx.AsyncClient() as client:
-                signals = await search_reddit("test", cfg, client)
-        assert len(signals) == 1
-
     async def test_empty_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         with respx.mock:
-            respx.post(_TOKEN_URL).mock(
-                return_value=httpx.Response(200, json=_token_response())
-            )
-            respx.get(_SEARCH_URL).mock(
-                return_value=httpx.Response(200, json={"data": {"children": []}})
-            )
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json=_token_response()))
+            respx.get(_SEARCH_URL).mock(return_value=httpx.Response(200, json={"data": {"children": []}}))
             async with httpx.AsyncClient() as client:
                 signals = await search_reddit("nothing", _make_config(), client)
         assert signals == []
@@ -161,9 +136,7 @@ class TestSearchReddit:
         monkeypatch.setenv("REDDIT_CLIENT_ID", "id")
         monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
         with respx.mock:
-            respx.post(_TOKEN_URL).mock(
-                return_value=httpx.Response(200, json=_token_response())
-            )
+            respx.post(_TOKEN_URL).mock(return_value=httpx.Response(200, json=_token_response()))
             respx.get(_SEARCH_URL).mock(return_value=httpx.Response(429))
             async with httpx.AsyncClient() as client:
                 with pytest.raises(httpx.HTTPStatusError):

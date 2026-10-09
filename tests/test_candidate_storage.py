@@ -1,4 +1,5 @@
 """Offline direct-object storage, proof binding and finite growth regression."""
+
 from __future__ import annotations
 
 import json
@@ -53,8 +54,15 @@ def test_occurrences_stored_once_and_exact_report_is_frozen(tmp_path: Path) -> N
     assert freeze_packet(replace(packet, handed_to_preparation=True), {"current_count": 999}, tmp_path) == path
     assert path.read_bytes() == before
     record = read_report_record(path.stem, tmp_path)
-    assert set(record) == {"schema_version", "report_sha256", "packet_sha256", "report_bundle_id",
-                           "summary", "packet", "sha256"}
+    assert set(record) == {
+        "schema_version",
+        "report_sha256",
+        "packet_sha256",
+        "report_bundle_id",
+        "summary",
+        "packet",
+        "sha256",
+    }
     assert "articles" not in record["packet"]
     assert "candidate_accounting" not in record
     assert len(list((tmp_path / "candidate_sources").glob("*.json"))) == 2
@@ -107,12 +115,18 @@ async def test_terminal_index_requires_exact_capture_and_occurrence(tmp_path: Pa
     progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
     packet = plan_packet(progress, config, NOW)
     assert packet is not None
-    response = json.dumps({"selections": [], "limitations": ["No actionable metadata"], "dispositions": [
-        {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable detail."}
-        for item in packet.evidence.items]})
+    response = json.dumps(
+        {
+            "selections": [],
+            "limitations": ["No actionable metadata"],
+            "dispositions": [
+                {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable detail."}
+                for item in packet.evidence.items
+            ],
+        }
+    )
     with patch("digest.application.review.complete", return_value=(response, {})):
-        result = await run_primary_review(articles, config,
-            execution=model_execution)
+        result = await run_primary_review(articles, config, execution=model_execution)
         packet.report = result.report
     packet.disposition_attempts = tuple(result.disposition_attempts)
     path = freeze_packet(packet, {}, tmp_path)
@@ -163,25 +177,6 @@ def test_policy_header_and_reference_paths_fail_closed(tmp_path: Path) -> None:
         load_candidate("../escape", tmp_path)
 
 
-def test_packet_archive_storage_grows_with_new_packets_not_all_prior_history(tmp_path: Path) -> None:
-    sizes = []
-    for window in range(20):
-        config, articles = population(2)
-        for article in articles["tech"]:
-            article.title += f" window {window:02d}"
-            article.link += f"/window-{window:02d}"
-        progress = merge_candidates(CandidateProgress(), articles, config, {}, now=NOW)
-        packet = plan_packet(progress, config, NOW)
-        assert packet is not None
-        packet.report = report_for(packet, config)
-        path = freeze_packet(packet, {"current_count": 2}, tmp_path)
-        sizes.append(path.stat().st_size)
-    assert len(list((tmp_path / "candidate_reports").glob("*.json"))) == 20
-    assert len(list((tmp_path / "candidate_sources").glob("*.json"))) == 40
-    assert max(sizes) - min(sizes) < 100
-    assert sum(sizes) < sizes[0] * 21
-
-
 def test_planned_packet_roundtrip_preserves_unknown_work(tmp_path: Path) -> None:
     progress, packet = completed_packet()
     packet.report = None
@@ -213,26 +208,19 @@ def test_active_codec_writes_only_shared_sources(tmp_path: Path) -> None:
         decode_active_candidate(raw, tmp_path)
 
 
-def test_latest_header_never_expands_sources_or_reports(tmp_path: Path) -> None:
-    progress, _ = completed_packet()
-    candidate = next(iter(progress.candidates.values()))
-    save_candidate(candidate, (), tmp_path)
-    with patch("digest.adapters.storage.candidate_objects.read_article",
-               side_effect=AssertionError("Unexpected source read")):
-        header = read_candidate_header(candidate.identity, tmp_path)
-    assert header is not None and header["status"] == "not_presented"
-    assert header["identity"] == candidate.identity
-    assert "article" not in header
-
-
 def test_policy_headers_include_alternates_and_bind_full_source(tmp_path: Path) -> None:
     progress, _ = completed_packet()
     candidate = next(iter(progress.candidates.values()))
     alternate = replace(candidate.article, source="B", source_url="https://b.example/feed", published=None)
     candidate.occurrences = (alternate,)
     path = save_candidate(candidate, (), tmp_path)
-    header = read_candidate_header(candidate.identity, tmp_path)
-    assert header is not None
+    with patch(
+        "digest.adapters.storage.candidate_objects.read_article", side_effect=AssertionError("Unexpected source read")
+    ):
+        header = read_candidate_header(candidate.identity, tmp_path)
+    assert header is not None and header["status"] == "not_presented"
+    assert header["identity"] == candidate.identity
+    assert "article" not in header
     assert header["policy_fields"] == [
         {"source": "A", "source_url": "https://a.example/feed", "category": "tech", "published": NOW.isoformat()},
         {"source": "B", "source_url": "https://b.example/feed", "category": "tech", "published": None},
@@ -304,12 +292,14 @@ def test_active_root_rejects_undeployed_prototype_schema(tmp_path: Path) -> None
 
 
 def test_preflight_charges_current_refs_not_retained_collection_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from copy import deepcopy
 
     from digest.adapters.storage.candidate_progress import load_candidate_progress, progress_size
     from digest.application.candidate_review import RESPONSE_STORAGE_RESERVE, begin_packet, reconcile_packet
+    from digest.domain.editorial.candidate_policy import pending_completed_report
     from digest.radar.collector import CollectionInventory
 
     config, articles = population(1)
@@ -320,24 +310,28 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
     observation = {
         "identity": identity,
         "article_reference": {"identity": identity, "occurrence_sha256": digest(asdict(old.articles[0]))},
-        "exclusion_reasons": [], "effective_priority": 3, "repeated_of": 0, "source_names": ["A"],
+        "exclusion_reasons": [],
+        "effective_priority": 3,
+        "repeated_of": 0,
+        "source_names": ["A"],
     }
     # A bounded synthetic old collection isolates the admission calculation;
     # this is not an estimate of ordinary feed arrivals.
-    progress.latest_collection_json = json.dumps(
-        {"observations": [observation] * 5000, "sources": []}, sort_keys=True)
+    progress.latest_collection_json = json.dumps({"observations": [observation] * 5000, "sources": []}, sort_keys=True)
     old.collection_json = progress.latest_collection_json
     begin_packet(progress, old, tmp_path)
     report = report_for(old, config, "invalid")
     reconcile_packet(progress, old, restore_review(report), config, tmp_path)
+    assert {candidate.status for candidate in progress.candidates.values()} == {"technical_pending"}
     progress = load_candidate_progress(tmp_path)
+    assert {candidate.status for candidate in progress.candidates.values()} == {"technical_pending"}
+    assert pending_completed_report(progress) is None
 
     _, fresh = population(1)
     fresh["tech"][0].title = "Fresh"
     fresh["tech"][0].link = "https://a.example/new"
     config.review.max_evidence_articles = 1
-    merge_candidates(progress, fresh, config, {}, now=NOW,
-                     inventory=CollectionInventory(), cache_dir=tmp_path)
+    merge_candidates(progress, fresh, config, {}, now=NOW, inventory=CollectionInventory(), cache_dir=tmp_path)
     new = plan_packet(progress, config, NOW)
     assert new is not None and new.evidence.items[0].title == "Fresh"
     preview = deepcopy(progress)
@@ -357,7 +351,11 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
 
 
 def measured_candidate_window(
-    cache_dir: Path, window: int, count: int = 20, *, same_identity: bool = False,
+    cache_dir: Path,
+    window: int,
+    count: int = 20,
+    *,
+    same_identity: bool = False,
 ) -> dict[str, int]:
     """Exercise the actual offline lifecycle and measure all persisted objects."""
     from datetime import timedelta
@@ -380,9 +378,16 @@ def measured_candidate_window(
     assert packet is not None and len(packet.evidence.items) == count
     begin_packet(progress, packet, cache_dir)
     report = report_for(packet, config, "abstained")
-    raw = json.dumps({"selections": [], "limitations": ["RSS evidence only"], "dispositions": [
-        {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable technical detail."}
-        for item in packet.evidence.items]})
+    raw = json.dumps(
+        {
+            "selections": [],
+            "limitations": ["RSS evidence only"],
+            "dispositions": [
+                {"evidence_id": item.evidence_id, "status": "not_selected", "reason": "No actionable technical detail."}
+                for item in packet.evidence.items
+            ],
+        }
+    )
     import hashlib
 
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
@@ -400,11 +405,14 @@ def measured_candidate_window(
         assert candidate is not None and candidate.status == "not_selected"
         assert load_candidate_packets(identity, cache_dir) == (replace(frozen, handed_to_preparation=True),)
     files = list(cache_dir.rglob("*.json"))
-    row = {"window": window + 1, "active_candidates": len(restored.candidates),
-           "active_packets": len(restored.packets),
-           "active_checkpoint_bytes": (cache_dir / CANDIDATE_FILE).stat().st_size,
-           "latest_report_bytes": (cache_dir / "candidate_reports" / f"{report_key}.json").stat().st_size,
-           "all_persisted_bytes": sum(path.stat().st_size for path in files)}
+    row = {
+        "window": window + 1,
+        "active_candidates": len(restored.candidates),
+        "active_packets": len(restored.packets),
+        "active_checkpoint_bytes": (cache_dir / CANDIDATE_FILE).stat().st_size,
+        "latest_report_bytes": (cache_dir / "candidate_reports" / f"{report_key}.json").stat().st_size,
+        "all_persisted_bytes": sum(path.stat().st_size for path in files),
+    }
     for directory in ("candidate_reports", "candidate_sources", "candidate_index", "candidate_history"):
         objects = list((cache_dir / directory).glob("*.json"))
         row[f"{directory}_count"] = len(objects)
@@ -417,12 +425,15 @@ def test_integrated_twenty_windows_retire_active_work_without_recursive_history(
     assert {row["active_checkpoint_bytes"] for row in rows} == {rows[0]["active_checkpoint_bytes"]}
     assert max(row["latest_report_bytes"] for row in rows) - min(row["latest_report_bytes"] for row in rows) < 100
     assert rows[-1]["candidate_reports_count"] == 20
+    assert rows[-1]["candidate_reports_bytes"] < rows[0]["latest_report_bytes"] * 21
     assert rows[-1]["candidate_sources_count"] == rows[-1]["candidate_index_count"] == 400
     assert rows[-1]["candidate_history_count"] == 400
     # This finite fixed-width population has constant per-window storage cost.
     # The assertion includes sources, historical states and latest-state indexes.
-    increments = [later["all_persisted_bytes"] - earlier["all_persisted_bytes"]
-                  for earlier, later in zip(rows, rows[1:], strict=False)]
+    increments = [
+        later["all_persisted_bytes"] - earlier["all_persisted_bytes"]
+        for earlier, later in zip(rows, rows[1:], strict=False)
+    ]
     assert max(increments) - min(increments) < 100
     assert rows[-1]["all_persisted_bytes"] <= rows[0]["all_persisted_bytes"] * 20
 
@@ -471,8 +482,10 @@ def test_packet_collection_retains_excluded_source_references_after_active_retir
     config, articles = population(2)
     eligible, excluded = articles["tech"]
     inventory = CollectionInventory(
-        observations=[CandidateObservation(eligible, article_hash(eligible.title, eligible.link), 3, ()),
-                      CandidateObservation(excluded, article_hash(excluded.title, excluded.link), 3, ("blocklist",))],
+        observations=[
+            CandidateObservation(eligible, article_hash(eligible.title, eligible.link), 3, ()),
+            CandidateObservation(excluded, article_hash(excluded.title, excluded.link), 3, ("blocklist",)),
+        ],
         sources=[SourceCollectionOutcome("A", config.sources[0].url, "tech", 3, True, 2)],
     )
     progress = merge_candidates(CandidateProgress(), {"tech": [eligible]}, config, {}, now=NOW, inventory=inventory)
@@ -480,8 +493,18 @@ def test_packet_collection_retains_excluded_source_references_after_active_retir
     assert packet is not None and len(packet.evidence.items) == 1
     begin_packet(progress, packet, tmp_path)
     report = report_for(packet, config, "abstained")
-    raw = json.dumps({"selections": [], "dispositions": [{"evidence_id": packet.evidence.items[0].evidence_id,
-                       "status": "not_selected", "reason": "No actionable metadata."}]})
+    raw = json.dumps(
+        {
+            "selections": [],
+            "dispositions": [
+                {
+                    "evidence_id": packet.evidence.items[0].evidence_id,
+                    "status": "not_selected",
+                    "reason": "No actionable metadata.",
+                }
+            ],
+        }
+    )
     report.reviews[0].response_sha256 = hashlib.sha256(raw.encode()).hexdigest()
     result = restore_review(report, (capture_review_dispositions(packet.evidence, report.reviews[0], raw),))
     reconcile_packet(progress, packet, result, config, tmp_path)

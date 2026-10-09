@@ -33,28 +33,44 @@ def _response(html: str | None = None) -> httpx.Response:
 
 @pytest.fixture(autouse=True)
 def _offline_dns(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kwargs: [
-        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
-    ])
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+        ],
+    )
     # Inject a synthetic trusted bootstrap; public fixtures contain no publisher body or vendored runtime.
-    monkeypatch.setattr("digest.article_source._REACT_STREAM_BOOTSTRAP_HASHES",
-                        frozenset({hashlib.sha256(_TEST_STREAM_BOOTSTRAP.encode()).hexdigest()}))
+    monkeypatch.setattr(
+        "digest.article_source._REACT_STREAM_BOOTSTRAP_HASHES",
+        frozenset({hashlib.sha256(_TEST_STREAM_BOOTSTRAP.encode()).hexdigest()}),
+    )
 
 
 @contextmanager
 def _http(handler: Any) -> Any:
     real_client = httpx.AsyncClient
-    with patch("digest.article_source.httpx.AsyncClient", side_effect=lambda **kwargs: real_client(
-        transport=httpx.MockTransport(handler), **kwargs,
-    )) as factory:
+    with patch(
+        "digest.article_source.httpx.AsyncClient",
+        side_effect=lambda **kwargs: real_client(
+            transport=httpx.MockTransport(handler),
+            **kwargs,
+        ),
+    ) as factory:
         yield factory
 
 
 def test_long_text_is_retained_in_full_including_late_qualification() -> None:
-    html = _html(content="<p>OPENING CLAIM</p>" + "".join(f"<p>{index}. {PARAGRAPH}</p>" for index in range(150))
-                 + "<aside><p>The limitation is USD only.</p></aside>"
-                 "<footer><p>FINAL FOOTNOTE retracts the opening claim for failed deployments.</p></footer>")
+    poison = "DO_NOT_INCLUDE " * 100
+    html = _html(
+        content="<p>OPENING CLAIM</p>"
+        + "".join(f"<p>{index}. {PARAGRAPH}</p>" for index in range(150))
+        + "<aside><p>The limitation is USD only.</p></aside>"
+        "<footer><p>FINAL FOOTNOTE retracts the opening claim for failed deployments.</p></footer>",
+        outside=f"<nav>{poison}</nav><script>{poison}</script><footer>{poison}</footer><form>{poison}</form>",
+    )
     result = extract_html(html)
+    assert "DO_NOT_INCLUDE" not in result.text
     assert len(result.text) > 40000
     assert result.text.startswith("OPENING CLAIM")
     assert "The limitation is USD only." in result.text
@@ -65,8 +81,10 @@ def test_long_text_is_retained_in_full_including_late_qualification() -> None:
 
 
 def test_tables_and_external_footnotes_are_preserved_with_boundaries() -> None:
-    table = "<table><caption>Measured results</caption><tr><th>Currency</th><th>Rate</th></tr>" \
-            "<tr><td>USD</td><td>1.5</td></tr></table>"
+    table = (
+        "<table><caption>Measured results</caption><tr><th>Currency</th><th>Rate</th></tr>"
+        "<tr><td>USD</td><td>1.5</td></tr></table>"
+    )
     reference = '<sup><a href="#fn1" role="doc-noteref">1</a></sup>'
     footnote = '<footer class="footnotes"><p id="fn1">The measured rates exclude failed requests.</p></footer>'
     result = extract_html(_html(content=f"<p>{PARAGRAPH}</p>{table}{reference}", outside=footnote))
@@ -74,14 +92,6 @@ def test_tables_and_external_footnotes_are_preserved_with_boundaries() -> None:
     assert "USD | 1.5" in result.text
     assert "USD1.5" not in result.text
     assert result.text.endswith("The measured rates exclude failed requests.")
-
-
-def test_article_is_preferred_and_boilerplate_is_excluded() -> None:
-    poison = "DO_NOT_INCLUDE " * 100
-    html = _html(outside=f"<nav>{poison}</nav><script>{poison}</script><footer>{poison}</footer><form>{poison}</form>")
-    result = extract_html(html)
-    assert "DO_NOT_INCLUDE" not in result.text
-    assert result.extraction_status == "article"
 
 
 @pytest.mark.parametrize("kind", ["main", "body"])
@@ -92,37 +102,41 @@ def test_semantic_main_or_conservative_body_fallback(kind: str) -> None:
     assert PARAGRAPH in result.text
 
 
-@pytest.mark.parametrize("head,extra,outside,reason", [
-    ('<link rel="next" href="?page=2">', "", "", "pagination"),
-    ("", '<nav class="pagination"><a href="?page=2">Next page</a></nav>', "", "pagination"),
-    ("", '<a rel="next" href="?page=2">Next</a>', "", "pagination"),
-    ("", '<div class="load-more" data-continuation="/part2">More</div>', "", "client_continuation"),
-    ("", '<canvas>Chart unavailable</canvas>', "", "unread_critical_media"),
-    ("", '<svg><text>Uninspected graph</text></svg>', "", "unread_critical_media"),
-    ("", '<img src="chart.png" alt="Benchmark results chart">', "", "unread_critical_media"),
-    ("", '<video src="evidence.mp4"></video>', "", "unread_critical_media"),
-    ("", '<sup><a href="#missing" role="doc-noteref">1</a></sup>', "", "missing_footnote_target"),
-    ("", '<div class="paywall">Subscribe</div>', "", "paywall"),
-    ('<script type="application/ld+json">{"isAccessibleForFree": false}</script>', "", "", "paywall"),
-])
+@pytest.mark.parametrize(
+    "head,extra,outside,reason",
+    [
+        ('<link rel="next" href="?page=2">', "", "", "pagination"),
+        ("", '<nav class="pagination"><a href="?page=2">Next page</a></nav>', "", "pagination"),
+        ("", '<a rel="next" href="?page=2">Next</a>', "", "pagination"),
+        ("", '<div class="load-more" data-continuation="/part2">More</div>', "", "client_continuation"),
+        ("", "<canvas>Chart unavailable</canvas>", "", "unread_critical_media"),
+        ("", "<svg><text>Uninspected graph</text></svg>", "", "unread_critical_media"),
+        ("", '<video src="evidence.mp4"></video>', "", "unread_critical_media"),
+        ("", '<sup><a href="#missing" role="doc-noteref">1</a></sup>', "", "missing_footnote_target"),
+        ("", '<div class="paywall">Subscribe</div>', "", "paywall"),
+        ('<script type="application/ld+json">{"isAccessibleForFree": false}</script>', "", "", "paywall"),
+    ],
+)
 def test_unread_continuation_or_critical_content_is_held(
-    head: str, extra: str, outside: str, reason: str,
+    head: str,
+    extra: str,
+    outside: str,
+    reason: str,
 ) -> None:
     with pytest.raises(ValueError, match=reason):
         extract_html(_html(head=head, content=f"<p>{PARAGRAPH}</p>{extra}", outside=outside))
 
 
-def test_uninspected_noncritical_image_is_explicitly_labelled() -> None:
-    result = extract_html(_html(content=f'<p>{PARAGRAPH}</p><img src="author.jpg" alt="Author portrait">'))
-    assert any("Uninspected images" in note for note in result.coverage_notes)
-
-
-@pytest.mark.parametrize("html", [
-    _html().removesuffix("</body></html>"), _html().replace("</article>", ""),
-    "<html><body><article></article></body></html>",
-    _html(content=f"<p>{PARAGRAPH} Subscribe to continue reading.</p>"),
-    _html(outside=f"<article><p>{PARAGRAPH}</p></article>"),
-])
+@pytest.mark.parametrize(
+    "html",
+    [
+        _html().removesuffix("</body></html>"),
+        _html().replace("</article>", ""),
+        "<html><body><article></article></body></html>",
+        _html(content=f"<p>{PARAGRAPH} Subscribe to continue reading.</p>"),
+        _html(outside=f"<article><p>{PARAGRAPH}</p></article>"),
+    ],
+)
 def test_http_success_does_not_establish_complete_acquisition(html: str) -> None:
     with pytest.raises(ValueError):
         extract_html(html)
@@ -131,11 +145,11 @@ def test_http_success_does_not_establish_complete_acquisition(html: str) -> None
 @pytest.mark.asyncio
 async def test_fetch_provenance_and_security_client_options() -> None:
     now = datetime(2026, 10, 1, 3, 30, tzinfo=UTC)
-    html = _html(head='<meta property="article:published_time" content="2026-09-30T12:00:00+02:00">')
+    html = _html(head='<meta property="article:published_time" content="2015-01-01T12:00:00+02:00">')
     with _http(lambda _: _response(html)) as factory, patch("digest.article_source._now", return_value=now):
         result = await fetch_article("https://public.example/article")
     assert result.text == extract_html(html).text
-    assert result.source_published == "2026-09-30T10:00:00+00:00"
+    assert result.source_published == "2015-01-01T10:00:00+00:00"
     assert result.fetched_at == now.isoformat()
     assert result.final_url == "https://public.example/article"
     assert factory.call_args.kwargs["trust_env"] is False
@@ -144,12 +158,20 @@ async def test_fetch_provenance_and_security_client_options() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("url", [
-    "file:///etc/passwd", "https://user:password@public.example/a",
-    "https://public.example:8443/a", "http://public.example:443/a", "https://127.0.0.1/a",
-    "https://[::1]/a",
-    "https://[invalid/a", "https://public.example/a\nb", "https://public.example:99999/a",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "https://user:password@public.example/a",
+        "https://public.example:8443/a",
+        "http://public.example:443/a",
+        "https://127.0.0.1/a",
+        "https://[::1]/a",
+        "https://[invalid/a",
+        "https://public.example/a\nb",
+        "https://public.example:99999/a",
+    ],
+)
 async def test_unsafe_url_is_rejected_before_http(url: str) -> None:
     with _http(lambda _: pytest.fail("Unsafe URL was fetched")):
         with pytest.raises(ValueError, match="unsafe_url"):
@@ -267,39 +289,51 @@ def test_noncritical_hidden_visuals_do_not_create_false_coverage_holds() -> None
     assert result.text == PARAGRAPH
 
 
-_TEST_STREAM_BOOTSTRAP = '$RC=function(a,b){/* synthetic trusted fixture helper */};'
+_TEST_STREAM_BOOTSTRAP = "$RC=function(a,b){/* synthetic trusted fixture helper */};"
 
 
 def _streamed(content: str, *, call: str = '$RC("B:0","S:0")') -> str:
-    return ('<html><body><main><!--$?--><template id="B:0"></template><p>Loading</p><!--/$--></main>'
-            f'<div hidden id="S:0">{content}</div><script>{_TEST_STREAM_BOOTSTRAP}{call}</script></body></html>')
+    return (
+        '<html><body><main><!--$?--><template id="B:0"></template><p>Loading</p><!--/$--></main>'
+        f'<div hidden id="S:0">{content}</div><script>{_TEST_STREAM_BOOTSTRAP}{call}</script></body></html>'
+    )
 
 
 def test_completed_stream_restores_source_without_unhiding_unrelated_content() -> None:
-    text = f'<article><p>{PARAGRAPH}</p><footer><p>FINAL SOURCE CONDITION.</p></footer></article>'
-    html = _streamed(text).replace('</body>', '<div hidden>PRIVATE HIDDEN CONTENT</div></body>')
+    text = f"<article><p>{PARAGRAPH}</p><footer><p>FINAL SOURCE CONDITION.</p></footer></article>"
+    html = _streamed(text).replace("</body>", "<div hidden>PRIVATE HIDDEN CONTENT</div></body>")
     result = extract_html(html)
     assert result.extraction_status == "article"
     assert result.text == PARAGRAPH + "\n\nFINAL SOURCE CONDITION."
     assert "Loading" not in result.text and "PRIVATE HIDDEN CONTENT" not in result.text
 
 
-@pytest.mark.parametrize("damage", ["missing_call", "wrong_call", "duplicate_source", "clipped_source",
-                                    "missing_boundary", "duplicate_call", "quoted_call"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_call",
+        "wrong_call",
+        "duplicate_source",
+        "clipped_source",
+        "missing_boundary",
+        "duplicate_call",
+        "quoted_call",
+    ],
+)
 def test_unresolved_or_ambiguous_streams_remain_incomplete(damage: str) -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>")
     if damage == "missing_call":
-        html = html.replace('$RC("B:0","S:0")', '')
+        html = html.replace('$RC("B:0","S:0")', "")
     elif damage == "wrong_call":
         html = html.replace('$RC("B:0","S:0")', '$RC("B:0","S:1")')
     elif damage == "duplicate_source":
-        html = html.replace('</body>', '<div hidden id="S:0">Duplicate</div></body>')
+        html = html.replace("</body>", '<div hidden id="S:0">Duplicate</div></body>')
     elif damage == "clipped_source":
-        html = html.replace('</article></div>', '</article>')
+        html = html.replace("</article></div>", "</article>")
     elif damage == "missing_boundary":
-        html = html.replace('<!--/$-->', '')
+        html = html.replace("<!--/$-->", "")
     elif damage == "duplicate_call":
-        html = html.replace('</body>', '<script>$RC("B:0","S:0")</script></body>')
+        html = html.replace("</body>", '<script>$RC("B:0","S:0")</script></body>')
     else:
         html = html.replace('$RC("B:0","S:0")', 'console.log(\'$RC("B:0","S:0")\')')
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
@@ -307,9 +341,11 @@ def test_unresolved_or_ambiguous_streams_remain_incomplete(damage: str) -> None:
 
 
 def test_dominant_main_prose_is_not_replaced_by_recommendation_article_cards() -> None:
-    paragraphs = ''.join(f'<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>' for index in range(12))
-    cards = ''.join(f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>'
-                    f'{"Unrelated preview " * 9}</p></article>' for index in range(3))
+    paragraphs = "".join(f"<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>" for index in range(12))
+    cards = "".join(
+        f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>{"Unrelated preview " * 9}</p></article>'
+        for index in range(3)
+    )
     result = extract_html(_streamed(paragraphs + cards))
     assert result.extraction_status == "main"
     assert all(f"PRIMARY SECTION {index}." in result.text for index in range(12))
@@ -317,29 +353,39 @@ def test_dominant_main_prose_is_not_replaced_by_recommendation_article_cards() -
 
 
 def test_article_listing_without_dominant_main_prose_remains_ambiguous() -> None:
-    cards = ''.join(f'<article><p>{index}. {PARAGRAPH}</p></article>' for index in range(3))
+    cards = "".join(f"<article><p>{index}. {PARAGRAPH}</p></article>" for index in range(3))
     with pytest.raises(ValueError, match="multiple_article_regions"):
         extract_html(_streamed(cards))
 
 
-@pytest.mark.parametrize("script_attrs", [
-    'type="application/json"', 'src="/external.js"', 'type="module"', 'nomodule', 'language="vbscript"',
-    'type="application/json" type="text/javascript"',
-])
+@pytest.mark.parametrize(
+    "script_attrs",
+    [
+        'type="application/json"',
+        'src="/external.js"',
+        'type="module"',
+        "nomodule",
+        'language="vbscript"',
+        'type="application/json" type="text/javascript"',
+    ],
+)
 def test_inactive_or_external_script_cannot_complete_stream(script_attrs: str) -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>').replace('<script>', f'<script {script_attrs}>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>").replace("<script>", f"<script {script_attrs}>")
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
         extract_html(html)
 
 
-@pytest.mark.parametrize("script", [
-    '$RC("B:0","S:0")',
-    '$RC=function(a,b){}; //;$RC("B:0","S:0")',
-    _TEST_STREAM_BOOTSTRAP + '//;$RC("B:0","S:0")',
-    _TEST_STREAM_BOOTSTRAP + '/*;$RC("B:0","S:0")',
-])
+@pytest.mark.parametrize(
+    "script",
+    [
+        '$RC("B:0","S:0")',
+        '$RC=function(a,b){}; //;$RC("B:0","S:0")',
+        _TEST_STREAM_BOOTSTRAP + '//;$RC("B:0","S:0")',
+        _TEST_STREAM_BOOTSTRAP + '/*;$RC("B:0","S:0")',
+    ],
+)
 def test_undefined_unknown_or_commented_replacement_is_not_executed(script: str) -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>")
     html = html.replace(_TEST_STREAM_BOOTSTRAP + '$RC("B:0","S:0")', script)
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
         extract_html(html)
@@ -347,60 +393,70 @@ def test_undefined_unknown_or_commented_replacement_is_not_executed(script: str)
 
 @pytest.mark.parametrize("wrapper", ["template", "noscript"])
 def test_inert_stream_container_is_not_a_live_dom_target(wrapper: str) -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>")
     html = html.replace('<div hidden id="S:0">', f'<{wrapper}><div hidden id="S:0">')
-    html = html.replace('</article></div>', f'</article></div></{wrapper}>')
+    html = html.replace("</article></div>", f"</article></div></{wrapper}>")
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
         extract_html(html)
 
 
 def test_standalone_replacement_requires_prior_exact_active_bootstrap() -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
-    html = html.replace(_TEST_STREAM_BOOTSTRAP, _TEST_STREAM_BOOTSTRAP + '</script><script>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>")
+    html = html.replace(_TEST_STREAM_BOOTSTRAP, _TEST_STREAM_BOOTSTRAP + "</script><script>")
     assert extract_html(html).text == PARAGRAPH
-    html = html.replace('</script><script>', '</script><script>unknownRuntime()</script><script>')
+    html = html.replace("</script><script>", "</script><script>unknownRuntime()</script><script>")
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
         extract_html(html)
 
 
 def test_replacement_before_its_dom_targets_exist_remains_incomplete() -> None:
-    html = _streamed(f'<article><p>{PARAGRAPH}</p></article>')
+    html = _streamed(f"<article><p>{PARAGRAPH}</p></article>")
     script = f'<script>{_TEST_STREAM_BOOTSTRAP}$RC("B:0","S:0")</script>'
-    html = html.replace(script, '').replace('<body>', '<body>' + script)
+    html = html.replace(script, "").replace("<body>", "<body>" + script)
     with pytest.raises(ValueError, match="unresolved_streamed_content"):
         extract_html(html)
 
 
 def test_removed_recommendation_cannot_supply_a_missing_source_footnote() -> None:
-    paragraphs = ''.join(f'<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>' for index in range(12))
+    paragraphs = "".join(f"<p>PRIMARY SECTION {index}. {PARAGRAPH}</p>" for index in range(12))
     paragraphs += '<sup><a role="doc-noteref" href="#fn1">1</a></sup>'
-    cards = ''.join(f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>'
-                    f'{"Unrelated preview " * 9}</p>'
-                    + ('<p id="fn1">Required source limitation omitted with this card.</p>' if index == 0 else '')
-                    + '</article>' for index in range(3))
+    cards = "".join(
+        f'<article><p><a href="/other/{index}">{"Linked teaser " * 5}</a>'
+        f"{'Unrelated preview ' * 9}</p>"
+        + ('<p id="fn1">Required source limitation omitted with this card.</p>' if index == 0 else "")
+        + "</article>"
+        for index in range(3)
+    )
     with pytest.raises(ValueError, match="removed_footnote_target"):
         extract_html(_streamed(paragraphs + cards))
 
 
-@pytest.mark.parametrize("visual", [
-    '<svg style="display: none;"><path/></svg>',
-    '<svg style="visibility: hidden;"><path/></svg>',
-    '<a role="button"><svg width="16" height="16" role="presentation" class="figure"><path/></svg></a>',
-    '<div id="author-link"><a href="/author"><svg width="16" height="16"><path/></svg></a></div>',
-    '<a aria-label="Share this article"><svg width="24" height="24"><path/></svg></a>',
-    '<a class="group/button"><span><svg width="1em" height="1em"><path/></svg></span></a>',
-])
+@pytest.mark.parametrize(
+    "visual",
+    [
+        '<svg style="display: none;"><path/></svg>',
+        '<svg style="visibility: hidden;"><path/></svg>',
+        '<a role="button"><svg width="16" height="16" role="presentation" class="figure"><path/></svg></a>',
+        '<div id="author-link"><a href="/author"><svg width="16" height="16"><path/></svg></a></div>',
+        '<a aria-label="Share this article"><svg width="24" height="24"><path/></svg></a>',
+        '<a class="group/button"><span><svg width="1em" height="1em"><path/></svg></span></a>',
+    ],
+)
 def test_hidden_or_identified_decorative_svg_does_not_block_text(visual: str) -> None:
-    assert extract_html(_html(content=f'<p>{PARAGRAPH}</p>{visual}')).text == PARAGRAPH
+    assert extract_html(_html(content=f"<p>{PARAGRAPH}</p>{visual}")).text == PARAGRAPH
 
 
 def test_static_image_text_alternative_is_preserved_without_claiming_pixel_review() -> None:
     description = "The client connects directly to the service over an encrypted connection."
-    result = extract_html(_html(content=f'<p>{PARAGRAPH}</p><figure><img alt="{description}">'
-                               '<figcaption>Architecture illustration.</figcaption></figure>'))
+    result = extract_html(
+        _html(
+            content=f'<p>{PARAGRAPH}</p><figure><img alt="{description}">'
+            "<figcaption>Architecture illustration.</figcaption></figure>"
+        )
+    )
     assert f"Image description: {description}" in result.text
     assert "Architecture illustration." in result.text
-    assert any("textual content only" in note for note in result.coverage_notes)
+    assert "Uninspected images are present; this acquisition covers textual content only." in result.coverage_notes
 
 
 def test_descriptive_alt_does_not_automatically_resolve_unread_diagram_coverage() -> None:
@@ -410,32 +466,43 @@ def test_descriptive_alt_does_not_automatically_resolve_unread_diagram_coverage(
 
 
 def test_separate_generated_summary_widget_is_not_authored_evidence() -> None:
-    html = _html(content='<details class="publisher-ai-summary"><p>Unverified generated claim.</p>'
-                         f'</details><p>{PARAGRAPH}</p>')
+    html = _html(
+        content=f'<details class="publisher-ai-summary"><p>Unverified generated claim.</p></details><p>{PARAGRAPH}</p>'
+    )
     assert extract_html(html).text == PARAGRAPH
 
 
-@pytest.mark.parametrize("label,contents", [
-    ('aria-label="Benchmark chart"', '<path/>'),
-    ('class="diagram"', '<path/>'),
-    ('', '<title>Benchmark graph</title><path/>'),
-])
+@pytest.mark.parametrize(
+    "label,contents",
+    [
+        ('aria-label="Benchmark chart"', "<path/>"),
+        ('class="diagram"', "<path/>"),
+        ("", "<title>Benchmark graph</title><path/>"),
+    ],
+)
 def test_small_control_context_cannot_hide_meaningful_svg(label: str, contents: str) -> None:
-    html = _html(content=f'<p>{PARAGRAPH}</p><a aria-label="Share this article">'
-                         f'<svg width="16" height="16" {label}>{contents}</svg></a>')
+    html = _html(
+        content=f'<p>{PARAGRAPH}</p><a aria-label="Share this article">'
+        f'<svg width="16" height="16" {label}>{contents}</svg></a>'
+    )
     with pytest.raises(ValueError, match="unread_critical_media"):
         extract_html(html)
 
 
-@pytest.mark.parametrize("width,height,contents", [
-    ("800", "600", '<path/>'),
-    ("16", "16", '<text>Failed requests: 97%</text>'),
-    ("16", "16", '<text><tspan>Failed requests: 97%</tspan></text>'),
-    ("16", "16", '<desc>Failed requests: 97%</desc>'),
-])
+@pytest.mark.parametrize(
+    "width,height,contents",
+    [
+        ("800", "600", "<path/>"),
+        ("16", "16", "<text>Failed requests: 97%</text>"),
+        ("16", "16", "<text><tspan>Failed requests: 97%</tspan></text>"),
+        ("16", "16", "<desc>Failed requests: 97%</desc>"),
+    ],
+)
 def test_author_or_presentation_marker_does_not_hide_source_evidence(width: str, height: str, contents: str) -> None:
-    html = _html(content=f'<p>{PARAGRAPH}</p><div id="author-link"><a href="/author">'
-                         f'<svg width="{width}" height="{height}" role="presentation">{contents}</svg></a></div>')
+    html = _html(
+        content=f'<p>{PARAGRAPH}</p><div id="author-link"><a href="/author">'
+        f'<svg width="{width}" height="{height}" role="presentation">{contents}</svg></a></div>'
+    )
     with pytest.raises(ValueError, match="unread_critical_media"):
         extract_html(html)
 
@@ -449,12 +516,3 @@ async def test_mixed_public_private_dns_answers_are_rejected_without_request() -
     ):
         with pytest.raises(ValueError, match="unsafe_url"):
             await fetch_article("https://public.example/article")
-
-
-@pytest.mark.asyncio
-async def test_original_publication_age_is_preserved_without_acquisition_age_out() -> None:
-    html = _html(head='<meta property="article:published_time" content="2015-01-01T00:00:00Z">')
-    with _http(lambda _: _response(html)):
-        result = await fetch_article("https://public.example/already-admitted")
-    assert result.source_published == "2015-01-01T00:00:00+00:00"
-    assert result.text == extract_html(html).text

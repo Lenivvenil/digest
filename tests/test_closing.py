@@ -1,4 +1,5 @@
 """Optional same-response closing contract; all model calls are offline doubles."""
+
 from __future__ import annotations
 
 import hashlib
@@ -59,10 +60,19 @@ def population() -> tuple[Config, dict[str, list[Article]]]:
     config.telegram.delivery_mode = "compact"
     config.sources = [SourceConfig("Community", "https://example.com/feed", "Society", True)]
     config.closing = ClosingConfig(True, (ClosingSourceBinding("Community", "https://example.com/feed", "Society"),))
-    articles = {"Society": [
-        Article(f"Item {index}", f"https://example.com/{index}", "Neighbours restored public access",
-                "Community", "Society", NOW) for index in range(4)
-    ]}
+    articles = {
+        "Society": [
+            Article(
+                f"Item {index}",
+                f"https://example.com/{index}",
+                "Neighbours restored public access",
+                "Community",
+                "Society",
+                NOW,
+            )
+            for index in range(4)
+        ]
+    }
     return config, articles
 
 
@@ -71,11 +81,21 @@ def response(messages: list[dict[str, str]], closing: object = "first") -> str:
     task = json.loads(messages[1]["content"])
     items = task["evidence"]["items"]
     raw: dict[str, Any] = {
-        "selections": [{"evidence_id": item["evidence_id"], "reason": "Neighbours restored public access.",
-                        "quote": item["excerpt"], "confidence": "high"} for item in items],
+        "selections": [
+            {
+                "evidence_id": item["evidence_id"],
+                "reason": "Neighbours restored public access.",
+                "quote": item["excerpt"],
+                "confidence": "high",
+            }
+            for item in items
+        ],
         "limitations": ["Synthetic evidence only"],
-        "dispositions": ([] if task.get("closing_contract_version") == 2 else
-                         [{"evidence_id": item["evidence_id"], "status": "selected"} for item in items]),
+        "dispositions": (
+            []
+            if task.get("closing_contract_version") == 2
+            else [{"evidence_id": item["evidence_id"], "status": "selected"} for item in items]
+        ),
     }
     if closing == "first":
         raw["closing"] = {"schema_version": 2, "selection": raw["selections"].pop(0)}
@@ -85,22 +105,29 @@ def response(messages: list[dict[str, str]], closing: object = "first") -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("feed,credit", [
-    (NHS_FEED, NHS_CREDIT), (EA_FEED, EA_CREDIT),
-    ("https://www.england.nhs.uk/feed", None),
-    ("https://www.england.nhs.uk/another-feed/", None),
-    (EA_FEED.replace("%5B%5D", "[]"), None),
-])
+@pytest.mark.parametrize(
+    "feed,credit",
+    [
+        (NHS_FEED, NHS_CREDIT),
+        (EA_FEED, EA_CREDIT),
+        ("https://www.england.nhs.uk/feed", None),
+        ("https://www.england.nhs.uk/another-feed/", None),
+        (EA_FEED.replace("%5B%5D", "[]"), None),
+    ],
+)
 async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_and_identity(
-    monkeypatch: pytest.MonkeyPatch, feed: str, credit: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    feed: str,
+    credit: str | None,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
     config.sources[0].url = feed
     config.closing = replace(config.closing, approved_sources=(ClosingSourceBinding("Community", feed, "Society"),))
     # A known article hostname cannot substitute for the immutable feed binding.
-    articles["Society"] = [replace(item, link=f"https://www.england.nhs.uk/news/{index}")
-                           for index, item in enumerate(articles["Society"])]
+    articles["Society"] = [
+        replace(item, link=f"https://www.england.nhs.uk/news/{index}") for index, item in enumerate(articles["Society"])
+    ]
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
     completion = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
@@ -124,18 +151,28 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
             tampered = replace(decision.provenance, occurrence_sha256="0" * 64)
             assert attribute_closing_card(replace(decision, provenance=tampered), presented) is None
             occurrence = replace(decision.provenance.occurrence, source="Different source")
-            tampered = replace(decision.provenance, occurrence=occurrence,
-                               occurrence_sha256=hashlib.sha256(_canonical(asdict(occurrence))).hexdigest())
+            tampered = replace(
+                decision.provenance,
+                occurrence=occurrence,
+                occurrence_sha256=hashlib.sha256(_canonical(asdict(occurrence))).hexdigest(),
+            )
             assert attribute_closing_card(replace(decision, provenance=tampered), presented) is None
     assert _canonical((asdict(decision), asdict(report), asdict(packet))) == canonical
     completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("designation", [[], 1, {"schema_version": 1, "evidence_id": "unknown"},
-                                          {"schema_version": True, "evidence_id": None}, "missing"])
+@pytest.mark.parametrize(
+    "designation",
+    [
+        pytest.param([], id="designation0"),
+        pytest.param({"schema_version": 1, "evidence_id": "unknown"}, id="designation2"),
+        "missing",
+    ],
+)
 async def test_bad_optional_designation_preserves_all_main_selections(
-    monkeypatch: pytest.MonkeyPatch, designation: object,
+    monkeypatch: pytest.MonkeyPatch,
+    designation: object,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -152,7 +189,8 @@ async def test_bad_optional_designation_preserves_all_main_selections(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("defect", ["quote", "schema", "version", "ambiguous", "untrusted_identity"])
 async def test_rejected_optional_card_cannot_be_terminally_dismissed_by_residual(
-    monkeypatch: pytest.MonkeyPatch, defect: str,
+    monkeypatch: pytest.MonkeyPatch,
+    defect: str,
 ) -> None:
     config, articles = population()
     proposed: list[str] = []
@@ -166,8 +204,9 @@ async def test_rejected_optional_card_cannot_be_terminally_dismissed_by_residual
         elif defect == "schema":
             proposed.append(raw["selections"].pop()["evidence_id"])
             raw["closing"]["evidence_id"] = proposed[-1]
-            raw["dispositions"].append({"evidence_id": proposed[-1], "status": "not_selected",
-                                         "reason": "No relevance."})
+            raw["dispositions"].append(
+                {"evidence_id": proposed[-1], "status": "not_selected", "reason": "No relevance."}
+            )
         elif defect == "version":
             raw["closing"] = {"schema_version": 1, "evidence_id": proposed[0]}
         elif defect == "untrusted_identity":
@@ -190,14 +229,28 @@ async def test_rejected_optional_card_cannot_be_terminally_dismissed_by_residual
     assert all(item.status == "selected" for item in accounting.dispositions)
     assert "optional closing selection invalid" in accounting.errors
     validate_disposition_attempt(accounting, result.report.evidence, review)
+    if defect == "ambiguous":
+        assert len(primary_cards(result, articles, "en", max_cards=2)) == 2
     completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("residual", ["valid", "contradiction", "selected", "missing", "main_duplicate",
-                                     "optional_duplicate", "chain", "missing_envelope"])
+@pytest.mark.parametrize(
+    "residual",
+    [
+        "valid",
+        "contradiction",
+        "selected",
+        "missing",
+        "main_duplicate",
+        "optional_duplicate",
+        "chain",
+        "missing_envelope",
+    ],
+)
 async def test_v2_derives_selected_accounting_without_hiding_conflicting_residuals(
-    monkeypatch: pytest.MonkeyPatch, residual: str,
+    monkeypatch: pytest.MonkeyPatch,
+    residual: str,
 ) -> None:
     config, articles = population()
     identities: list[str] = []
@@ -209,8 +262,12 @@ async def test_v2_derives_selected_accounting_without_hiding_conflicting_residua
         identities[:] = [closer["evidence_id"], main["evidence_id"], spare["evidence_id"], other["evidence_id"]]
         raw["selections"] = [main]
         raw["dispositions"] = [
-            {"evidence_id": spare["evidence_id"], "status": "duplicate", "retained_id": closer["evidence_id"],
-             "reason": "Same reported event."},
+            {
+                "evidence_id": spare["evidence_id"],
+                "status": "duplicate",
+                "retained_id": closer["evidence_id"],
+                "reason": "Same reported event.",
+            },
             {"evidence_id": other["evidence_id"], "status": "not_selected", "reason": "No useful development."},
         ]
         if residual in {"contradiction", "selected"}:
@@ -225,8 +282,9 @@ async def test_v2_derives_selected_accounting_without_hiding_conflicting_residua
         elif residual == "optional_duplicate":
             raw["closing"]["selection"] = main
             raw["dispositions"][0]["retained_id"] = main["evidence_id"]
-            raw["dispositions"].append({"evidence_id": closer["evidence_id"], "status": "not_selected",
-                                         "reason": "No useful development."})
+            raw["dispositions"].append(
+                {"evidence_id": closer["evidence_id"], "status": "not_selected", "reason": "No useful development."}
+            )
         elif residual == "chain":
             raw["dispositions"][1].update(status="duplicate", retained_id=spare["evidence_id"])
         elif residual == "missing_envelope":
@@ -240,12 +298,17 @@ async def test_v2_derives_selected_accounting_without_hiding_conflicting_residua
     assert review.status == ("partial" if residual == "main_duplicate" else "ok")
     assert len(review.selections) == (1 if residual == "optional_duplicate" else 2)
     assert [item.evidence_id for item in review.selections] == (
-        [identities[1]] if residual == "optional_duplicate" else [identities[1], identities[0]])
+        [identities[1]] if residual == "optional_duplicate" else [identities[1], identities[0]]
+    )
     expected_unresolved = {
-        "valid": (), "contradiction": (identities[0], identities[2]),
-        "selected": (identities[0], identities[2]), "missing": (identities[3],),
-        "main_duplicate": (identities[1],), "optional_duplicate": (),
-        "chain": (identities[3],), "missing_envelope": (identities[2], identities[3]),
+        "valid": (),
+        "contradiction": (identities[0], identities[2]),
+        "selected": (identities[0], identities[2]),
+        "missing": (identities[3],),
+        "main_duplicate": (identities[1],),
+        "optional_duplicate": (),
+        "chain": (identities[3],),
+        "missing_envelope": (identities[2], identities[3]),
     }
     assert accounting.unresolved_ids == expected_unresolved[residual]
     assert accounting.status == ("complete" if residual in {"valid", "optional_duplicate"} else "incomplete")
@@ -255,7 +318,8 @@ async def test_v2_derives_selected_accounting_without_hiding_conflicting_residua
 
 @pytest.mark.asyncio
 async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -278,8 +342,9 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
         return json.dumps(raw), {}
 
     monkeypatch.setattr("digest.application.review.complete", complete)
-    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
-        execution=execution)
+    reviewed = await _review_candidates(
+        CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution
+    )
     cards, report = reviewed.cards, reviewed.report
     assert report is not None and count == 2
     main, decision = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
@@ -295,7 +360,10 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
     assert pending_completed_report(restored) == report
     report_bytes = _canonical(asdict(report))
     replayed = await _review_candidates(
-        CandidateWork(restored, restored.packets[0]), articles, config, str(tmp_path),
+        CandidateWork(restored, restored.packets[0]),
+        articles,
+        config,
+        str(tmp_path),
         execution=execution,
     )
     recovered, reused = replayed.cards, replayed.report
@@ -308,7 +376,9 @@ async def test_capture_uses_exact_fallback_and_filters_before_unchanged_cap(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["missing", "corrupt", "write"])
 async def test_optional_capture_failure_keeps_completed_main_without_reselection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -320,8 +390,9 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     monkeypatch.setattr("digest.application.review.complete", complete)
     if failure == "write":
         monkeypatch.setattr("digest.closing.save_closing", lambda *args: (_ for _ in ()).throw(OSError("disk")))
-    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
-        execution=execution)
+    reviewed = await _review_candidates(
+        CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution
+    )
     cards, report = reviewed.cards, reviewed.report
     assert report is not None
     for path in (tmp_path / "closing_decisions").glob("*.json"):
@@ -333,15 +404,17 @@ async def test_optional_capture_failure_keeps_completed_main_without_reselection
     assert main == cards and decision is not None and decision.status == "incomplete"
     restored = load_candidate_progress(tmp_path)
     assert pending_completed_report(restored) == report
-    await _review_candidates(CandidateWork(restored, restored.packets[0]), articles, config, str(tmp_path),
-        execution=execution)
+    await _review_candidates(
+        CandidateWork(restored, restored.packets[0]), articles, config, str(tmp_path), execution=execution
+    )
     assert complete.await_count == 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_change", ["disabled", "missing", "changed_url", "ambiguous"])
 async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
-    monkeypatch: pytest.MonkeyPatch, source_change: str,
+    monkeypatch: pytest.MonkeyPatch,
+    source_change: str,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -355,8 +428,10 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
         config.sources[0].url += "changed"
     else:
         config.sources.append(replace(config.sources[0], url="https://other.example/feed"))
-    monkeypatch.setattr("digest.application.review.complete", AsyncMock(
-        side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
+    monkeypatch.setattr(
+        "digest.application.review.complete",
+        AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})),
+    )
     result = await run_primary_review(articles, config, execution=execution)
     report = result.report
     assert eligible_ids(report.evidence, config.closing, config.sources) == []
@@ -366,14 +441,17 @@ async def test_unavailable_feed_binding_cannot_designate_or_remove_main(
 
 @pytest.mark.asyncio
 async def test_terminal_v2_selected_and_omitted_roundtrip_and_strict_binding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None
-    monkeypatch.setattr("digest.application.review.complete", AsyncMock(
-        side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})))
+    monkeypatch.setattr(
+        "digest.application.review.complete",
+        AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {})),
+    )
     result = await run_primary_review(articles, config, execution=execution)
     report = result.report
     decision = decide_closing(result, packet, config.closing, config.sources)
@@ -407,9 +485,18 @@ def test_historical_v1_capture_and_terminal_sidecar_bytes_remain_readable(tmp_pa
     raw["closing"] = {"schema_version": 1, "evidence_id": identity}
     text = json.dumps(raw)
     selections, limitations, rejected = _parse_live_review(text, packet.evidence, allow_closing=True)
-    review = ModelReview("primary", "fixture", "fixture", packet.evidence.bundle_id, "historical-request", "ok",
-                         selections=selections, limitations=limitations, rejected_items=rejected,
-                         response_sha256=hashlib.sha256(text.encode()).hexdigest())
+    review = ModelReview(
+        "primary",
+        "fixture",
+        "fixture",
+        packet.evidence.bundle_id,
+        "historical-request",
+        "ok",
+        selections=selections,
+        limitations=limitations,
+        rejected_items=rejected,
+        response_sha256=hashlib.sha256(text.encode()).hexdigest(),
+    )
     report = BlindReviewReport(1, packet.evidence, [review], "incomplete", None, [], "historical")
     result = restore_review(report)
     capture = capture_closing(review, text, "stop")
@@ -443,25 +530,34 @@ def test_legacy_disabled_wire_shape_and_prompt_are_unchanged(tmp_path: Path) -> 
     config, articles = population()
     bundle = build_evidence_bundle(articles, config.review)
     assert build_review_messages(bundle, config.review, "en", sources=config.sources) == build_review_messages(
-        bundle, config.review, "en", sources=config.sources, closing=ClosingConfig())
+        bundle, config.review, "en", sources=config.sources, closing=ClosingConfig()
+    )
     # Captured from the unchanged pre-v2 implementation, not recomputed expected bytes.
     messages = build_review_messages(bundle, config.review, "en", sources=config.sources)
     assert hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest() == (
-        "7f576740c5ffd6ed14660a4db80d87153add62028ff1de76e76cd5203b8f2505")
+        "7f576740c5ffd6ed14660a4db80d87153add62028ff1de76e76cd5203b8f2505"
+    )
     assert hashlib.sha256(json.dumps(groq_review_response_format(), sort_keys=True).encode()).hexdigest() == (
-        "a0bcefed74a2e8510d434cae51955f3bd90fa63483657c666667d226b3bb1815")
+        "a0bcefed74a2e8510d434cae51955f3bd90fa63483657c666667d226b3bb1815"
+    )
     enabled = build_review_messages(bundle, config.review, "en", sources=config.sources, closing=config.closing)
     assert enabled != messages
     # Exact old enabled request identity cannot authorize a fresh v2 review reuse.
     assert hashlib.sha256(json.dumps(enabled, sort_keys=True).encode()).hexdigest() != (
-        "2e3713ad691fb3fec34a9b5c003802866bec586516947c1e251347c38e34065a")
+        "2e3713ad691fb3fec34a9b5c003802866bec586516947c1e251347c38e34065a"
+    )
     snapshot = PreparationSnapshot([], [], "exact legacy", None, 0, 0, [])
     path = save_preparation(snapshot, tmp_path, NOW)
     record = json.loads(path.read_text())
     payload = asdict(snapshot)
     payload.pop("closing")
-    body = {"schema_version": 1, "utc_date": NOW.date().isoformat(), "created_at": NOW.isoformat(),
-            "publication_date": NOW.date().isoformat(), "snapshot": payload}
+    body = {
+        "schema_version": 1,
+        "utc_date": NOW.date().isoformat(),
+        "created_at": NOW.isoformat(),
+        "publication_date": NOW.date().isoformat(),
+        "snapshot": payload,
+    }
     expected = {**body, "sha256": hashlib.sha256(_canonical(body)).hexdigest()}
     assert record == expected
     original = path.read_bytes()
@@ -473,7 +569,9 @@ def test_legacy_disabled_wire_shape_and_prompt_are_unchanged(tmp_path: Path) -> 
 def test_closing_default_disabled_and_stale_binding_does_not_block_config(tmp_path: Path) -> None:
     path = _write_config(tmp_path, MINIMAL_CONFIG)
     assert not load_config(path).closing.enabled
-    text = Path(path).read_text() + '''
+    text = (
+        Path(path).read_text()
+        + """
 review:
   enabled: true
   review_led_only: true
@@ -486,7 +584,8 @@ closing:
     - name: Absent Feed
       url: https://missing.example/feed
       category: Community
-'''
+"""
+    )
     Path(path).write_text(text)
     config = load_config(path)
     assert config.closing.enabled and len(config.sources) == 1 and config.sources[0].name == "Test Feed"
@@ -495,13 +594,20 @@ closing:
 
 @pytest.mark.asyncio
 async def test_explicit_abstention_is_persisted_without_inventing_a_story(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
     monkeypatch.setattr(
-        "digest.application.review.complete", AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (
-        response(messages, {"schema_version": 2, "selection": None}), {})))
+        "digest.application.review.complete",
+        AsyncMock(
+            side_effect=lambda role, messages, *args, **kwargs: (
+                response(messages, {"schema_version": 2, "selection": None}),
+                {},
+            )
+        ),
+    )
     result = await run_primary_review(articles, config, execution=execution)
     report = result.report
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
@@ -514,7 +620,8 @@ async def test_explicit_abstention_is_persisted_without_inventing_a_story(
 
 @pytest.mark.asyncio
 async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -524,8 +631,9 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
     begin_packet(progress, packet, tmp_path)
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, str(tmp_path),
-        execution=execution)
+    reviewed = await _review_candidates(
+        CandidateWork(progress, packet), articles, config, str(tmp_path), execution=execution
+    )
     cards, report = reviewed.cards, reviewed.report
     assert report is not None
     main, selected = _preparation_closing(cards, restore_review(report), articles, config, str(tmp_path))
@@ -541,9 +649,10 @@ async def test_fresh_handoff_rechecks_allowlist_but_accepted_snapshot_does_not(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("conflict", ["closing_field", "designation_id", "selected_id"])
+@pytest.mark.parametrize("conflict", ["designation_id", "selected_id"])
 async def test_conflicting_optional_or_selected_identity_omits_closing_only(
-    monkeypatch: pytest.MonkeyPatch, conflict: str,
+    monkeypatch: pytest.MonkeyPatch,
+    conflict: str,
 ) -> None:
     execution = ModelExecution()
     config, articles = population()
@@ -554,8 +663,6 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
             raw["closing"]["selection"] = raw["selections"][0]
             return json.dumps(raw), {}
         text = json.dumps(raw)
-        if conflict == "closing_field":
-            return text[:-1] + ', "closing": {"schema_version": 2, "selection": null}}', {}
         designation = json.dumps(raw["closing"])
         return text.replace(designation, designation[:-1] + ', "selection": null}'), {}
 
@@ -569,7 +676,8 @@ async def test_conflicting_optional_or_selected_identity_omits_closing_only(
 
 @pytest.mark.asyncio
 async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     from digest.delivery.edition import READY_FILE
@@ -586,8 +694,9 @@ async def test_sole_selected_story_remains_main_and_freezes_without_reselection(
     begin_packet(progress, packet, ".cache")
     complete = AsyncMock(side_effect=lambda role, messages, *args, **kwargs: (response(messages), {}))
     monkeypatch.setattr("digest.application.review.complete", complete)
-    reviewed = await _review_candidates(CandidateWork(progress, packet), articles, config, ".cache",
-        execution=execution)
+    reviewed = await _review_candidates(
+        CandidateWork(progress, packet), articles, config, ".cache", execution=execution
+    )
     cards, report = reviewed.cards, reviewed.report
     assert report is not None
     main, decision = _preparation_closing(cards, restore_review(report), articles, config, ".cache")

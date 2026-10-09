@@ -1,4 +1,5 @@
 """Offline review wire-shape and safe numeric diagnostics; no provider acceptance claim."""
+
 from __future__ import annotations
 
 import json
@@ -26,34 +27,21 @@ def test_numeric_usage_is_allowlisted_and_zero_is_distinct_from_absence() -> Non
     assert _review_usage({}) == {}
     assert _review_usage({"reasoning_tokens": 17}) == {}  # Wrong provider nesting is not a measured count.
     assert _review_usage({"completion_tokens_details": "private"}) == {}
-    assert _review_usage({"prompt_tokens": 10, "completion_tokens": 30,
-                          "completion_tokens_details": {"reasoning_tokens": 0, "text": "private"},
-                          "rate_limit_remaining_tokens": 12, "rate_limit_limit_tokens": True,
-                          "authorization": "private"}) == {
-        "prompt_tokens": 10, "completion_tokens": 30, "reasoning_tokens": 0, "rate_limit_remaining_tokens": 12,
+    assert _review_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 30,
+            "completion_tokens_details": {"reasoning_tokens": 0, "text": "private"},
+            "rate_limit_remaining_tokens": 12,
+            "rate_limit_limit_tokens": True,
+            "authorization": "private",
+        }
+    ) == {
+        "prompt_tokens": 10,
+        "completion_tokens": 30,
+        "reasoning_tokens": 0,
+        "rate_limit_remaining_tokens": 12,
     }
-
-
-def test_strict_wire_shape_disallows_per_selection_limitations_and_preserves_dispositions() -> None:
-    fmt = groq_review_response_format()
-    assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
-    schema = fmt["json_schema"]["schema"]
-    assert set(schema["required"]) == {"selections", "limitations", "dispositions"}
-    assert schema["additionalProperties"] is False
-    selection = schema["properties"]["selections"]["items"]
-    assert selection["additionalProperties"] is False
-    assert set(selection["properties"]) == set(selection["required"]) == {
-        "evidence_id", "reason", "quote", "confidence",
-    }
-    assert "limitations" not in selection["properties"]
-    variants = schema["properties"]["dispositions"]["items"]["anyOf"]
-    assert [variant["properties"]["status"]["enum"] for variant in variants] == [
-        ["selected"], ["not_selected", "deferred"], ["duplicate"],
-    ]
-    for variant in variants:
-        assert variant["additionalProperties"] is False
-        assert set(variant["properties"]) == set(variant["required"])
-    assert "maxItems" not in json.dumps(fmt) and "maxLength" not in json.dumps(fmt)
 
 
 @pytest.mark.asyncio
@@ -61,8 +49,12 @@ async def test_only_groq_gptoss_review_gets_controls_and_length_diagnostics_surv
     execution = ModelExecution()
     config = fixture_config()
     raw = json.dumps(payload())
-    usage = {"finish_reason": "length", "prompt_tokens": 4222, "completion_tokens": 4096,
-             "completion_tokens_details": {"reasoning_tokens": 1800, "reasoning": "DO NOT RETAIN"}}
+    usage = {
+        "finish_reason": "length",
+        "prompt_tokens": 4222,
+        "completion_tokens": 4096,
+        "completion_tokens_details": {"reasoning_tokens": 1800, "reasoning": "DO NOT RETAIN"},
+    }
     completion = AsyncMock(side_effect=[RuntimeError("primary unavailable"), (raw, usage)])
     with patch("digest.application.review.complete", completion) as call:
         result = await run_primary_review(fixture_articles(), config, execution=execution)

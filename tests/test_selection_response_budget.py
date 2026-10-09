@@ -39,22 +39,30 @@ def test_response_detail_config_rejects_invalid_bounds(value: int) -> None:
 
 
 def _response(bundle: EvidenceBundle, detailed: int = 5) -> str:
-    return json.dumps({
-        "selections": [
-            {"evidence_id": item.evidence_id, "reason": "Useful synthetic evidence.",
-             "quote": item.title, "confidence": "high"}
-            for item in bundle.items[:detailed]
-        ],
-        "limitations": ["Synthetic fixture; RSS metadata only."],
-        "dispositions": [
-            {"evidence_id": item.evidence_id, "status": "selected"}
-            if index < detailed else {
-                "evidence_id": item.evidence_id, "status": "deferred",
-                "reason": "Useful evidence deferred because the response detail budget is full.",
-            }
-            for index, item in enumerate(bundle.items)
-        ],
-    })
+    return json.dumps(
+        {
+            "selections": [
+                {
+                    "evidence_id": item.evidence_id,
+                    "reason": "Useful synthetic evidence.",
+                    "quote": item.title,
+                    "confidence": "high",
+                }
+                for item in bundle.items[:detailed]
+            ],
+            "limitations": ["Synthetic fixture; RSS metadata only."],
+            "dispositions": [
+                {"evidence_id": item.evidence_id, "status": "selected"}
+                if index < detailed
+                else {
+                    "evidence_id": item.evidence_id,
+                    "status": "deferred",
+                    "reason": "Useful evidence deferred because the response detail budget is full.",
+                }
+                for index, item in enumerate(bundle.items)
+            ],
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -69,9 +77,9 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     begin_packet(progress, packet, tmp_path)
     raw = _response(packet.evidence)
     with patch(
-        "digest.application.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as complete:
-        result = await run_primary_review(packet_articles(packet), config,
-            execution=model_execution)
+        "digest.application.review.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))
+    ) as complete:
+        result = await run_primary_review(packet_articles(packet), config, execution=model_execution)
         report = result.report
     complete.assert_awaited_once()
     task = json.loads(complete.call_args.args[1][1]["content"])
@@ -87,13 +95,14 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     assert {item.evidence_id for item in review.selections} == selected
     response_hash = hashlib.sha256(raw.encode()).hexdigest()
     assert review.response_sha256 == response_hash
-    attempt, = result.disposition_attempts
+    (attempt,) = result.disposition_attempts
     validate_disposition_attempt(attempt, packet.evidence, review)
     assert attempt.response_sha256 == response_hash and attempt.prompt_hash == packet.prompt_hash
     assert attempt.status == "incomplete" and not attempt.errors
     assert attempt.finish_reason == "stop"
     assert set(attempt.unresolved_ids) == deferred
     assert len(attempt.dispositions) == 20
+    assert not any(item.status == "not_selected" for item in attempt.dispositions)
     assert {item.evidence_id for item in attempt.dispositions if item.status == "selected"} == selected
     assert {item.evidence_id for item in attempt.dispositions if item.status == "deferred"} == deferred
 
@@ -104,8 +113,9 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     assert pending_completed_report(restored) == report
     assert len(restored.candidates) == 20 and all(item.eligible for item in restored.candidates.values())
     assert {identity for identity, item in restored.candidates.items() if item.status == "selected"} == selected
-    assert {identity for identity, item in restored.candidates.items()
-            if item.status == "technical_pending"} == deferred
+    assert {
+        identity for identity, item in restored.candidates.items() if item.status == "technical_pending"
+    } == deferred
     for identity, candidate in restored.candidates.items():
         assert candidate.disposition is not None
         assert candidate.disposition.status == ("selected" if identity in selected else "deferred")
@@ -130,7 +140,11 @@ async def test_twenty_useful_items_keep_fifteen_deferred_after_five_detailed_sel
     ids=["closed-json-length", "closed-json-max-tokens", "truncated-json", "six-exceeds-detail-budget"],
 )
 async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pending(
-    tmp_path: Path, finish_reason: str, detailed: int, truncated: bool, error: str,
+    tmp_path: Path,
+    finish_reason: str,
+    detailed: int,
+    truncated: bool,
+    error: str,
 ) -> None:
     model_execution = ModelExecution()
     config, articles = population(20)
@@ -140,16 +154,16 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
     begin_packet(progress, packet, tmp_path)
     raw = _response(packet.evidence, detailed)
     if truncated:
-        raw = raw[:raw.index('"dispositions"') + 20]
+        raw = raw[: raw.index('"dispositions"') + 20]
     else:
         assert len(json.loads(raw)["selections"]) == detailed
     with patch(
-        "digest.application.review.complete",
-        AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))) as complete:
-        result = await run_primary_review(packet_articles(packet), config,
-            execution=model_execution)
+        "digest.application.review.complete", AsyncMock(return_value=(raw, {"finish_reason": finish_reason}))
+    ) as complete:
+        result = await run_primary_review(packet_articles(packet), config, execution=model_execution)
         report = result.report
     assert complete.await_count == 2  # Only the existing primary and fallback attempt.
+    assert all(call.kwargs["max_output_tokens"] == 4096 for call in complete.call_args_list)
     assert len(result.disposition_attempts) == 2
     identities = {item.evidence_id for item in packet.evidence.items}
     response_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -162,6 +176,9 @@ async def test_unfinished_or_oversized_live_response_keeps_every_candidate_pendi
         assert attempt.response_sha256 == response_hash and attempt.finish_reason == finish_reason
         assert attempt.status == "incomplete" and not attempt.dispositions
         assert set(attempt.unresolved_ids) == identities
+        if finish_reason in {"length", "MAX_TOKENS"}:
+            assert "finish_reason" not in asdict(review)
+            assert attempt.errors == ("provider reported unfinished response",)
     assert not primary_cards(result, articles, "en")
     reconcile_packet(progress, packet, result, config, tmp_path)
     restored = load_candidate_progress(tmp_path)

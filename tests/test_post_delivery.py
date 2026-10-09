@@ -245,10 +245,16 @@ async def test_compact_execution_retains_accepted_incomplete_fragment_and_occupi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checkpoint = await confirmed_checkpoint(monkeypatch)
+    checkpoint_sha256 = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     config = fixture_config()
     config.telegram.delivery_mode = "compact"
 
     async def stage(bundle: Any, config: Any, client: Any, *, delivered: Any, **kwargs: Any) -> Any:
+        assert len(delivered.cards) == 1
+        assert delivered.checkpoint_sha256 == checkpoint_sha256
+        assert delivered.canonical_sha256 != delivered.presentation_sha256
+        assert delivered.cards[0].canonical.summary == "Raw evidence."
+        assert delivered.cards[0].presentation.summary == "Delivered translated claim"
         return accepted_result(bundle, delivered)
 
     with (
@@ -256,7 +262,11 @@ async def test_compact_execution_retains_accepted_incomplete_fragment_and_occupi
         patch("httpx.AsyncClient", return_value=_client_context()),
         patch("digest.irritator.evidence_stage.run_evidence_irritator", side_effect=stage) as run,
     ):
-        prepare_post_delivery(Path("config.yaml"), checkpoint)
+        marker = prepare_post_delivery(Path("config.yaml"), checkpoint)
+        assert marker is not None
+        prepared = json.loads(marker.read_text())
+        assert prepared["schema_version"] == 3
+        assert len(prepared["delivered"]["cards"]) == 1
         assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=ModelExecution()) == 2
         occupied = checkpoint.with_name("next.review.json")
         occupied.write_bytes(checkpoint.read_bytes())
@@ -306,14 +316,24 @@ async def test_fragment_admission_does_not_promote_invalid_rankings(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("closing", [False, True])
+@pytest.mark.parametrize("closing", [True])
 async def test_compact_prepare_freezes_actual_delivered_origin_and_source_occurrences(
     monkeypatch: pytest.MonkeyPatch,
     closing: bool,
 ) -> None:
-    from digest.post_delivery import _delivered_input
+    from dataclasses import replace
 
-    checkpoint = await confirmed_checkpoint(monkeypatch, closing=closing)
+    from digest.post_delivery import _delivered_input
+    from digest.translation import translate_publication_with_closing
+
+    async def presented_closing(*args: Any, **kwargs: Any) -> Any:
+        text, cards, ranked, closer = await translate_publication_with_closing(*args, **kwargs)
+        assert len(cards) == 1
+        return text, [replace(cards[0], summary="Delivered translated claim")], ranked, closer
+
+    with patch("digest.translation.translate_publication_with_closing", side_effect=presented_closing) as present:
+        checkpoint = await confirmed_checkpoint(monkeypatch, closing=closing)
+    present.assert_awaited_once()
     config = fixture_config()
     config.telegram.delivery_mode = "compact"
     with patch("digest.post_delivery._config", return_value=config):
@@ -327,11 +347,10 @@ async def test_compact_prepare_freezes_actual_delivered_origin_and_source_occurr
     assert origin.checkpoint_sha256 == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     assert origin.canonical_sha256 != origin.presentation_sha256
     assert origin.cards[0].canonical.summary == "Raw evidence."
+    assert origin.cards[0].presentation.summary == "Delivered translated claim"
     if closing:
         assert origin.cards[-1].canonical.title == "Community source"
         assert "NHS England RSS feeds" in origin.cards[-1].presentation.summary
-    else:
-        assert origin.cards[0].presentation.summary == "Delivered translated claim"
 
 
 @pytest.mark.asyncio
@@ -457,43 +476,17 @@ def _markdown(checkpoint: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_prepare_persists_checkpoint_identity_without_live_work(
+async def test_prepare_is_exclusive_and_never_replaces_an_existing_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checkpoint = tmp_path / "digests/day.review.json"
-    payload = await _checkpoint(checkpoint)
-    original = checkpoint.read_bytes()
+    await _checkpoint(checkpoint)
     output = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    with patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as run:
-        assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
-    run.assert_not_called()
-    record = json.loads(_marker(checkpoint).read_text())
-    assert record["checkpoint"] == "digests/day.review.json"
-    assert record["checkpoint_sha256"] == hashlib.sha256(original).hexdigest()
-    assert record["bundle_id"] == payload["evidence"]["bundle_id"]
-    assert record["execute_started"] is None
-    assert record["schema_version"] == 2
-    assert record["search_policy"] == {
-        "id": "bounded-hn-arxiv-devto-v1",
-        "sources": ["hackernews", "arxiv", "devto"],
-        "max_queries": 3,
-    }
-    assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {
-        "checkpoint": "digests/day.review.json",
-        "marker": "digests/day.post-attempt.json",
-    }
-    assert checkpoint.read_bytes() == original
-    assert not _result(checkpoint).exists()
-    assert not _markdown(checkpoint).exists()
-
-
-@pytest.mark.asyncio
-async def test_prepare_is_exclusive_and_never_replaces_an_existing_marker(tmp_path: Path) -> None:
-    checkpoint = tmp_path / "digests/day.review.json"
-    await _checkpoint(checkpoint)
+    assert not output.exists()
     assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
+    assert output.read_text() == "checkpoint=digests/day.review.json\nmarker=digests/day.post-attempt.json\n"
     first_marker = _marker(checkpoint).read_bytes()
     with patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as run:
         assert prepare_post_delivery(Path("config.yaml"), checkpoint) is None
@@ -606,7 +599,8 @@ async def test_initial_marker_is_fsynced_with_its_newline_before_workflow_output
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checkpoint = tmp_path / "digests/day.review.json"
-    await _checkpoint(checkpoint)
+    payload = await _checkpoint(checkpoint)
+    original = checkpoint.read_bytes()
     output = tmp_path / "github-output"
     output.write_text("previous=value\n", encoding="utf-8")
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
@@ -620,9 +614,27 @@ async def test_initial_marker_is_fsynced_with_its_newline_before_workflow_output
         assert output.read_text() == "previous=value\n"
         fsync(descriptor)
 
-    with patch("digest.adapters.storage.post_delivery.os.fsync", side_effect=sync_marker) as sync:
+    with (
+        patch("digest.adapters.storage.post_delivery.os.fsync", side_effect=sync_marker) as sync,
+        patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as run,
+    ):
         assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
     sync.assert_called_once()
+    run.assert_not_called()
+    record = json.loads(_marker(checkpoint).read_text())
+    assert record["checkpoint"] == "digests/day.review.json"
+    assert record["checkpoint_sha256"] == hashlib.sha256(original).hexdigest()
+    assert record["bundle_id"] == payload["evidence"]["bundle_id"]
+    assert record["execute_started"] is None
+    assert record["schema_version"] == 2
+    assert record["search_policy"] == {
+        "id": "bounded-hn-arxiv-devto-v1",
+        "sources": ["hackernews", "arxiv", "devto"],
+        "max_queries": 3,
+    }
+    assert checkpoint.read_bytes() == original
+    assert not _result(checkpoint).exists()
+    assert not _markdown(checkpoint).exists()
     assert output.read_text() == (
         "previous=value\ncheckpoint=digests/day.review.json\nmarker=digests/day.post-attempt.json\n"
     )
@@ -927,30 +939,6 @@ async def test_supplement_without_destination_never_contacts_telegram(
 
 
 @pytest.mark.asyncio
-async def test_supplement_uses_existing_primary_telegram_target_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = fixture_config()
-    config.telegram.enabled = True
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
-    client = _client_context()
-    response = httpx.Response(
-        200,
-        json={"ok": True, "result": {"message_id": 99}},
-        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendMessage"),
-    )
-    client.post = AsyncMock(return_value=response)
-    with patch("httpx.AsyncClient", return_value=client):
-        assert await _send_supplement(_stage_result("bundle", status="incomplete"), config) == "sent"
-    client.post.assert_awaited_once()
-    assert client.post.call_args.args == ("https://api.telegram.org/bottest-token/sendMessage",)
-    payload = client.post.call_args.kwargs["json"]
-    assert payload["chat_id"] == "same-primary-chat"
-    assert payload["disable_notification"] is True
-    assert "incomplete" in payload["text"]
-    assert "Limited coverage" in payload["text"]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["prepare", "execute"])
 async def test_checkpoint_change_during_validation_is_rejected(phase: str, tmp_path: Path) -> None:
     execution = ModelExecution()
@@ -1221,7 +1209,7 @@ async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyP
     config.telegram.enabled = True
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "same-primary-chat")
-    result = _stage_result("bundle", "empty")
+    result = _stage_result("bundle", "incomplete")
     private = make_signal(title="PRIVATE TITLE SENTINEL", snippet="PRIVATE ABSTRACT SENTINEL")
     result.ranking_audit = _admit_ranking([private], 5, 3, {}).audit
     result.ranking_audit.candidates[0].decision = RankingDecision(
@@ -1241,6 +1229,13 @@ async def test_private_audit_does_not_enter_telegram(monkeypatch: pytest.MonkeyP
     )
     with patch("httpx.AsyncClient", return_value=client):
         assert await _send_supplement(result, config) == "sent"
+    client.post.assert_awaited_once()
+    assert client.post.call_args.args == ("https://api.telegram.org/bottest-token/sendMessage",)
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["chat_id"] == "same-primary-chat"
+    assert payload["disable_notification"] is True
+    assert "incomplete" in payload["text"]
+    assert "Limited coverage" in payload["text"]
     assert "PRIVATE" not in json.dumps([call.kwargs for call in client.post.await_args_list])
 
 

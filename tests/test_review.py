@@ -41,19 +41,26 @@ def test_evidence_is_deterministic_and_changes_when_excerpt_changes() -> None:
 async def test_every_slot_is_blind_and_gets_identical_evidence() -> None:
     execution = ModelExecution()
     requests = []
+    completed_providers = []
 
     async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
+        provider = kwargs["provider_override"].name
+        is_primary = provider == "gemini"
         requests.append(deepcopy(messages))
         text, usage = await fixture_response(role, messages, config, **kwargs)
-        if len(requests) == 1:
+        if is_primary:
             data = json.loads(text)
             data["selections"][0]["reason"] = "PRIMARY_ONLY_SENTINEL"
             text = json.dumps(data)
+            await asyncio.sleep(0.001)
+        completed_providers.append(provider)
         return text, usage
 
     with patch("digest.application.review.complete", side_effect=adapter):
         report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
     assert len(requests) == 3
+    assert completed_providers == ["groq", "gemini", "groq"]
+    assert [review.slot for review in report.reviews] == ["primary", "secondary", "third"]
     assert all(request == requests[0] for request in requests)
     assert "PRIMARY_ONLY_SENTINEL" not in json.dumps(requests)
     assert len({r.prompt_hash for r in report.reviews}) == 1
@@ -161,20 +168,6 @@ async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp
     archive = json.loads(path.with_suffix(".review.json").read_text())
     assert archive == json.loads(json.dumps(asdict(report)))
     assert "Independent Blind Review" in path.read_text()
-
-
-@pytest.mark.asyncio
-async def test_completion_order_does_not_change_slot_attribution() -> None:
-    execution = ModelExecution()
-
-    async def adapter(role: object, messages: list[dict[str, str]], config: object, **kwargs: object) -> tuple:
-        if kwargs["provider_override"].name == "gemini":
-            await asyncio.sleep(0.001)
-        return await fixture_response(role, messages, config, **kwargs)
-
-    with patch("digest.application.review.complete", side_effect=adapter):
-        report = await run_blind_review(fixture_articles(), fixture_config(), execution=execution)
-    assert [r.slot for r in report.reviews] == ["primary", "secondary", "third"]
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.review import run_blind_review
+from digest.application.review_request import build_review_messages
 from digest.config import Config, ReviewModelConfig
 from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, ModelReview
@@ -65,31 +66,7 @@ def _report_content(report: BlindReviewReport) -> dict[str, Any]:
 
 def _rehash_evidence(evidence: dict[str, Any]) -> None:
     payload = {key: value for key, value in evidence.items() if key != "bundle_id"}
-    evidence["bundle_id"] = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
-    ).hexdigest()
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_roundtrip_preserves_evidence_and_valid_reviews(tmp_path: Path) -> None:
-    from digest.review_checkpoint import load_review_checkpoint
-
-    config = _trial_config()
-    original = await _report(config)
-    path = tmp_path / "review.json"
-    _archive(path, original)
-    before = path.read_bytes()
-
-    bundle, cached = load_review_checkpoint(path, config)
-
-    assert bundle == original.evidence
-    assert isinstance(bundle.items, tuple)
-    assert [asdict(review) for review in cached] == [asdict(review) for review in original.reviews]
-    assert path.read_bytes() == before
-    with pytest.raises(FrozenInstanceError):
-        bundle.bundle_id = "changed"  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        bundle.items[0].excerpt = "changed"  # type: ignore[misc]
+    evidence["bundle_id"] = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -108,7 +85,8 @@ async def test_resume_reuses_valid_results_and_calls_only_missing_slots() -> Non
         resumed = await run_evidence_review(original.evidence, config, cached_reviews=cached, execution=execution)
 
     assert [call.kwargs["provider_override"].model for call in complete.call_args_list] == [
-        config.review.secondary.model, config.review.tie_breaker.model,
+        config.review.secondary.model,
+        config.review.tie_breaker.model,
     ]
     assert resumed.status == "complete"
     assert resumed.selection_overlap == original.selection_overlap
@@ -117,23 +95,9 @@ async def test_resume_reuses_valid_results_and_calls_only_missing_slots() -> Non
     assert asdict(resumed.reviews[0]) == {**before_reviews[0], "reused_from_checkpoint": True}
     assert asdict(original.evidence) == before_bundle
     assert [asdict(review) for review in cached] == before_reviews
+    expected = build_review_messages(original.evidence, config.review, config.radar.language, sources=config.sources)
     for call in complete.call_args_list:
-        assert json.loads(call.args[1][1]["content"])["evidence"] == json.loads(json.dumps(before_bundle))
-
-
-@pytest.mark.asyncio
-async def test_complete_checkpoint_makes_no_model_calls() -> None:
-    execution = ModelExecution()
-    from digest.application.review import run_evidence_review
-
-    config = _trial_config()
-    original = await _report(config)
-    with patch(
-        "digest.application.review.complete",
-        AsyncMock(side_effect=AssertionError("No review is missing"))) as complete:
-        resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
-    complete.assert_not_called()
-    assert _report_content(resumed) == _report_content(original)
+        assert call.args[1] == expected
 
 
 @pytest.mark.asyncio
@@ -149,7 +113,8 @@ async def test_abstained_cached_reviews_are_reused_without_third_model() -> None
         review.selections = []
         review.limitations = ["Supplied excerpts are insufficient to select useful evidence."]
     with patch(
-        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Valid abstentions are reusable"))):
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Valid abstentions are reusable"))
+    ):
         resumed = await run_evidence_review(original.evidence, config, cached, execution=execution)
     assert resumed.status == "complete"
     assert resumed.selection_overlap == 1.0
@@ -158,10 +123,17 @@ async def test_abstained_cached_reviews_are_reused_without_third_model() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("field", "value"), [
-    ("model", "stale-value"), ("provider", "stale-value"), ("prompt_hash", "stale-value"),
-    ("bundle_id", "stale-value"), ("slot", "secondary"), ("slot", "unknown"),
-])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model", "stale-value"),
+        ("provider", "stale-value"),
+        ("prompt_hash", "stale-value"),
+        ("bundle_id", "stale-value"),
+        ("slot", "secondary"),
+        ("slot", "unknown"),
+    ],
+)
 async def test_cached_review_identity_must_match_before_selections_are_validated(field: str, value: str) -> None:
     execution = ModelExecution()
     from digest.application.review import run_evidence_review
@@ -203,7 +175,8 @@ async def test_unconfigured_third_review_is_not_revalidated_or_reused() -> None:
     before = asdict(original)
     assert _reusable_slots(original.evidence, original.reviews, config) == {"primary", "secondary"}
     with patch(
-        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Configured reviews are reusable"))):
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Configured reviews are reusable"))
+    ):
         resumed = await run_evidence_review(original.evidence, config, original.reviews, execution=execution)
     assert [review.slot for review in resumed.reviews] == ["primary", "secondary"]
     assert all(review.reused_from_checkpoint for review in resumed.reviews)
@@ -249,11 +222,22 @@ async def test_changed_configured_model_retries_only_that_slot() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", [
-    "unknown_id", "duplicate_id", "invented_quote", "empty_reason", "long_reason",
-    "bad_confidence", "too_many_selections", "bad_limitations", "ok_without_selection",
-    "abstained_with_selection", "unexplained_abstention",
-])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "unknown_id",
+        "duplicate_id",
+        "invented_quote",
+        "empty_reason",
+        "long_reason",
+        "bad_confidence",
+        "too_many_selections",
+        "bad_limitations",
+        "ok_without_selection",
+        "abstained_with_selection",
+        "unexplained_abstention",
+    ],
+)
 async def test_cached_reviews_are_revalidated_before_reuse(kind: str) -> None:
     execution = ModelExecution()
     from digest.application.review import run_evidence_review
@@ -386,7 +370,8 @@ async def test_duplicate_in_memory_slots_are_rejected_before_model_calls() -> No
 
 @pytest.mark.asyncio
 async def test_trial_resume_skips_collection_preserves_input_and_writes_separate_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     from digest.review_trial import run_trial
@@ -430,7 +415,9 @@ async def test_trial_resume_skips_collection_preserves_input_and_writes_separate
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias", [False, True])
 async def test_trial_rejects_overwriting_resume_input_before_calls(
-    alias: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    alias: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     from digest.review_trial import run_trial
@@ -462,20 +449,25 @@ async def test_trial_rejects_overwriting_resume_input_before_calls(
 async def test_legacy_checkpoint_without_timestamps_reuses_unknown_provenance(tmp_path: Path) -> None:
     execution = ModelExecution()
     from digest.application.review import run_evidence_review
-    from digest.review_checkpoint import load_review_checkpoint
+    from digest.review_checkpoint import load_full_source_evidence, load_review_checkpoint
 
     config = _trial_config()
     path = tmp_path / "legacy.json"
-    payload = _archive(path, await _report(config))
+    original = await _report(config)
+    payload = _archive(path, original)
     for review in payload["reviews"]:
         review.pop("generated_at")
         review.pop("attempted_at")
         review.pop("reused_from_checkpoint")
     path.write_text(json.dumps(payload), encoding="utf-8")
     bundle, cached = load_review_checkpoint(path, config)
+    assert load_full_source_evidence(path, bundle, config) is None
     with patch(
-        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Legacy success is reusable"))):
+        "digest.application.review.complete", AsyncMock(side_effect=AssertionError("Legacy success is reusable"))
+    ) as complete:
         resumed = await run_evidence_review(bundle, config, cached, execution=execution)
+    complete.assert_not_called()
+    assert _report_content(resumed) == _report_content(original)
     assert all(review.generated_at is None for review in resumed.reviews)
     assert all(review.reused_from_checkpoint for review in resumed.reviews)
 
@@ -490,8 +482,11 @@ async def test_historical_fallback_cards_preserve_explicit_attribution(language:
     report.status = "incomplete"
     cards = primary_cards(restore_review(report), fixture_articles(), language)
     secondary = report.reviews[1]
-    expected_urls = {item.url for item in report.evidence.items
-                     if item.evidence_id in {selection.evidence_id for selection in secondary.selections}}
+    expected_urls = {
+        item.url
+        for item in report.evidence.items
+        if item.evidence_id in {selection.evidence_id for selection in secondary.selections}
+    }
     assert {card.link for card in cards} == expected_urls
     assert all(f"{secondary.provider}/{secondary.model}" in card.summary for card in cards)
     label = "independent comparison incomplete" if language == "en" else "независимое сравнение не завершено"
@@ -509,7 +504,8 @@ async def test_primary_abstention_does_not_silently_fall_back_to_secondary() -> 
 
 @pytest.mark.asyncio
 async def test_trial_rejects_corrupt_checkpoint_without_collection_or_model_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     execution = ModelExecution()
     from digest.review_trial import run_trial
@@ -564,27 +560,58 @@ async def test_mutable_evidence_item_container_is_rejected_before_model_calls() 
 
 
 def _full_source_evidence(
-    tmp_path: Path, bundle: EvidenceBundle, *, fallback: bool = False, final_url: str | None = None,
+    tmp_path: Path,
+    bundle: EvidenceBundle,
+    *,
+    fallback: bool = False,
+    final_url: str | None = None,
 ) -> FullSourceEvidence:
     from digest.article_source import FetchedArticle
     from digest.reading_brief_state import BriefState, Page, PageResult, Route, Selection, save_source
     from digest.review_checkpoint import build_full_source_evidence
 
     # This stored backlog article intentionally is not a member of today's RSS bundle.
-    selection = Selection("Provider rollout announcement", "https://provider.example/rollout",
-                          "Provider engineering", "technology", None)
-    body = ("Opening context without the selected evidence. " * 20 + "\n\n"
-            "The provider reports API-powered deployments improved reliability.\n\n"
-            "The reported result applies only to the trial deployment, not every customer.")
-    snapshot, source = save_source(tmp_path, selection, FetchedArticle(
-        body, final_url or selection.link, "2026-10-02T12:00:00+00:00", None, "article",
-    ))
-    page = Page(0, len(source.spans), "a" * 64, PageResult(
-        [span.id for span in source.spans], [2], [3], "A model-only reading angle", [2], False,
-    ))
-    state = BriefState(selection, Route("gemini", "exact-source-reader", 10000, 2000),
-                       "2026-10-02T12:00:00+00:00", "2026-10-02T12:00:00+00:00",
-                       status="ready", source_sha256=snapshot, pages=[page])
+    selection = Selection(
+        "Provider rollout announcement", "https://provider.example/rollout", "Provider engineering", "technology", None
+    )
+    body = (
+        "Opening context without the selected evidence. " * 20 + "\n\n"
+        "The provider reports API-powered deployments improved reliability.\n\n"
+        "The reported result applies only to the trial deployment, not every customer."
+    )
+    snapshot, source = save_source(
+        tmp_path,
+        selection,
+        FetchedArticle(
+            body,
+            final_url or selection.link,
+            "2026-10-02T12:00:00+00:00",
+            None,
+            "article",
+        ),
+    )
+    page = Page(
+        0,
+        len(source.spans),
+        "a" * 64,
+        PageResult(
+            [span.id for span in source.spans],
+            [2],
+            [3],
+            "A model-only reading angle",
+            [2],
+            False,
+        ),
+    )
+    state = BriefState(
+        selection,
+        Route("gemini", "exact-source-reader", 10000, 2000),
+        "2026-10-02T12:00:00+00:00",
+        "2026-10-02T12:00:00+00:00",
+        status="ready",
+        source_sha256=snapshot,
+        pages=[page],
+    )
     if fallback:
         page.route = Route("groq", "actual-fallback", 8000, 2000)
     # Reading-brief validation is tested by its owner; this adapter receives only checked states.
@@ -609,6 +636,11 @@ async def test_full_source_checkpoint_roundtrip_preserves_rss_and_selected_liter
     before = path.read_bytes()
 
     rss_bundle, cached = load_review_checkpoint(path, config)
+    assert isinstance(rss_bundle.items, tuple)
+    with pytest.raises(FrozenInstanceError):
+        rss_bundle.bundle_id = "changed"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        rss_bundle.items[0].excerpt = "changed"  # type: ignore[misc]
     loaded = load_full_source_evidence(path, rss_bundle, config)
 
     assert rss_bundle == original.evidence and cached == original.reviews
@@ -629,21 +661,20 @@ async def test_full_source_checkpoint_roundtrip_preserves_rss_and_selected_liter
 
 
 @pytest.mark.asyncio
-async def test_legacy_checkpoint_has_no_full_source_authority(tmp_path: Path) -> None:
-    from digest.review_checkpoint import load_full_source_evidence
-
-    config = _trial_config()
-    original = await _report(config)
-    path = tmp_path / "review.json"
-    _archive(path, original)
-    assert load_full_source_evidence(path, original.evidence, config) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", [
-    "excerpt", "offset", "span_boolean", "body_hash", "article_identity", "source_url", "rss_link", "schema",
-    "duplicate",
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "excerpt",
+        "offset",
+        "span_boolean",
+        "body_hash",
+        "article_identity",
+        "source_url",
+        "rss_link",
+        "schema",
+        "duplicate",
+    ],
+)
 async def test_full_source_checkpoint_rejects_tampered_provenance(mutation: str, tmp_path: Path) -> None:
     from digest.review_checkpoint import load_full_source_evidence
 
@@ -701,5 +732,6 @@ def test_full_source_provenance_names_actual_page_fallback(tmp_path: Path) -> No
     bundle = build_evidence_bundle(fixture_articles(), config.review)
     evidence = _full_source_evidence(tmp_path, bundle, fallback=True)
     assert evidence.items
-    assert all(item.selection_provider == "groq" and item.selection_model == "actual-fallback"
-               for item in evidence.items)
+    assert all(
+        item.selection_provider == "groq" and item.selection_model == "actual-fallback" for item in evidence.items
+    )
