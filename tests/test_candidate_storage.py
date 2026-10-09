@@ -9,8 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_review import CandidatePacket, CandidateProgress, merge_candidates, plan_packet
-from digest.candidate_storage import (
+from digest.adapters.storage.candidate_objects import (
     decode_active_candidate,
     digest,
     encode_active_candidate,
@@ -27,8 +26,10 @@ from digest.candidate_storage import (
     save_candidate,
     write_policy,
 )
+from digest.application.candidate_review import merge_candidates, plan_packet
+from digest.application.review import run_primary_review
 from digest.domain.editorial.attempts import restore_review
-from digest.review import run_primary_review
+from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
 from tests.test_candidate_review import NOW, population, report_for
 
 
@@ -255,24 +256,25 @@ def test_policy_boolean_schema_is_not_version_one(tmp_path: Path) -> None:
 
 
 def test_active_checkpoint_switches_to_exact_packet_reference_after_freeze(tmp_path: Path) -> None:
-    from digest.candidate_review import load_candidate_progress, save_candidate_progress
+    from digest.adapters.storage.candidate_progress import load_candidate_progress
+    from digest.application.candidate_lifecycle import checkpoint_candidates
 
     progress, packet = completed_packet()
     progress.packets.append(packet)
-    path = save_candidate_progress(progress, tmp_path)
+    path = checkpoint_candidates(progress, tmp_path)
     raw = json.loads(path.read_text())["candidate_accounting"]
     assert raw["kind"] == "candidate_working_set"
     assert "packet" in raw["packets"][0]
     assert load_candidate_progress(tmp_path) == progress
     freeze_packet(packet, {}, tmp_path)
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     raw = json.loads(path.read_text())["candidate_accounting"]
     assert "packet_ref" in raw["packets"][0]
     assert load_candidate_progress(tmp_path) == progress
 
 
 def test_report_sidecar_uses_immutable_sources_without_active_root(tmp_path: Path) -> None:
-    from digest.candidate_review import archive_candidate_accounting, candidate_accounting_sources
+    from digest.adapters.storage.candidate_progress import archive_candidate_accounting, candidate_accounting_sources
 
     _, packet = completed_packet()
     assert packet.report is not None
@@ -293,7 +295,7 @@ def test_report_sidecar_uses_immutable_sources_without_active_root(tmp_path: Pat
 
 
 def test_active_root_rejects_undeployed_prototype_schema(tmp_path: Path) -> None:
-    from digest.candidate_review import CANDIDATE_FILE, load_candidate_progress
+    from digest.adapters.storage.candidate_progress import CANDIDATE_FILE, load_candidate_progress
 
     old_body = {"schema_version": 1, "candidates": {}, "packets": [], "latest_collection_json": "{}"}
     (tmp_path / CANDIDATE_FILE).write_text(json.dumps({"candidate_accounting": old_body, "sha256": digest(old_body)}))
@@ -306,7 +308,8 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
 ) -> None:
     from copy import deepcopy
 
-    from digest import candidate_review as review
+    from digest.adapters.storage.candidate_progress import load_candidate_progress, progress_size
+    from digest.application.candidate_review import RESPONSE_STORAGE_RESERVE, begin_packet, reconcile_packet
     from digest.radar.collector import CollectionInventory
 
     config, articles = population(1)
@@ -324,10 +327,10 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
     progress.latest_collection_json = json.dumps(
         {"observations": [observation] * 5000, "sources": []}, sort_keys=True)
     old.collection_json = progress.latest_collection_json
-    review.begin_packet(progress, old, tmp_path)
+    begin_packet(progress, old, tmp_path)
     report = report_for(old, config, "invalid")
-    review.reconcile_packet(progress, old, restore_review(report), config, tmp_path)
-    progress = review.load_candidate_progress(tmp_path)
+    reconcile_packet(progress, old, restore_review(report), config, tmp_path)
+    progress = load_candidate_progress(tmp_path)
 
     _, fresh = population(1)
     fresh["tech"][0].title = "Fresh"
@@ -340,17 +343,17 @@ def test_preflight_charges_current_refs_not_retained_collection_history(
     preview = deepcopy(progress)
     preview.packets.append(new)
     preview.candidates[new.evidence.items[0].evidence_id].status = "technical_pending"
-    current_bytes = review.progress_size(preview, tmp_path)
-    limit = current_bytes + review.RESPONSE_STORAGE_RESERVE + 512
-    assert review.progress_size(preview) + review.RESPONSE_STORAGE_RESERVE > limit
+    current_bytes = progress_size(preview, tmp_path)
+    limit = current_bytes + RESPONSE_STORAGE_RESERVE + 512
+    assert progress_size(preview) + RESPONSE_STORAGE_RESERVE > limit
 
     monkeypatch.setattr("digest.application.candidate_review.MAX_BYTES", limit)
-    review.begin_packet(progress, new, tmp_path)
-    restored = review.load_candidate_progress(tmp_path)
+    begin_packet(progress, new, tmp_path)
+    restored = load_candidate_progress(tmp_path)
     assert len(restored.packets) == 2
     assert restored.packets[0].report == report
     assert restored.candidates[identity].status == "technical_pending"
-    assert review.progress_size(restored, tmp_path) + review.RESPONSE_STORAGE_RESERVE <= limit
+    assert progress_size(restored, tmp_path) + RESPONSE_STORAGE_RESERVE <= limit
 
 
 def measured_candidate_window(
@@ -359,14 +362,9 @@ def measured_candidate_window(
     """Exercise the actual offline lifecycle and measure all persisted objects."""
     from datetime import timedelta
 
-    from digest.candidate_dispositions import capture_review_dispositions
-    from digest.candidate_review import (
-        CANDIDATE_FILE,
-        begin_packet,
-        load_candidate_progress,
-        mark_prepared,
-        reconcile_packet,
-    )
+    from digest.adapters.storage.candidate_progress import CANDIDATE_FILE, load_candidate_progress
+    from digest.application.candidate_review import begin_packet, mark_prepared, reconcile_packet
+    from digest.domain.editorial.dispositions import capture_review_dispositions
 
     config, articles = population(count)
     for article in articles["tech"]:
@@ -460,16 +458,14 @@ def test_same_identity_revisions_keep_latest_index_proof_bounded(tmp_path: Path)
 def test_packet_collection_retains_excluded_source_references_after_active_retirement(tmp_path: Path) -> None:
     import hashlib
 
-    from digest.candidate_dispositions import capture_review_dispositions
-    from digest.candidate_review import (
+    from digest.adapters.storage.candidate_progress import (
         archive_candidate_accounting,
-        begin_packet,
         candidate_accounting_sources,
         load_candidate_progress,
-        mark_prepared,
-        reconcile_packet,
-        save_candidate_progress,
     )
+    from digest.application.candidate_lifecycle import checkpoint_candidates
+    from digest.application.candidate_review import begin_packet, mark_prepared, reconcile_packet
+    from digest.domain.editorial.dispositions import capture_review_dispositions
     from digest.radar.collector import CandidateObservation, CollectionInventory, SourceCollectionOutcome, article_hash
 
     config, articles = population(2)
@@ -501,7 +497,7 @@ def test_packet_collection_retains_excluded_source_references_after_active_retir
     mark_prepared(progress, report.evidence.bundle_id, tmp_path)
     assert load_candidate_progress(tmp_path).candidates == {}
     progress.latest_collection_json = "{}"
-    save_candidate_progress(progress, tmp_path)
+    checkpoint_candidates(progress, tmp_path)
     assert read_report_record(digest(asdict(report)), tmp_path) == record
     sources = candidate_accounting_sources(report, tmp_path)
     assert len(sources) == 2 and any(path.stem == excluded_ref for path in sources)

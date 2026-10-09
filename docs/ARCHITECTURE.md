@@ -375,9 +375,11 @@ and applies identical final cards to archive and frozen payloads.
 | Discovery and external investigation | `application/discovery.py`; `post_delivery.py`, `irritator/evidence_stage.py` |
 
 Domain code defines values and decision rules. Applications sequence effects; adapters
-perform concrete I/O; presentation builds output copies. Compatibility modules preserve
-existing public imports. The map describes ownership, not a requirement that every
-facade disappear.
+perform concrete I/O; presentation builds output copies. The unused RSS review and
+candidate import bridges are retired with an explicit
+[migration map](decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08).
+Feedback, discovery and source-scoring compatibility interfaces remain supported.
+The map describes ownership, not a requirement that every facade disappear.
 
 ## Deliberate remaining coupling
 

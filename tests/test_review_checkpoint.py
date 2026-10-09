@@ -13,9 +13,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_blind_review
 from digest.config import Config, ReviewModelConfig
 from digest.domain.editorial.attempts import restore_review
-from digest.review import BlindReviewReport, EvidenceBundle, ModelReview, primary_cards, run_blind_review
+from digest.domain.editorial.reviews import BlindReviewReport, EvidenceBundle, ModelReview
+from digest.presentation.review import primary_cards
 from digest.review_checkpoint import FullSourceEvidence
 from digest.review_resume import _reusable_slots
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
@@ -93,7 +95,7 @@ async def test_checkpoint_roundtrip_preserves_evidence_and_valid_reviews(tmp_pat
 @pytest.mark.asyncio
 async def test_resume_reuses_valid_results_and_calls_only_missing_slots() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -122,7 +124,7 @@ async def test_resume_reuses_valid_results_and_calls_only_missing_slots() -> Non
 @pytest.mark.asyncio
 async def test_complete_checkpoint_makes_no_model_calls() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -137,7 +139,7 @@ async def test_complete_checkpoint_makes_no_model_calls() -> None:
 @pytest.mark.asyncio
 async def test_abstained_cached_reviews_are_reused_without_third_model() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -162,7 +164,7 @@ async def test_abstained_cached_reviews_are_reused_without_third_model() -> None
 ])
 async def test_cached_review_identity_must_match_before_selections_are_validated(field: str, value: str) -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -192,7 +194,7 @@ async def test_reuse_identity_must_match_the_supplied_bundle() -> None:
 @pytest.mark.asyncio
 async def test_unconfigured_third_review_is_not_revalidated_or_reused() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -212,7 +214,7 @@ async def test_unconfigured_third_review_is_not_revalidated_or_reused() -> None:
 @pytest.mark.asyncio
 async def test_changed_prompt_retries_all_slots_on_exact_original_evidence() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -227,7 +229,7 @@ async def test_changed_prompt_retries_all_slots_on_exact_original_evidence() -> 
 @pytest.mark.asyncio
 async def test_changed_configured_model_retries_only_that_slot() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -254,7 +256,7 @@ async def test_changed_configured_model_retries_only_that_slot() -> None:
 ])
 async def test_cached_reviews_are_revalidated_before_reuse(kind: str) -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -298,7 +300,7 @@ async def test_cached_reviews_are_revalidated_before_reuse(kind: str) -> None:
 @pytest.mark.parametrize("status", ["invalid", "unavailable"])
 async def test_failed_cached_slots_are_retried(status: str) -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -316,7 +318,7 @@ async def test_failed_cached_slots_are_retried(status: str) -> None:
 @pytest.mark.asyncio
 async def test_corrupt_in_memory_bundle_is_rejected_before_model_calls() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -371,7 +373,7 @@ async def test_duplicate_checkpoint_slots_are_rejected(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_duplicate_in_memory_slots_are_rejected_before_model_calls() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -459,7 +461,7 @@ async def test_trial_rejects_overwriting_resume_input_before_calls(
 @pytest.mark.asyncio
 async def test_legacy_checkpoint_without_timestamps_reuses_unknown_provenance(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
     from digest.review_checkpoint import load_review_checkpoint
 
     config = _trial_config()
@@ -550,7 +552,7 @@ async def test_boolean_schema_versions_are_not_accepted_as_version_one(location:
 @pytest.mark.asyncio
 async def test_mutable_evidence_item_container_is_rejected_before_model_calls() -> None:
     execution = ModelExecution()
-    from digest.review import run_evidence_review
+    from digest.application.review import run_evidence_review
 
     config = _trial_config()
     original = await _report(config)
@@ -679,7 +681,7 @@ async def test_full_source_checkpoint_rejects_tampered_provenance(mutation: str,
 
 
 def test_full_source_transport_budget_rejects_without_truncating(tmp_path: Path) -> None:
-    from digest.review import build_evidence_bundle
+    from digest.application.review_request import build_evidence_bundle
     from digest.review_checkpoint import validate_full_source_evidence
 
     config = _trial_config()
@@ -693,7 +695,7 @@ def test_full_source_transport_budget_rejects_without_truncating(tmp_path: Path)
 
 
 def test_full_source_provenance_names_actual_page_fallback(tmp_path: Path) -> None:
-    from digest.review import build_evidence_bundle
+    from digest.application.review_request import build_evidence_bundle
 
     config = _trial_config()
     bundle = build_evidence_bundle(fixture_articles(), config.review)

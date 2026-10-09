@@ -19,8 +19,8 @@ import yaml
 from digest import llm, model_budget
 from digest import reconciliation_checkpoint as checkpoint
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_review import CandidateProgress
 from digest.config import Config, ProviderConfig
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.reading_preparation import prepare_selected_sources, setup_reading_budget
 from tests.test_candidate_review import NOW
 from tests.test_main_reading_brief import generate, saved_selection
@@ -711,17 +711,17 @@ async def test_accidentally_staged_active_budget_holds_before_publication(runtim
 
 @pytest.mark.asyncio
 async def test_historical_collection_audit_does_not_expand_checkpoint_dependencies(runtime: Runtime) -> None:
-    from digest import candidate_storage
-    from digest.candidate_review import _digest
+    from digest.adapters.storage.candidate_objects import digest, freeze_packet
+    from digest.domain.editorial.candidate_policy import _digest
 
     root = Path(".cache")
-    frozen = candidate_storage.freeze_packet(runtime.progress.packets[0], {}, root)
+    frozen = freeze_packet(runtime.progress.packets[0], {}, root)
     historical = {
         "observations": [{"article_reference": {"occurrence_sha256": f"{index:064x}"}} for index in range(100)]
     }
     body = checkpoint._json(frozen)
     body["summary"]["current_collection"] = historical
-    body["sha256"] = candidate_storage.digest({key: value for key, value in body.items() if key != "sha256"})
+    body["sha256"] = digest({key: value for key, value in body.items() if key != "sha256"})
     frozen.write_text(json.dumps(body))
     working = checkpoint._json(root / "candidate_progress.json")
     working["candidate_accounting"]["latest_collection_json"] = json.dumps(historical)

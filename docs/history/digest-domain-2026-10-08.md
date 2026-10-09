@@ -405,7 +405,8 @@ Observation baseline: engine commit
   not permission to label those contracts architecturally accepted retroactively.
 - The review-led path supplies bounded RSS evidence, not full articles. Literal
   citation validation and per-item salvage establish provenance only. See
-  [review.py](../../digest/review.py) and [review protocol](review-operations-2026-10-08.md).
+  [review.py at the observation baseline](https://github.com/Lenivvenil/digest/blob/a1beb435c47f988096469e4b7337c77e0733819c/digest/review.py)
+  and [review protocol](review-operations-2026-10-08.md).
 - Primary delivery precedes separately persisted, bounded Irritator and missing-slot
   review work. These checkpoints are implemented; they are not an all-article
   acquisition/analysis queue.

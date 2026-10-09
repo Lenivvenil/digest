@@ -2,6 +2,15 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Retired the root RSS import bridges `digest.review`, `digest.candidate_dispositions`,
+  `digest.candidate_storage` and `digest.candidate_review` (#194). Python consumers
+  must import their canonical domain/application/storage/presentation owners; no
+  replacement shim is supplied. The old `save_candidate_progress(retire=...)`
+  dispatcher becomes explicit `checkpoint_candidates` or `persist_candidates`.
+  [ADR0016's migration map](docs/decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08)
+  lists destinations and retired private aliases. Canonical types, persisted formats,
+  CLI/run/config and the supported feedback/discovery/source-scoring interfaces remain.
+
 - Preserve full article identity in new vote links and confirmed attribution
   (#199). Ready editions now use schema 2; readers retain schema 1, and claims and
   receipts stay schema 1. Existing short votes/history remain readable without

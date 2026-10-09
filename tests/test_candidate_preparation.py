@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from digest.candidate_review import load_candidate_progress
+from digest.adapters.storage.candidate_progress import load_candidate_progress
 from digest.config import SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE
 from digest.edition_runtime import delivery_phase
@@ -138,7 +138,7 @@ async def test_later_packet_reaches_real_preparation_without_replaying_confirmed
         item['link'] for item in first_manifest['canonical_metadata']['cards']}
     state = load_candidate_progress()
     assert sum(item.status == 'not_presented' for item in state.candidates.values()) == 7
-    from digest.candidate_storage import read_candidate_header
+    from digest.adapters.storage.candidate_objects import read_candidate_header
 
     indexed = [read_candidate_header(path.stem, '.cache') for path in Path('.cache/candidate_index').glob('*.json')]
     assert sum(item is not None and item['status'] == 'not_selected' for item in indexed) == 38

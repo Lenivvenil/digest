@@ -15,19 +15,20 @@ import pytest
 import respx
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_review import CandidateProgress, merge_candidates, plan_packet
-from digest.candidate_storage import freeze_packet
+from digest.adapters.storage.candidate_objects import freeze_packet
+from digest.application.candidate_review import merge_candidates, plan_packet
 from digest.closing import ClosingDecision, capture_closing, decide_closing
 from digest.config import ClosingConfig, ClosingSourceBinding, SourceConfig
 from digest.delivery.edition import CLAIM_FILE, READY_FILE, inspect_edition
 from digest.domain.editorial.attempts import ReviewAttempt, resolve_review
+from digest.domain.editorial.candidates import CandidateProgress
 from digest.domain.editorial.dispositions import capture_review_dispositions
+from digest.domain.editorial.reviews import BlindReviewReport, EvidenceSelection, ModelReview
 from digest.edition_runtime import delivery_phase, finish_preparation, resume_preparation
 from digest.feedback import FeedbackStore, load_feedback, save_feedback
 from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
-from digest.review import BlindReviewReport, EvidenceSelection, ModelReview
 from scripts.review_fixture import fixture_config
 from tests.test_closing import EA_CREDIT, EA_FEED, NHS_CREDIT, NHS_FEED, NOW
 

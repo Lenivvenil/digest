@@ -53,6 +53,9 @@ remote persistence remains the runtime's responsibility.
 
 ## Compatibility and remaining work
 
+The following records the original extraction-stage decision. The dated RSS bridge
+retirement below supersedes its import-path promise for four namespaces only.
+
 Compatibility exports preserve moved value identities and existing import paths.
 `candidate_storage.py` delegates to the storage adapter; the legacy
 `save_candidate_progress(..., retire=...)` API retains its existing dispatch semantics.
@@ -67,6 +70,49 @@ evidence tracked separately in #145. Review prompt/model execution, legacy/disco
 scenarios and the other target domains retain their remaining ownership debt.
 Pure candidate contracts do not make all existing domain behavior isolated or complete.
 
+## Retire the RSS import bridges — 2026-10-08
+
+[#194](https://github.com/Lenivvenil/digest/issues/194) retires four root modules after
+all production and script consumers moved to their canonical owners. These were
+migration bridges, not a second implementation of review or candidate policy.
+Direct Python imports of the retired paths now fail; no replacement shim is added.
+The pre-retirement sources remain at immutable commit `0b939fb6`:
+
+- [`digest.review`](https://github.com/Lenivvenil/digest/blob/0b939fb6b065723eee278069fec546980788e439/digest/review.py)
+- [`digest.candidate_dispositions`](https://github.com/Lenivvenil/digest/blob/0b939fb6b065723eee278069fec546980788e439/digest/candidate_dispositions.py)
+- [`digest.candidate_storage`](https://github.com/Lenivvenil/digest/blob/0b939fb6b065723eee278069fec546980788e439/digest/candidate_storage.py)
+- [`digest.candidate_review`](https://github.com/Lenivvenil/digest/blob/0b939fb6b065723eee278069fec546980788e439/digest/candidate_review.py)
+
+Import from the owner of the operation rather than another aggregate namespace:
+
+| Former bridge content | Canonical owner |
+| --- | --- |
+| Disposition records, parsing and validation | `domain.editorial.dispositions` |
+| Candidate object reads, writes and hashes | `adapters.storage.candidate_objects` |
+| Candidate values / pure accounting and replay policy | `domain.editorial.candidates` / `domain.editorial.candidate_policy` |
+| Merge, plan, begin, reconcile and handoff | `application.candidate_review` |
+| Active-root loading, archive accounting and source references | `adapters.storage.candidate_progress` |
+| Persist, index and checkpoint/retire operations | `application.candidate_lifecycle` |
+| Review values, strict/live parsing, quote and cache validation | `domain.editorial.reviews` |
+| Review request construction / model execution | `application.review_request` / `application.review` |
+| Card and review-notice rendering | `presentation.review` |
+
+The legacy `save_candidate_progress` boolean dispatcher is removed. Its default or
+`retire=True` call becomes `checkpoint_candidates`, retaining `skipped_empty_reports`;
+`retire=False` becomes `persist_candidates`. These existing operations keep their
+write/failure order. The incidental private aliases also retire:
+`_ordered_unique_articles` becomes `domain.editorial.evidence.ordered_unique_articles`,
+`_groq_review_format` becomes `adapters.models.review.groq_review_response_format`, and
+`_validated_cached_selections` becomes `domain.editorial.reviews.validated_cached_selections`.
+Configuration, catalog, summary and execution values incidentally re-exported by the
+bridges should be imported from their defining modules shown in the retained sources.
+
+Canonical classes, their module identities, codecs, persisted bytes and hashes remain
+unchanged. CLI, `main.run` and config entrypoints remain supported. The documented
+feedback, discovery and source-scoring compatibility interfaces in ADR0021 remain;
+this decision does not withdraw them. Existing behavioral tests use actual owners;
+retirement does not make their persistence, budget or validation safeguards redundant.
+
 ## Verification and rollback
 
 Review actual imports, including function-local imports, and compare persisted bytes
@@ -75,6 +121,10 @@ freshness, review and preparation regressions must retain interruption, corrupti
 accepted-abstention and bounded-continuation coverage. Verification results belong
 to the implementing change; this record does not assert that checks have passed.
 
-A compatible code revert or prior engine pin is the rollback boundary. Retain runtime
-objects, candidate history and delivery receipts; no format migration or state reset
-is required. Editorial quality and ordinary-runtime acceptance remain separate.
+A reviewed revert restoring the four bridges, or a compatible prior engine pin,
+is the rollback boundary. After full-token vote publication, every sender and
+feedback collector must retain the ready-v2 and full-token readers required by
+[ADR0024's rollback floor](0024-full-article-vote-identity.md#deployment-and-rollback-floor);
+an arbitrary pre-retirement pin is not safe. Retain runtime objects, candidate
+history and delivery receipts; no format migration or state reset is required.
+Editorial quality and ordinary-runtime acceptance remain separate.

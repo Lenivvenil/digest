@@ -11,14 +11,16 @@ from unittest.mock import patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import (
+from digest.application.review import run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
+from digest.config import ReviewConfig
+from digest.domain.editorial.attempts import ResolvedReview
+from digest.domain.editorial.dispositions import (
     CandidateDisposition,
     capture_review_dispositions,
     validate_disposition_attempt,
 )
-from digest.config import ReviewConfig
-from digest.domain.editorial.attempts import ResolvedReview
-from digest.review import _parse_review, build_evidence_bundle, build_review_messages, run_primary_review
+from digest.domain.editorial.reviews import _parse_review
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article
 

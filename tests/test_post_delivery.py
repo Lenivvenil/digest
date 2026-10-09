@@ -16,9 +16,9 @@ import httpx
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
+from digest.application.review import run_blind_review
 from digest.irritator.evidence_stage import EvidenceIrritatorResult, Outcome
 from digest.post_delivery import _send_supplement, execute_post_delivery, prepare_post_delivery
-from digest.review import run_blind_review
 from digest.review_checkpoint import load_review_checkpoint
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 

@@ -12,11 +12,11 @@ import pytest
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.analysis import analyze_articles as _analyze_articles
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import ProviderConfig, ReviewConfig, _load_review, load_config
 from digest.delivery import ArticleDeliveryResult
 from digest.main import run
 from digest.radar.summarizer import CategorySummary
-from digest.review import build_evidence_bundle, build_review_messages
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
 from tests.test_config import MINIMAL_CONFIG
 

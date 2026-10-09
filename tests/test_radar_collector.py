@@ -1261,8 +1261,8 @@ async def test_collect_reports_fetch_metrics_without_mutating_source_stats(
 async def test_feedback_allocation_changes_candidates_seen_by_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from digest.application.review_request import build_evidence_bundle
     from digest.config import ReviewConfig
-    from digest.review import build_evidence_bundle
 
     monkeypatch.chdir(tmp_path)
     sources = [make_source(name="A", url="https://example.com/a"),

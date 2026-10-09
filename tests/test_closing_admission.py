@@ -11,23 +11,16 @@ from pathlib import Path
 import pytest
 
 from digest.adapters.storage.candidate_objects import packet_key, read_packet
-from digest.application.review_request import eligible_ids
-from digest.candidate_dispositions import capture_review_dispositions
-from digest.candidate_review import (
-    CandidateProgress,
-    begin_packet,
-    load_candidate_progress,
-    merge_candidates,
-    packet_articles,
-    plan_packet,
-    reconcile_packet,
-)
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet, reconcile_packet
+from digest.application.review_request import build_evidence_bundle, eligible_ids
 from digest.config import ClosingConfig, ClosingSourceBinding, Config, SourceConfig
 from digest.domain.editorial.attempts import restore_review
-from digest.domain.editorial.candidate_policy import _closing_opportunity
-from digest.domain.editorial.candidates import Candidate
+from digest.domain.editorial.candidate_policy import _closing_opportunity, packet_articles
+from digest.domain.editorial.candidates import Candidate, CandidateProgress
+from digest.domain.editorial.dispositions import capture_review_dispositions
+from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS
 from digest.radar.collector import Article, article_hash
-from digest.review import MAX_EVIDENCE_JSON_CHARS, build_evidence_bundle
 from tests.test_candidate_review import NOW, population, report_for
 
 

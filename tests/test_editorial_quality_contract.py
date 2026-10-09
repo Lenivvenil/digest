@@ -10,19 +10,21 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.candidate_dispositions import capture_review_dispositions
-from digest.candidate_review import (
-    CandidateProgress,
+from digest.adapters.storage.candidate_progress import load_candidate_progress
+from digest.application.candidate_review import (
     begin_packet,
-    load_candidate_progress,
     mark_prepared,
     merge_candidates,
     plan_packet,
     reconcile_packet,
 )
+from digest.application.review import run_primary_review
+from digest.application.review_request import build_evidence_bundle, build_review_messages
 from digest.config import _load_review
 from digest.domain.editorial.attempts import restore_review
-from digest.review import build_evidence_bundle, build_review_messages, canonical_evidence_quote, run_primary_review
+from digest.domain.editorial.candidates import CandidateProgress
+from digest.domain.editorial.dispositions import capture_review_dispositions
+from digest.domain.editorial.reviews import canonical_evidence_quote
 from digest.translation import PROMPT_VERSION, SYSTEM, _parse
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.test_candidate_review import NOW, population, report_for
