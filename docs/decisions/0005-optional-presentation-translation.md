@@ -106,3 +106,14 @@ calls; literal notices are appended after translation and before rendering/split
 checks, archive and freeze. Canonical prose, translation request/cache bindings,
 fallback and allowances remain unchanged. This ownership extraction neither
 activates sources nor extends the finite semantic acceptance recorded above.
+
+## Optional HTTP rejection facts (#55 / G5)
+
+New failed translation records may include `http_rejection`, the bounded safe
+response facts described in [ADR0020](0020-explicit-model-execution.md#optional-translation-http-rejection-facts--55--g5).
+The existing route, binding, `error` and `error_kind` keep their meaning. Optional
+facts must fit after existing business sizing; otherwise they are omitted without
+changing cache bytes, fallback or allowance. Absent facts mean unknown. Successful,
+reserved and historical cache records are unchanged and are never rerun to collect
+metadata. This establishes neither complete request accounting nor quota cause,
+translation fidelity or broader #55 runtime acceptance.

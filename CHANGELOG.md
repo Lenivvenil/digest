@@ -2,6 +2,12 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Preserve optional safe HTTP-rejection facts in failed translation records
+  (partial #55 / G5): allowlisted status/code and bounded retry/quota headers fit
+  within the existing cache allowance. Routing, retries and canonical fallback stay
+  unchanged; broader accounting and acceptance remain open. See the
+  [ADR0020 amendment](docs/decisions/0020-explicit-model-execution.md#optional-translation-http-rejection-facts--55--g5).
+
 - Strictly preload prepared accounting inputs before the first accounting write
   (#220, slice 1). Complete current-writer source history is preserved; malformed,
   sparse or unknown-field records now hold accounting instead of being reset.

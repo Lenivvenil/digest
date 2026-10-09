@@ -122,9 +122,14 @@ async def test_complete_falls_back_on_500() -> None:
         )
     )
     messages = [{"role": "user", "content": "test"}]
+    rejections = []
     with patch.dict("os.environ", {"GROQ_API_KEY": "k1", "DEEPSEEK_API_KEY": "k2"}):
-        text, _ = await complete(LLMRole.SUMMARIZE, messages, config, execution=model_execution)
+        text, usage = await complete(
+            LLMRole.SUMMARIZE, messages, config, execution=model_execution, http_rejections=rejections,
+        )
     assert text == "DeepSeek fallback"
+
+    assert usage == {"completion_tokens": 3} and [item.http_status for item in rejections] == [500]
 
 
 @pytest.mark.asyncio
@@ -188,14 +193,18 @@ async def test_transient_error_retries_with_server_delay() -> None:
     cfg.llm.max_retries = 1
     response = httpx.Response(503, headers={"retry-after": "3"}, request=httpx.Request("POST", "https://example.com"))
     error = httpx.HTTPStatusError("unavailable", request=response.request, response=response)
+    rejections = []
     with (
         patch("digest.llm._call_provider", AsyncMock(side_effect=[error, ("Recovered", {})])) as call,
         patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
     ):
-        text, _ = await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution)
+        text, _ = await complete(LLMRole.SUMMARIZE, [], cfg, execution=model_execution, http_rejections=rejections)
     assert text == "Recovered"
     assert call.await_count == 2
     sleep.assert_awaited_once_with(3.0)
+
+    assert len(rejections) == 1 and rejections[0].http_status == 503 and rejections[0].retry_after_seconds == 3
+    assert model_execution.request_state(cfg.llm).requests_attempted == 2
 
 
 @pytest.mark.asyncio
@@ -783,12 +792,14 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
             httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}),
         ]
     )
+    rejections = []
     with (
         patch.dict("os.environ", {"GEMINI_API_KEY": "fixture-key"}),
         patch("digest.llm.asyncio.sleep", AsyncMock()) as sleep,
     ):
         if requested is None:
-            assert (await complete(LLMRole.SUMMARIZE, [], config, execution=model_execution))[0] == "ok"
+            assert (await complete(LLMRole.SUMMARIZE, [], config, execution=model_execution,
+                                   http_rejections=rejections))[0] == "ok"
             assert route.call_count == 2
             sleep.assert_awaited_once()
         else:
@@ -800,9 +811,12 @@ async def test_explicit_request_timeout_prevents_retry_while_legacy_timeout_stil
                     execution=model_execution,
                     provider_override=config.llm.providers[0],
                     request_timeout_seconds=requested,
+                    http_rejections=rejections,
                 )
             assert route.call_count == 1
             sleep.assert_not_awaited()
+
+    assert rejections == []
 
 
 @pytest.mark.asyncio
@@ -905,3 +919,47 @@ async def test_stricter_stage_pacing_covers_previous_start_and_deadline_without_
         await llm._pace_request(state, 65)
         assert clock[0] == state.last_request_at == 1065 and waits == [60]
         assert state.next_request_at == 1130 and llm.request_budget_remaining(config, model_execution) == 1
+
+
+@pytest.mark.parametrize("retry,quota,expected", [
+    (" \t86400.0\t ", "9223372036854775807", (86400.0, 2**63 - 1)),
+    ("86400.1", "9223372036854775808", (None, None)),
+    ("1e2", "１２", (None, None)),
+    ("9" * 33, "9" * 20, (None, None)),
+    ("\u00a01\u00a0", "\u00a01\u00a0", (None, None)),
+])
+def test_rejection_metadata_is_bounded_and_invalid_values_stay_unknown(retry, quota, expected) -> None:
+    from dataclasses import FrozenInstanceError
+
+    from digest.llm import _http_rejection
+
+    response = httpx.Response(429, json={"error": {"code": "HOSTILE", "message": "HOSTILE"}}, headers={
+        "retry-after": retry.encode("utf-8"), "x-ratelimit-limit-tokens": quota.encode("utf-8"),
+        "x-ratelimit-remaining-requests": "0",
+    })
+    facts = _http_rejection(response)
+    assert (facts.retry_after_seconds, facts.rate_limit_limit_tokens) == expected
+    assert facts.http_status == 429 and facts.provider_code is None and facts.rate_limit_remaining_requests == 0
+    assert facts.rate_limit_limit_requests is facts.rate_limit_remaining_tokens is None
+    with pytest.raises(FrozenInstanceError):
+        facts.http_status = 200
+
+
+async def test_rejection_projector_failure_preserves_terminal_error_and_cooldown() -> None:
+    from unittest.mock import AsyncMock
+
+    cfg = _make_config([{"name": "groq", "model": "model", "role": ["summarize"]}])
+    execution = ModelExecution()
+    response = httpx.Response(403, json={"error": {"code": "permission_denied"}},
+                              request=httpx.Request("POST", "https://example.com"))
+    error = httpx.HTTPStatusError("HOSTILE", request=response.request, response=response)
+    rejections = []
+    with patch("digest.llm._call_provider", AsyncMock(side_effect=error)) as call, patch(
+        "digest.llm._http_rejection", side_effect=ValueError("projection failed")
+    ):
+        with pytest.raises(RuntimeError) as caught:
+            await complete(LLMRole.SUMMARIZE, [], cfg, execution=execution, http_rejections=rejections)
+    assert type(caught.value) is RuntimeError
+    assert str(caught.value) == "All providers failed for role 'summarize'. Last error: HTTP 403 code=permission_denied"
+    assert rejections == [] and call.await_count == execution.request_state(cfg.llm).requests_attempted == 1
+    assert execution.request_state(cfg.llm).unavailable_until[("groq", "model")] == float("inf")

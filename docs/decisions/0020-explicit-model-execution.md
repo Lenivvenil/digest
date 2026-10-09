@@ -124,3 +124,29 @@ shared state, sampled semaphore capacity and independent cross-loop rebinding.
 Local checks establish structural behavior only, not real provider or editorial
 acceptance. Rollback uses a reviewed code revert or prior engine pin while retaining
 all runtime evidence and budgets; no state migration or reset is required.
+
+## Optional translation HTTP rejection facts — #55 / G5
+
+`complete` accepts an optional call-local `http_rejections` list. Only an
+`HTTPStatusError` in its existing catch produces a frozen `HTTPRejection`: supplied
+HTTP status, the existing allowlisted code, numeric Retry-After and four numeric
+request/token limit/remaining headers. Provider helpers, tuples/usage, exceptions,
+routing, retries, reservations, cooldowns and pacing are unchanged. A projection
+failure omits diagnostics without replacing the original error or its policy.
+
+Status is an integer 100–599. Retry-After requires at most 32 ASCII decimal
+characters, no sign/exponent, and finite 0–86400 seconds. Quota headers require
+1–19 ASCII decimal digits and values at most `2**63 - 1`. Numeric headers strip
+only surrounding ASCII whitespace. Absent/malformed facts are null. No clocks,
+success usage, raw body, arbitrary headers, request IDs, URLs, prompts, returned
+content, exception text or credentials are retained.
+
+Only a failed translation record may gain the optional `http_rejection` object,
+after its existing business-size check, when exactly one rejection was collected
+and the object fits 1024 pretty-JSON UTF-8 bytes and the unchanged whole-record cap.
+Otherwise the exact business record is written. Existing route/binding/error
+fields remain authoritative; cache schemas, hashes and replay do not change.
+Successful/reserved/cached records gain neither metadata nor writes. Absence means
+unknown, never zero attempts. This is no complete physical-attempt or quota-cause
+claim. Review/investigation persistence, countTokens, success usage and broader
+G5/free-operation, semantic and runtime acceptance remain open under #55.
