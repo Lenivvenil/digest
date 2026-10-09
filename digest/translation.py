@@ -24,7 +24,7 @@ from digest._serialization import extract_json as _extract_json
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig, TranslationConfig
-from digest.llm import LLMRole, complete
+from digest.llm import HTTPRejection, LLMRole, complete
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
@@ -280,6 +280,20 @@ def _check_combined_size(record: dict[str, object]) -> None:
         raise ValueError("Combined translation cache record exceeds its byte budget.")
 
 
+def _with_http_rejection(record: dict[str, object], rejections: list[HTTPRejection]) -> dict[str, object]:
+    """Add optional rejection facts only after the existing failure-record checks."""
+    try:
+        if len(rejections) == 1:
+            facts = asdict(rejections[0])
+            candidate = {**record, "http_rejection": facts}
+            if (len(json.dumps(facts, indent=2).encode("utf-8")) <= 1024
+                    and len(json.dumps(candidate, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
+                return candidate
+    except Exception:
+        pass
+    return record
+
+
 def _persist_batch_translation(
     path: Path, record: dict[str, object], optional: TranslationResult | None, original: str,
 ) -> TranslationResult | None:
@@ -416,10 +430,12 @@ async def translate_fields(
                 os.fsync(handle.fileno())
             result.calls += 1
             phase = "provider_failure"
+            http_rejections: list[HTTPRejection] = []
             try:
                 async with asyncio.timeout_at(deadline):
                     response, usage = await complete(LLMRole.SUMMARIZE, messages, translation_config,
                                                      execution=translation_execution,
+                                                     http_rejections=http_rejections,
                                                      provider_override=route, temperature=0,
                                                      max_output_tokens=settings.max_output_tokens)
                 phase = "completion_incomplete"
@@ -441,7 +457,7 @@ async def translate_fields(
             except (Exception, asyncio.CancelledError) as exc:
                 record.update(status="incomplete", error=type(exc).__name__, error_kind=phase)
                 _check_combined_size(record)
-                atomic_json_write(path, record)
+                atomic_json_write(path, _with_http_rejection(record, http_rejections))
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 result.reasons.append("translation_failed")

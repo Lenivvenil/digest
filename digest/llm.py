@@ -12,7 +12,9 @@ import enum
 import logging
 import math
 import os
+import re
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -52,6 +54,19 @@ class LLMRole(str, enum.Enum):
     RANK_SIGNALS = "rank_signals"
     FALLBACK = "fallback"
     REVIEW_EVIDENCE = "review_evidence"
+
+
+@dataclass(frozen=True)
+class HTTPRejection:
+    """Allowlisted response facts, not a complete request or quota history."""
+
+    http_status: int | None = None
+    provider_code: str | None = None
+    retry_after_seconds: float | None = None
+    rate_limit_limit_requests: int | None = None
+    rate_limit_remaining_requests: int | None = None
+    rate_limit_limit_tokens: int | None = None
+    rate_limit_remaining_tokens: int | None = None
 
 
 def _request_timeout(default: float, requested: float | None) -> float:
@@ -469,13 +484,11 @@ async def _call_provider(
     )
 
 
-def _safe_provider_error(exc: Exception) -> str:
-    """Log status and a machine code, never response text, prompts or credentials."""
-    if not isinstance(exc, httpx.HTTPStatusError):
-        return type(exc).__name__
-    code = "unknown"
+def _safe_provider_code(response: httpx.Response) -> str | None:
+    """Extract only the existing machine-code allowlist."""
+    code = None
     try:
-        body = exc.response.json()
+        body = response.json()
         error = body.get("error", {}) if isinstance(body, dict) else {}
         if isinstance(error, dict):
             candidate = error.get("code") or error.get("status") or error.get("type")
@@ -488,7 +501,43 @@ def _safe_provider_error(exc: Exception) -> str:
                 code = candidate
     except ValueError:
         pass
-    return f"HTTP {exc.response.status_code} code={code}"
+    return code
+
+
+def _safe_provider_error(exc: Exception) -> str:
+    """Log status and a machine code, never response text, prompts or credentials."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return type(exc).__name__
+    return f"HTTP {exc.response.status_code} code={_safe_provider_code(exc.response) or 'unknown'}"
+
+
+def _quota_header(value: str | None) -> int | None:
+    value = value.strip(" \t\n\r\v\f") if value is not None else ""
+    if re.fullmatch(r"[0-9]{1,19}", value):
+        number = int(value)
+        return number if number <= 2**63 - 1 else None
+    return None
+
+
+def _retry_after_header(value: str | None) -> float | None:
+    value = value.strip(" \t\n\r\v\f") if value is not None else ""
+    if len(value) <= 32 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value):
+        number = float(value)
+        return number if math.isfinite(number) and 0 <= number <= 86400 else None
+    return None
+
+
+def _http_rejection(response: httpx.Response) -> HTTPRejection:
+    return HTTPRejection(
+        http_status=response.status_code if type(response.status_code) is int and 100 <= response.status_code <= 599
+        else None,
+        provider_code=_safe_provider_code(response),
+        retry_after_seconds=_retry_after_header(response.headers.get("retry-after")),
+        rate_limit_limit_requests=_quota_header(response.headers.get("x-ratelimit-limit-requests")),
+        rate_limit_remaining_requests=_quota_header(response.headers.get("x-ratelimit-remaining-requests")),
+        rate_limit_limit_tokens=_quota_header(response.headers.get("x-ratelimit-limit-tokens")),
+        rate_limit_remaining_tokens=_quota_header(response.headers.get("x-ratelimit-remaining-tokens")),
+    )
 
 
 def _provider_cooldown(state: RequestState, provider: Any, exc: Exception) -> None:
@@ -593,6 +642,7 @@ async def complete(
     request_timeout_seconds: float | None = None,
     reasoning_effort: str | None = None,
     response_format: dict[str, Any] | None = None,
+    http_rejections: list[HTTPRejection] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Bounded LLM calls. Explicit model slots never silently fall back."""
     control_kwargs: dict[str, Any] = {}
@@ -646,6 +696,11 @@ async def complete(
                     )
                     return text, usage
                 except (httpx.HTTPError, ValueError) as exc:
+                    if http_rejections is not None and isinstance(exc, httpx.HTTPStatusError):
+                        try:
+                            http_rejections.append(_http_rejection(exc.response))
+                        except Exception:
+                            pass  # Optional diagnostics cannot change the original failure policy.
                     last_error = _safe_provider_error(exc)
                     _provider_cooldown(state, provider, exc)
                     logger.warning(

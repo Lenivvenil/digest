@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import respx
 
 from digest.adapters.models.execution import ModelExecution
 from digest.application.presentation import primary_presentation as _primary_presentation
@@ -694,6 +695,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
     complete.assert_awaited_once()
     record = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert record["schema_version"] == 2 and record["status"] == "translated"
+    assert "http_rejection" not in record
     assert record["target_language"] == "de"
     assert len(record["response_sha256"]) == 64 and "response" not in record
     assert "closing.summary" not in record["required_fields"]
@@ -1029,3 +1031,83 @@ async def test_combined_cache_write_failure_preserves_main_without_fabricating_l
     ):
         required = await translate_fields(fields, cfg, tmp_path / "main-only", execution=execution)
     assert required.status == "fallback" and required.fields == fields
+
+
+@respx.mock
+@pytest.mark.parametrize("combined", [False, True])
+async def test_http_rejection_is_safe_failure_only_metadata_and_old_records_still_replay(
+    tmp_path: Path, combined: bool,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(429, json={
+        "error": {"code": "rate_limit_exceeded", "message": "HOSTILE_BODY"}, "usage": {"prompt_tokens": 7},
+    }, headers={"retry-after": "30", "x-ratelimit-limit-requests": "100",
+                "x-ratelimit-remaining-requests": "0", "x-ratelimit-limit-tokens": "8000",
+                "x-ratelimit-remaining-tokens": "42", "x-request-id": "HOSTILE_HEADER"})
+    fields = {"a": "English original."}
+    with patch.dict("os.environ", {"GROQ_API_KEY": "synthetic-only-key"}):
+        result = await translate_fields(fields, cfg, tmp_path, execution=execution,
+                                        closing_summary="Kind." if combined else None)
+    path = next(tmp_path.glob("*.json"))
+    record = json.loads(path.read_text())
+    assert result.fields == fields and result.status == "fallback" and result.reasons == ["translation_failed"]
+    assert result.calls == execution.request_state(cfg.llm).requests_attempted == route.call_count == 1
+    assert record["schema_version"] == (2 if combined else 1)
+    assert (record["status"], record["error"], record["error_kind"]) == (
+        "incomplete", "RuntimeError", "provider_failure")
+    assert record["http_rejection"] == {
+        "http_status": 429, "provider_code": "rate_limit_exceeded", "retry_after_seconds": 30.0,
+        "rate_limit_limit_requests": 100, "rate_limit_remaining_requests": 0,
+        "rate_limit_limit_tokens": 8000, "rate_limit_remaining_tokens": 42,
+    }
+    assert "HOSTILE" not in path.read_text() and "synthetic-only-key" not in path.read_text()
+    assert json.loads(route.calls.last.request.content)["temperature"] == 0
+    for legacy in (False, True):
+        if legacy:
+            del record["http_rejection"]
+            path.write_text(json.dumps(record, indent=2))
+        before = path.read_bytes()
+        replay = await translate_fields(fields, cfg, tmp_path, execution=execution,
+                                        closing_summary="Kind." if combined else None)
+        assert replay.calls == 0 and replay.reasons == ["previous_attempt_incomplete"]
+        assert path.read_bytes() == before and route.call_count == 1
+
+
+@respx.mock
+async def test_rejection_overflow_preserves_exact_combined_failure_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from digest import translation
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(
+        429, json={"error": {"code": "rate_limit_exceeded"}},
+    )
+    cfg = config()
+    with patch.dict("os.environ", {"GROQ_API_KEY": "synthetic"}), patch("digest.translation.datetime") as clock:
+        clock.now.return_value = datetime(2026, 1, 1, tzinfo=UTC)
+        first = await translate_fields({"a": "English."}, cfg, tmp_path / "first", execution=ModelExecution(),
+                                       closing_summary="Kind.")
+        record = json.loads(next((tmp_path / "first").glob("*.json")).read_text())
+        assert record["schema_version"] == 2 and "http_rejection" in record
+        del record["http_rejection"]
+        business_bytes = json.dumps(record, indent=2).encode("utf-8")
+        monkeypatch.setattr(translation, "MAX_CACHE_BYTES", len(business_bytes))
+        bounded = await translate_fields({"a": "English."}, cfg, tmp_path / "bounded", execution=ModelExecution(),
+                                         closing_summary="Kind.")
+    assert first == bounded and first.reasons == ["translation_failed"] and route.call_count == 2
+    assert next((tmp_path / "bounded").glob("*.json")).read_bytes() == business_bytes
+
+
+def test_unavailable_rejection_projection_is_omitted_without_mutating_record() -> None:
+    from digest.llm import HTTPRejection
+    from digest.translation import _with_http_rejection
+
+    record = {"schema_version": 1, "status": "incomplete"}
+    assert _with_http_rejection(record, []) is record
+    assert _with_http_rejection(record, [HTTPRejection(), HTTPRejection()]) is record
+    assert _with_http_rejection(record, [HTTPRejection(provider_code="a" * 1024)]) is record
+    with patch("digest.translation.asdict", side_effect=TypeError("projection failed")):
+        assert _with_http_rejection(record, [HTTPRejection(http_status=429)]) is record
+    assert "http_rejection" not in record
