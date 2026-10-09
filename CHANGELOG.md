@@ -2,6 +2,16 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Primary review now shares the caller's same-loop semaphore, spacing lock and
+  timestamps, provider/model cooldowns, local cap and spent-attempt count with
+  later translation even when full-source reading is disabled (#215). Existing
+  caps/cooldowns can reduce admitted review attempts; zero-retry settings and
+  primary/fallback holder sharing remain. The configured interval carries across
+  stages without extra calls or allowance. Independent invocations, cross-loop
+  rebinding and durable-ledger ownership remain unchanged. See the
+  [ADR0020 amendment](docs/decisions/0020-explicit-model-execution.md#primary-review-pacing-correction--2026-10-09).
+  Synthetic timing proof does not establish the cause of HTTP 429 or live success.
+
 - Candidate admission now carries exact selected occurrences and canonical RSS
   evidence together (#211). Shared item preparation and bundle serialization remove
   repeated sanitization, proposed-bundle rebuilds and the temporary empty packet.

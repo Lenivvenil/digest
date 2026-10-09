@@ -39,12 +39,8 @@ async def test_valid_primary_stops_without_peer_or_third(abstain: bool, reading_
         derived = kwargs["execution"]
         assert derived is not execution
         actual_state = derived.request_state(used.llm)
-        if reading_enabled:
-            assert actual_state is caller_state and actual_state.request_limit == 0
-            assert actual_state.unavailable_until[route] == float("inf")
-        else:
-            assert actual_state is not caller_state and actual_state.request_limit is None
-            assert actual_state.unavailable_until == {}
+        assert actual_state is caller_state and actual_state.request_limit == 0
+        assert actual_state.unavailable_until[route] == float("inf")
         assert kwargs["provider_override"].model == config.review.primary.model
         if abstain:
             return json.dumps({"selections": [], "limitations": ["Insufficient useful evidence"]}), {}
@@ -89,10 +85,12 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
     config = fixture_config()
     config.llm.max_retries = 3
     calls = []
+    holders = []
 
     async def adapter(role: Any, messages: list[dict[str, str]], used: Any, **kwargs: Any) -> tuple:
         model = kwargs["provider_override"].model
         calls.append((model, deepcopy(messages)))
+        holders.append(kwargs["execution"])
         assert used.llm.max_retries == 0
         status = failure if model == config.review.primary.model else fallback
         if status == "unavailable":
@@ -108,6 +106,8 @@ async def test_primary_failure_attempts_only_secondary_once(failure: str, fallba
         report = result.report
     assert [model for model, _ in calls] == [config.review.primary.model, config.review.secondary.model]
     assert calls[0][1] == calls[1][1]
+    assert holders[0] is holders[1] and holders[0] is not execution
+    assert holders[0].request_state(config.llm) is execution.request_state(config.llm)
     assert [review.status for review in report.reviews] == [failure, fallback]
     assert all(review.attempted_at for review in report.reviews)
     assert report.status == "incomplete" and report.selection_overlap is None
