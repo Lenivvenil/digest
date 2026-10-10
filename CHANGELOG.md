@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Frame serialized supplement diagnostics as JSON code, preserving the exact JSON
+  payload, companion archive and surrounding formatted prose. Refs #148.
 - Render source article-title link labels literally in Markdown archives and review
   previews, preserving canonical evidence, destinations and formatted prose. Refs #148.
 - Escape literal backslashes in Telegram MarkdownV2 text while preserving saved

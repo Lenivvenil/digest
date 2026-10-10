@@ -173,7 +173,9 @@ def _render_result(
             f"response validated: {audit['response_validated']}. "
             "Candidate evidence and dispositions are in the companion .irritator.json archive."
         )
-    lines.append("\n## Stage diagnostics\n" + json.dumps(diagnostics, ensure_ascii=False, indent=2))
+    lines.append(
+        "\n## Stage diagnostics\n\n```json\n" + json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n```"
+    )
     return "\n".join(lines) + "\n"
 
 

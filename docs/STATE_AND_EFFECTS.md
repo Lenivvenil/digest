@@ -149,6 +149,11 @@ and an explicit current-review checkpoint. The older origin review remains a ref
 never a filename-order inference for the next optional investigation. Claims and
 receipts keep their existing schema because the exact ready hash binds the extension.
 
+The supplement archive frames its exact serialized stage diagnostics in a JSON code
+fence. Its companion JSON and surrounding formatted prose are unchanged; the fence
+only describes the diagnostic block, not a whole-document Markdown safety boundary.
+Previously saved archives and frozen payloads are not rewritten.
+
 The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
 references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
 expired dispositions; mutable state is not a ready checkpoint reference. This adds no
