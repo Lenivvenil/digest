@@ -28,3 +28,18 @@ def test_lower_modules_do_not_import_main_or_cli() -> None:
                 if target == "digest.main" or target == "digest.cli" or target.startswith("digest.cli."):
                     violations.append(f"{relative}:{node.lineno}: {target}")
     assert not violations, "Lower layers cannot depend on CLI owners:\n" + "\n".join(violations)
+
+
+def test_prepared_publication_has_no_raw_snapshot_or_orphan_entrypoints() -> None:
+    from digest import edition_runtime
+    from digest.application import preparation
+
+    retired = {"finish_preparation", "_present_snapshot", "existing_preparation", "resume_preparation"}
+    assert not retired.intersection(vars(edition_runtime))
+    tree = ast.parse(Path(preparation.__file__).read_text())
+    coordinator = next(node for node in tree.body
+                       if isinstance(node, ast.AsyncFunctionDef) and node.name == "_prepare_category_edition")
+    calls = {node.func.id for node in ast.walk(coordinator)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    assert {"_accept_category_preparation", "present_preparation"} <= calls
+    assert not calls.intersection(retired | {"save_preparation"})

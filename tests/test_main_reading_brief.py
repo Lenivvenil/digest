@@ -169,7 +169,7 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
                 AsyncMock(return_value=fetched("Full source evidence."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as model,
-          patch("digest.edition_runtime.finish_preparation", side_effect=AssertionError("No semantic acceptance"))):
+          patch("digest.edition_runtime.present_preparation", side_effect=AssertionError("No semantic acceptance"))):
         first = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
         second = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
         third = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)

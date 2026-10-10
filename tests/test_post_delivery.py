@@ -31,8 +31,8 @@ async def confirmed_checkpoint(monkeypatch: pytest.MonkeyPatch, *, closing: bool
     from digest.application.prepared_delivery import claim_edition
     from digest.domain.delivery.edition import ChunkReceipt, Receipts
     from digest.domain.editorial.summaries import ArticleSummary
-    from digest.edition_runtime import finish_preparation
-    from digest.preparation import PreparationSnapshot
+    from digest.edition_runtime import present_preparation
+    from digest.preparation import PreparationSnapshot, persist_accepted_preparation
     from tests.test_edition_runtime import bound_snapshot
 
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
@@ -57,7 +57,8 @@ async def confirmed_checkpoint(monkeypatch: pytest.MonkeyPatch, *, closing: bool
         "digest.application.presentation.publication_presentation",
         AsyncMock(return_value=("Notice", [replace(card, summary="Delivered translated claim")], [])),
     ):
-        result = await finish_preparation(snapshot, config, execution=ModelExecution())
+        accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+        result = await present_preparation(accepted, config, execution=ModelExecution())
     _, claim_sha = claim_edition(result.ready_sha256)
     data = json.loads(Path(".cache", storage.READY_FILE).read_text())
     receipts = Receipts(

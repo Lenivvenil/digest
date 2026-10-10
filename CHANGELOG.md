@@ -2,6 +2,16 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+- Verify category preparation through the shared existing-codec save/readback operation
+  and revalidate every accepted presentation reference against `.cache` (#220, slice 2).
+  Preserve category prose/trends, optional perspectives, distinct no-news rules and all
+  persisted/CLI contracts. Retire internal `finish_preparation`, `_present_snapshot`,
+  `existing_preparation` and `resume_preparation`; use explicit admission,
+  `present_preparation`, `inspect_preparation`/`recover_preparation` and `preparation_stats`.
+  Missing or changed checkpoints now stop before presentation and retain evidence.
+  Receipt-owned application remains separate work. See the
+  [ADR0015 continuation](docs/decisions/0015-application-workflow-ownership.md#verified-category-acceptance--220-slice-2).
+
 - Preserve optional safe HTTP-rejection facts in failed translation records
   (partial #55 / G5): allowlisted status/code and bounded retry/quota headers fit
   within the existing cache allowance. Routing, retries and canonical fallback stay

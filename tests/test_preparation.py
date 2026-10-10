@@ -198,3 +198,80 @@ def test_invalid_persisted_dates_rejected(tmp_path: Path, field: str, value: str
     path.write_text(json.dumps(record))
     with pytest.raises(ValueError, match="Invalid preparation"):
         load_preparation(tmp_path, NOW)
+
+
+@pytest.mark.parametrize("binding", ["unpersisted", "path", "body_hash", "nested_mutation", "replacement"])
+async def test_presentation_rejects_reference_that_does_not_identify_active_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from digest.adapters.models.execution import ModelExecution
+    from digest.edition_runtime import present_preparation
+    from digest.preparation import AcceptedPreparation, persist_accepted_preparation
+
+    monkeypatch.chdir(tmp_path)
+    snapshot = _snapshot()
+    if binding == "unpersisted":
+        accepted = AcceptedPreparation(Path(".cache/pending_preparation.json"), "unpersisted", snapshot)
+    else:
+        accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+        if binding == "path":
+            # A different valid root cannot redirect the publication cache owner.
+            other_path = Path("elsewhere/pending_preparation.json")
+            other_path.parent.mkdir()
+            other_path.write_bytes(accepted.path.read_bytes())
+            redirected = load_accepted_preparation("elsewhere")
+            assert redirected is not None and redirected.sha256 == accepted.sha256
+            assert redirected.snapshot == accepted.snapshot
+            accepted = redirected
+        elif binding == "body_hash":
+            accepted = replace(accepted, sha256=hashlib.sha256(accepted.path.read_bytes()).hexdigest())
+        elif binding == "nested_mutation":
+            accepted.snapshot.summaries[0].article_summaries.clear()
+        else:
+            save_preparation(replace(snapshot, combined="Different valid canonical work"))
+    retained = {path: path.read_bytes() for path in tmp_path.rglob("*.json")}
+    blocked = {
+        "digest.application.publication.assemble_publication": AsyncMock(),
+        "digest.application.presentation.publication_presentation": AsyncMock(),
+        "digest.application.investigation.run_irritator": AsyncMock(),
+        "digest.application.supplement.pending_fragment": MagicMock(),
+        "digest.application.supplement.archive_fragment": MagicMock(),
+        "digest.delivery.write_digest": MagicMock(),
+        "digest.application.prepared_delivery.prepare_edition": MagicMock(),
+        "digest.preparation.clear_preparation": MagicMock(),
+    }
+    for target, effect in blocked.items():
+        monkeypatch.setattr(target, effect)
+    with pytest.raises(ValueError, match="reference differs.*inspect and preserve"):
+        await present_preparation(accepted, fixture_config(), execution=ModelExecution())
+    for effect in blocked.values():
+        effect.assert_not_called()
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*.json")} == retained
+
+
+async def test_presentation_consumes_a_newly_restored_snapshot_not_callers_mutable_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.adapters.models.execution import ModelExecution
+    from digest.edition_runtime import present_preparation
+    from digest.preparation import persist_accepted_preparation
+
+    monkeypatch.chdir(tmp_path)
+    snapshot = _snapshot()
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    assert accepted.snapshot == snapshot and accepted.snapshot is not snapshot
+    retained = accepted.path.read_bytes()
+
+    async def inspect(snapshot_for_presentation: PreparationSnapshot, *args: Any, **kwargs: Any) -> None:
+        assert snapshot_for_presentation == accepted.snapshot
+        assert snapshot_for_presentation is not accepted.snapshot
+        accepted.snapshot.top_articles.clear()
+        assert snapshot_for_presentation.top_articles == snapshot.top_articles
+        raise RuntimeError("stopped after proving independent presentation input")
+
+    monkeypatch.setattr("digest.application.publication.assemble_publication", inspect)
+    with pytest.raises(RuntimeError, match="independent presentation input"):
+        await present_preparation(accepted, fixture_config(), execution=ModelExecution())
+    assert accepted.path.read_bytes() == retained and load_preparation() == snapshot

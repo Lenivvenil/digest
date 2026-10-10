@@ -175,6 +175,20 @@ def load_accepted_preparation(
         raise ValueError("Invalid preparation checkpoint; inspect or clear it before preparing again.") from exc
 
 
+def persist_accepted_preparation(
+    snapshot: PreparationSnapshot,
+    *,
+    cache_dir: str | Path,
+    publication_date: date | None = None,
+) -> AcceptedPreparation:
+    """Save and read back exact canonical work before handing it to another operation."""
+    path = save_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+    accepted = load_accepted_preparation(cache_dir, publication_date=publication_date)
+    if accepted is None or accepted.path != path or accepted.snapshot != snapshot:
+        raise ValueError("Accepted preparation readback differs from the saved canonical work; handoff blocked.")
+    return accepted
+
+
 def load_preparation(
     cache_dir: str | Path = ".cache",
     now: datetime | None = None,

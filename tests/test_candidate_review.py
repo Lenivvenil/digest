@@ -1070,3 +1070,19 @@ def test_old_deferred_work_keeps_eligibility_without_becoming_re_reviewed(tmp_pa
     assert next_packet.prompt_hash != old_hash and next_packet.report is None
     assert restored.packets[0].report.reviews[0].prompt_hash == old_hash
     assert candidate.status == "technical_pending" and candidate.decision_prompt_hash == old_hash
+
+
+def test_candidate_acceptance_rejects_a_different_resolved_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.edition_runtime import accept_preparation
+    from tests.test_preparation import _snapshot
+
+    snapshot = _snapshot()
+    assert snapshot.review_report is not None
+    result = restore_review(replace(snapshot.review_report, third_model_reason="Another resolved report"))
+    monkeypatch.setattr("digest.preparation.persist_accepted_preparation",
+                        lambda *args, **kwargs: pytest.fail("No storage before report binding"))
+    with pytest.raises(ValueError, match="does not bind the resolved candidate review"):
+        accept_preparation(snapshot, result, cache_dir=str(tmp_path))
+    assert not list(tmp_path.iterdir())

@@ -248,6 +248,8 @@ receipts and original state to establish the cause; do not delete history to mak
 validation pass, reset the claim or resend. Preserve evidence and use an explicit
 reviewed recovery decision. Later write failures can still leave a written prefix
 and unapplied receipts: no transaction, automatic rollback or safe replay is added.
-Accepted-reference admission and receipt-owned dispatch/application remain later
-#220 work. The [current effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
+Verified category accepted-reference admission is implemented in
+[#220 slice 2](0015-application-workflow-ownership.md#verified-category-acceptance--220-slice-2).
+Receipt-owned dispatch/application remains later #220 work; this continuation does
+not move accounting, supplement consumption or the applied-marker owner. The [current effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
 remains the canonical contract.

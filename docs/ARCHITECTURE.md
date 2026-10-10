@@ -145,8 +145,8 @@ natural run does not block an unrelated mechanical safety repair.
    accepted/ready/claim/receipt bytes and hashes, CLI phases, remote barriers, source
    and feedback identities, empty-result rules and interruption holds. Amend
    [ADR0017](decisions/0017-confirmed-delivery-application.md) explicitly: its current
-   strict current-writer preflight is implemented in slice 1; accepted-reference and
-   receipt-owned application remain pending. Prove
+   strict current-writer preflight is implemented in slice 1 and verified category
+   acceptance in slice 2; receipt-owned application remains pending. Prove
    invalid existing state blocks before the first accounting write, valid history survives, and
    every write-failure prefix remains held with a truthful read-only diagnosis.
 4. **Resolve measured operating-policy tradeoffs.** Decide supported delivery guarantees,
@@ -240,12 +240,17 @@ recoverable work or a hold, according to the boundary already crossed.
    packets without that capture retain their existing compatibility behavior.
    If the primary is invalid/unavailable and the secondary only abstains, the
    delivery-used result remains incomplete. It does not become accepted no-news.
-7. **Save, verify and hand off accepted work.** The ordinary candidate path saves the
-   canonical checkpoint, verifies readback equality, and carries an accepted reference
-   into candidate handoff and presentation. Fetch statistics follow the handoff.
-   The reference contains the path, existing envelope/body hash and restored snapshot;
-   it proves local acceptance, not remote persistence. A handoff is not delivery.
-8. **Present and freeze.** Validate required immutable source provenance before model
+7. **Save, verify and hand off accepted work.** Candidate and category admission have
+   distinct editorial rules, then share `persist_accepted_preparation`: save through
+   the existing codec, reload and compare the path and full canonical snapshot. The
+   restored reference contains the path and existing canonical envelope-body hash,
+   not a hash of the indented file bytes. Candidate handoff precedes fetch statistics;
+   category statistics and its source map follow verified acceptance. This is local
+   readback, not remote persistence or power-loss durability. A handoff is not delivery.
+8. **Present and freeze.** `present_preparation` first reloads the requested publication
+   day from the publication-owned `.cache` and compares path, body hash and the full
+   snapshot with the supplied reference, even for empty work. It consumes the separately
+   restored snapshot. Then validate required immutable source provenance before model
    presentation calls. Translate generated prose, append literal credits, check chunk
    coverage, write the enabled archive and freeze the exact edition. Clear the pending
    preparation only after the ready file is written. An accepted empty result stays
@@ -263,9 +268,10 @@ the eligible subset.
 | `recover_preparation` | `ExistingEdition`, `AcceptedPreparation` or `FreshPreparation.REQUIRED` | Return an existing edition outcome, resume locally verified accepted content, or collect fresh work. `held` remains the inspector’s conservative summary, not a detailed receipt diagnosis. |
 | Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Ordinary candidate work carries progress, packet and one resolved review; category and empty outcomes remain separate. |
 | Editorial authority | `ReviewAttempt` → `ResolvedReview` | One response owns its review, dispositions and optional closing capture. The resolver chooses authority; the unchanged comparison report is its audit projection. |
-| `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | One policy decides whether ordinary work is acceptable, saves it and verifies the exact restored snapshot before handoff. |
+| `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | Candidate policy binds the resolved review and decides whether work can use shared verified persistence before handoff. |
+| `_accept_category_preparation` | `AcceptedPreparation` or `NoEdition` | Category policy retains historical report-order/no-news rules before the same verified persistence operation. |
 | `assemble_publication` | `PublicationAssembly` | Resolve required provenance, present main content and decide whether the optional closer can accompany it. Final card order and existing metadata derive from this result. |
-| `present_preparation` | `FrozenPreparation` or `NoEdition` | Presentation consumes the accepted reference; successful freezing returns a required ready-file hash. |
+| `present_preparation` | `FrozenPreparation` or `NoEdition` | Revalidate the reference against the active checkpoint before any presentation effects; successful freezing returns a required ready-file hash. |
 
 `RunStats` is the terminal public/reporting projection, not the internal work model.
 These scenario outcome values add no persisted state machine or new schema. The
@@ -273,21 +279,39 @@ separate supplementary-publication ready3 contract is described below. Supported
 entrypoints remain stable; deliberate internal API retirements are listed in the
 [changelog](../CHANGELOG.md#unreleased--reliability-rehabilitation).
 
-Category preparation owns its historical completion and save decisions together in
-`_prepare_category_edition`; shared presentation receives no editorial-completion flag.
+Category admission owns its historical completion and save decisions in
+`_accept_category_preparation`; `_prepare_category_edition` sequences the effects.
+Shared presentation receives no editorial-completion flag.
 
-| Category result | Save canonical work? | Continue with |
+| Category result | Save and verify canonical work? | Continue with |
 | --- | --- | --- |
-| Projected cards exist | Yes | Presentation, archive and freeze |
+| Projected cards exist | Yes, with or without an optional report | Accepted-reference presentation, archive and freeze |
 | Empty, no review report | No | `NoEdition("no_ready")` |
 | Empty, report-first review abstains | Only if a primary abstention also exists | `NoEdition("no_ready")` |
 | Other empty review outcomes | No | `NoEdition("selection_incomplete")` |
 
-The category boundary preserves report ordering, including older reordered reports.
-It saves before fetch statistics and the source map, with no candidate-style readback;
-empty outcomes return only after those operational effects. Save failure prevents
-later effects, and archive failure retains the saved snapshot. Ordinary candidate
-acceptance remains the stricter verified-reference contract above.
+The category boundary preserves report ordering, including older reordered reports
+and the existing secondary-success fallback from `restore_review`. Summaries or trends
+without main cards do not create an edition. A chosen secondary abstention with a later
+primary selection remains unsaved no-ready; a chosen selected/partial review with a
+later primary abstention remains incomplete. Category acceptance does not require
+candidate disposition metadata; fresh candidate abstention still does.
+
+The category effect order is snapshot → admission → save → save readback → fetch
+statistics → source map → presentation-entry readback → presentation → archive →
+freeze → clear. Unsaved no-edition branches perform no admission read/write and return
+after statistics/map. Accepted empty work stays saved and passes the entry check, then
+returns no-ready without archive/freeze. Save/readback failure stops later operational
+effects; entry validation can fail after statistics/map have already been written.
+Missing, replaced or mismatched references, including a UTC day rollover between
+operations, stop preparation without deleting or repairing its evidence. Loader errors
+also propagate. These are preparation failures, not new ready/receipt hold records.
+
+Reference comparison is not an unforgeable Python capability: an exactly matching
+reference has the authority of its valid checkpoint. Frozen dataclasses are shallow;
+the freshly restored snapshot isolates caller mutation after verification, but this is
+not a lock across awaits or protection against concurrent disk writers. Serialized
+runtime writers remain required. Local readback adds no fsync or remote durability.
 
 Publication assembly keeps the canonical snapshot separate from presented main
 cards and the optional closing disposition. Required main-card credit failures
@@ -568,7 +592,7 @@ and applies identical final cards to archive and frozen payloads.
 | Public command dispatch and reporting | `main.main`, `cli/arguments.py`, `cli/reporting.py` |
 | Select an execution scenario | `application/execution.py` |
 | Prepare ordinary canonical work | `application/preparation.py:prepare_edition` |
-| Inspect/recover accepted or ready work; present/freeze | `edition_runtime.py:recover_preparation`, `accept_preparation`, `present_preparation`; `preparation.py:load_accepted_preparation` |
+| Inspect/recover accepted or ready work; present/freeze | `edition_runtime.py:recover_preparation`, `accept_preparation`, `present_preparation`; `preparation.py:persist_accepted_preparation`, `load_accepted_preparation` |
 | Assemble presented main cards and optional closing disposition | `application/publication.py:assemble_publication`, `PublicationAssembly` |
 | Candidate rules, packet construction and ordered persistence | `domain/editorial/candidate_policy.py`, `application/candidate_review.py`, `application/candidate_lifecycle.py` |
 | Canonical RSS item preparation, measurement and evidence bundle serialization | `domain/editorial/evidence.py` |

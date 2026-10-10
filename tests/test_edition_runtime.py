@@ -24,9 +24,23 @@ from digest.domain.editorial.attempts import ReviewAttempt, resolve_review
 from digest.domain.editorial.candidates import CandidateProgress
 from digest.domain.editorial.dispositions import capture_review_dispositions
 from digest.domain.editorial.reviews import BlindReviewReport, EvidenceSelection, ModelReview
-from digest.edition_runtime import delivery_phase, finish_preparation, resume_preparation
+from digest.edition_runtime import (
+    ExistingEdition,
+    delivery_phase,
+    preparation_stats,
+    present_preparation,
+    recover_preparation,
+)
 from digest.feedback import FeedbackStore, load_feedback, save_feedback
-from digest.preparation import PreparationSnapshot, _canonical, load_preparation, save_preparation
+from digest.preparation import (
+    AcceptedPreparation,
+    PreparationSnapshot,
+    _canonical,
+    load_accepted_preparation,
+    load_preparation,
+    persist_accepted_preparation,
+    save_preparation,
+)
 from digest.radar.collector import Article, article_hash
 from digest.radar.summarizer import ArticleSummary
 from scripts.review_fixture import fixture_config
@@ -140,8 +154,9 @@ async def test_supplement_delivery_outputs_current_review_and_applies_real_state
         "digest.application.presentation.publication_presentation",
         AsyncMock(return_value=("Current notice", snapshot.top_articles, [])),
     ):
-        prepared = await finish_preparation(
-            snapshot, config, execution=ModelExecution(), publication_date=next_day.date()
+        accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=next_day.date())
+        prepared = preparation_stats(
+            await present_preparation(accepted, config, execution=ModelExecution(), publication_date=next_day.date())
         )
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert manifest["current_review_checkpoint"] == prepared.review_checkpoint != pending.fragment.checkpoint
@@ -202,7 +217,10 @@ async def test_optional_fragment_failure_before_freeze_preserves_main_and_closer
         "digest.application.presentation.publication_presentation",
         AsyncMock(return_value=("Current notice", snapshot.top_articles, [])),
     ):
-        result = await finish_preparation(snapshot, config, execution=ModelExecution(), publication_date=day)
+        accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=day)
+        result = preparation_stats(
+            await present_preparation(accepted, config, execution=ModelExecution(), publication_date=day)
+        )
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert manifest["schema"] == 2 and len(manifest["articles"]) == 2
     assert [item["card"]["title"] for item in manifest["articles"]] == [snapshot.top_articles[0].title, closer.title]
@@ -260,14 +278,18 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     save_preparation(snapshot)
     presentation = AsyncMock(side_effect=RuntimeError("presentation failed"))
     monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
+    recovered = recover_preparation()
+    assert isinstance(recovered, AcceptedPreparation)
     with pytest.raises(RuntimeError):
-        await resume_preparation(config, 0, verbose=False, execution=execution)
+        await present_preparation(recovered, config, execution=execution)
     assert asdict(load_preparation()) == asdict(snapshot)
     assert not Path(".cache", CLAIM_FILE).exists()
     assert not Path(".cache/seen_articles.json").exists()
     presentation.side_effect = None
     presentation.return_value = ("Rendered notice", snapshot.top_articles, [])
-    stats = await resume_preparation(config, 0, verbose=False, execution=execution)
+    recovered = recover_preparation()
+    assert isinstance(recovered, AcceptedPreparation)
+    stats = preparation_stats(await present_preparation(recovered, config, execution=execution))
     assert stats.edition_status == "ready"
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     assert not Path(".cache", CLAIM_FILE).exists()
@@ -283,7 +305,9 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     monkeypatch.setattr(
         "digest.application.presentation.publication_presentation", AsyncMock(side_effect=AssertionError("rerender"))
     )
-    assert (await resume_preparation(config, 0, verbose=False, execution=execution)).ready_sha256 == stats.ready_sha256
+    recovered = recover_preparation()
+    assert isinstance(recovered, ExistingEdition)
+    assert preparation_stats(recovered).ready_sha256 == stats.ready_sha256
     assert await delivery_phase("claim", "config.yaml", stats.ready_sha256, None) == 0
     import hashlib
 
@@ -301,7 +325,9 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     assert load_feedback(".cache", strict=True).article_source_map
     assert json.loads(Path(".cache/seen_articles.json").read_text())
     assert inspect_edition()[2] == "confirmed"
-    assert (await resume_preparation(config, 0, verbose=False, execution=execution)).edition_status == "confirmed"
+    recovered = recover_preparation()
+    assert isinstance(recovered, ExistingEdition)
+    assert preparation_stats(recovered).edition_status == "confirmed"
     with respx.mock(assert_all_called=False) as router:
         assert await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha) == 0
         assert not router.calls
@@ -330,7 +356,8 @@ async def test_state_save_failure_after_accepted_post_holds_instead_of_replaying
     config, snapshot = setup
     config.adaptive = SimpleNamespace(enabled=True)
     config.enabled_sources = [SourceConfig("Source", "https://example.com/feed", "Tech", True, trial=True)]
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     assert await delivery_phase("claim", "config.yaml", stats.ready_sha256, None) == 0
     claim_sha = hashlib.sha256(Path(".cache", CLAIM_FILE).read_bytes()).hexdigest()
     current = FeedbackStore(last_update_id=999, article_source_map={"old": "Previous source"})
@@ -384,10 +411,13 @@ async def test_empty_or_corrupt_attribution_never_sends(setup: tuple[SimpleNames
     execution = ModelExecution()
     config, snapshot = setup
     snapshot.top_articles.clear()
-    assert (await finish_preparation(snapshot, config, execution=execution)).edition_status == "no_ready"
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    empty = preparation_stats(await present_preparation(accepted, config, execution=execution))
+    assert empty.edition_status == "no_ready"
     assert not Path(".cache", READY_FILE).exists()
     snapshot.top_articles.append(ArticleSummary("Title", "https://example.com/x", "Source", "Tech", "Claim"))
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     Path(".cache/feedback.json").write_text("corrupt")
     with pytest.raises(ValueError):
         await delivery_phase("claim", "config.yaml", stats.ready_sha256, None)
@@ -442,7 +472,9 @@ async def test_unavailable_primary_is_not_a_reusable_empty_preparation(
     assert accepted.review_report == snapshot.review_report
     presentation.side_effect = None
     presentation.return_value = ("Notice", work.cards, [])
-    stats = await resume_preparation(config, 0, verbose=False, execution=execution)
+    recovered = recover_preparation()
+    assert isinstance(recovered, AcceptedPreparation)
+    stats = preparation_stats(await present_preparation(recovered, config, execution=execution))
     assert stats.edition_status == "ready"
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert manifest["canonical_metadata"]["cards"] == [asdict(card) for card in work.cards]
@@ -501,7 +533,10 @@ async def test_future_edition_archive_and_delivery_day_accounting(
     config, snapshot = setup
     today = datetime.now(timezone.utc).date()
     target = today + timedelta(days=1)
-    result = await finish_preparation(snapshot, config, publication_date=target, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=target)
+    result = preparation_stats(
+        await present_preparation(accepted, config, publication_date=target, execution=execution)
+    )
     assert result.edition_status == "pending_window"
     archive = Path("digests", f"{target.isoformat()}.md")
     assert archive.exists() and f"date: {target.isoformat()}" in archive.read_text()
@@ -569,7 +604,8 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     if translation != "canonical":
         settings = translation_config()
         config.translation, config.llm = settings.translation, settings.llm
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     prefix = "Перевод: " if translation == "translated" else ""
     presented = replace(card, summary=f"{prefix}{card.summary} {NHS_CREDIT}")
@@ -610,7 +646,9 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     config.translation = SimpleNamespace(enabled=True)
     config.radar.language = "ru"
     config.review.enabled = False
-    assert (await resume_preparation(config, 0, verbose=False, execution=execution)).ready_sha256 == stats.ready_sha256
+    recovered = recover_preparation()
+    assert isinstance(recovered, ExistingEdition)
+    assert preparation_stats(recovered).ready_sha256 == stats.ready_sha256
     assert Path(".cache", READY_FILE).read_bytes() == ready_bytes
 
 
@@ -622,7 +660,8 @@ async def test_unrenderable_closing_is_omitted_before_archive_and_freeze(
     config, snapshot = setup
     card = ArticleSummary("Unsafe optional", "https://example.com/" + "a" * 5000, "Closing source", "World", "Claim.")
     snapshot = bound_snapshot(snapshot, card)
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     assert len(frozen["articles"]) == 1 and len(frozen["presentation_metadata"]["cards"]) == 1
     optional = frozen["presentation_metadata"]["closing"]
@@ -644,13 +683,15 @@ async def test_invalid_main_rendering_and_required_archive_errors_are_not_option
     closing = ArticleSummary("Closing", "https://example.com/good", "Closing source", "World", "Claim.")
     unsafe = replace(original.top_articles[0], link="https://example.com/" + "a" * 5000)
     unsafe_snapshot = bound_snapshot(replace(original, top_articles=[unsafe]), closing)
+    accepted = persist_accepted_preparation(unsafe_snapshot, cache_dir=".cache")
     with pytest.raises(ValueError, match="URL exceeds"):
-        await finish_preparation(unsafe_snapshot, config, execution=execution)
+        await present_preparation(accepted, config, execution=execution)
     assert not Path("digests").exists() and not Path(".cache", READY_FILE).exists()
     monkeypatch.setattr("digest.delivery.write_digest", lambda *_args, **_kwargs: None)
     snapshot = bound_snapshot(original, closing)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
     with pytest.raises(ValueError, match="archive persistence failed"):
-        await finish_preparation(snapshot, config, execution=execution)
+        await present_preparation(accepted, config, execution=execution)
     assert not Path(".cache", READY_FILE).exists()
 
 
@@ -662,7 +703,8 @@ async def test_omitted_closing_decision_is_frozen_without_changing_main_output(
     config, original = setup
     decision = ClosingDecision("unavailable", "no_suitable_item_in_packet")
     snapshot = bound_snapshot(replace(original, closing=decision))
-    await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    await present_preparation(accepted, config, execution=execution)
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     assert len(frozen["articles"]) == 1
     assert frozen["canonical_metadata"]["closing"] == asdict(decision)
@@ -676,8 +718,17 @@ async def test_closing_alone_does_not_create_a_filler_edition(
 ) -> None:
     execution = ModelExecution()
     config, original = setup
-    decision = ClosingDecision("selected", "same_response_designation", original.top_articles[0])
-    stats = await finish_preparation(replace(original, top_articles=[], closing=decision), config, execution=execution)
+    closer = replace(
+        original.top_articles[0],
+        title="Closing title",
+        link="https://example.com/closing",
+        source="NHS England",
+        category="Health",
+    )
+    snapshot = replace(bound_snapshot(original, closer), top_articles=[])
+    assert snapshot.closing is not None and snapshot.closing.card == closer
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     assert stats.edition_status == "no_ready"
     assert not Path(".cache", READY_FILE).exists() and not Path("digests").exists()
 
@@ -711,7 +762,8 @@ async def test_unattributable_closing_is_omitted_and_only_unchanged_main_is_deli
             _, uncredited = _render_compact_issue([*original.top_articles, card], config, original.combined)
             assert len(uncredited[-1].covering_chunks) == 1
     expected_chunks, _ = _render_compact_issue(original.top_articles, config, original.combined)
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     manifest = json.loads(Path(".cache", READY_FILE).read_text())
     assert manifest["presentation_metadata"]["cards"] == [asdict(item) for item in original.top_articles]
     assert [item["card"] for item in manifest["articles"]] == [asdict(item) for item in original.top_articles]
@@ -755,7 +807,8 @@ async def test_main_credit_uses_immutable_packet_even_after_source_settings_chan
         for path in Path(".cache", directory).glob("*.json")
     }
     config.sources = [SourceConfig("Source", "https://changed.example/feed", "Tech", False)]
-    stats = await finish_preparation(snapshot, config, execution=execution)
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     card = original.top_articles[0]
     expected = asdict(replace(card, summary=f"{card.summary} {credit}"))
@@ -795,13 +848,15 @@ async def test_missing_main_attribution_proof_retains_accepted_work_before_any_t
         directory = "candidate_reports" if failure == "missing_packet" else "candidate_sources"
         next(Path(".cache", directory).glob("*.json")).unlink()
     path = save_preparation(snapshot)
-    accepted = path.read_bytes()
+    accepted_bytes = path.read_bytes()
+    accepted = load_accepted_preparation()
+    assert accepted is not None
     translation = AsyncMock(side_effect=AssertionError("Attribution must resolve before translation"))
     monkeypatch.setattr("digest.translation.complete", translation)
     with pytest.raises(ValueError, match="attribution|candidate evidence|storage hash mismatch"):
-        await finish_preparation(snapshot, config, execution=execution)
+        await present_preparation(accepted, config, execution=execution)
     translation.assert_not_awaited()
-    assert path.read_bytes() == accepted and load_preparation() == snapshot
+    assert path.read_bytes() == accepted_bytes and load_preparation() == snapshot
     assert not Path("digests").exists() and not Path(".cache", READY_FILE).exists()
     assert not Path(".cache", CLAIM_FILE).exists() and not Path(".cache/seen_articles.json").exists()
 
@@ -823,7 +878,9 @@ async def test_corrupt_optional_packet_preserves_legacy_recovery_with_archive_di
     report_path.write_text("{}")
     translation = AsyncMock(side_effect=AssertionError("Legacy recovery needs no model call"))
     monkeypatch.setattr("digest.translation.complete", translation)
-    stats = await resume_preparation(config, 0, verbose=False, execution=execution)
+    recovered = recover_preparation()
+    assert isinstance(recovered, AcceptedPreparation)
+    stats = preparation_stats(await present_preparation(recovered, config, execution=execution))
     assert stats is not None and stats.edition_status == "ready"
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     expected = [asdict(card) for card in original.top_articles]
@@ -853,12 +910,14 @@ async def test_main_credit_crossing_chunk_boundary_holds_accepted_work_without_d
     )
     assert len(uncredited[0].covering_chunks) == 1 and len(credited[0].covering_chunks) > 1
     path = save_preparation(snapshot)
-    accepted = path.read_bytes()
+    accepted_bytes = path.read_bytes()
+    accepted = load_accepted_preparation()
+    assert accepted is not None
     translation = AsyncMock(side_effect=AssertionError("Translation is disabled"))
     monkeypatch.setattr("digest.translation.complete", translation)
     with pytest.raises(ValueError, match="Main source attribution spans delivery chunks"):
-        await finish_preparation(snapshot, config, execution=execution)
+        await present_preparation(accepted, config, execution=execution)
     translation.assert_not_awaited()
-    assert path.read_bytes() == accepted and load_preparation() == snapshot
+    assert path.read_bytes() == accepted_bytes and load_preparation() == snapshot
     assert not Path("digests").exists() and not Path(".cache", READY_FILE).exists()
     assert not Path(".cache", CLAIM_FILE).exists() and not Path(".cache/seen_articles.json").exists()
