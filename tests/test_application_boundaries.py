@@ -43,3 +43,21 @@ def test_prepared_publication_has_no_raw_snapshot_or_orphan_entrypoints() -> Non
              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     assert {"_accept_category_preparation", "present_preparation"} <= calls
     assert not calls.intersection(retired | {"save_preparation"})
+
+
+def test_prepared_receipts_have_one_dispatch_application_owner() -> None:
+    from digest import edition_runtime
+    from digest.application import delivery, prepared_delivery
+    from digest.delivery import edition
+
+    assert "_merge_delivery" not in vars(edition_runtime)
+    assert not {"PreparedOutcomePolicy", "_apply_prepared"}.intersection(vars(delivery))
+    assert "mark_applied" not in vars(prepared_delivery) and "mark_applied" not in vars(edition)
+    assert edition.send_prepared_edition is prepared_delivery.send_prepared_edition
+    tree = ast.parse(Path(edition_runtime.__file__).read_text())
+    coordinator = next(node for node in tree.body
+                       if isinstance(node, ast.AsyncFunctionDef) and node.name == "delivery_phase")
+    calls = [node.func.id for node in ast.walk(coordinator)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    assert calls.count("send_prepared_edition") == 1
+    assert not {"apply_confirmed_outcome", "mark_applied", "_merge_delivery"}.intersection(calls)

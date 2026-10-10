@@ -261,6 +261,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[SimpleNamesp
         telegram=SimpleNamespace(enabled=True, delivery_mode="compact", bot_username="test_digest_bot"),
         obsidian=SimpleNamespace(enabled=True, output_dir="digests"),
         translation=SimpleNamespace(enabled=False),
+        adaptive=SimpleNamespace(enabled=False), enabled_sources=[],
     )
     card = ArticleSummary("Source title", "https://example.com/article", "Source", "Tech", "Canonical claim")
     snapshot = PreparationSnapshot([card], [], "Canonical notice", None, 1, 1, ["Source"])
@@ -525,12 +526,15 @@ async def test_future_edition_archive_and_delivery_day_accounting(
     execution = ModelExecution()
     from datetime import datetime, timedelta, timezone
 
-    from digest.delivery.telegram import IssueDeliveryResult
-    from digest.edition_runtime import _merge_delivery
+    from digest.application.prepared_delivery import claim_edition, send_prepared_edition
     from digest.radar.collector import article_hash
     from digest.source_scorer import DailySnapshot, SourceStats, load_stats, save_stats
 
     config, snapshot = setup
+    old_card = replace(snapshot.top_articles[0], title="Already delivered",
+                       link="https://example.com/already", source="Retained")
+    snapshot = replace(snapshot, top_articles=[*snapshot.top_articles, old_card],
+                       contributing_sources=["Source", "Retained"])
     today = datetime.now(timezone.utc).date()
     target = today + timedelta(days=1)
     accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=target)
@@ -549,25 +553,32 @@ async def test_future_edition_archive_and_delivery_day_accounting(
     source = SourceStats(
         "Source", total_fetches=2, successful_fetches=2, history=[DailySnapshot(today.isoformat(), 3, 0, True)]
     )
-    save_stats({"Source": source}, ".cache")
+    retained = SourceStats("Retained", articles_included_in_digest=3)
+    save_stats({"Source": source, "Retained": retained}, ".cache")
+    old_identity = article_hash(old_card.title, old_card.link)
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    Path(".cache/seen_articles.json").write_text(json.dumps({old_identity: old_timestamp}))
     card = snapshot.top_articles[0]
     identity = article_hash(card.title, card.link)
-    receipt = IssueDeliveryResult(
-        sent=1,
-        outcome="sent",
-        total_chunks=1,
-        confirmed_chunks=1,
-        delivered_hashes={identity},
-        article_source_map={identity[:8]: "Source"},
-    )
-    manifest = json.loads(Path(".cache", READY_FILE).read_text())
-    _merge_delivery(receipt, manifest, config)
-    _merge_delivery(receipt, manifest, config)
+    dispatch_time = datetime.combine(target, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12)
+    _, claim = claim_edition(result.ready_sha256, now=dispatch_time)
+    with respx.mock() as router:
+        route = router.post("https://api.telegram.org/bottest-token/sendMessage").mock(return_value=httpx.Response(
+            200, json={"ok": True, "result": {"message_id": 17, "chat": {"id": 12345}}},
+        ))
+        delivered = await send_prepared_edition(result.ready_sha256, claim, config=config, now=dispatch_time)
+        assert delivered.complete and delivered.delivered_hashes == {identity, old_identity}
+        saved_cache = Path(".cache/seen_articles.json").read_bytes()
+        repeated = await send_prepared_edition(result.ready_sha256, claim, config=config, now=dispatch_time)
+        assert repeated == delivered and route.call_count == 1
+        assert Path(".cache/seen_articles.json").read_bytes() == saved_cache
     persisted = load_stats(".cache")["Source"]
     assert persisted.total_fetches == persisted.successful_fetches == 2
     assert persisted.articles_included_in_digest == 1
     assert persisted.history[-1].date == target.isoformat()
     assert persisted.history[-1].articles_included == 1
+    assert load_stats(".cache")["Retained"] == retained
+    assert json.loads(Path(".cache/seen_articles.json").read_text())[old_identity] == old_timestamp
 
 
 @pytest.mark.asyncio

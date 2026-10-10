@@ -12,7 +12,7 @@ import uuid
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -38,6 +38,9 @@ from digest.domain.delivery.outcomes import IssueDeliveryResult
 from digest.domain.delivery.supplement import PendingSupplement, PreparedSupplement
 from digest.domain.editorial.summaries import ArticleSummary
 from digest.presentation.telegram import SupplementPlacement, render_compact_publication
+
+if TYPE_CHECKING:
+    from digest.config import Config
 
 _DISPATCH_SECONDS = 30.0
 
@@ -216,19 +219,18 @@ async def send_prepared_edition(
     expected_ready_sha256: str,
     expected_claim_sha256: str,
     *,
-    enabled: bool,
-    bot_username: str,
+    config: Config,
     cache_dir: str | Path = ".cache",
     now: datetime | None = None,
 ) -> IssueDeliveryResult:
-    """Send stored bytes once after both external persistence barriers succeeded."""
-    if not enabled:
+    """Dispatch once, then apply only this invocation's exactly verified receipts."""
+    if not config.telegram.enabled:
         raise ValueError("Telegram delivery is disabled; prepared edition publishing blocked.")
     instant = _instant(now)
     owner, owner_sha = _owner()
     cache = safe_issue_path(Path(cache_dir))
     data, ready_sha = storage.load_edition(cache / READY_FILE, owner, instant, expected_ready_sha256)
-    if bot_username != data.bot_username:
+    if config.telegram.bot_username != data.bot_username:
         raise ValueError("Prepared edition bot identity changed; publishing blocked.")
     claim, claim_sha = storage.load_claim(cache / CLAIM_FILE, ready_sha, owner_sha, expected_claim_sha256)
     existing = storage.load_receipts(cache, claim.ready_sha256, claim_sha, len(data.payloads), owner_sha)
@@ -275,8 +277,74 @@ async def send_prepared_edition(
                     receipts.state = "confirmed"
         except (httpx.HTTPError, TimeoutError, ValueError):
             receipts.state = "unknown"
-    storage.write_record(path, asdict(receipts))
-    return project_result(data, receipts)
+    terminal_sha = storage.content_sha256(storage.canonical_bytes(asdict(receipts)))
+    if storage.write_record(path, asdict(receipts)) != terminal_sha:
+        raise ValueError("Terminal receipt readback differs from intended transport evidence; application blocked.")
+    restored = storage.load_receipts(cache, ready_sha, claim_sha, len(data.payloads), owner_sha, expected=terminal_sha)
+    if restored is None:
+        raise ValueError("Terminal receipt is missing; application blocked.")
+    data, _ = storage.load_edition(cache / READY_FILE, owner, instant, expected_ready_sha256)
+    storage.load_claim(cache / CLAIM_FILE, ready_sha, owner_sha, expected_claim_sha256)
+    _apply_receipt(data, restored, config, cache)
+
+    # Accounting is not replayable. Recheck original bindings before finalization.
+    data, _ = storage.load_edition(cache / READY_FILE, owner, _instant(None), expected_ready_sha256)
+    storage.load_claim(cache / CLAIM_FILE, ready_sha, owner_sha, expected_claim_sha256)
+    restored = storage.load_receipts(cache, ready_sha, claim_sha, len(data.payloads), owner_sha, expected=terminal_sha)
+    if restored is None:
+        raise ValueError("Terminal receipt is missing; finalization blocked.")
+    if isinstance(data, SupplementEdition):
+        from digest.application.supplement import consume_fragment
+
+        consume_fragment(data, ready_sha, restored)
+    restored.applied = True
+    applied_sha = storage.content_sha256(storage.canonical_bytes(asdict(restored)))
+    if storage.write_record(path, asdict(restored)) != applied_sha:
+        raise ValueError("Applied receipt readback differs from intended bytes; inspect retained state.")
+    return project_result(data, restored)
+
+
+def _apply_receipt(data: Edition, receipts: Receipts, config: Config, cache: Path) -> None:
+    from digest.adapters.storage import delivery_state
+    from digest.adapters.storage.feedback import load_feedback, save_feedback
+    from digest.adapters.storage.sources import load_source_state, load_stats
+    from digest.application.source_scoring import evaluate_trial_sources
+    from digest.domain.catalog.source_rules import apply_trial_decisions_to_cache, record_delivered_articles
+    from digest.domain.feedback.rules import apply_delivery_attribution
+
+    outcome = project_result(data, receipts)
+    cache_dir = str(cache)
+    if not outcome.delivered_hashes:
+        return
+    store = load_feedback(cache_dir, strict=True)
+    delivered = delivery_state.load_delivery_cache(cache / "seen_articles.json")
+    # Validate every applicable current input before the first accounting write.
+    # Transport may already be confirmed; failures retain unapplied, held receipts.
+    stats = load_stats(cache_dir, strict=True)
+    state = load_source_state(cache_dir, strict=True) if config.adaptive.enabled else None
+    now = datetime.now(timezone.utc)
+    new_hashes = outcome.delivered_hashes - delivered.keys()
+    for identity in outcome.delivered_hashes:
+        delivered.setdefault(identity, now.isoformat())
+    apply_delivery_attribution(
+        store,
+        outcome.article_source_map,
+        complete=outcome.complete,
+        contributing_sources=data.canonical_metadata["contributing_sources"],
+        delivered_at=now,
+    )
+
+    # Preserve current votes/cursors/decisions; every write failure propagates.
+    # Order is feedback -> stats -> optional adaptive state -> seen articles.
+    save_feedback(store, cache_dir, strict=True)
+    record_delivered_articles(stats, new_hashes, outcome.article_source_map, parse_instant(data.window_start).date())
+    delivery_state.save_delivery_source_stats(stats, cache_dir)
+    if state is not None:
+        today = now.date().isoformat()
+        promote, demote, start = evaluate_trial_sources(config.enabled_sources, stats, today, state)
+        apply_trial_decisions_to_cache(state, promote, demote, today, start)
+        delivery_state.save_delivery_source_state(state, cache_dir)
+    delivery_state.save_delivery_cache(delivered, cache_dir)
 
 
 def inspect_edition(
@@ -327,20 +395,3 @@ def inspect_edition(
     if instant < parse_instant(data.window_start):
         return asdict(data), ready_sha, "pending_window"
     return asdict(data), ready_sha, "ready" if instant < parse_instant(data.expires_at) else "expired"
-
-
-def mark_applied(expected_ready_sha256: str, *, cache_dir: str | Path = ".cache") -> None:
-    """Mark known coverage reconciled only after the caller saves latest state."""
-    cache = safe_issue_path(Path(cache_dir))
-    owner, owner_sha = _owner()
-    data, ready_sha = storage.load_edition(cache / READY_FILE, owner, _instant(None), expected_ready_sha256)
-    claim, claim_sha = storage.load_claim(cache / CLAIM_FILE, ready_sha, owner_sha)
-    receipts = storage.load_receipts(cache, claim.ready_sha256, claim_sha, len(data.payloads), owner_sha)
-    if receipts is None:
-        raise ValueError("Cannot apply an edition without transport receipts.")
-    if isinstance(data, SupplementEdition):
-        from digest.application.supplement import consume_fragment
-
-        consume_fragment(data, ready_sha, receipts)
-    receipts.applied = True
-    storage.write_record(cache / RECEIPTS_FILE, asdict(receipts))

@@ -105,7 +105,8 @@ before ready replacement; the new reservation is saved after ready and before cl
 Missing proof or a crash between writes holds the optional fragment; it is never guessed
 or overwritten. Frozen-reference corruption blocks dispatch.
 
-`mark_applied` owns the required consumption write before the receipt's applied marker.
+`application.prepared_delivery.send_prepared_edition` owns the required consumption
+write before its exact-readback applied marker (ADR0017 receipt-owned amendment).
 Every fragment-covering chunk needs a positive owner-matching receipt. A later unrelated
 unknown chunk does not undo complete fragment coverage, but the overall issue stays held.
 Incomplete fragment coverage or a failed consumption write leaves receipts unapplied and

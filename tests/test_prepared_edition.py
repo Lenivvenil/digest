@@ -31,6 +31,13 @@ def credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def sender_config(*, enabled: bool = True, bot_username: str = "mybot") -> Any:
+    return SimpleNamespace(
+        telegram=SimpleNamespace(enabled=enabled, bot_username=bot_username),
+        adaptive=SimpleNamespace(enabled=False), enabled_sources=[],
+    )
+
+
 def prepare(tmp_path: Path, *, long: bool = False) -> tuple[dict[str, Any], str, str]:
     config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
     articles = [ArticleSummary("Frozen title", "https://example.com/1", "Source", "AI", "Frozen summary")]
@@ -41,7 +48,10 @@ def prepare(tmp_path: Path, *, long: bool = False) -> tuple[dict[str, Any], str,
         config,
         cache_dir=tmp_path,
         now=NOW,
-        canonical_metadata={"cards": [{"title": "Canonical title"}], "config_sha256": "old config"},
+        canonical_metadata={
+            "cards": [{"title": "Canonical title"}], "config_sha256": "old config",
+            "contributing_sources": ["Source", "Other"],
+        },
         presentation_metadata={"language": "ru"},
         checkpoint_refs={},
         producing_engine={"commit": "old engine", "prompt": "old prompt"},
@@ -55,7 +65,7 @@ def success(message_id: int = 1, owner: int = 123) -> httpx.Response:
 
 
 @respx.mock
-async def test_sender_uses_frozen_payload_without_rendering_or_config(
+async def test_sender_uses_frozen_payload_without_rendering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -64,7 +74,7 @@ async def test_sender_uses_frozen_payload_without_rendering_or_config(
     monkeypatch.setattr(prepared_delivery, "render_compact_publication", renderer)
     route = respx.post(API).mock(return_value=success())
     result = await edition.send_prepared_edition(
-        ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+        ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
     )
     assert result.complete and result.sent == 1
     assert manifest["schema"] == 2
@@ -77,9 +87,8 @@ async def test_sender_uses_frozen_payload_without_rendering_or_config(
     assert receipts["schema"] == 1
     assert json.loads((tmp_path / edition.CLAIM_FILE).read_text())["schema"] == 1
     assert receipts["confirmed"][0]["message_id"] == 1
-    edition.mark_applied(ready, cache_dir=tmp_path)
     again = await edition.send_prepared_edition(
-        ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW + timedelta(days=2)
+        ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW + timedelta(days=2)
     )
     assert again.complete and route.call_count == 1
 
@@ -105,8 +114,7 @@ async def test_confirmed_legacy_collision_remains_readable_without_resend(tmp_pa
         ready,
         claim,
         cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
+        config=sender_config(),
         now=NOW + timedelta(days=2),
     )
     assert result.complete and result.sent == 2
@@ -132,8 +140,7 @@ async def test_unstarted_legacy_collision_blocks_before_claim_or_post(tmp_path: 
             ready,
             claim,
             cache_dir=tmp_path,
-            enabled=True,
-            bot_username="mybot",
+            config=sender_config(),
             now=NOW,
         )
     assert not (tmp_path / edition.RECEIPTS_FILE).exists()
@@ -156,7 +163,9 @@ async def test_full_vote_identities_survive_frozen_send_and_source_inclusion(tmp
         )
         for number, source in ((42028, "A"), (53130, "B"))
     ]
-    path, ready = edition.prepare_edition(articles, config, cache_dir=tmp_path, now=NOW)
+    path, ready = edition.prepare_edition(
+        articles, config, cache_dir=tmp_path, now=NOW, canonical_metadata={"contributing_sources": ["A", "B"]},
+    )
     data = json.loads(path.read_text())
     _, claim = edition.claim_edition(ready, cache_dir=tmp_path, now=NOW)
     route = respx.post(API).mock(return_value=success())
@@ -164,8 +173,7 @@ async def test_full_vote_identities_survive_frozen_send_and_source_inclusion(tmp
         ready,
         claim,
         cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
+        config=sender_config(),
         now=NOW,
     )
     expected = {item["full_hash"]: item["source"] for item in data["articles"]}
@@ -202,13 +210,13 @@ async def test_ambiguous_receipt_holds_and_never_replays(tmp_path: Path, receipt
     _, ready, claim = prepare(tmp_path)
     route = respx.post(API).mock(return_value=httpx.Response(200, json=receipt))
     result = await edition.send_prepared_edition(
-        ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+        ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
     )
     assert result.outcome == "unknown" and result.sent == 0
     assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "held"
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
-            ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+            ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
         )
     assert route.call_count == 1
 
@@ -219,12 +227,12 @@ async def test_http_errors_never_retry_or_fallback(tmp_path: Path, status: int) 
     _, ready, claim = prepare(tmp_path)
     route = respx.post(API).mock(return_value=httpx.Response(status, json={"ok": False}))
     result = await edition.send_prepared_edition(
-        ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+        ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
     )
     assert result.sent == 0 and route.call_count == 1
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
-            ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+            ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
         )
 
 
@@ -233,14 +241,14 @@ async def test_partial_receipts_keep_only_complete_article_coverage(tmp_path: Pa
     manifest, ready, claim = prepare(tmp_path, long=True)
     route = respx.post(API).mock(side_effect=[success(), httpx.ReadTimeout("lost receipt")])
     result = await edition.send_prepared_edition(
-        ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+        ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
     )
     assert result.confirmed_chunks == 1 and result.attempted_chunks == 2 and result.outcome == "unknown"
     assert result.delivered_hashes == {manifest["articles"][0]["full_hash"]}
     assert route.call_count == 2
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
-            ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+            ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
         )
 
 
@@ -270,7 +278,7 @@ async def test_receipt_write_failure_retains_hold_without_replay(
     route = respx.post(API).mock(return_value=success())
     with pytest.raises(OSError):
         await edition.send_prepared_edition(
-            ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+            ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
         )
     persisted = json.loads((tmp_path / edition.RECEIPTS_FILE).read_bytes())
     assert persisted["state"] == "sending" and persisted["applied"] is False
@@ -279,7 +287,7 @@ async def test_receipt_write_failure_retains_hold_without_replay(
     monkeypatch.setattr(edition_storage, "write_record", original_write)
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
-            ready, claim, cache_dir=tmp_path, enabled=True, bot_username="mybot", now=NOW
+            ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
         )
     assert route.call_count == (0 if failure == "attempted" else 1)
 
@@ -307,8 +315,7 @@ async def test_validation_blocks_before_http(
             ready,
             claim,
             cache_dir=tmp_path,
-            enabled=change != "disabled",
-            bot_username="mybot",
+            config=sender_config(enabled=change != "disabled"),
             now=NOW + timedelta(days=1) if change == "expired" else NOW,
         )
     assert not respx.calls
@@ -358,31 +365,33 @@ def test_expired_unclaimed_edition_can_be_replaced(tmp_path: Path) -> None:
 
 
 @respx.mock
-async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(tmp_path: Path) -> None:
+async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _, ready, claim = prepare(tmp_path)
     route = respx.post(API).mock(return_value=success())
-    await edition.send_prepared_edition(
-        ready,
-        claim,
-        cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
-        now=NOW,
-    )
+    from digest.adapters.storage import feedback
+
+    monkeypatch.setattr(feedback, "save_feedback", Mock(side_effect=OSError("accounting interrupted")))
+    with pytest.raises(OSError, match="accounting interrupted"):
+        await edition.send_prepared_edition(
+            ready,
+            claim,
+            cache_dir=tmp_path,
+            config=sender_config(),
+            now=NOW,
+        )
     assert edition.inspect_edition(cache_dir=tmp_path, now=NOW + timedelta(days=1))[2] == "held"
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
             ready,
             claim,
             cache_dir=tmp_path,
-            enabled=True,
-            bot_username="mybot",
+            config=sender_config(),
             now=NOW,
         )
     assert route.call_count == 1
-    edition.mark_applied(ready, cache_dir=tmp_path)
-    assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "confirmed"
-    assert edition.inspect_edition(cache_dir=tmp_path, now=NOW + timedelta(days=1))[2] == "expired"
+    assert json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())["applied"] is False
 
 
 @respx.mock
@@ -393,8 +402,7 @@ async def test_changed_bot_identity_cannot_send(tmp_path: Path) -> None:
             ready,
             claim,
             cache_dir=tmp_path,
-            enabled=True,
-            bot_username="differentbot",
+            config=sender_config(enabled=True, bot_username="differentbot"),
             now=NOW,
         )
     assert not respx.calls
@@ -409,14 +417,12 @@ async def test_definite_partial_error_differs_from_uncertain_receipt(tmp_path: P
         ready,
         claim,
         cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
+        config=sender_config(),
         now=NOW,
     )
     assert result.outcome == "failed"
     receipts = json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())
     assert receipts["state"] == "partial" and route.call_count == 2
-    edition.mark_applied(ready, cache_dir=tmp_path)
     assert edition.inspect_edition(cache_dir=tmp_path, now=NOW + timedelta(days=5))[2] == "held"
 
 
@@ -445,8 +451,7 @@ async def test_checkpoint_bytes_bound_at_claim_and_send(tmp_path: Path, monkeypa
             ready,
             claim,
             cache_dir=path.parent,
-            enabled=True,
-            bot_username="mybot",
+            config=sender_config(),
             now=NOW,
         )
     assert not respx.calls
@@ -509,6 +514,7 @@ def prepare_tomorrow(tmp_path: Path) -> tuple[Path, str]:
         cache_dir=tmp_path,
         now=NOW,
         publication_date=(NOW + timedelta(days=1)).date(),
+        canonical_metadata={"contributing_sources": ["Source"]},
     )
 
 
@@ -520,11 +526,9 @@ async def test_prepare_tomorrow_after_confirmed_today_and_send_only_in_window(tm
         ready,
         claim,
         cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
+        config=sender_config(),
         now=NOW,
     )
-    edition.mark_applied(ready, cache_dir=tmp_path)
     assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "confirmed"
     path, tomorrow_ready = prepare_tomorrow(tmp_path)
     manifest = json.loads(path.read_text())
@@ -550,8 +554,7 @@ async def test_prepare_tomorrow_after_confirmed_today_and_send_only_in_window(tm
             tomorrow_ready,
             tomorrow_claim,
             cache_dir=tmp_path,
-            enabled=True,
-            bot_username="mybot",
+            config=sender_config(),
             now=NOW,
         )
     assert route.call_count == 1
@@ -559,8 +562,7 @@ async def test_prepare_tomorrow_after_confirmed_today_and_send_only_in_window(tm
         tomorrow_ready,
         tomorrow_claim,
         cache_dir=tmp_path,
-        enabled=True,
-        bot_username="mybot",
+        config=sender_config(),
         now=start,
     )
     assert result.complete and route.call_count == 2
@@ -645,7 +647,7 @@ def test_prepared_compatibility_exports_keep_value_and_entrypoint_identity() -> 
     assert ArticleSummary is Summary
     for name in ("_Edition", "_PreparedArticle", "_Claim", "_ChunkReceipt", "_Receipts"):
         assert getattr(edition, name) is getattr(domain, name)
-    for name in ("prepare_edition", "claim_edition", "send_prepared_edition", "inspect_edition", "mark_applied"):
+    for name in ("prepare_edition", "claim_edition", "send_prepared_edition", "inspect_edition"):
         assert getattr(edition, name) is getattr(prepared_delivery, name)
 
 
@@ -672,7 +674,9 @@ async def supplement_edition(
         config,
         publication_date=day.date(),
         supplement=pending,
-        canonical_metadata={"cards": [asdict(cards[0])], "closing": {"card": asdict(cards[1])}},
+        canonical_metadata={
+            "cards": [asdict(cards[0])], "closing": {"card": asdict(cards[1])}, "contributing_sources": ["Source"],
+        },
         presentation_metadata={"cards": [asdict(card) for card in cards], "closing": {"card": asdict(cards[1])}},
         notice="Unrelated footer " * 500,
     )
@@ -718,16 +722,16 @@ async def test_ready3_sends_frozen_multichunk_fragment_without_article_votes_or_
                 json={"ok": True, "result": {"message_id": 5, "chat": {"id": 12345}}},
             )
         )
-        result = await edition.send_prepared_edition(ready, claim, enabled=True, bot_username="mybot", now=now)
+        result = await edition.send_prepared_edition(ready, claim, config=sender_config(), now=now)
     assert result.complete and result.sent == 2 and len(result.article_source_map) == 2
     assert all(len(identity) == 32 for identity in result.article_source_map)
     assert [json.loads(call.request.content) for call in route.calls] == manifest["payloads"]
-    edition.mark_applied(ready)
     saved = json.loads(Path(pending.attempt).read_text())
     assert saved["supplement_status"] == "consumed"
     assert json.loads(Path(".cache", edition.RECEIPTS_FILE).read_text())["applied"] is True
     consumption = Path(pending.attempt).read_bytes()
-    edition.mark_applied(ready)
+    again = await edition.send_prepared_edition(ready, claim, config=sender_config(), now=now)
+    assert again.complete
     assert Path(pending.attempt).read_bytes() == consumption
 
 
@@ -745,29 +749,24 @@ async def test_fragment_consumption_is_required_before_applied_and_independent_o
     last_fragment_chunk = manifest["supplement"]["coverage"]["covering_chunks"][-1]
     prefix = last_fragment_chunk if outcome == "fragment_incomplete" else last_fragment_chunk + 1
     assert prefix < len(manifest["payloads"])
-    receipts = {
-        "schema": 1,
-        "ready_sha256": ready,
-        "claim_sha256": claim,
-        "state": "unknown",
-        "attempted": prefix + 1,
-        "applied": False,
-        "confirmed": [
-            {"chunk": index, "message_id": index + 1, "owner_sha256": manifest["owner_sha256"]}
-            for index in range(prefix)
-        ],
-    }
     path = Path(".cache", edition.RECEIPTS_FILE)
-    edition_storage.write_record(path, receipts)
-    if outcome == "consume_write_failure":
-        with patch("digest.application.supplement.storage.save_attempt", side_effect=OSError("disk full")):
-            with pytest.raises(OSError, match="disk full"):
-                edition.mark_applied(ready)
-    elif outcome == "fragment_incomplete":
-        with pytest.raises(ValueError, match="not completely confirmed"):
-            edition.mark_applied(ready)
-    else:
-        edition.mark_applied(ready)
+    responses = [
+        httpx.Response(200, json={"ok": True, "result": {"message_id": index + 1, "chat": {"id": 12345}}})
+        for index in range(prefix)
+    ] + [httpx.ReadTimeout("uncertain effect")]
+    with respx.mock() as router:
+        route = router.post(API).mock(side_effect=responses)
+        if outcome == "consume_write_failure":
+            with patch("digest.application.supplement.storage.save_attempt", side_effect=OSError("disk full")):
+                with pytest.raises(OSError, match="disk full"):
+                    await edition.send_prepared_edition(ready, claim, config=sender_config(), now=now)
+        elif outcome == "fragment_incomplete":
+            with pytest.raises(ValueError, match="not completely confirmed"):
+                await edition.send_prepared_edition(ready, claim, config=sender_config(), now=now)
+        else:
+            result = await edition.send_prepared_edition(ready, claim, config=sender_config(), now=now)
+            assert not result.complete
+        assert route.call_count == prefix + 1
     assert json.loads(path.read_text())["applied"] is (outcome == "later_unknown")
     saved = json.loads(Path(pending.attempt).read_text())
     assert saved["supplement_status"] == ("consumed" if outcome == "later_unknown" else "included_ready")
@@ -969,3 +968,147 @@ async def test_unclaimed_fragment_reuse_requires_retained_old_ready_and_release_
                 presentation_metadata={"cards": [asdict(card)]},
             )
         assert path.read_bytes() == original_ready
+
+
+@respx.mock
+async def test_terminal_receipt_must_match_intended_bytes_before_accounting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, ready, claim = prepare(tmp_path)
+    real_write = edition_storage.write_record
+
+    def substitute(path: Path, value: dict[str, Any], **kwargs: Any) -> str:
+        if path.name == edition.RECEIPTS_FILE and value["state"] == "confirmed":
+            value = json.loads(json.dumps(value))
+            value["confirmed"][0]["message_id"] = 999
+        return real_write(path, value, **kwargs)
+
+    monkeypatch.setattr(edition_storage, "write_record", substitute)
+    route = respx.post(API).mock(return_value=success())
+    with pytest.raises(ValueError, match="intended transport evidence"):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert route.call_count == 1
+    assert {path.name for path in tmp_path.iterdir()} == {
+        edition.READY_FILE, edition.CLAIM_FILE, edition.RECEIPTS_FILE,
+    }
+    receipt = json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())
+    assert receipt["state"] == "confirmed" and receipt["applied"] is False
+    assert receipt["confirmed"][0]["message_id"] == 999
+    with pytest.raises(ValueError, match="held"):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_original_claim_is_rechecked_after_transport_before_accounting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, ready, claim = prepare(tmp_path)
+    real_write = edition_storage.write_record
+
+    def replace_claim(path: Path, value: dict[str, Any], **kwargs: Any) -> str:
+        digest = real_write(path, value, **kwargs)
+        if path.name == edition.RECEIPTS_FILE and value["state"] == "confirmed":
+            claim_path = tmp_path / edition.CLAIM_FILE
+            changed = json.loads(claim_path.read_text())
+            changed["claim_id"] = "a" * 32
+            real_write(claim_path, changed)
+        return digest
+
+    monkeypatch.setattr(edition_storage, "write_record", replace_claim)
+    route = respx.post(API).mock(return_value=success())
+    with pytest.raises(ValueError, match="hash mismatch"):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert route.call_count == 1
+    assert not (tmp_path / "feedback.json").exists()
+    receipt = json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())
+    assert receipt["claim_sha256"] == claim and receipt["state"] == "confirmed" and not receipt["applied"]
+
+
+@respx.mock
+async def test_changed_terminal_after_accounting_blocks_finalization_without_transport_reclassification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.adapters.storage import delivery_state
+
+    _, ready, claim = prepare(tmp_path)
+    real_save = delivery_state.save_delivery_cache
+
+    def change_receipt(cache: dict[str, str], cache_dir: str) -> None:
+        real_save(cache, cache_dir)
+        path = tmp_path / edition.RECEIPTS_FILE
+        changed = json.loads(path.read_text())
+        changed["confirmed"][0]["message_id"] = 999
+        edition_storage.write_record(path, changed)
+
+    monkeypatch.setattr(delivery_state, "save_delivery_cache", change_receipt)
+    route = respx.post(API).mock(return_value=success())
+    with pytest.raises(ValueError, match="hash mismatch"):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert route.call_count == 1
+    assert (tmp_path / "feedback.json").exists() and (tmp_path / "seen_articles.json").exists()
+    receipt = json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())
+    assert receipt["state"] == "confirmed" and receipt["applied"] is False
+    assert receipt["confirmed"][0]["message_id"] == 999
+
+
+@respx.mock
+@pytest.mark.parametrize("failure", ["unchanged_readback", "before_replace", "after_replace"])
+async def test_final_applied_write_preserves_actual_persisted_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from digest.adapters.storage import sources
+    from digest.domain.catalog.sources import SourceStats
+
+    _, ready, claim = prepare(tmp_path)
+    sources.save_stats({"Source": SourceStats("Source")}, str(tmp_path))
+    real_write = edition_storage.write_record
+
+    def fail_marker(path: Path, value: dict[str, Any], **kwargs: Any) -> str:
+        if path.name == edition.RECEIPTS_FILE and value["applied"]:
+            if failure == "unchanged_readback":
+                return edition_storage.content_sha256(path.read_bytes())
+            if failure == "after_replace":
+                real_write(path, value, **kwargs)
+            raise OSError("marker persistence interrupted")
+        return real_write(path, value, **kwargs)
+
+    monkeypatch.setattr(edition_storage, "write_record", fail_marker)
+    route = respx.post(API).mock(return_value=success())
+    error = ValueError if failure == "unchanged_readback" else OSError
+    with pytest.raises(error):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    receipt_bytes = (tmp_path / edition.RECEIPTS_FILE).read_bytes()
+    receipt = json.loads(receipt_bytes)
+    assert receipt["state"] == "confirmed" and receipt["applied"] is (failure == "after_replace")
+    assert sources.load_stats(str(tmp_path), strict=True)["Source"].articles_included_in_digest == 1
+    state = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    if failure == "after_replace":
+        assert (await edition.send_prepared_edition(
+            ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW,
+        )).complete
+    else:
+        with pytest.raises(ValueError, match="held"):
+            await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert route.call_count == 1
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == state
+
+
+async def test_cancelled_dispatch_keeps_attempted_receipt_without_implicit_application(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    _, ready, claim = prepare(tmp_path)
+    send = AsyncMock(side_effect=asyncio.CancelledError)
+    monkeypatch.setattr(prepared_delivery, "send_prepared_chunk", send)
+    with pytest.raises(asyncio.CancelledError):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    receipt = json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())
+    assert receipt["state"] == "sending" and receipt["attempted"] == 1
+    assert receipt["confirmed"] == [] and receipt["applied"] is False
+    assert not (tmp_path / "feedback.json").exists() and not (tmp_path / "seen_articles.json").exists()
+    with pytest.raises(ValueError, match="held"):
+        await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    send.assert_awaited_once()

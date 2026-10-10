@@ -146,7 +146,7 @@ natural run does not block an unrelated mechanical safety repair.
    and feedback identities, empty-result rules and interruption holds. Amend
    [ADR0017](decisions/0017-confirmed-delivery-application.md) explicitly: its current
    strict current-writer preflight is implemented in slice 1 and verified category
-   acceptance in slice 2; receipt-owned application remains pending. Prove
+   acceptance in slice 2; receipt-owned application is implemented in slice 3. Prove
    invalid existing state blocks before the first accounting write, valid history survives, and
    every write-failure prefix remains held with a truthful read-only diagnosis.
 4. **Resolve measured operating-policy tradeoffs.** Decide supported delivery guarantees,
@@ -335,9 +335,9 @@ boolean. The code entrypoints below identify the implemented owners.
 | Canonical work → presentation | Translation changes generated prose while retaining source identity/evidence. Required main-card provenance failure holds accepted work; unsafe optional closing insertion is omitted. | [publication assembly](../digest/application/publication.py), [attribution](../digest/application/source_attribution.py), [accepted presentation](../digest/edition_runtime.py) |
 | Presentation → frozen edition | Bind payloads, article coverage, recipient, publication window and archive references together. | [edition domain](../digest/domain/delivery/edition.py), [prepared application](../digest/application/prepared_delivery.py) |
 | Ready → claim → transport | Require the exact remote ready/claim hashes. Persist attempted count before each POST and each known confirmation afterward. | [prepared application](../digest/application/prepared_delivery.py), [storage](../digest/adapters/storage/edition.py), [Telegram adapter](../digest/adapters/telegram/prepared.py) |
-| Receipts → applied outcome | Apply only known complete article coverage; mark receipts applied after the ordered operational writes succeed. | [coverage projection](../digest/domain/delivery/outcomes.py), [outcome application](../digest/application/delivery.py) |
+| Receipts → applied outcome | Apply only known complete article coverage; mark receipts applied after the ordered operational writes succeed. | [coverage projection](../digest/domain/delivery/outcomes.py), [prepared publication](../digest/application/prepared_delivery.py) |
 | Confirmed publication → later supplementary evidence | Freeze canonical delivered targets and source occurrences; the evidence producer retains narrative/ranking authority. Preserve one immutable projection and per-attempt disposition. | [origin application](../digest/application/investigation_origin.py), [delivered values](../digest/domain/investigation/delivered.py), [evidence stage](../digest/irritator/evidence_stage.py), [supplement application](../digest/application/supplement.py) |
-| Fragment coverage → consumption | Separate supplement chunks from article attribution. Consume only complete positive owner-matching coverage before `mark_applied` writes the applied marker. | [supplement values](../digest/domain/delivery/supplement.py), [prepared application](../digest/application/prepared_delivery.py) |
+| Fragment coverage → consumption | Separate supplement chunks from article attribution. Consume only complete positive owner-matching coverage inside receipt-owned publication before the applied marker is written. | [supplement values](../digest/domain/delivery/supplement.py), [prepared application](../digest/application/prepared_delivery.py) |
 
 ## Cache architecture
 
@@ -464,7 +464,7 @@ record or a change to the prepared-edition policy.
 | Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
 | Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
 | Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
-| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; `mark_applied` consumes complete ready3 supplement coverage before writing the applied receipt marker. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
+| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; the prepared sender consumes complete ready3 supplement coverage before its intended-byte-verified applied receipt marker. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
 | Failure policy | All applicable reads fail closed before the first accounting write. Source reads require complete current-writer fields, supported schema, exact types, finite nonnegative numeric values and canonical calendar days. For source statistics/lifecycle files, missing whole files are first-run state; malformed, sparse, unknown-field, duplicate-key, symlinked or unreadable files hold application. All writes propagate failures. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
 
 This preflight runs at accounting time, potentially after confirmed transport. Invalid
@@ -473,11 +473,26 @@ accounting files; it does not prove that no message was sent. Default direct/leg
 source readers remain permissive. See the [strict-read amendment](decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09)
 for the intentional current-writer compatibility boundary and inspection guidance.
 
-After a successful prepared application, inclusion counters and existing deduplication
-timestamps remain unchanged on reapplication while those hashes are cached. Metadata,
-clock observations and adaptive evaluation are not byte-idempotent. Normal confirmed
-and applied inspection avoids reapplication entirely. If any write or the final
-applied marker fails, the held receipt prevents blind replay.
+The prepared sender owns the active dispatch through application. It compares the
+terminal writer's readback hash with the intended canonical receipt bytes, reloads
+that exact receipt, and verifies original ready/claim identities before accounting.
+Reporting projections do not authorize writes. After accounting it rechecks those
+bindings, consumes required supplement coverage, and verifies the applied marker's
+readback against its intended canonical bytes before returning success.
+
+Confirmed/applied history returns without dispatch or application. Existing unapplied,
+sending, failed, partial or unknown receipts remain held; this owner never replays
+accounting. Fresh partial/unknown transport may still apply complete known article
+coverage during its uninterrupted invocation. Every failure retains the actual
+persisted prefix. A final-write exception after replacement may leave applied bytes;
+inspection honors them rather than resetting or resending. These checks are neither
+a multi-file transaction nor protection against concurrent state writers.
+
+The Python sender now requires `config`; its old enabled/bot-only signature,
+`PreparedOutcomePolicy`, `_merge_delivery`, the prepared apply branch and independent
+`mark_applied` are retired. Known engine/configured workflow consumers are migrated
+or verified absent; unknown external Python callers must migrate explicitly. CLI,
+wire formats, external ready/claim barriers and direct-run policies are unchanged.
 
 ## Supported application scenarios
 
@@ -600,7 +615,7 @@ and applies identical final cards to archive and frozen payloads.
 | Freeze/claim/send/inspect an edition | `application/prepared_delivery.py`; CLI phases enter through `edition_runtime.delivery_phase` |
 | Edition/claim/receipt validation and bytes | `domain/delivery/edition.py`, `adapters/storage/edition.py` |
 | One prepared Telegram POST | `adapters/telegram/prepared.py` |
-| Apply known article coverage | `application/delivery.py`, with feedback/catalog policy owners |
+| Apply known article coverage | `application/prepared_delivery.py` for prepared receipts; `application/delivery.py` for legacy direct output, with feedback/catalog policy owners |
 | Feedback and approved source application | `application/feedback.py`, `application/run_state.py` |
 | Discovery and external investigation | `application/discovery.py`; `post_delivery.py`, `irritator/evidence_stage.py` |
 

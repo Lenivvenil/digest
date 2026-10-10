@@ -250,6 +250,45 @@ reviewed recovery decision. Later write failures can still leave a written prefi
 and unapplied receipts: no transaction, automatic rollback or safe replay is added.
 Verified category accepted-reference admission is implemented in
 [#220 slice 2](0015-application-workflow-ownership.md#verified-category-acceptance--220-slice-2).
-Receipt-owned dispatch/application remains later #220 work; this continuation does
-not move accounting, supplement consumption or the applied-marker owner. The [current effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
+This slice-1 continuation did not move accounting, supplement consumption or the
+applied-marker owner; the slice-3 amendment below now owns that transition. The [current effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
 remains the canonical contract.
+
+
+## Receipt-owned prepared publication — #220 slice 3
+
+Accepted on 2026-10-10. `application.prepared_delivery.send_prepared_edition`
+owns its active dispatch, exact terminal-receipt readback, strict accounting,
+required supplement consumption and exact applied-marker readback. The [current
+architecture effect matrix](../ARCHITECTURE.md#stage-3-confirmed-delivery-application)
+is the canonical order and failure contract.
+
+Both hashes are computed from intended canonical bytes before the write. The
+terminal gate compares the returned destination hash, restores that exact receipt,
+and binds it to the original ready and claim before any accounting write. The
+final gate rechecks those bindings after accounting and compares the applied write
+against its own intended hash. No reporting object or separately callable marker
+can authorize accounting. A small private helper consumes the verified typed
+edition/receipt and current config; it has one production caller.
+
+The sender requires `config` instead of separate enabled/bot arguments, since
+accounting needs the real adaptive/source settings. Retire `PreparedOutcomePolicy`,
+the prepared `apply_confirmed_outcome` branch/helper, `_merge_delivery` and public/
+facade `mark_applied`; retain prepare, claim, inspection and sender aliases. Known
+engine and configured runtime/workflow consumers were checked; this is not a claim
+about all external Python users. No live compatibility shim or receipt-replay API
+is added. The CLI's pre-send read order and output mapping stay unchanged.
+
+Strict reads and writes retain the existing order. Zero article coverage skips
+operational accounting, not receipt binding or supplement/final-marker obligations.
+Fresh partial/unknown outcomes may carry known complete coverage. Existing unapplied
+or uncertain receipts never resume accounting; confirmed/applied records return
+without new effects. Transport catch/cancellation behavior and remote barriers stay
+unchanged. Readback/accounting/finalization failures remain outside the transport
+catch, preserving actual terminal evidence and every written prefix.
+
+A failed final write can occur after replacement. Keep the bytes that actually
+persisted: a valid applied record allows the existing no-op; an unapplied record
+holds. Do not reset, roll back, resend or infer replay safety. Ready/claim/receipt
+schemas, canonical encoding, output payloads and optional-source policy do not
+change; no record migration, ledger or transaction framework is introduced.

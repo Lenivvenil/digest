@@ -25,7 +25,6 @@ from digest.application.prepared_delivery import _legacy_guard as _legacy_guard
 from digest.application.prepared_delivery import _owner as _owner
 from digest.application.prepared_delivery import claim_edition as claim_edition
 from digest.application.prepared_delivery import inspect_edition as inspect_edition
-from digest.application.prepared_delivery import mark_applied as mark_applied
 from digest.application.prepared_delivery import prepare_edition as prepare_edition
 from digest.application.prepared_delivery import send_prepared_edition as send_prepared_edition
 from digest.domain.delivery.edition import READY_SCHEMA_VERSION as READY_SCHEMA_VERSION

@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,9 +21,7 @@ from digest.adapters.storage import delivery_state
 from digest.adapters.storage import feedback as feedback_storage
 from digest.adapters.storage import sources as storage
 from digest.application import prepared_delivery
-from digest.application.delivery import AppliedOutcome, PreparedOutcomePolicy, apply_confirmed_outcome
 from digest.domain.catalog.sources import DailySnapshot, SourceStateEntry, SourceStateStore, SourceStats
-from digest.domain.delivery.outcomes import IssueDeliveryResult
 from digest.domain.feedback.values import FeedbackStore
 from digest.edition_runtime import delivery_phase
 from digest.radar.summarizer import ArticleSummary
@@ -231,17 +229,30 @@ def test_default_lifecycle_loader_retains_sparse_and_coercing_behavior(tmp_path:
         storage.load_source_state(str(tmp_path), strict=True)
 
 
-def _policy(cache: Path, *, adaptive: bool = True, delivered: bool = True) -> PreparedOutcomePolicy:
-    outcome = IssueDeliveryResult(
-        sent=int(delivered), outcome="sent", total_chunks=1, confirmed_chunks=1,
-        delivered_hashes={"a" * 32} if delivered else set(),
-        article_source_map={"a" * 32: "Source"} if delivered else {},
+async def _dispatch(cache: Path, *, adaptive: bool = True, delivered: bool = True) -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    config = SimpleNamespace(
+        telegram=SimpleNamespace(enabled=True, bot_username="test_bot"),
+        radar=SimpleNamespace(language="en"), adaptive=SimpleNamespace(enabled=adaptive), enabled_sources=[],
     )
-    return PreparedOutcomePolicy(outcome, str(cache), date(2026, 10, 7), ["Source"], adaptive, [])
+    with patch.dict("os.environ", TELEGRAM_CHAT_ID="123", TELEGRAM_BOT_TOKEN="offline-token"):
+        _, ready = prepared_delivery.prepare_edition(
+            [ArticleSummary("Title", "https://example.invalid/article", "Source", "Tech", "Synthetic summary")],
+            config, cache_dir=cache, now=now, canonical_metadata={"contributing_sources": ["Source"]},
+        )
+        _, claim = prepared_delivery.claim_edition(ready, cache_dir=cache, now=now)
+        response = (
+            httpx.Response(200, json={"ok": True, "result": {"message_id": 52, "chat": {"id": 123}}})
+            if delivered else httpx.Response(400, json={"ok": False})
+        )
+        with respx.mock() as router:
+            route = router.post("https://api.telegram.org/botoffline-token/sendMessage").mock(return_value=response)
+            await prepared_delivery.send_prepared_edition(ready, claim, config=config, cache_dir=cache, now=now)
+            assert route.call_count == 1
 
 
 @pytest.mark.parametrize("adaptive", [True, False])
-def test_prepared_application_preloads_every_applicable_store_before_first_write(
+async def test_prepared_application_preloads_every_applicable_store_before_first_write(
     tmp_path: Path, adaptive: bool,
 ) -> None:
     feedback_storage.save_feedback(FeedbackStore(last_update_id=999), str(tmp_path), strict=True)
@@ -263,7 +274,7 @@ def test_prepared_application_preloads_every_applicable_store_before_first_write
         for owner, name in methods:
             wrapped = stack.enter_context(patch.object(owner, name, wraps=getattr(owner, name)))
             manager.attach_mock(wrapped, name)
-        assert apply_confirmed_outcome(_policy(tmp_path, adaptive=adaptive)) == AppliedOutcome()
+        await _dispatch(tmp_path, adaptive=adaptive)
     expected = ["load_feedback", "load_delivery_cache", "load_stats"]
     if adaptive:
         expected.append("load_source_state")
@@ -285,7 +296,7 @@ def test_prepared_application_preloads_every_applicable_store_before_first_write
     assert stats.history == [DailySnapshot("2026-10-07", 0, 1, False)]
 
 
-def test_prepared_application_without_delivered_hashes_never_reads_or_writes(tmp_path: Path) -> None:
+async def test_prepared_application_without_delivered_hashes_never_reads_or_writes(tmp_path: Path) -> None:
     forbidden = Mock(side_effect=AssertionError("zero-coverage application touched accounting"))
     with (
         patch.object(feedback_storage, "load_feedback", forbidden),
@@ -295,9 +306,13 @@ def test_prepared_application_without_delivered_hashes_never_reads_or_writes(tmp
         patch.object(feedback_storage, "atomic_json_write", forbidden),
         patch.object(delivery_state, "atomic_json_write", forbidden),
     ):
-        assert apply_confirmed_outcome(_policy(tmp_path, delivered=False)) == AppliedOutcome()
+        await _dispatch(tmp_path, delivered=False)
     forbidden.assert_not_called()
-    assert not list(tmp_path.iterdir())
+    assert {path.name for path in tmp_path.iterdir()} == {
+        prepared_delivery.READY_FILE, prepared_delivery.CLAIM_FILE, prepared_delivery.RECEIPTS_FILE,
+    }
+    receipts = json.loads((tmp_path / prepared_delivery.RECEIPTS_FILE).read_text())
+    assert receipts["applied"] is True and receipts["confirmed"] == []
 
 
 @pytest.mark.parametrize("filename", LOADERS)
