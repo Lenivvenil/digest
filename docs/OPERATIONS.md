@@ -206,6 +206,9 @@ retained Git/run evidence to establish what actually persisted. Recovery require
 reviewed resolution of that specific prefix; this guide supplies no marker-reset or
 blind resend command.
 
+For direct/card runs, read the [legacy delivery caveats](STATE_AND_EFFECTS.md#legacy-delivery-caveats)
+before rerunning after an uncertain send or a missing archive.
+
 ## Walk through the boundaries
 
 This illustrative walkthrough follows a selected card through the existing contract.

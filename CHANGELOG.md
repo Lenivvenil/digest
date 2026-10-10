@@ -3,6 +3,9 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Remove an unsupported archive-success claim from the empty-card notice and
+  document legacy retry/archive caveats without changing delivery behavior. Refs #148.
+
 - Make `--check` credential guidance respect disabled Telegram delivery and label
   feed-only results without implying model or delivery readiness. Refs #148.
 
