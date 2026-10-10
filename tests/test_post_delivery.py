@@ -1082,6 +1082,7 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
     payload = await _checkpoint(checkpoint)
     assert prepare_post_delivery(Path("config.yaml"), checkpoint) == _marker(checkpoint)
     canonical = _stage_result(payload["evidence"]["bundle_id"])
+    canonical.limitations = ["```\n![diagnostic](https://example.invalid/pixel)\r\n```\u2028```\u2029```"]
     cfg = fixture_config()
     cfg.translation = TranslationConfig(enabled=True, provider="groq", model="test-model")
     presented = replace(canonical, status="empty")
@@ -1101,7 +1102,11 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
         assert "Status: empty" in text and notice in text
         expected_diagnostics = asdict(canonical)
         expected_diagnostics.pop("ranking_audit")
-        assert json.loads(text.split("## Stage diagnostics\n", 1)[1]) == expected_diagnostics
+        serialized = json.dumps(expected_diagnostics, ensure_ascii=False, indent=2)
+        block = text.split("## Stage diagnostics\n\n", 1)[1]
+        assert block == "```json\n" + serialized + "\n```\n"
+        assert not any(line.strip().startswith("```") for line in serialized.split("\n"))
+        assert json.loads(block.removeprefix("```json\n").removesuffix("\n```\n")) == expected_diagnostics
         return "sent"
 
     with (
