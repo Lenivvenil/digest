@@ -24,7 +24,9 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip --version
+          pip install -r requirements-dev.txt
 
       - name: Lint
         run: ruff check digest/ tests/ --output-format=github
