@@ -42,6 +42,10 @@ These contracts do not establish deployment or observed editorial quality.
    packets without that capture retain their existing compatibility behavior.
    If the primary is invalid/unavailable and the secondary only abstains, the
    delivery-used result remains incomplete. It does not become accepted no-news.
+   Disposition contradiction and duplicate-entry diagnostics identify known evidence
+   IDs within their existing error bound. Saved captures retain their original text;
+   new diagnostic text changes packet/envelope hashes, not the standalone review or
+   raw-response identity. Recovery reads the saved capture rather than regenerating it.
 7. **Save, verify and hand off accepted work.** Candidate and category admission have
    distinct editorial rules, then share `persist_accepted_preparation`: save through
    the existing codec, reload and compare the path and full canonical snapshot. The

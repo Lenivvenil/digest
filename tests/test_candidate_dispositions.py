@@ -18,6 +18,7 @@ from digest.config import ReviewConfig
 from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.dispositions import (
     CandidateDisposition,
+    _parse_dispositions,
     capture_review_dispositions,
     validate_disposition_attempt,
 )
@@ -155,11 +156,42 @@ async def test_bad_or_unfinished_dispositions_never_become_editorial_rejections(
     report = result.report
     attempt = result.disposition_attempts[0]
     assert report.reviews[0].status == "ok"  # No extra fallback for incomplete metadata.
+    if kind == "duplicate_id":
+        assert attempt.errors == (f"disposition 2: duplicated disposition evidence id (evidence_id={identity})",)
+    elif kind == "contradiction":
+        assert attempt.errors == (
+            f"disposition 1: disposition contradicts accepted selection (evidence_id={identity})",
+        )
     assert attempt.status == "incomplete"
     assert identity in attempt.unresolved_ids
     assert not any(
         item.evidence_id == identity and item.status in {"not_selected", "duplicate"} for item in attempt.dispositions
     )
+
+
+@pytest.mark.asyncio
+async def test_repeated_unknown_disposition_identity_is_not_echoed() -> None:
+    data = payload()
+    untrusted = "private-response-fragment"
+    data["dispositions"][1]["evidence_id"] = untrusted
+    data["dispositions"][2]["evidence_id"] = untrusted
+    result = await run(data)
+    attempt = result.disposition_attempts[0]
+    assert attempt.errors == (
+        "disposition 1: unknown disposition evidence id",
+        "disposition 2: duplicated disposition evidence id",
+    )
+    assert all(untrusted not in error for error in attempt.errors)
+    assert attempt.status == "incomplete"
+    assert len(attempt.unresolved_ids) == 2
+
+
+def test_constructed_known_identity_keeps_existing_error_size_bound() -> None:
+    identity = "x" * 600
+    text = json.dumps({"dispositions": [{"evidence_id": identity, "status": "selected"}]})
+    parsed, errors = _parse_dispositions(text, {identity}, set(), set())
+    assert not parsed
+    assert errors == ["disposition 0: disposition contradicts accepted selection"]
 
 
 @pytest.mark.asyncio
