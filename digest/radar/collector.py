@@ -6,6 +6,7 @@ import asyncio
 import html as html_lib
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -243,6 +244,7 @@ async def _fetch_feed(
     HTTP 429 respects Retry-After: waits the requested duration (up to
     _MAX_RETRY_AFTER_SECS) and retries once; if the requested wait exceeds
     the maximum, the source is skipped for this run.
+    Missing or invalid numeric delays use a 2s fallback; HTTP dates are not parsed.
     """
     response: PublicResponse | None = None
     for attempt in range(2):
@@ -273,6 +275,8 @@ async def _fetch_feed(
                 try:
                     retry_after = float(retry_after_raw)
                 except (ValueError, TypeError):
+                    retry_after = 2.0
+                if not math.isfinite(retry_after) or retry_after < 0:
                     retry_after = 2.0
                 if retry_after > _MAX_RETRY_AFTER_SECS:
                     logger.warning(

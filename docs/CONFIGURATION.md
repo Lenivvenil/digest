@@ -149,6 +149,10 @@ the project's original use, not mandatory personal-profile presets.
 
 ### Delivery settings
 
+`telegram.enabled` and `obsidian.enabled` accept YAML booleans (`true` or `false`
+without quotes). Invalid explicit values fail configuration loading; omitted flags
+retain their enabled-by-default behavior.
+
 Create a Telegram bot through the official BotFather flow and configure its token and
 intended chat ID in runtime environment variables or Actions secrets. The engine sends
 to `TELEGRAM_CHAT_ID`; it does not select recipients. Set `telegram.enabled: true`

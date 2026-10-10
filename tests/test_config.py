@@ -236,6 +236,27 @@ def test_filters_and_delivery(tmp_path: Path) -> None:
     assert config.obsidian.output_dir == "my_notes"
 
 
+@pytest.mark.parametrize("section", ["telegram", "obsidian"])
+def test_quoted_false_delivery_flag_is_rejected(tmp_path: Path, section: str) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f'\n{section}: {{enabled: "false"}}\n')
+    with pytest.raises(ValueError, match=f"'enabled' in section '{section}' must be a boolean"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("value", ["null", "0"])
+def test_present_nonboolean_delivery_flag_is_not_an_omitted_default(tmp_path: Path, value: str) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + f"\ntelegram: {{enabled: {value}}}\n")
+    with pytest.raises(ValueError, match="must be a boolean"):
+        load_config(path)
+
+
+def test_delivery_sections_without_enabled_keep_defaults(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\ntelegram: {}\nobsidian: {}\n")
+    config = load_config(path)
+    assert config.telegram.enabled is True
+    assert config.obsidian.enabled is True
+
+
 def test_source_fields(tmp_path: Path) -> None:
     cfg_path = _write_config(
         tmp_path,

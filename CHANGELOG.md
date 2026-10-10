@@ -3,6 +3,11 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Reject malformed explicit Telegram/Markdown enabled flags instead of coercing
+  quoted `"false"` into enabled delivery; omitted defaults are unchanged. Refs #148.
+- Keep non-finite or negative feed Retry-After values inside the existing bounded
+  retry policy, preserving successful peer sources and the 2s invalid-header fallback. Refs #148.
+
 - Remove an unsupported archive-success claim from the empty-card notice and
   document legacy retry/archive caveats without changing delivery behavior. Refs #148.
 
