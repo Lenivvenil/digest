@@ -542,6 +542,14 @@ def test_legacy_disabled_wire_shape_and_prompt_are_unchanged(tmp_path: Path) -> 
     )
     enabled = build_review_messages(bundle, config.review, "en", sources=config.sources, closing=config.closing)
     assert enabled != messages
+    rubric = enabled[0]["content"]
+    assert "identify the evidenced positive basis" in rubric
+    assert "The quote must support that basis" in rubric
+    assert "routine administrative step alone is insufficient" in rubric
+    assert "Wonder and community connection need not identify a beneficiary or measured result" in rubric
+    assert "Announcements remain eligible" in rubric
+    assert "null means no suitable story in this packet" in rubric
+    assert "identify the evidenced positive basis" not in messages[0]["content"]
     # Exact old enabled request identity cannot authorize a fresh v2 review reuse.
     assert hashlib.sha256(json.dumps(enabled, sort_keys=True).encode()).hexdigest() != (
         "2e3713ad691fb3fec34a9b5c003802866bec586516947c1e251347c38e34065a"
