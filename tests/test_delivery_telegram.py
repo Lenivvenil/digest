@@ -41,8 +41,10 @@ class TestEscapeMarkdownV2:
     def test_all_special_chars(self) -> None:
         special = r"\_*[]()~`>#+-=|{}.!"
         result = escape_markdownv2(special)
-        for ch in r"\_*[]()~`>#+-=|{}.!":
-            assert f"\\{ch}" in result
+        assert result == "".join("\\" + ch for ch in special)
+
+    def test_backslash_before_reserved_text_and_at_end(self) -> None:
+        assert escape_markdownv2(r"\*bold\* unpaired\* and tail" + "\\") == r"\\\*bold\\\* unpaired\\\* and tail\\"
 
     def test_empty_string(self) -> None:
         assert escape_markdownv2("") == ""
@@ -61,6 +63,17 @@ class TestToMarkdownV2:
         assert "*bold*" in result
         assert "[link](https://x.com)" in result
         assert "5\\.99" in result
+
+    def test_link_label_and_destination_keep_distinct_escape_rules(self) -> None:
+        result = to_markdownv2(r"[label\*](https://x.test/a\b)")
+        assert result == r"[label\\\*](https://x.test/a\\b)"
+
+
+def test_card_label_and_destination_keep_distinct_escape_rules() -> None:
+    from digest.presentation.telegram import render_article_card
+
+    card = render_article_card(r"label\*", r"https://x.test/a\b)", "source", "category", "summary", _make_config())
+    assert card.text.startswith(r"[label\\\*](https://x.test/a\\b\))" + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +544,10 @@ class TestSendCompactIssue:
         top = [
             _make_top(title="One", link="https://a.test/1", summary="First.", source="A"),
             _make_top(title="Two", link="https://a.test/2", summary="Second.", source="B"),
-            _make_top(title="Three 🚀 [complete]", link=long_url, summary="🧭_detail " * 90, source="C"),
+            _make_top(
+                title="Three 🚀 [complete]", link=long_url,
+                summary=(r"🧭_detail \*literal\* " + "\\" * 3) * 90, source="C",
+            ),
         ]
         notice = "Review: complete. Translation: original."
         config = self.config()
@@ -549,7 +565,8 @@ class TestSendCompactIssue:
             result = await send_compact_issue(top, config, notice=notice, before_send=callback)
 
         texts = [json.loads(call.request.content)["text"] for call in route.calls]
-        recovered = re.sub(r"\\(.)", r"\1", "".join(texts))
+        assert all((len(text) - len(text.rstrip("\\"))) % 2 == 0 for text in texts)
+        recovered = "".join(re.sub(r"\\(.)", r"\1", text) for text in texts)
         expected = "\n\n".join(
             f"{index}. {article.title}\n{article.summary}\n{article.source}\n{article.link}"
             for index, article in enumerate(top, 1)
@@ -781,6 +798,8 @@ def test_delivery_compatibility_exports_keep_their_actual_owner_identity() -> No
 async def test_legacy_markdown_fallback_retains_payload_and_http_only_acceptance() -> None:
     api_url = "https://api.telegram.org/botfake-token/sendMessage"
     keyboard = {"inline_keyboard": [[{"text": "Vote", "url": "https://t.me/example?start=vote_g_abcd"}]]}
+    literal = r"A \*qualified\* point" + "\\"
+    encoded = escape_markdownv2(literal)
     with respx.mock:
         route = respx.post(api_url).mock(
             side_effect=[
@@ -789,19 +808,19 @@ async def test_legacy_markdown_fallback_retains_payload_and_http_only_acceptance
             ]
         )
         async with httpx.AsyncClient() as client:
-            await _send_chunk(client, api_url, "123", r"A \*qualified\* point", True, keyboard)
+            await _send_chunk(client, api_url, "123", encoded, True, keyboard)
     assert route.call_count == 2
     first, fallback = [json.loads(call.request.content) for call in route.calls]
     assert first == {
         "chat_id": "123",
-        "text": r"A \*qualified\* point",
+        "text": encoded,
         "parse_mode": "MarkdownV2",
         "disable_notification": True,
         "reply_markup": keyboard,
     }
     assert fallback == {
         "chat_id": "123",
-        "text": "A *qualified* point",
+        "text": literal,
         "disable_notification": True,
         "reply_markup": keyboard,
     }

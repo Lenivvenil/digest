@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Escape literal backslashes in Telegram MarkdownV2 text while preserving saved
+  ready payloads and the separate link-destination encoding rules. Refs #148.
 - Identify known evidence items in bounded disposition contradiction/duplicate errors
   without retaining raw output or changing editorial decisions. Refs #55.
 - Reject malformed explicit Telegram/Markdown enabled flags instead of coercing

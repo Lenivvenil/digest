@@ -391,6 +391,10 @@ third-party log sinks or deliberate logging of raw response objects. Review the
 [ADR0017 continuation](decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09)
 when changing the HTTP dependencies or transport entrypoints.
 
+Telegram literal text escapes backslashes before MarkdownV2 interpretation. Newly
+rendered payload lengths and chunk boundaries can change; saved ready payloads
+remain authoritative and are sent byte-for-byte without re-rendering.
+
 Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
 entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
 an excerpt into a full article or guarantee immunity to all malicious instructions.
