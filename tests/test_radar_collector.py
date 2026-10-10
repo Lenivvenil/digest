@@ -977,6 +977,35 @@ async def test_fetch_feed_429_retry_after_honoured(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("header", ["Infinity", "NaN", "-1", "Wed, 21 Oct 2026 07:28:00 GMT"])
+async def test_invalid_retry_after_is_bounded_and_preserves_successful_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, header: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    limited = make_source(name="Limited", url="https://example.com/limited")
+    healthy = make_source(name="Healthy", url="https://example.com/healthy")
+    calls: list[str] = []
+
+    async def fetch(url: str, **_kwargs: object) -> MagicMock:
+        calls.append(url)
+        if url == limited.url:
+            return make_http_response_with_headers(b"", 429, {"Retry-After": header})
+        assert url == healthy.url
+        return make_http_response(make_rss_sample().encode())
+
+    with (
+        patch("digest.radar.collector.fetch_public", AsyncMock(side_effect=fetch)),
+        patch("asyncio.sleep", AsyncMock()) as sleep,
+    ):
+        result, _ = await collect(_make_config(sources=[limited, healthy]))
+    assert calls.count(limited.url) == 2
+    assert calls.count(healthy.url) == 1
+    sleep.assert_awaited_once_with(2.0)
+    assert result["Tech"]
+    assert all(article.source == healthy.name for article in result["Tech"])
+
+
+@pytest.mark.asyncio
 async def test_fetch_feed_429_retry_after_exceeds_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP 429 with Retry-After exceeding _MAX_RETRY_AFTER_SECS: source skipped immediately."""
     monkeypatch.chdir(tmp_path)

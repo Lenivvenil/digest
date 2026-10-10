@@ -208,6 +208,31 @@ class TestCleanSummary:
 
 
 @pytest.mark.asyncio
+async def test_malformed_delivery_flag_fails_cli_before_application_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        'llm:\n  providers:\n    - name: groq\n      model: example\n      role: [summarize]\n'
+        'sources:\n  - name: Example\n    url: https://example.com/feed\n'
+        '    category: Tech\n    enabled: true\ntelegram:\n  enabled: "false"\n',
+        encoding="utf-8",
+    )
+    with (
+        patch("digest.application.execution.ModelExecution") as execution,
+        patch("digest.application.legacy.run_legacy", AsyncMock()) as legacy,
+        patch("digest.application.preparation.prepare_edition", AsyncMock()) as prepare,
+    ):
+        assert await main(["--config", str(path)]) == 1
+    assert "'enabled' in section 'telegram' must be a boolean" in caplog.text
+    execution.assert_not_called()
+    legacy.assert_not_awaited()
+    prepare.assert_not_awaited()
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.asyncio
 class TestCheckConfig:
     async def test_valid_config(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],

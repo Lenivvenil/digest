@@ -603,7 +603,7 @@ def _load_telegram(data: dict[str, Any]) -> TelegramConfig:
     delivery_mode = section.get("delivery_mode", "cards")
     if delivery_mode not in ("cards", "compact"):
         raise ValueError("telegram.delivery_mode must be cards or compact.")
-    enabled = bool(section.get("enabled", True))
+    enabled = _require_bool(section, "enabled", "telegram") if "enabled" in section else True
     required = section.get("required", False)
     if not isinstance(required, bool):
         raise ValueError("telegram.required must be a boolean.")
@@ -627,7 +627,7 @@ def _load_obsidian(data: dict[str, Any]) -> ObsidianConfig:
         return ObsidianConfig()
     if not isinstance(section, dict):
         raise ValueError("Config field 'obsidian' must be a mapping.")
-    enabled = bool(section.get("enabled", True))
+    enabled = _require_bool(section, "enabled", "obsidian") if "enabled" in section else True
     output_dir = str(section.get("output_dir", "digests"))
     return ObsidianConfig(enabled=enabled, output_dir=output_dir)
 
