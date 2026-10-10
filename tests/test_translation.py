@@ -696,6 +696,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
     record = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert record["schema_version"] == 2 and record["status"] == "translated"
     assert "http_rejection" not in record
+    assert "validation_reason" not in record
     assert record["target_language"] == "de"
     assert len(record["response_sha256"]) == 64 and "response" not in record
     assert "closing.summary" not in record["required_fields"]
@@ -1100,14 +1101,64 @@ async def test_rejection_overflow_preserves_exact_combined_failure_bytes(
     assert next((tmp_path / "bounded").glob("*.json")).read_bytes() == business_bytes
 
 
-def test_unavailable_rejection_projection_is_omitted_without_mutating_record() -> None:
+def test_unavailable_failure_projection_is_omitted_without_mutating_record(monkeypatch: pytest.MonkeyPatch) -> None:
     from digest.llm import HTTPRejection
-    from digest.translation import _with_http_rejection
+    from digest.translation import _with_failure_diagnostics
 
     record = {"schema_version": 1, "status": "incomplete"}
-    assert _with_http_rejection(record, []) is record
-    assert _with_http_rejection(record, [HTTPRejection(), HTTPRejection()]) is record
-    assert _with_http_rejection(record, [HTTPRejection(provider_code="a" * 1024)]) is record
+    assert _with_failure_diagnostics(record, []) is record
+    assert _with_failure_diagnostics(record, [HTTPRejection(), HTTPRejection()]) is record
+    assert _with_failure_diagnostics(record, [HTTPRejection(provider_code="a" * 1024)]) is record
     with patch("digest.translation.asdict", side_effect=TypeError("projection failed")):
-        assert _with_http_rejection(record, [HTTPRejection(http_status=429)]) is record
+        assert _with_failure_diagnostics(record, [HTTPRejection(http_status=429)]) is record
     assert "http_rejection" not in record
+    assert _with_failure_diagnostics(record, [], "coverage") == {**record, "validation_reason": "coverage"}
+    assert "validation_reason" not in record
+    monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", len(json.dumps(record, indent=2).encode("utf-8")))
+    assert _with_failure_diagnostics(record, [], "coverage") is record
+
+
+@pytest.mark.parametrize(("raw", "reason"), [
+    ("SENTINEL_PRIVATE_RESPONSE", "extraction"),
+    ('{"other": []}', "envelope"),
+    ('{"translations": [{"id": "a"}]}', "field_shape"),
+    ('{"translations": [{"id": "unknown", "text": "20 clients."}]}', "identity_or_text"),
+    ('{"translations": [{"id": "a", "text": "21 clients."}]}', "protected_content"),
+    ('{"translations": []}', "coverage"),
+])
+async def test_validation_reason_preserves_safe_failure_and_terminal_cache(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, raw: str, reason: str,
+) -> None:
+    fields = {"a": "20 clients."}
+    cfg, execution = config(), ModelExecution()
+    with patch("digest.translation.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as call:
+        first = await translate_fields(fields, cfg, tmp_path, execution=execution)
+        path = next(tmp_path.glob("*.json"))
+        record = json.loads(path.read_text())
+        assert (record["error"], record["error_kind"], record["validation_reason"]) == (
+            "ValueError", "contract_invalid", reason)
+        before = path.read_bytes()
+        repeated = await translate_fields(fields, cfg, tmp_path, execution=execution)
+        assert path.read_bytes() == before
+        del record["validation_reason"]  # Historical records lack this optional diagnostic.
+        path.write_text(json.dumps(record, indent=2))
+        legacy_bytes = path.read_bytes()
+        legacy = await translate_fields(fields, cfg, tmp_path, execution=execution)
+        assert path.read_bytes() == legacy_bytes
+    assert first.fields == repeated.fields == legacy.fields == fields
+    assert first.status == repeated.status == legacy.status == "fallback"
+    assert repeated.reasons == legacy.reasons == ["previous_attempt_incomplete"]
+    call.assert_awaited_once()
+    assert "SENTINEL_PRIVATE_RESPONSE" not in before.decode() + caplog.text
+    assert "_TranslationValidationError" not in before.decode() + caplog.text
+
+
+async def test_validation_reason_is_not_projected_outside_contract_phase(tmp_path: Path) -> None:
+    from digest.translation import _TranslationValidationError
+
+    with patch("digest.translation.complete", AsyncMock(side_effect=_TranslationValidationError("coverage", "safe"))):
+        result = await translate_fields({"a": "Original."}, config(), tmp_path, execution=ModelExecution())
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert result.status == "fallback"
+    assert record["error"] == "ValueError" and record["error_kind"] == "provider_failure"
+    assert "validation_reason" not in record

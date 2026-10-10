@@ -89,23 +89,43 @@ def _invariants(text: str) -> tuple[Counter[str], Counter[str], Counter[str]]:
     return Counter(_URL.findall(text)), Counter(_NUMBER.findall(text)), Counter(_QUOTE.findall(text))
 
 
+_ValidationReason = Literal[
+    "extraction", "envelope", "field_shape", "identity_or_text", "protected_content", "coverage",
+]
+
+
+class _TranslationValidationError(ValueError):
+    def __init__(self, reason: _ValidationReason, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _translation_json(text: str) -> object:
+    try:
+        return _extract_json(text)
+    except ValueError:
+        raise _TranslationValidationError("extraction", "No valid translation JSON found.") from None
+
+
 def _parse(text: str, originals: dict[str, str]) -> dict[str, str]:
-    raw = _extract_json(text)
+    raw = _translation_json(text)
     if not isinstance(raw, dict) or set(raw) != {"translations"} or not isinstance(raw["translations"], list):
-        raise ValueError("Invalid translation envelope.")
+        raise _TranslationValidationError("envelope", "Invalid translation envelope.")
     result: dict[str, str] = {}
     for item in raw["translations"]:
         if not isinstance(item, dict) or set(item) != {"id", "text"}:
-            raise ValueError("Invalid translation field.")
+            raise _TranslationValidationError("field_shape", "Invalid translation field.")
         identity, translated = item["id"], item["text"]
         if (not isinstance(identity, str) or identity not in originals or identity in result
                 or not isinstance(translated, str) or not translated.strip()):
-            raise ValueError("Invalid translation identity or text.")
+            raise _TranslationValidationError("identity_or_text", "Invalid translation identity or text.")
         if _invariants(translated) != _invariants(originals[identity]):
-            raise ValueError("Translation changed a protected URL, numeric literal or quotation.")
+            raise _TranslationValidationError(
+                "protected_content", "Translation changed a protected URL, numeric literal or quotation.",
+            )
         result[identity] = translated
     if set(result) != set(originals):
-        raise ValueError("Incomplete translation field coverage.")
+        raise _TranslationValidationError("coverage", "Incomplete translation field coverage.")
     return result
 
 
@@ -223,9 +243,9 @@ def _parse_batch(
 ) -> tuple[dict[str, str], TranslationResult | None]:
     if required == requested:
         return _parse(text, required), None
-    raw = _extract_json(text)
+    raw = _translation_json(text)
     if not isinstance(raw, dict) or set(raw) != {"translations"} or not isinstance(raw["translations"], list):
-        raise ValueError("Invalid translation envelope.")
+        raise _TranslationValidationError("envelope", "Invalid translation envelope.")
     main: list[object] = []
     optional: list[object] = []
     for item in raw["translations"]:
@@ -280,18 +300,25 @@ def _check_combined_size(record: dict[str, object]) -> None:
         raise ValueError("Combined translation cache record exceeds its byte budget.")
 
 
-def _with_http_rejection(record: dict[str, object], rejections: list[HTTPRejection]) -> dict[str, object]:
-    """Add optional rejection facts only after the existing failure-record checks."""
+def _with_failure_diagnostics(
+    record: dict[str, object], rejections: list[HTTPRejection], reason: _ValidationReason | None = None,
+) -> dict[str, object]:
+    """Project optional safe facts after existing failure-record sizing."""
     try:
+        candidate = record
         if len(rejections) == 1:
             facts = asdict(rejections[0])
-            candidate = {**record, "http_rejection": facts}
+            enriched = {**candidate, "http_rejection": facts}
             if (len(json.dumps(facts, indent=2).encode("utf-8")) <= 1024
-                    and len(json.dumps(candidate, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
-                return candidate
+                    and len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
+                candidate = enriched
+        if reason is not None:
+            enriched = {**candidate, "validation_reason": reason}
+            if len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES:
+                candidate = enriched
+        return candidate
     except Exception:
-        pass
-    return record
+        return record
 
 
 def _persist_batch_translation(
@@ -455,13 +482,16 @@ async def translate_fields(
                 result.fields.update(translated)
                 result.optional = optional or result.optional
             except (Exception, asyncio.CancelledError) as exc:
-                record.update(status="incomplete", error=type(exc).__name__, error_kind=phase)
+                error = "ValueError" if isinstance(exc, _TranslationValidationError) else type(exc).__name__
+                reason = (exc.reason if isinstance(exc, _TranslationValidationError)
+                          and phase == "contract_invalid" else None)
+                record.update(status="incomplete", error=error, error_kind=phase)
                 _check_combined_size(record)
-                atomic_json_write(path, _with_http_rejection(record, http_rejections))
+                atomic_json_write(path, _with_failure_diagnostics(record, http_rejections, reason))
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 result.reasons.append("translation_failed")
-                logger.warning("Translation retained canonical text after %s", type(exc).__name__)
+                logger.warning("Translation retained canonical text after %s", error)
         except (OSError, ValueError, TypeError):
             result.reasons.append("cache_unavailable_or_invalid")
     if result.reasons:

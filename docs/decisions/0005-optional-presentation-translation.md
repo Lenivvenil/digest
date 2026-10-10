@@ -117,3 +117,18 @@ changing cache bytes, fallback or allowance. Absent facts mean unknown. Successf
 reserved and historical cache records are unchanged and are never rerun to collect
 metadata. This establishes neither complete request accounting nor quota cause,
 translation fidelity or broader #55 runtime acceptance.
+
+## Optional validation reason (#55)
+
+Failed required translation batches may retain `validation_reason`: one of
+`extraction`, `envelope`, `field_shape`, `identity_or_text`, `protected_content`, or
+`coverage`, owned by the existing parser. It is present only for that parser's
+controlled error during `contract_invalid`; legacy `error="ValueError"` remains.
+The optional field is added after normal record sizing and omitted if it cannot
+fit. Absence means unavailable, including historical records. Old readers ignore
+it and failed reservations remain terminal; no retry or prompt binding changes.
+
+Only the closed code is retained, never response excerpts or exception text.
+The optional closer's existing `closing_contract_invalid` fallback is separate
+and is not further diagnosed by this failed-batch field. These reasons identify
+structural rejection, not semantic fidelity or the cause of earlier failures.
