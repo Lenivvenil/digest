@@ -395,6 +395,12 @@ Telegram literal text escapes backslashes before MarkdownV2 interpretation. Newl
 rendered payload lengths and chunk boundaries can change; saved ready payloads
 remain authoritative and are sent byte-for-byte without re-rendering.
 
+Markdown article-link title labels are literal source text at the card, quotation
+heading and review-preview sites. This changes new Markdown/CLI escape spelling,
+not canonical titles, link destinations, review JSON or intentionally formatted model
+prose. It does not constrain other Markdown fields or URL targets; saved output is
+never rewritten by this presentation rule.
+
 Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
 entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
 an excerpt into a full article or guarantee immunity to all malicious instructions.
