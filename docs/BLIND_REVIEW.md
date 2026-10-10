@@ -181,6 +181,7 @@ them. Never infer that a message was not sent merely because a later file is abs
 | --- | --- | --- |
 | No ready file, claim or receipts; no active accepted checkpoint | No recoverable prepared edition is present. | Use the normal preparation path within its existing budget. Inspect collection/review outcomes if it again returns no ready edition. |
 | Valid matching `pending_preparation.json`; no active ready/claimed edition | Canonical work was accepted but presentation/freeze is unfinished, or it is an accepted empty result. | Run preparation for the same intended day. It resumes accepted work; empty acceptance remains no-ready for that day. Do not rerun selection to replace it. |
+| Missing, replaced or mismatched accepted preparation reference | The active saved work does not match the supplied reference, or its requested publication day is invalid. | Inspect and preserve the checkpoint and failure evidence. Do not clear/rewrite it to bypass verification. No new ready/receipt hold is created; category fetch statistics/map may already have been written before entry verification failed. |
 | `selection_incomplete`, without accepted preparation | A usable editorial result was not accepted. | Retain candidate/review evidence and diagnose the recorded failure. A later admitted preparation may continue; the result must not be reported as editorial rejection or accepted no-news. |
 | Unclaimed `pending_window` edition | Frozen content targets a future UTC day. | Preserve it and wait for the publication window. Do not claim or send early. |
 | Unclaimed eligible `ready` edition | Content is frozen but not yet reserved. | Verify the remote ready/evidence revision, then use the normal claim/persist/send sequence. Claim validation still checks referenced bytes. |
@@ -679,9 +680,9 @@ Optional supplementary failures must remain visible without erasing primary rece
 | Which scenario runs? | `main.main`, `application/execution.py` |
 | What is recovered before collection? | `application/preparation.py`, `edition_runtime.recover_preparation` |
 | Which primary/fallback result is usable? | `application/review.py:run_primary_review`, `domain/editorial/attempts.py:resolve_review`; saved records enter through `restore_review` |
-| What does accepted storage validate? | `edition_runtime.accept_preparation`, `preparation.py:load_accepted_preparation` |
-| Who completes category preparation? | `application.preparation._prepare_category_edition` owns its historical save/empty decisions; see the [category contract](ARCHITECTURE.md#preparing-an-edition). |
-| What does presentation preserve or hold? | `edition_runtime.present_preparation`; legacy callers retain the default snapshot entrypoint `finish_preparation`, without an editorial-completion flag. |
+| What does accepted storage validate? | `preparation.persist_accepted_preparation` saves and reads back canonical work; `load_accepted_preparation` verifies the existing codec. |
+| Who completes category preparation? | `application.preparation._accept_category_preparation` owns historical save/empty decisions; the coordinator orders effects; see the [category contract](ARCHITECTURE.md#preparing-an-edition). |
+| What does presentation preserve or hold? | `edition_runtime.present_preparation` verifies the supplied path/body hash/full snapshot against the current `.cache` checkpoint before any presentation effect. |
 | What can claim/send/inspect do? | `application/prepared_delivery.py` |
 | Which bytes and references are checked? | `adapters/storage/edition.py`, `domain/delivery/edition.py` |
 | What does confirmed coverage change? | `application/delivery.py`, then `application/prepared_delivery.py:mark_applied` |

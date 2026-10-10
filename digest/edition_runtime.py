@@ -113,16 +113,6 @@ def recover_preparation(
     return accepted if accepted is not None else FreshPreparation.REQUIRED
 
 
-def existing_preparation(
-    config: Any,
-    feedback: int = 0,
-    publication_date: date | None = None,
-) -> RunStats | None:
-    """Compatibility projection of edition inspection."""
-    existing = inspect_preparation(publication_date)
-    return preparation_stats(existing, feedback) if isinstance(existing, ExistingEdition) else None
-
-
 async def present_preparation(
     accepted: AcceptedPreparation,
     config: Any,
@@ -131,52 +121,21 @@ async def present_preparation(
     verbose: bool = False,
     publication_date: date | None = None,
 ) -> FrozenPreparation | NoEdition:
-    """Present exactly the canonical work verified at acceptance or recovery."""
-    return await _present_snapshot(
-        accepted.snapshot,
-        config,
-        execution=execution,
-        verbose=verbose,
-        publication_date=publication_date,
-    )
-
-
-async def finish_preparation(
-    snapshot: PreparationSnapshot,
-    config: Any,
-    feedback: int = 0,
-    *,
-    execution: ModelExecution,
-    verbose: bool = False,
-    publication_date: date | None = None,
-) -> RunStats:
-    """Legacy snapshot API; ordinary preparation uses a verified accepted reference."""
-    outcome = await _present_snapshot(
-        snapshot,
-        config,
-        execution=execution,
-        verbose=verbose,
-        publication_date=publication_date,
-    )
-    return preparation_stats(outcome, feedback)
-
-
-async def _present_snapshot(
-    snapshot: PreparationSnapshot,
-    config: Any,
-    *,
-    execution: ModelExecution,
-    verbose: bool = False,
-    publication_date: date | None = None,
-) -> FrozenPreparation | NoEdition:
-    """Shared presentation implementation; editorial acceptance belongs to the caller."""
+    """Verify the active accepted reference before any presentation or readiness effect."""
     from digest.application.prepared_delivery import prepare_edition
     from digest.application.publication import assemble_publication
     from digest.application.supplement import archive_fragment, pending_fragment
     from digest.delivery import write_digest
-    from digest.preparation import clear_preparation
+    from digest.preparation import clear_preparation, load_accepted_preparation
     from digest.presentation.telegram import SupplementPlacement, render_compact_publication
 
+    restored = load_accepted_preparation(".cache", publication_date=publication_date)
+    if restored is None or restored != accepted:
+        raise ValueError(
+            "Accepted preparation reference differs from the current checkpoint; "
+            "inspect and preserve canonical work before resuming."
+        )
+    snapshot = restored.snapshot
     review_status = snapshot.review_report.status if snapshot.review_report is not None else "not_requested"
     if not snapshot.top_articles:
         logger.info("Edition preparation: no selected articles; no ready edition created")
@@ -336,31 +295,6 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
     return 0 if result.complete else 1
 
 
-async def resume_preparation(
-    config: Any,
-    feedback: int,
-    *,
-    execution: ModelExecution,
-    verbose: bool,
-    publication_date: date | None = None,
-) -> RunStats | None:
-    from digest.preparation import AcceptedPreparation
-
-    recovered = recover_preparation(publication_date)
-    if isinstance(recovered, ExistingEdition):
-        return preparation_stats(recovered, feedback)
-    if isinstance(recovered, AcceptedPreparation):
-        outcome = await present_preparation(
-            recovered,
-            config,
-            verbose=verbose,
-            publication_date=publication_date,
-            execution=execution,
-        )
-        return preparation_stats(outcome, feedback)
-    return None
-
-
 def validate_cli(args: Any) -> None:
     if args.edition_date:
         if not args.prepare_edition or date.fromisoformat(args.edition_date).isoformat() != args.edition_date:
@@ -425,7 +359,7 @@ def accept_preparation(
     publication_date: date | None = None,
 ) -> AcceptedPreparation | IncompleteSelection:
     """Decide, save and verify the exact canonical work before any candidate handoff."""
-    from digest.preparation import load_accepted_preparation, save_preparation
+    from digest.preparation import load_accepted_preparation, persist_accepted_preparation
 
     if snapshot.review_report != result.report:
         raise ValueError("Preparation does not bind the resolved candidate review.")
@@ -436,8 +370,4 @@ def accept_preparation(
         # statistics, including incomplete work. Presence never proves acceptance.
         load_accepted_preparation(cache_dir, publication_date=publication_date)
         return IncompleteSelection(review_status)
-    path = save_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
-    accepted = load_accepted_preparation(cache_dir, publication_date=publication_date)
-    if accepted is None or accepted.path != path or accepted.snapshot != snapshot:
-        raise ValueError("Accepted preparation readback differs from the saved canonical work; handoff blocked.")
-    return accepted
+    return persist_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)

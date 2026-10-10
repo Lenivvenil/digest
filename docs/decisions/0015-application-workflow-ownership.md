@@ -91,8 +91,43 @@ distinct, and legacy/direct/optional scenarios keep their current guarantees unt
 explicitly migrated. Shared trust-boundary repairs precede deeper ownership changes.
 
 This decision does not itself change code, persisted formats, command contracts,
-transport behavior or accounting recovery. In particular, strict prepared accounting
-preflight is a planned amendment to ADR0017, not its current implemented policy.
+transport behavior or accounting recovery. Strict prepared accounting
+preflight is implemented by the scoped ADR0017 slice-1 amendment. Verified category
+acceptance is implemented by the slice-2 continuation below; receipt-owned publication
+remains later work.
 Each implementing change must retire its former authority, preserve wire/rollback
 compatibility and document any intentional behavior change. Reviewed release evidence
 and ordinary product acceptance are separate requirements.
+
+
+## Verified category acceptance — #220 slice 2
+
+Candidate and category admission retain distinct policies. Candidate acceptance still
+binds its resolved review and required disposition evidence; category acceptance keeps
+its historical report order, selected-card and empty-work rules. Both successful
+paths now use `preparation.persist_accepted_preparation`, which saves through the
+unchanged codec, reloads, compares saved path/full snapshot and returns the restored
+`AcceptedPreparation`. Failed readback retains evidence and blocks the handoff.
+
+`edition_runtime.present_preparation` reloads the requested day from `.cache` before
+any empty return or presentation effect. It compares the full path/body-hash/snapshot
+reference and uses the freshly restored snapshot. The hash remains the canonical
+stored body digest, not a hash of formatted file bytes. This is local verification,
+not remote persistence, deep immutability, a concurrent-writer lock or power-loss
+transaction. Category statistics/map effects occur between the two verification reads;
+a later entry failure preserves that already-written prefix.
+
+Internal API retirement is deliberate: `finish_preparation` and `_present_snapshot`
+no longer provide a raw-snapshot archive/freeze route. `existing_preparation` is removed
+in favor of `inspect_preparation` plus `preparation_stats`; `resume_preparation` is
+removed in favor of `recover_preparation` plus accepted presentation. The supported
+CLI/run API, existing preparation/ready/claim/receipt formats and lower-level freeze
+primitive remain unchanged. `load_preparation` remains the useful codec projection.
+
+Category prose, trends, optional perspectives, no-report mode, full-source optionality,
+closing/source-credit decisions and direct/discovery scenarios retain their contracts.
+The [current preparation flow](../ARCHITECTURE.md#preparing-an-edition) records exact
+effects and failure limits. Receipt dispatch/application ownership and its three
+remaining retirements belong to slice 3. Review, exact-head checks, rollout and natural
+product acceptance are separately recorded in [#220](https://github.com/Lenivvenil/digest/issues/220).
+Rollback uses a compatible reviewed code/pin while retaining canonical work and receipts.

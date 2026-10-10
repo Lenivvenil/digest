@@ -583,7 +583,7 @@ async def test_main_preparation_emits_executable_batch_in_both_reading_branches(
         ),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
         patch("digest.llm.complete", side_effect=generate),
-        patch("digest.edition_runtime.finish_preparation", side_effect=AssertionError("No publication")),
+        patch("digest.edition_runtime.present_preparation", side_effect=AssertionError("No publication")),
     ):
         stats = await _run("config.yaml", False, False, False, prepare_only=True, feedback_precollected=True)
     batch_path = Path(

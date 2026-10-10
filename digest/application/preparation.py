@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from digest.domain.editorial.candidates import CandidatePacket, CandidateProgress
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.domain.feedback.values import FeedbackStore
+    from digest.edition_runtime import NoEdition
     from digest.preparation import AcceptedPreparation, PreparationSnapshot
     from digest.radar.collector import Article, CollectionInventory, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary, CategorySummary
@@ -473,6 +474,28 @@ def _empty_work_stats(work: EmptyWork, run: PreparationRun, collected: Collected
     return _empty_stats(len(run.config.enabled_sources), run.feedback_collected, articles)
 
 
+def _accept_category_preparation(
+    snapshot: PreparationSnapshot,
+    *,
+    cache_dir: str,
+    publication_date: date | None,
+) -> AcceptedPreparation | NoEdition:
+    """Keep category/report-order completion separate from candidate dispositions."""
+    from digest.domain.editorial.attempts import restore_review
+    from digest.edition_runtime import NoEdition
+    from digest.preparation import persist_accepted_preparation
+
+    if not snapshot.top_articles:
+        report = snapshot.review_report
+        if report is None:
+            return NoEdition("no_ready", "not_requested")
+        if restore_review(report).chosen.review.status != "abstained":
+            return NoEdition("selection_incomplete", report.status)
+        if not any(review.slot == "primary" and review.status == "abstained" for review in report.reviews):
+            return NoEdition("no_ready", report.status)
+    return persist_accepted_preparation(snapshot, cache_dir=cache_dir, publication_date=publication_date)
+
+
 async def _prepare_category_edition(
     work: CategoryAnalysis,
     collected: CollectedArticles,
@@ -481,30 +504,12 @@ async def _prepare_category_edition(
     verbose: bool,
     publication_date: date | None,
 ) -> RunStats:
-    """Explicit legacy boundary: preserve its save/no-readback and empty-success behavior."""
+    """Admit category work, record fetch effects, then present its verified reference."""
     from digest.adapters.storage.sources import save_source_category_map
-    from digest.domain.editorial.attempts import restore_review
-    from digest.edition_runtime import NoEdition, finish_preparation, preparation_stats
-    from digest.preparation import save_preparation
+    from digest.edition_runtime import NoEdition, preparation_stats, present_preparation
 
     snapshot = _snapshot(work, collected, run.config)
-    report = snapshot.review_report
-    empty: NoEdition | None = None
-    if not snapshot.top_articles:
-        # Category completion follows report order; durable empty acceptance also
-        # requires a primary abstention. Neither rule is candidate acceptance.
-        complete = report is None or restore_review(report).chosen.review.status == "abstained"
-        empty = NoEdition(
-            "no_ready" if complete else "selection_incomplete",
-            report.status if report is not None else "not_requested",
-        )
-    if snapshot.top_articles or (
-        empty is not None
-        and empty.status == "no_ready"
-        and report is not None
-        and any(review.slot == "primary" and review.status == "abstained" for review in report.reviews)
-    ):
-        save_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
+    accepted = _accept_category_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
     _save_prepared_fetch_stats(
         run.source_stats,
         collected.fetch_metrics,
@@ -514,22 +519,22 @@ async def _prepare_category_edition(
         collected.collection_failed,
     )
     save_source_category_map(run.config.enabled_sources, ".cache")
-    if empty is not None:
-        if empty.status == "selection_incomplete":
+    if isinstance(accepted, NoEdition):
+        if accepted.status == "selection_incomplete":
             logging.getLogger(__name__).error(
                 "Selection did not complete; candidate evidence remains pending and no edition is ready."
             )
         else:
             logging.getLogger(__name__).info("Edition preparation: no selected articles; no ready edition created")
-        return preparation_stats(empty, run.feedback_collected)
-    return await finish_preparation(
-        snapshot,
+        return preparation_stats(accepted, run.feedback_collected)
+    presented = await present_preparation(
+        accepted,
         run.config,
-        run.feedback_collected,
         verbose=verbose,
         publication_date=publication_date,
         execution=run.execution,
     )
+    return preparation_stats(presented, run.feedback_collected)
 
 
 async def prepare_edition(
