@@ -292,6 +292,20 @@ Prepared transport additionally requires a positive message ID and exact matchin
 chat, persists chunk receipts and holds uncertain/unapplied outcomes. Its adapter has
 no retry or plaintext fallback.
 
+### Legacy delivery caveats
+
+**Cards can duplicate after a timeout or interruption.** Their retries can repeat
+a POST, and they have no durable prepared claim/receipt hold. Before considering a
+rerun, compare logs and Telegram with retained deduplication and feedback records.
+Uncertainty may remain: absent markers or cache entries never prove that nothing
+was sent. This is not an automatic resend or marker-reset procedure.
+
+**Telegram success does not verify a direct-run archive.** Both direct and prepared
+paths attempt an enabled Markdown archive before sending. An enabled prepared
+archive failure blocks readiness; a handled direct archive failure can coexist with
+successful Telegram delivery and exit status. Check the archive result and logs
+separately. Do not rerun publication merely to recreate a missing archive.
+
 ## Request identity and reuse
 
 Declarative settings select provider/model routes and limits. A lazy `ModelExecution`

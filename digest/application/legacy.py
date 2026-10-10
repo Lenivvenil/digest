@@ -490,15 +490,11 @@ def _build_nano_status(
 
 
 async def _notify_skipped_cards(top_articles: list[Any]) -> None:
-    """Surface a Telegram notice when the LLM picker returned no cards.
-
-    Prevents the perception of a 'skipped digest' when summaries were still
-    written to markdown but no cards landed in Telegram.
-    """
+    """Report an empty card selection without assuming an archive was saved."""
     if top_articles:
         return
     await _send_status_message(
-        "⚠️ Radar: LLM picker returned no top articles — cards skipped; summary saved to markdown."
+        "⚠️ Radar: LLM picker returned no top articles — cards skipped."
     )
 
 

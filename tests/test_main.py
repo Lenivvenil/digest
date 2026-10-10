@@ -327,6 +327,20 @@ class TestCheckConfig:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_cards", [False, True])
+async def test_skipped_cards_notice_does_not_claim_archive_success(has_cards: bool) -> None:
+    from digest.application.legacy import _notify_skipped_cards
+
+    with patch("digest.application.legacy._send_status_message", AsyncMock()) as send:
+        await _notify_skipped_cards([_Article()] if has_cards else [])
+
+    if has_cards:
+        send.assert_not_awaited()
+    else:
+        send.assert_awaited_once_with("⚠️ Radar: LLM picker returned no top articles — cards skipped.")
+
+
+@pytest.mark.asyncio
 class TestRunRadarOnly:
     async def test_radar_only_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
         summary = _CategorySummary()
