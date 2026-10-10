@@ -1,38 +1,24 @@
 """Apply confirmed delivery through attribution, deduplication and accounting owners.
 
-Prepared and direct delivery retain different persistence policies. These ordered
-writes are not a transaction: an interrupted prepared application leaves its
-receipts unapplied and held for inspection, never automatically reconciled.
+Direct delivery retains its legacy persistence policy. Prepared publication owns
+its receipt-bound accounting in application.prepared_delivery.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from digest.adapters.storage import delivery_state
 
 if TYPE_CHECKING:
     from digest.config import Config
-    from digest.domain.catalog.sources import SourceConfig, SourceStateStore, SourceStats
-    from digest.domain.delivery.outcomes import ArticleDeliveryResult, IssueDeliveryResult
+    from digest.domain.catalog.sources import SourceStateStore, SourceStats
+    from digest.domain.delivery.outcomes import ArticleDeliveryResult
     from digest.domain.feedback.values import FeedbackStore
     from digest.radar.collector import Article, SourceFetchMetrics
     from digest.radar.summarizer import ArticleSummary
-
-
-@dataclass(frozen=True)
-class PreparedOutcomePolicy:
-    """Frozen delivery facts; mutable state is reloaded at application time."""
-
-    outcome: IssueDeliveryResult
-    cache_dir: str
-    publication_day: date
-    contributing_sources: list[str]
-    adaptive_enabled: bool
-    enabled_sources: list[SourceConfig]
 
 
 @dataclass(frozen=True)
@@ -95,57 +81,14 @@ def save_delivery_cache(cache: dict[str, str], compact: bool, cache_dir: str) ->
         save_dedup_cache(cache)
 
 
-def apply_confirmed_outcome(policy: PreparedOutcomePolicy | LegacyOutcomePolicy) -> AppliedOutcome:
+def apply_confirmed_outcome(policy: LegacyOutcomePolicy) -> AppliedOutcome:
     """Apply confirmed Telegram coverage and legacy eligible Markdown output.
 
-    Markdown consumption never creates Telegram attribution. Callers finalize
-    transport receipts only after this application operation returns.
+    Markdown consumption never creates Telegram attribution. Prepared publication
+    owns its receipt-bound accounting separately.
     """
-    if isinstance(policy, PreparedOutcomePolicy):
-        return _apply_prepared(policy)
     return _apply_legacy(policy)
 
-
-def _apply_prepared(policy: PreparedOutcomePolicy) -> AppliedOutcome:
-    from digest.adapters.storage.feedback import load_feedback, save_feedback
-    from digest.adapters.storage.sources import load_source_state, load_stats
-    from digest.application.source_scoring import evaluate_trial_sources
-    from digest.domain.catalog.source_rules import apply_trial_decisions_to_cache, record_delivered_articles
-    from digest.domain.feedback.rules import apply_delivery_attribution
-
-    outcome = policy.outcome
-    if not outcome.delivered_hashes:
-        return AppliedOutcome()
-    store = load_feedback(policy.cache_dir, strict=True)
-    cache = delivery_state.load_delivery_cache(Path(policy.cache_dir) / "seen_articles.json")
-    # Validate every applicable current input before the first accounting write.
-    # Transport may already be confirmed; failures retain unapplied, held receipts.
-    stats = load_stats(policy.cache_dir, strict=True)
-    state = load_source_state(policy.cache_dir, strict=True) if policy.adaptive_enabled else None
-    now = datetime.now(timezone.utc)
-    new_hashes = outcome.delivered_hashes - cache.keys()
-    for identity in outcome.delivered_hashes:
-        cache.setdefault(identity, now.isoformat())
-    apply_delivery_attribution(
-        store,
-        outcome.article_source_map,
-        complete=outcome.complete,
-        contributing_sources=policy.contributing_sources,
-        delivered_at=now,
-    )
-
-    # Preserve current votes/cursors/decisions; every write failure propagates.
-    # Order is feedback -> stats -> optional adaptive state -> seen articles.
-    save_feedback(store, policy.cache_dir, strict=True)
-    record_delivered_articles(stats, new_hashes, outcome.article_source_map, policy.publication_day)
-    delivery_state.save_delivery_source_stats(stats, policy.cache_dir)
-    if state is not None:
-        today = now.date().isoformat()
-        promote, demote, start = evaluate_trial_sources(policy.enabled_sources, stats, today, state)
-        apply_trial_decisions_to_cache(state, promote, demote, today, start)
-        delivery_state.save_delivery_source_state(state, policy.cache_dir)
-    save_delivery_cache(cache, True, policy.cache_dir)
-    return AppliedOutcome()
 
 
 def _direct_accounting(policy: LegacyOutcomePolicy) -> _DirectAccounting:

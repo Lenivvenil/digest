@@ -2,6 +2,14 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+### Changed
+- Prepared publication now owns exact receipt readback, strict accounting, supplement
+  consumption and verified applied marking in one operation. Its Python sender takes
+  `config`; the separate prepared policy/apply branch, `_merge_delivery` and public
+  `mark_applied` are retired. CLI, persisted formats, write order and held-state rules
+  remain unchanged. Refs #220.
+
+
 - Verify category preparation through the shared existing-codec save/readback operation
   and revalidate every accepted presentation reference against `.cache` (#220, slice 2).
   Preserve category prose/trends, optional perspectives, distinct no-news rules and all

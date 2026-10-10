@@ -16,7 +16,6 @@ from digest.application.results import RunStats
 
 if TYPE_CHECKING:
     from digest.adapters.models.execution import ModelExecution
-    from digest.domain.delivery.outcomes import IssueDeliveryResult
     from digest.domain.editorial.attempts import ResolvedReview
     from digest.preparation import AcceptedPreparation, PreparationSnapshot
 
@@ -232,28 +231,9 @@ def _strict_cache(path: Path) -> dict[str, str]:
     return load_delivery_cache(path)
 
 
-def _merge_delivery(result: IssueDeliveryResult, manifest: dict[str, Any], config: Any) -> None:
-    """Compatibility entrypoint for prepared outcome application."""
-    from digest.application.delivery import PreparedOutcomePolicy, apply_confirmed_outcome
-
-    if not result.delivered_hashes:
-        return
-    adaptive_enabled = getattr(getattr(config, "adaptive", None), "enabled", False)
-    apply_confirmed_outcome(
-        PreparedOutcomePolicy(
-            outcome=result,
-            cache_dir=".cache",
-            publication_day=datetime.fromisoformat(manifest["window_start"]).date(),
-            contributing_sources=manifest["canonical_metadata"]["contributing_sources"],
-            adaptive_enabled=adaptive_enabled,
-            enabled_sources=config.enabled_sources if adaptive_enabled else [],
-        )
-    )
-
-
 async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, claim_sha: str | None) -> int:
     from digest.adapters.storage.feedback import load_feedback
-    from digest.application.prepared_delivery import claim_edition, inspect_edition, mark_applied, send_prepared_edition
+    from digest.application.prepared_delivery import claim_edition, inspect_edition, send_prepared_edition
     from digest.config import load_config
 
     config = load_config(config_path)
@@ -279,11 +259,8 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
     result = await send_prepared_edition(
         ready_sha,
         claim_sha,
-        enabled=config.telegram.enabled,
-        bot_username=config.telegram.bot_username,
+        config=config,
     )
-    _merge_delivery(result, manifest, config)
-    mark_applied(ready_sha)
     checkpoint = ""
     if result.complete:
         checkpoint = (

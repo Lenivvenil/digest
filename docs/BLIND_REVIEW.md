@@ -685,7 +685,7 @@ Optional supplementary failures must remain visible without erasing primary rece
 | What does presentation preserve or hold? | `edition_runtime.present_preparation` verifies the supplied path/body hash/full snapshot against the current `.cache` checkpoint before any presentation effect. |
 | What can claim/send/inspect do? | `application/prepared_delivery.py` |
 | Which bytes and references are checked? | `adapters/storage/edition.py`, `domain/delivery/edition.py` |
-| What does confirmed coverage change? | `application/delivery.py`, then `application/prepared_delivery.py:mark_applied` |
+| What does confirmed coverage change? | `application/prepared_delivery.py:send_prepared_edition`, from exact persisted receipts through ordered accounting and verified applied marking |
 
 ## Decisions and prior operational records
 
