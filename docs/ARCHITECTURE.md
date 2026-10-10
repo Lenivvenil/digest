@@ -1,194 +1,35 @@
 # Architecture — Daily News Digest
 
-Digest has one Python engine and a separate runtime repository. The engine decides
-what work can advance; the runtime supplies configuration, credentials, scheduling
-and durable Git storage. Telegram is an external effect that cannot be rolled back.
-The design therefore separates choosing an edition from publishing its exact bytes.
+Digest separates choosing an edition from publishing its exact bytes. One Python
+engine owns the decisions; a private runtime supplies configuration, credentials,
+scheduling and durable Git storage. Telegram is an external effect that cannot be rolled back.
 
-Read the [domain model](domain/digest/overview.md) for the meaning of the entities,
-and the [operational guide](BLIND_REVIEW.md) for commands and recovery decisions.
-This page connects that model to effects, persisted records and code.
+- [Follow the prepared edition](#prepared-edition-data-flow) and its two recovery checkpoints
+- [Find a boundary owner](#entities-contracts-and-enforcement) or [code entry point](#modules-and-responsibilities)
+- [Compare supported scenarios](#supported-application-scenarios)
+- For commands, use [Operations](OPERATIONS.md); for exact contracts, [State and effects](STATE_AND_EFFECTS.md)
 
 ## Overview
 
 The ordinary daily path is review-led compact delivery. It observes configured RSS
 sources, reviews one bounded evidence packet, saves accepted canonical work, prepares
-its presentation and freezes a sendable edition. Sending uses only that frozen
-edition. Optional comparison and external investigation use retained evidence after
-primary publication; compact mode keeps their results in the archive.
+its presentation and freezes a sendable edition. Sending uses only that frozen edition.
+Optional comparison and external investigation use retained evidence after primary
+publication. Their results are archived; eligible target-bound investigation material
+can enter a later ordinary edition without a separate supplementary dispatch. Optionality
+and useful-counter-evidence acceptance remain separate; see [supplementary investigation](ADVANCED_OPERATIONS.md#supplementary-investigation).
 
 There are two recovery boundaries before transport:
 
 - **Accepted preparation** preserves the reading decision before translation,
-  attribution, archive writing or rendering can fail.
-- **Ready edition** preserves the final payloads before a sending process begins.
-  The sender does not run selection, translation or rendering again.
+  attribution, archive writing or rendering can fail
+- **Ready edition** preserves the final payloads before a sending process begins;
+  the sender does not run selection, translation or rendering again
 
-A claim and transport receipts then distinguish an unused ready edition from an
-attempt that may already have reached Telegram. Accounting is applied afterward,
-so confirmed transport and completed local effects are separate facts.
-
-## Target architecture and migration
-
-**Accepted direction, 2026-10-09; migration in progress.** This section describes the
-intended destination, not deployed guarantees. The current-contract sections below
-remain authoritative for existing behavior until a reviewed implementation explicitly
-amends them. [#164](https://github.com/Lenivvenil/digest/issues/164) tracks structural
-work; [#91](https://github.com/Lenivvenil/digest/issues/91) tracks product acceptance.
-The ownership decision is recorded in [ADR0015](decisions/0015-application-workflow-ownership.md#target-ownership-continuation--2026-10-09).
-
-### Destination and boundaries
-
-Keep one Python package and short-lived GitHub Actions commands, with no always-on
-service, new infrastructure or paid route required. CLI/composition selects application
-use cases; application code coordinates effects; pure domain policies decide validity,
-eligibility and coverage. Concrete HTTP, model, Telegram and storage adapters implement
-those operations. Introduce a port only where a real boundary needs it, not a generic
-workflow, repository or event framework.
-
-The editable diagram shows the target ordinary prepared path. Dashed inputs affect
-future preparation. Legacy cards, direct compact, Markdown and standalone supplements
-retain their distinct contracts until deliberately migrated.
-
-```mermaid
-flowchart TD
-    Runtime["GitHub Actions / CLI<br/>bounded commands; serialized state writers"] --> Prepare
-    subgraph Prepare["Prepare owns the editorial decision"]
-        Acquire["Acquire approved RSS / optional full text<br/>public-only bounded fetch; retained source evidence"]
-        Select["Select and edit<br/>evidence-bound decisions; professional value and controlled exploration"]
-        Accept["Accept<br/>verified immutable AcceptedPreparation"]
-        Acquire --> Select --> Accept
-    end
-    Discovery["Discover sources<br/>propose → explicit approval → bounded trial"] -.-> Acquire
-    Feedback["Collect feedback<br/>persist before acknowledgement; best-effort capture"] -.-> Select
-    Investigate["Investigate delivered claims<br/>dated target-bound external evidence; bounded carry"] -.-> Select
-    subgraph Publish["Publish owns every prepared delivery effect"]
-        Render["Render and freeze<br/>optional translation / canonical fallback; exact ready bytes"]
-        Claim["Claim and send<br/>remote ready + claim barriers; attempted progress before POST"]
-        Apply["Verify and apply<br/>exact receipt readback; strict state preflight;<br/>account / consume supplements / mark applied"]
-        Render --> Claim --> Apply
-    end
-    Accept --> Render
-    Apply -.-> Investigate
-    Claim -->|uncertain effect| Hold["Uncertain send or interrupted accounting: HOLD<br/>inspect evidence; no blind resend or counter reset"]
-    Apply -->|interrupted accounting| Hold
-    State["Private Git state<br/>catalog, evidence, progress, preferences,<br/>accepted work, frozen editions, claims and receipts"]
-    Prepare <--> State
-    Publish <--> State
-```
-
-- **Preparation has one accepted handoff.** Every publishable ordinary or category
-  result must enter the existing verified `AcceptedPreparation` boundary before
-  presentation. Category editorial/no-news decisions remain distinct. Acceptance
-  preserves source identity, qualifications and provenance; it is local readback proof,
-  not proof of remote persistence or semantic quality.
-- **Publication owns irreversible prepared effects.** One use case consumes accepted
-  work, freezes exact content, verifies ready/claim barriers, sends under the existing
-  transport policy, verifies saved receipts and owns accounting, required supplement
-  consumption and the final applied write. Reporting projections cannot authorize
-  these operations. Remove caller-managed transitions and duplicate live authority
-  rather than wrapping them in another context object.
-- **Persistence is evidence, not a distributed transaction.** Strict reads distinguish
-  legitimate first-run absence from invalid existing state. Validate applicable current
-  accounting inputs before the first accounting write. Per-file atomicity does not
-  make a multi-file update replayable. Unknown transport and incomplete application
-  remain held; no automatic saved-receipt replay, state reset or supplement release.
-  Telegram confirmation establishes an API receipt, not human receipt or exactly-once
-  delivery across Git and Telegram.
-- **External inputs have explicit trust and resource limits.** Every untrusted URL hop
-  uses connection-scoped public-address validation, bounded redirects, decoded bytes
-  and total elapsed time without ambient proxies or a process-global resolver override.
-  Pin connections while preserving original-host TLS verification, SNI and HTTP Host.
-  Telegram diagnostics retain safe stage/status evidence without credentials, raw
-  request URLs or response bodies. Feed/article parsing and transport policies remain
-  separate from these small shared safety operations.
-- **The product and operating envelope remain testable claims.** Preserve a useful
-  professional radar, humane closing where evidence fits, approved source exploration,
-  best-effort feedback and independently failing optional enrichments. Retain category
-  analysis, cross-category trends and opt-in three perspectives as distinct supported
-  product/scenario contracts; this ordinary-path drawing does not prove their useful
-  daily realization. Protect meaning
-  in canonical and translated output. Paid routes remain disabled for this migration;
-  current account entitlement, model quota, runner usage and archive growth require
-  observation. A schedule is not a delivery SLA, and request counts do not prove a
-  zero-spend or token-window limit.
-
-### Staged migration and exit evidence
-
-Each stage is a coherent risk or ownership change, not a mandate for one PR per symptom.
-Implementation issues carry current status and evidence; this guide does not duplicate
-that mutable checklist. Independent observation can proceed while code stages are
-reviewed. Product evidence must inform affected behavior changes, but waiting for a
-natural run does not block an unrelated mechanical safety repair.
-
-1. **Repair active trust boundaries.** [Public fetch #218](https://github.com/Lenivvenil/digest/issues/218)
-   and [Telegram diagnostics #219](https://github.com/Lenivvenil/digest/issues/219). Establish the small public-fetch operation and
-   the shared Telegram diagnostic boundary. Preserve concurrency, supported sources,
-   exception classification and each send mode's retry/receipt policy. Offline public
-   operation tests must exercise redirects to private addresses, rebinding, concurrent
-   requests, cancellation, oversized/slow streams and token-free INFO/DEBUG/error/
-   traceback paths without mocking away the safety decision. No live exploit probe is
-   required. The [current security section](#security) describes the starting gaps.
-2. **Establish product and cost evidence.** Build a finite source-bound acceptance set
-   from observed editorial/translation failures and valid contrasts; inspect natural
-   current-baseline output. Retain allowlisted physical-attempt diagnostics in existing
-   reports, including unknown status/usage when absent. Reconcile actual free limits
-   and measured use before deciding whether the existing durable budget journal needs
-   complete runtime integration. No extra model judge, provider probe, paid route,
-   manual digest dispatch or resend is part of acceptance. See [ADR0020](decisions/0020-explicit-model-execution.md),
-   [the ordinary domain](domain/digest/overview.md) and [Irritator acceptance](domain/irritator/overview.md).
-3. **Give prepared publication one authority.** [#220](https://github.com/Lenivvenil/digest/issues/220). Combine strict accounting preflight
-   with the verified accepted-reference handoff for category work and receipt-owned
-   application. Retire the raw-snapshot presentation bypass, orphan helpers,
-   `PreparedOutcomePolicy`, caller `_merge_delivery` and independently callable
-   `mark_applied` only when their responsibilities move to the real owner. Preserve
-   accepted/ready/claim/receipt bytes and hashes, CLI phases, remote barriers, source
-   and feedback identities, empty-result rules and interruption holds. Amend
-   [ADR0017](decisions/0017-confirmed-delivery-application.md) explicitly: its current
-   strict current-writer preflight is implemented in slice 1 and verified category
-   acceptance in slice 2; receipt-owned application is implemented in slice 3. Prove
-   invalid existing state blocks before the first accounting write, valid history survives, and
-   every write-failure prefix remains held with a truthful read-only diagnosis.
-4. **Resolve measured operating-policy tradeoffs.** Decide supported delivery guarantees,
-   professional/trial allocation, retention and feedback cadence from evidence within
-   the free envelope. Do not infer publisher independence from source-name entropy or
-   unlimited capacity from bounded active checkpoints. Preserve required audit and
-   delivery evidence before choosing retention. Follow [candidate progress ADR0008](decisions/0008-candidate-selection-progress.md),
-   [exploration ADR0013](decisions/0013-discovery-exploration-state.md) and
-   [feedback ADR0006](decisions/0006-batch-message-voting.md). A changed cadence or
-   transport guarantee needs its own explicit decision and compatible rollout.
-5. **Simplify optional ownership only when justified.** Optional reader completion
-   now belongs to its frozen accepted attempt; Page retains coverage and history,
-   with explicit pending scheduling or history-0 evidence. One old-wire projection
-   preserves retained hashes and exact null/explicit route spelling. See the
-   [reader ownership amendment](decisions/0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10). Defer
-   supplement reservation/tombstone redesign until a bounded migration and observed
-   need justify it. Keep the [scenario distinctions in ADR0019](decisions/0019-remaining-application-scenarios.md)
-   and the [optional closing contract in ADR0014](decisions/0014-optional-humane-closing-item.md).
-
-For every code batch, run applicable offline lint, typing and aggregate regression
-checks, then obtain independent strict review of the final diff before merge. Tie CI
-and release evidence to the exact revision and tested dependency graph; retain bounded
-security-check evidence. Verify main and any compatible private runtime pin separately.
-Rollback uses a reviewed compatible code revert or pin while retaining runtime facts;
-never clear receipts, reset state or resend to make a check pass. A new wire format
-requires a separate reader/rollback compatibility decision.
-
-The measured baseline and migration constraints are recorded in
-[#164](https://github.com/Lenivvenil/digest/issues/164). The execution constraint for
-this work is at least 92.93% statement coverage; the repository's current CI floor
-is still 80% and is not evidence that the stronger constraint passed. Architectural
-boundaries, cohesive state ownership, clear contracts and removal of duplicated
-logic define progress; there is no test-count target. Preserve meaningful behavioral
-and security checks. Retire tests only when production states or duplicate contracts
-genuinely disappear, never by packing cases, weakening assertions or adding exclusions.
-The abandoned test-only consolidation is not part of this migration.
-
-Close the learning loop with a concise linked record of incident evidence, confirmed
-cause versus hypothesis, change, regression proof, deployed revision, natural-run
-acceptance and remaining limits. Use the existing issues and operator guide; keep
-private runtime payloads, destinations and credentials private. Synthetic success
-establishes mechanics; ordinary useful output establishes the separate product gate.
+A claim and transport receipts distinguish an unused ready edition from an attempt
+that may already have reached Telegram. Confirmed transport and completed local
+accounting are separate facts. The [domain story](domain/digest/overview.md#one-story-through-the-system)
+traces these distinctions through one illustrative reading decision.
 
 ## Prepared-edition data flow
 
@@ -207,125 +48,23 @@ sequenceDiagram
     D-->>R: Outcome for persistence
 ```
 
-This overview follows a publishable edition; recovery and no-edition outcomes are detailed below.
+This overview follows a publishable edition; see [preparation outcomes](STATE_AND_EFFECTS.md#outcomes-in-the-application) and
+[interruption recovery](OPERATIONS.md#inspect-an-interrupted-edition) for other results.
 The arrows are ordered operations, not a transaction. Failure between them leaves
 recoverable work or a hold, according to the boundary already crossed.
 
 ## Preparing an edition
 
-1. **Process independent input.** Load current operational state, collect feedback
-   unless the managed runtime already did so, and apply verified source approvals.
-   Reloaded source configuration takes effect before inspecting saved preparation.
-   Feedback and approved configuration work can occur even when the edition is reused.
-2. **Prefer an existing edition.** Ready, future-window, confirmed and held outcomes
-   return before fresh collection. A completed edition can permit preparation for a
-   later intended day; unresolved claimed work blocks replacement.
-3. **Resume accepted work.** A matching `pending_preparation.json` resumes presentation.
-   It does not acquire a new review result. Presentation can still call an explicitly
-   configured translation route when its cache is absent.
-4. **Collect and reconcile candidates.** Retain observed occurrences and current
-   eligibility, including saved unfinished work. A feed failure is not a relevance
-   judgment. If every feed fails, eligible saved candidates may still form a packet;
-   otherwise collection failure remains a failure.
-5. **Recover a candidate report or review a packet.** Reusable completed candidate
-   reports are considered after collection and eligibility reconciliation. With no
-   reusable report, persist the planned attempt before the bounded primary review.
-   Planning does not prove that a provider received a request.
-6. **Resolve the response, then accept projected cards.** One response-owned result
-   binds the chosen primary/fallback review to its dispositions and optional closing
-   capture. Fresh enabled v2 validates a separate closing card through the same live
-   item owner, appends it after main cards, then derives selected dispositions and
-   validates residual accounting. Consumers do not independently reselect a review slot. The comparison
-   report remains an audit artifact and can still be incomplete. Valid projected
-   cards, including accepted partial results, can advance. A valid primary abstention requires resolved disposition
-   evidence when recorded attempts carry it, as fresh candidate packets do. Older
-   packets without that capture retain their existing compatibility behavior.
-   If the primary is invalid/unavailable and the secondary only abstains, the
-   delivery-used result remains incomplete. It does not become accepted no-news.
-7. **Save, verify and hand off accepted work.** Candidate and category admission have
-   distinct editorial rules, then share `persist_accepted_preparation`: save through
-   the existing codec, reload and compare the path and full canonical snapshot. The
-   restored reference contains the path and existing canonical envelope-body hash,
-   not a hash of the indented file bytes. Candidate handoff precedes fetch statistics;
-   category statistics and its source map follow verified acceptance. This is local
-   readback, not remote persistence or power-loss durability. A handoff is not delivery.
-8. **Present and freeze.** `present_preparation` first reloads the requested publication
-   day from the publication-owned `.cache` and compares path, body hash and the full
-   snapshot with the supplied reference, even for empty work. It consumes the separately
-   restored snapshot. Then validate required immutable source provenance before model
-   presentation calls. Translate generated prose, append literal credits, check chunk
-   coverage, write the enabled archive and freeze the exact edition. Clear the pending
-   preparation only after the ready file is written. An accepted empty result stays
-   as its canonical checkpoint and creates no ready edition.
+1. Process feedback and verified source approvals independently of publication.
+2. Prefer an existing edition or matching accepted preparation before fresh collection.
+3. Collect and reconcile candidates, then recover a compatible report or review one bounded packet.
+4. Resolve one editorial response and save/read back accepted canonical work.
+5. Revalidate that reference, present the cards, write the archive and freeze ready bytes.
 
-An expired accepted checkpoint does not consume undelivered selection. Candidate
-recovery can reuse exact still-eligible selected work after collection, even after
-handoff; handed-off empty abstentions stay consumed and mixed eligibility requeues
-the eligible subset.
-
-### Outcomes in the application
-
-| Operation | Explicit result | Meaning for the next step |
-| --- | --- | --- |
-| `recover_preparation` | `ExistingEdition`, `AcceptedPreparation` or `FreshPreparation.REQUIRED` | Return an existing edition outcome, resume locally verified accepted content, or collect fresh work. `held` remains the inspector’s conservative summary, not a detailed receipt diagnosis. |
-| Collection/review | `ReviewedCandidates`, `CategoryAnalysis` or `EmptyWork` | Ordinary candidate work carries progress, packet and one resolved review; category and empty outcomes remain separate. |
-| Editorial authority | `ReviewAttempt` → `ResolvedReview` | One response owns its review, dispositions and optional closing capture. The resolver chooses authority; the unchanged comparison report is its audit projection. |
-| `accept_preparation` | `AcceptedPreparation` or `IncompleteSelection` | Candidate policy binds the resolved review and decides whether work can use shared verified persistence before handoff. |
-| `_accept_category_preparation` | `AcceptedPreparation` or `NoEdition` | Category policy retains historical report-order/no-news rules before the same verified persistence operation. |
-| `assemble_publication` | `PublicationAssembly` | Resolve required provenance, present main content and decide whether the optional closer can accompany it. Final card order and existing metadata derive from this result. |
-| `present_preparation` | `FrozenPreparation` or `NoEdition` | Revalidate the reference against the active checkpoint before any presentation effects; successful freezing returns a required ready-file hash. |
-
-`RunStats` is the terminal public/reporting projection, not the internal work model.
-These scenario outcome values add no persisted state machine or new schema. The
-separate supplementary-publication ready3 contract is described below. Supported CLI and run
-entrypoints remain stable; deliberate internal API retirements are listed in the
-[changelog](../CHANGELOG.md#unreleased--reliability-rehabilitation).
-
-Category admission owns its historical completion and save decisions in
-`_accept_category_preparation`; `_prepare_category_edition` sequences the effects.
-Shared presentation receives no editorial-completion flag.
-
-| Category result | Save and verify canonical work? | Continue with |
-| --- | --- | --- |
-| Projected cards exist | Yes, with or without an optional report | Accepted-reference presentation, archive and freeze |
-| Empty, no review report | No | `NoEdition("no_ready")` |
-| Empty, report-first review abstains | Only if a primary abstention also exists | `NoEdition("no_ready")` |
-| Other empty review outcomes | No | `NoEdition("selection_incomplete")` |
-
-The category boundary preserves report ordering, including older reordered reports
-and the existing secondary-success fallback from `restore_review`. Summaries or trends
-without main cards do not create an edition. A chosen secondary abstention with a later
-primary selection remains unsaved no-ready; a chosen selected/partial review with a
-later primary abstention remains incomplete. Category acceptance does not require
-candidate disposition metadata; fresh candidate abstention still does.
-
-The category effect order is snapshot → admission → save → save readback → fetch
-statistics → source map → presentation-entry readback → presentation → archive →
-freeze → clear. Unsaved no-edition branches perform no admission read/write and return
-after statistics/map. Accepted empty work stays saved and passes the entry check, then
-returns no-ready without archive/freeze. Save/readback failure stops later operational
-effects; entry validation can fail after statistics/map have already been written.
-Missing, replaced or mismatched references, including a UTC day rollover between
-operations, stop preparation without deleting or repairing its evidence. Loader errors
-also propagate. These are preparation failures, not new ready/receipt hold records.
-
-Reference comparison is not an unforgeable Python capability: an exactly matching
-reference has the authority of its valid checkpoint. Frozen dataclasses are shallow;
-the freshly restored snapshot isolates caller mutation after verification, but this is
-not a lock across awaits or protection against concurrent disk writers. Serialized
-runtime writers remain required. Local readback adds no fsync or remote durability.
-
-Publication assembly keeps the canonical snapshot separate from presented main
-cards and the optional closing disposition. Required main-card credit failures
-hold preparation; optional credit or layout failures omit the closer with its
-existing reason. The archive and frozen edition consume the same derived card
-sequence. The coordinator then writes the archive, hashes its references, freezes
-readiness and clears accepted preparation, in that order. Assembly itself does
-not persist a new checkpoint or change translation's request/cache contract.
-
-These are ordinary-path contracts. Category preparation and experimental source work
-retain their own terminal behavior; they must not be inferred from a generic success
-boolean. The code entrypoints below identify the implemented owners.
+Accepted empty work remains a checkpoint without a ready edition. A failed or
+abstaining fallback is not automatically accepted no-news. Candidate and category
+admission keep their distinct rules; the exact [preparation and presentation contract](STATE_AND_EFFECTS.md#preparation-and-presentation)
+owns outcomes, reference checks and write order.
 
 ## Entities, contracts and enforcement
 
@@ -341,169 +80,17 @@ boolean. The code entrypoints below identify the implemented owners.
 | Confirmed publication → later supplementary evidence | Freeze canonical delivered targets and source occurrences; the evidence producer retains narrative/ranking authority. Preserve one immutable projection and per-attempt disposition. | [origin application](../digest/application/investigation_origin.py), [delivered values](../digest/domain/investigation/delivered.py), [evidence stage](../digest/irritator/evidence_stage.py), [supplement application](../digest/application/supplement.py) |
 | Fragment coverage → consumption | Separate supplement chunks from article attribution. Consume only complete positive owner-matching coverage inside receipt-owned publication before the applied marker is written. | [supplement values](../digest/domain/delivery/supplement.py), [prepared application](../digest/application/prepared_delivery.py) |
 
-## Cache architecture
-
-### The four publication records
-
-All paths below are relative to the runtime working directory. These records have
-different jobs; a filename's presence alone never proves the later stages happened.
-
-| Record | Meaning and binding | Next boundary |
-| --- | --- | --- |
-| `.cache/pending_preparation.json` | Canonical `PreparationSnapshot`, intended publication date, creation time and integrity hash. It can contain accepted empty work. | Resume presentation for the same intended day; no selection rerun. It is removed after successful readiness freeze, or becomes ineligible after its publication day. |
-| `.cache/prepared_edition.json` | Frozen `Edition`: exact payloads, article chunk ranges, owner/bot binding, UTC window, canonical/presentation hashes and referenced archive/evidence hashes. | The runtime must persist and verify these exact file bytes before claiming. |
-| `.cache/prepared_edition_claim.json` | One immutable claim bound to the ready-file SHA-256 and owner. | The runtime must persist and verify the claim and ready file from the same remote revision before first dispatch. |
-| `.cache/prepared_edition_receipts.json` | Ready/claim binding, attempted chunk count, known chunk confirmations, terminal transport state and `applied`. | Persist the known send outcome and apply its complete article coverage. Existing uncertain or unapplied state holds later automatic publication. |
-
-Main-only editions retain ready schema 2. A `SupplementEdition` uses schema 3 with
-an immutable fragment, separate `SupplementCoverage`,
-and an explicit current-review checkpoint. The older origin review remains a reference,
-never a filename-order inference for the next optional investigation. Claims and
-receipts keep their existing schema because the exact ready hash binds the extension.
-
-The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
-references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
-expired dispositions; mutable state is not a ready checkpoint reference. This adds no
-central queue, index, worker or retry loop. Normal preparation reuses a verified eligible
-fragment without model/source work. The shared lossless renderer inserts it before the
-closer; sender validation checks frozen hashes, identities and coverage bounds
-without rendering or parsing publication prose. See [ADR0007](decisions/0007-compact-issue-reservation.md)
-for D+1..D+3 eligibility, actual-clock expiry and proof-bound unclaimed-ready release.
-
-Consumption is an ordered application write, so the runtime receipt barrier must persist
-the existing attempt under `digests/` together with `.cache/` applied receipts. The existing
-post-prepare step also needs the private owner ID; no bot/model key is needed there.
-These are deployment prerequisites, not additional jobs, requests or operating capacity.
-
-Legacy snapshot counters need care: in this preparation path, `article_count` counts
-admitted packet articles, while `source_count` is the number of category groups
-(`len(articles_by_category)`), not distinct publishers. Main/closing card counts and
-`RunStats.feeds_fetched` (attempted feeds) are separate. The retained schema names do
-not make those quantities interchangeable.
-
-`READY_SHA` and `CLAIM_SHA` are hashes of the complete persisted file bytes, not an
-edition ID or the manifest's internal content hash. Archive references bind the
-exact Markdown, review and candidate-evidence files used to prepare the edition.
-Reformatting an otherwise equivalent JSON file changes its external hash.
-
-The runtime establishes three durable boundaries:
-
-1. After successful freeze, persist the ready edition and referenced archive/evidence;
-   verify the ready hash from the successful remote revision before claim creation.
-   Successful freeze has already cleared the pending preparation. On preparation
-   failure, retain and persist the remaining accepted/candidate work for recovery instead.
-2. Persist the immutable claim; verify ready and claim hashes from that remote
-   revision before sending.
-3. Persist receipts and resulting feedback/dedup/accounting state together, including
-   partial or failed outcomes. Optional-stage failure must not discard primary state.
-
-Engine atomic writes and filesystem sync protect local records. They do not make
-several files a transaction, publish a Git commit or survive a runner loss by themselves.
-The runtime must preserve saved work on failure and serialize writers sharing state.
-
-### Other retained state
-
-| Record | Owner and purpose |
-| --- | --- |
-| `.cache/candidate_progress.json` | Current eligible/unfinished candidate work and planned packets. |
-| `.cache/candidate_sources/`, `candidate_reports/`, `candidate_index/`, `candidate_excluded/` | Exact occurrences and packet proof, indexed historical decisions and reversible policy exclusions. Retirement removes active work only after proof has been written and verified. |
-| `.cache/feedback.json` | Votes, polling cursor, replay/acknowledgement data, source decisions and article/source attribution. |
-| `.cache/seen_articles.json` | Delivered/consumed identity timestamps under the scenario's deduplication policy. |
-| `.cache/source_stats.json`, `source_state.json`, `source_category_map.json` | Source observations, trial lifecycle and category read model. |
-| `.cache/pending_sources.json`, `discovery_delivery.json` | Saved proposals and separately bound discovery reservation/delivery history. |
-| `.cache/compact_issue.json` | Legacy direct-compact reservation; unresolved legacy sending also blocks prepared publication. |
-| `digests/*.review.json`, `*.candidates.json` | Review and candidate-accounting evidence associated with archived output. |
-
 ## Sending and applying coverage
 
-<a id="stage-5-prepared-delivery-values-persistence-and-application"></a>
+Prepared publication owns frozen-byte validation, one-attempt transport, exact-receipt
+application and the verified applied marker. The runtime owns the remote durability
+barriers and retention of partial outcomes. It must serialize writers sharing state.
+There is no transaction across Telegram, Git and multiple accounting files.
 
-The sender validates the owner, bot, window, exact ready/claim bytes and referenced
-checkpoint files. It uses the frozen payloads; current prompts or translation settings
-do not rerender them. Each POST is attempted once in the prepared protocol.
-
-| Step | Ordering and failure meaning |
-| --- | --- |
-| Claim | Verify an eligible ready edition and its checkpoint bytes, reject existing receipts, then create the claim exclusively. |
-| Start send | Require the already persisted ready and claim hashes. Create `sending` receipts exclusively before the first POST. |
-| Send a chunk | Persist its attempted count, perform one POST, then persist a positive message ID with a matching chat. A transport uncertainty or lost post-acceptance write can leave the attempt held. |
-| Finish transport | Record `confirmed`, `failed`, `partial` or `unknown`. A known complete article needs every covering chunk confirmed; a failed notice can still leave the whole edition incomplete. |
-| Apply | Reload current operational state and apply known confirmed coverage. Set `applied` only after those effects complete. Partial/unknown transport remains held even after known coverage is applied. |
-
-A normal confirmed-and-applied edition is a no-op. Confirmed transport with
-`applied: false` is a hold: some operational files may already have changed. There
-is no automatic multi-file rollback or counter reconciliation. An expired unresolved
-claim is still unresolved; expiry does not make a resend safe.
-
-Read-only prepared inspection emits one bounded diagnostic for held work from the
-records it already loaded. Claim-without-receipts and sending share an unresolved-
-dispatch action; terminal-unapplied work directs inspection to operational write
-prefixes; applied-incomplete work identifies marker presence without claiming
-accounting proof or replay safety. Missing receipt counts remain unknown. Persisted
-coverage does not describe unsaved effects. The status tuple, workflow output keys,
-exit codes and legacy compact policy stay unchanged; no new reads or recovery API
-are added. See the [recovery guide](BLIND_REVIEW.md#delivery-states-and-recovery).
-
-An uninterrupted managed workflow may send its newly persisted claim when no receipt
-exists yet. Rediscovering a claim in a later run is different: missing remote receipts
-do not prove the earlier process never sent. The [recovery guide](BLIND_REVIEW.md#delivery-states-and-recovery)
-uses the observed records and execution history together.
-
-<a id="applying-confirmed-outcomes"></a>
-
-## Applying output outcomes
-
-<a id="stage-3-confirmed-delivery-application"></a>
-
-Prepared and legacy applications share coverage values while preserving distinct
-accounting rules. The following matrix is the current compatibility contract.
-
-The direct-run accounting decision distinguishes confirmed Telegram coverage from
-eligible Markdown consumption. Their union determines which collected identities
-qualify for deduplication and inclusion statistics. Feedback attribution continues
-to use the transport result alone. Separately, an article sent or an archive saved
-means that output occurred; this remains true even when the qualifying identity
-set is empty. That fact controls cache persistence and adaptive evaluation, not
-Telegram success. The decision is an in-memory application value, not a new saved
-record or a change to the prepared-edition policy.
-
-| Effect | Prepared edition | Legacy direct run, including direct compact |
-| --- | --- | --- |
-| Mutable input | Strictly reload current feedback, delivered cache and statistics, plus lifecycle state only when adaptation is enabled, before the first accounting write. Never restore the preparer's mutable snapshot. | Use current-run feedback, collected cache, statistics, lifecycle state and fetch observations supplied by the caller. |
-| Delivery identity | Full article hashes enter deduplication only after complete confirmed chunk coverage. Empty coverage returns before state reads or writes. | Confirmed Telegram hashes qualify. Cards mode additionally consumes summarized-category articles and top articles after a saved Markdown output when Telegram is optional or complete. That consumption does not imply Telegram confirmation. Direct compact never treats Markdown as delivered coverage. |
-| Attribution | Merge confirmed vote-token/source mappings: full article identities for ready v2/v3, original short tokens for ready v1. Supplement coverage adds no article identity. Update last-digest sources/time only when the whole issue is complete. | New delivery uses full article vote identities. Merge confirmed mappings when any article was sent or Markdown was saved; last-digest metadata still requires complete Telegram output. With neither output, restore only prior attribution, preserving collected votes and polling cursor. |
-| Deduplication timestamps/path | Add absent hashes with application-time UTC timestamps; preserve existing timestamps. Write under the supplied cache directory. | Preserve collection timestamps and old entries; filter newly collected entries to qualifying output. Save only when an article was sent or Markdown was saved. Compact uses the supplied cache directory; cards retain `save_dedup_cache`'s default path, ignoring the passed `cache_dir`. |
-| Source accounting | Count only confirmed hashes absent from the reloaded delivered cache, and only for existing source-stat entries. Use the intended UTC publication day; a delivery-only snapshot adds no fetch, found-article or HTTP-success observation. No inactive-source pruning. | Record actual fetch observations, including failed feeds, and qualifying output through the existing run-stat operation. Keep current-day fetch history semantics and inactive-source pruning on save. |
-| Lifecycle state | When adaptation is enabled and coverage exists, reload/evaluate current state and strictly save it, including an unchanged result. Use application-time UTC day for trial decisions. | Evaluate only when adaptation is enabled and an article was sent or Markdown was saved. Apply changes only when promotion, demotion or trial start is needed; persist lifecycle state on the normal path even without delivery. |
-| Write order | Strict feedback → strict source statistics → optional strict lifecycle state → strict seen cache; the prepared sender consumes complete ready3 supplement coverage before its intended-byte-verified applied receipt marker. | Seen cache when output qualifies → usable feedback → lifecycle state → source statistics → source-category map; caller then finalizes the compact guard. |
-| Failure policy | All applicable reads fail closed before the first accounting write. Source reads require complete current-writer fields, supported schema, exact types, finite nonnegative numeric values and canonical calendar days. For source statistics/lifecycle files, missing whole files are first-run state; malformed, sparse, unknown-field, duplicate-key, symlinked or unreadable files hold application. All writes propagate failures. | Compact cache/feedback writes propagate failures. Cards cache/feedback and source-state/statistics/category-map writers retain their existing caught-write-error behavior; setup failures outside those handlers can still propagate. |
-
-This preflight runs at accounting time, potentially after confirmed transport. Invalid
-source history leaves saved receipts unapplied and holds the edition without changing
-accounting files; it does not prove that no message was sent. Default direct/legacy
-source readers remain permissive. See the [strict-read amendment](decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09)
-for the intentional current-writer compatibility boundary and inspection guidance.
-
-The prepared sender owns the active dispatch through application. It compares the
-terminal writer's readback hash with the intended canonical receipt bytes, reloads
-that exact receipt, and verifies original ready/claim identities before accounting.
-Reporting projections do not authorize writes. After accounting it rechecks those
-bindings, consumes required supplement coverage, and verifies the applied marker's
-readback against its intended canonical bytes before returning success.
-
-Confirmed/applied history returns without dispatch or application. Existing unapplied,
-sending, failed, partial or unknown receipts remain held; this owner never replays
-accounting. Fresh partial/unknown transport may still apply complete known article
-coverage during its uninterrupted invocation. Every failure retains the actual
-persisted prefix. A final-write exception after replacement may leave applied bytes;
-inspection honors them rather than resetting or resending. These checks are neither
-a multi-file transaction nor protection against concurrent state writers.
-
-The Python sender now requires `config`; its old enabled/bot-only signature,
-`PreparedOutcomePolicy`, `_merge_delivery`, the prepared apply branch and independent
-`mark_applied` are retired. Known engine/configured workflow consumers are migrated
-or verified absent; unknown external Python callers must migrate explicitly. CLI,
-wire formats, external ready/claim barriers and direct-run policies are unchanged.
+Use [send and apply](STATE_AND_EFFECTS.md#send-and-apply) for the exact contract and
+[inspect an interrupted edition](OPERATIONS.md#inspect-an-interrupted-edition) for a
+safe next step. Missing receipts cannot establish that nothing was sent; an unresolved
+claim does not become safe merely by expiring.
 
 ## Supported application scenarios
 
@@ -519,60 +106,23 @@ wire formats, external ready/claim barriers and direct-run policies are unchange
 | Supplementary investigation | Search external sources from frozen evidence under its own attempt. New compact attempts bind actually delivered canonical cards and may retain one accepted fragment for a later ordinary edition; unbound standalone results have no fragment eligibility. |
 | Experimental source preparation | Optional source-bound acquisition/analysis with its own technical handoff and uncertainty holds; it does not publish a concatenated prototype as an edition. |
 
-Experimental source preparation reloads the current handoff, source, page state and
-eligibility through [`reconciliation_checkpoint`](../digest/reconciliation_checkpoint.py).
-[`build_reconciliation_input`](../digest/reading_reconciliation.py) then validates and
-freezes one evidence input for offline planning and execution. The
-[`reconciliation_operation`](../digest/reconciliation_operation.py) owns its exact
-request, admission, attempt history and completion envelope; its decoder verifies
-persisted records against the fresh input before cache reuse, uncertainty holds or
-fallback. Fresh generation saves accepted metadata before validating terminal output.
-The content parser only checks response schema, citation membership and retained
-qualifications. Complete source access and sparse evidence remain distinct; none of
-these checks establishes semantic completeness or publication acceptance. Reading
-remains optional and off by default. [ADR0009](decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
-records the direct-call migration and retained trust boundaries.
-
-<a id="stage-5-first-telegram-delivery-ownership-slice"></a>
-
-The transport contracts also differ. Selecting compact formatting alone does not
-turn a legacy direct call into the persisted prepared protocol.
-
-| Protocol | Preserved acceptance, retries and effects |
-| --- | --- |
-| Legacy cards, status and counter-signals | HTTP success is sufficient; no Telegram `ok` or message-ID validation is added. HTTP 400 triggers the existing plaintext fallback. The existing three attempts, Retry-After/backoff, per-card continuation and 0.5-second spacing remain. Supplement dispatch retains its 90-second total bound and status-dependent notification. |
-| Direct compact | Render every chunk before `before_send`, which remains immediately before dispatch. A 30-second total bound and per-request timeout remain. HTTP 4xx or explicit `ok: false` fails; other non-200/malformed receipts and transport uncertainty become unknown. HTTP 200 plus `ok: true` confirms without message-ID/chat validation. No retry or fallback; only complete confirmed article coverage is attributed. |
-| Legacy standalone post-delivery supplement | Missing/disabled destination returns `not_configured` before rendering/client creation. Each silent chunk gets one POST with a 30-second total bound and per-request timeout. HTTP success plus explicit `ok: true` is required; errors propagate to the existing unknown marker. New compact target-bound material instead enters a later ordinary ready3 edition. |
-
-
-Prepared transport additionally requires a positive message ID and exact matching
-chat, persists chunk receipts and holds uncertain/unapplied outcomes. Its adapter has
-no retry or plaintext fallback.
+See [transport protocols](STATE_AND_EFFECTS.md#transport-protocols) for distinct
+confirmation, retry and fallback rules, and [experimental source reading](ADVANCED_OPERATIONS.md#experimental-source-reading)
+for reconciliation ownership and technical-handoff limits.
 
 ## Feedback loop
 
 <a id="stage-5-c-catalog-and-feedback-boundaries"></a>
 
 Feedback is independent of today's generation and delivery outcome. The private-owner
-poller validates identity/replay, saves votes, cursor and pending acknowledgement data,
-then acknowledges the exact saved batch. Managed runtimes persist that batch remotely
-before acknowledgement. A later send failure does not roll votes back.
+poller validates identity/replay; application code saves the exact batch before acknowledgement.
+Managed runtimes persist it remotely first. A later publication failure cannot roll votes back.
+Source allocation uses effective priorities; models receive supplied evidence rather than
+individual private votes. Changed allocation does not guarantee changed editorial selection.
 
-Only `application/feedback.collect_feedback` refreshes `last_successful_poll_at`,
-the UTC observation retained by a successful local save, including empty batches.
-Cursor trust remains separate. See [ADR0021](decisions/0021-catalog-feedback-boundaries.md#retained-successful-local-collection--148-g9-2026-10-10)
-for persistence/compatibility and the [operations guide](BLIND_REVIEW.md#feedback-and-source-decisions)
-for the existing collect CLI's diagnostic logs.
-
-Only the latest valid vote per exact stored token contributes within the existing
-14-day feedback window. New tokens carry the full article identity; historical
-eight-character tokens remain a separate namespace. They cannot safely be joined
-by prefix, so mixed old/full votes for one article may both contribute. This legacy
-limitation is explicit in [ADR0024](decisions/0024-full-article-vote-identity.md).
-Source allocation uses the resulting effective priority; model review sees
-ordinary supplied evidence rather than individual private votes. Repeated taps are
-not independent evidence, and a changed allocation does not guarantee a different
-editorial choice.
+[Feedback operations](OPERATIONS.md#feedback-and-source-decisions) owns the collect/persist/ack
+sequence, observation timestamps and old/full-token limits. [ADR0021](decisions/0021-catalog-feedback-boundaries.md)
+and [ADR0024](decisions/0024-full-article-vote-identity.md) retain identity and scoring rationale.
 
 ## Trial source lifecycle and discovery
 
@@ -589,33 +139,18 @@ before the application performs its idempotent source addition. YAML/backup or l
 state failures preserve the decision/proposal for inspection or retry under the existing
 ordered contract. No source is activated merely because a model suggested it.
 
+Configure [exploration areas](CONFIGURATION.md#source-discovery) and follow the
+[proposal/approval workflow](OPERATIONS.md#source-discovery) for operator actions.
+
 ## Provider execution
 
 <a id="stage-5-b-explicit-model-execution"></a>
 
-Declarative settings select provider/model routes and limits. A lazy `ModelExecution`
-owns per-loop concurrency, pacing, cooldowns and local attempt accounting. Applications
-pass that owner explicitly; construction alone does not inspect a quota or acquire a
-request allowance. Accepted work can therefore recover without initializing model work.
-
-Fresh versus shared derived execution, loop rebinding and first-initialization semaphore
-capacity follow the [execution contract](decisions/0020-explicit-model-execution.md).
-The durable cycle journal is separate from that in-memory holder. Each physical retry,
-fallback or counting call retains its own reservation; failures do not refund attempts.
-Absolute deadlines and provider/account allowance remain distinct constraints.
-
-<a id="stage-4-review-reuse-and-source-attribution"></a>
-
-Request construction is shared by planning, execution and resume. Cached review reuse
-requires the configured slot/provider/model, exact bundle and prompt identity, plus
-valid retained selections. Accepted preparation and ready editions are separate
-recovery objects and are not revalidated as new model judgments.
-
-Hash encodings retain their specific contracts: prompt JSON uses sorted ASCII-escaped
-JSON with spaces; evidence JSON uses sorted non-ASCII JSON with spaces; retained
-occurrences/objects use compact sorted UTF-8 JSON. Source attribution resolves the
-accepted immutable occurrence before calls, adds literal credits after translation,
-and applies identical final cards to archive and frozen payloads.
+Declarative settings select routes and limits. An explicitly passed lazy `ModelExecution`
+owns concurrency, pacing, cooldowns and local attempt accounting. Constructing it
+neither inspects quota nor acquires an allowance, so accepted work can recover without
+initializing model work. [Request identity and reuse](STATE_AND_EFFECTS.md#request-identity-and-reuse)
+owns fresh/shared execution, reservations, cache identity and hash encodings.
 
 ## Modules and responsibilities
 
@@ -628,11 +163,13 @@ and applies identical final cards to archive and frozen payloads.
 | Assemble presented main cards and optional closing disposition | `application/publication.py:assemble_publication`, `PublicationAssembly` |
 | Candidate rules, packet construction and ordered persistence | `domain/editorial/candidate_policy.py`, `application/candidate_review.py`, `application/candidate_lifecycle.py` |
 | Canonical RSS item preparation, measurement and evidence bundle serialization | `domain/editorial/evidence.py` |
+| Resolve primary/fallback authority and restore saved reviews | `application/review.py:run_primary_review`, `domain/editorial/attempts.py:resolve_review`, `restore_review` |
+| Category acceptance and ordered coordination | `application/preparation.py:_accept_category_preparation`, `_prepare_category_edition`; [category contract](STATE_AND_EFFECTS.md#outcomes-in-the-application) |
 | Configured request, review routes and display copy | `application/review_request.py`, `application/review.py`, `presentation/review.py` |
 | Freeze/claim/send/inspect an edition | `application/prepared_delivery.py`; CLI phases enter through `edition_runtime.delivery_phase` |
 | Edition/claim/receipt validation and bytes | `domain/delivery/edition.py`, `adapters/storage/edition.py` |
 | One prepared Telegram POST | `adapters/telegram/prepared.py` |
-| Apply known article coverage | `application/prepared_delivery.py` for prepared receipts; `application/delivery.py` for legacy direct output, with feedback/catalog policy owners |
+| Apply known article coverage | `application/prepared_delivery.py:send_prepared_edition` for exact persisted prepared receipts through accounting and verified applied marking; `application/delivery.py` for legacy direct output, with feedback/catalog policy owners |
 | Feedback and approved source application | `application/feedback.py`, `application/run_state.py` |
 | Discovery and external investigation | `application/discovery.py`; `post_delivery.py`, `irritator/evidence_stage.py` |
 
@@ -661,69 +198,71 @@ RSS review. Their invariants are not silently unified by this layout.
 
 ## Security
 
-The small [public-fetch operation](../digest/adapters/http/public_fetch.py) owns
-untrusted feed, discovery, article and optional signal-liveness acquisition (#218).
-Collector and CLI probes use the same operation. Every requested hop rejects unsafe
-syntax and every DNS address must be global, non-multicast, non-reserved and not IPv6
-site-local. Reserved IPv6 translation prefixes are deliberately excluded. Connections
-use a validated IP with the logical origin's HTTP Host and TLS SNI/certificate hostname;
-default certificate verification stays enabled. Fresh clients for each address/hop
-avoid cross-origin pooling. There is no process-global DNS override or ambient proxy.
+Untrusted feed, discovery, article and optional signal-liveness acquisition share
+one bounded, connection-scoped public-fetch operation. Telegram adapters share safe
+diagnostics without merging their transport policies. Feed sanitization does not
+make excerpts complete articles or guarantee immunity to malicious instructions.
 
-GET has at most three redirects and separate 2 MiB raw/decoded caps. One total fetch
-budget includes DNS awaits, address attempts, redirects and body consumption: 15 seconds
-for collector/probes/discovery and 20 seconds for articles. TCP and TLS establishment each have
-at most three seconds (roughly six combined); another validated address is attempted
-only if total time remains. Slow DNS can leave no fallback opportunity. Read/status
-failures do not trigger address fallback. Collector alone retains its existing second
-attempt and bounded backoff, so its whole-source envelope can exceed 15 seconds.
-Discovery and article retain their existing outer budgets across fetching and parsing.
-Await timeouts cannot stop an OS resolver or parser worker already running; bounded
-synchronous decoding/article extraction is checked on return, not preempted mid-call.
-
-Identity, gzip/x-gzip and zlib/raw deflate are supported with bounded decompression.
-Unsupported/chained encodings, concatenated compressed members, truncated bodies and
-invalid/oversized Content-Length fail technically, without returning partial evidence.
-HTTPX may read ahead one bounded raw chunk before the accumulator rejects overflow.
-Error statuses and HEAD never consume response bodies. Liveness performs one public-only
-HEAD without redirects, drops 404/410 and failed acquisition, and retains other statuses.
-Article-specific standard-port, URL-length, content-type and completeness policies stay
-in the article caller; feed parsing remains separate. Logical source/final URLs are
-preserved rather than replaced with connection IPs.
-
-These deliberate acquisition restrictions and fresh-connection costs are recorded in
-[ADR0026](decisions/0026-public-acquisition-boundary.md). No persistence, editorial,
-CLI or delivery contract changes. This is not a universal outbound-HTTP guarantee:
-fixed-endpoint Hacker News, Reddit, arXiv and other [search clients](../digest/irritator/sources/)
-keep their own HTTP policies. Boundary tests use synthetic DNS/transports and the real
-HTTPX/httpcore request path, including original-host TLS verification configuration;
-they are not evidence of live exploit testing or publisher availability.
-
-All Telegram adapters use the small [diagnostic boundary](../digest/adapters/telegram/diagnostics.py)
-for HTTP requests and safe status errors (#219). It adds no retry, receipt or result
-policy. Sent URLs and payloads remain unchanged; returned response/exception request
-metadata is a separate token-free diagnostic request with no body or original headers.
-Retries still use the original local URL, never that redacted metadata. HTTP status,
-response body and headers remain available to the existing protocol decisions.
-
-The boundary filters the concrete emitting HTTPX/httpcore 1.0.9 loggers before
-handlers retain records, retaining method/status evidence while redacting credentials
-in ordinary, DEBUG and exception diagnostics. A per-request context keeps overlapping
-requests separate; no temporary process-global logger levels are changed. Safe status
-errors do not interpolate response reason, redirect Location or body. This is verified
-for the reviewed dependency graph, not a claim about arbitrary future logger names,
-third-party log sinks or deliberate logging of raw response objects. Review the
-[ADR0017 continuation](decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09)
-when changing the HTTP dependencies or transport entrypoints.
-
-Feed titles/descriptions are untrusted content: sanitization removes HTML, decodes
-entities, normalizes whitespace and limits the description supplied to existing RSS prompts. Sanitization does not turn
-an excerpt into a full article or guarantee immunity to all malicious instructions.
+The exact [public acquisition and diagnostic limits](STATE_AND_EFFECTS.md#public-acquisition-and-diagnostics)
+cover addresses, redirects, bytes, deadlines, decoding and redaction scope. Fixed-endpoint
+search clients retain their own policies; this is not a universal outbound-HTTP guarantee.
 
 Keep real keys/tokens in runtime environment variables or Actions secrets. The engine
 does not automatically load `.env`. Never commit credentials or source-account details
 in public examples. Runtime artifacts can contain source bodies and model outputs;
 choose access and retention deliberately rather than copying them into the public repo.
+
+## Target architecture and migration
+
+Accepted direction is separate from implemented contracts and observed production quality.
+Read the [target architecture](MIGRATION.md#target-architecture-and-migration), its
+[destination and boundaries](MIGRATION.md#destination-and-boundaries), and the
+[staged migration and exit evidence](MIGRATION.md#staged-migration-and-exit-evidence).
+Issue [#164](https://github.com/Lenivvenil/digest/issues/164) carries current implementation
+evidence; [#91](https://github.com/Lenivvenil/digest/issues/91) carries product acceptance.
+
+## Detailed contract routes
+
+Older links below keep their exact subject while the detail has one canonical home.
+
+<a id="destination-and-boundaries"></a>
+
+- [Target destination and boundaries](MIGRATION.md#destination-and-boundaries)
+
+<a id="staged-migration-and-exit-evidence"></a>
+
+- [Migration stages and exit evidence](MIGRATION.md#staged-migration-and-exit-evidence)
+
+<a id="outcomes-in-the-application"></a>
+
+- [Explicit application outcomes](STATE_AND_EFFECTS.md#outcomes-in-the-application)
+
+<a id="cache-architecture"></a>
+<a id="the-four-publication-records"></a>
+
+- [Publication records and exact byte bindings](STATE_AND_EFFECTS.md#publication-records)
+
+<a id="other-retained-state"></a>
+
+- [Other retained state](STATE_AND_EFFECTS.md#other-retained-state)
+
+<a id="stage-5-prepared-delivery-values-persistence-and-application"></a>
+
+- [Prepared sending and application](STATE_AND_EFFECTS.md#send-and-apply)
+
+<a id="applying-output-outcomes"></a>
+<a id="applying-confirmed-outcomes"></a>
+<a id="stage-3-confirmed-delivery-application"></a>
+
+- [Prepared/direct output-effect matrix](STATE_AND_EFFECTS.md#output-effect-matrix)
+
+<a id="stage-5-first-telegram-delivery-ownership-slice"></a>
+
+- [Transport protocol compatibility](STATE_AND_EFFECTS.md#transport-protocols)
+
+<a id="stage-4-review-reuse-and-source-attribution"></a>
+
+- [Request reuse and source attribution](STATE_AND_EFFECTS.md#request-identity-and-reuse)
 
 ## Decisions and history
 
@@ -732,9 +271,6 @@ The [ADR index](decisions/README.md) records the architectural decisions. The
 preserves prior implementation stages, detailed acceptance evidence and release facts.
 Use runtime pins and receipts to establish deployment; this current design is not a
 substitute for observed operational state.
-
-<details>
-<summary>Links to prior sections</summary>
 
 <a id="adaptive-priority-system"></a>
 
@@ -799,5 +335,3 @@ substitute for observed operational state.
 <a id="ограничения-и-известные-особенности"></a>
 
 - [ограничения-и-известные-особенности](history/architecture-2026-10-08.md#ограничения-и-известные-особенности)
-
-</details>

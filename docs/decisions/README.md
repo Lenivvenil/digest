@@ -1,144 +1,81 @@
 # Architecture decision records
 
-Decisions use the MADR format and numbered files. Preserve the original decision,
-status and rationale; a translation or implementation observation does not change
-who approved it.
+Find the decision behind a boundary. Each record owns its rationale; the current
+[architecture](../ARCHITECTURE.md) and [state/effect contracts](../STATE_AND_EFFECTS.md)
+explain implemented behavior.
+
+- [Runtime, ownership and external boundaries](#runtime-ownership-and-external-boundaries)
+- [Selection and evidence](#selection-and-evidence)
+- [Publication and presentation](#publication-and-presentation)
+- [Feedback and source portfolio](#feedback-and-source-portfolio)
+- [Investigation and optional source reading](#investigation-and-optional-source-reading)
 
 ## Existing decisions
 
-- [0001](0001-adopt-claude-mini-governance.md) — Adopt the claude-mini engineering workflow
-- [0002](0002-engine-instance-split.md) — Separate the public engine from runtime instances
-- [0003](0003-source-state-split.md) — Separate source configuration from lifecycle state
+“Recorded status” follows each ADR's header and cited amendments, including historical
+proposed or under-review wording. It is not a live deployment ledger. Implementation,
+rollout and useful editorial output remain separate evidence; preserve the original
+status, rationale and approval context when editing a record.
 
-These historical records retain their original language and decision context. Current
-English explanations are in the [architecture guide](../ARCHITECTURE.md) and canonical
+### Runtime, ownership and external boundaries
+
+| Decision | Recorded status |
+| --- | --- |
+| [0001 · Adopt the claude-mini engineering workflow](0001-adopt-claude-mini-governance.md) | Accepted |
+| [0002 · Separate public engine and runtime instances](0002-engine-instance-split.md) | Proposed (historical header) |
+| [0015 · Give prepared workflows an application owner](0015-application-workflow-ownership.md) | Stage 1 merged/deployed; [target continuation](0015-application-workflow-ownership.md#target-ownership-continuation--2026-10-09) |
+| [0019 · Give direct execution and discovery explicit owners](0019-remaining-application-scenarios.md) | Scoped #147-A implementation record |
+| [0020 · Separate model execution from configuration](0020-explicit-model-execution.md) | Scoped #147-B implementation record; [pacing amendment](0020-explicit-model-execution.md#primary-review-pacing-correction--2026-10-09) |
+| [0026 · Own bounded public acquisition](0026-public-acquisition-boundary.md) | Implementation under review (header); plan approved |
+
+### Selection and evidence
+
+| Decision | Recorded status |
+| --- | --- |
+| [0008 · Account for candidates across bounded packets](0008-candidate-selection-progress.md) | Accepted; natural-run and disposition acceptance open |
+| [0016 · Separate candidate contracts, storage and retirement](0016-candidate-contracts-and-retirement.md) | Scoped #144 implementation merged/deployed |
+| [0018 · Share review reuse and separate source attribution](0018-review-reuse-and-source-attribution.md) | Scoped #146 implementation record; deployment recorded |
+| [0023 · Resolve authority from response-owned attempts](0023-response-owned-editorial-outcome.md) | Decision record for #181 |
+
+### Publication and presentation
+
+| Decision | Recorded status |
+| --- | --- |
+| [0005 · Opt-in translation of publication text](0005-optional-presentation-translation.md) | Accepted, implemented/deployed; finite acceptance passed |
+| [0007 · Compact presentation and publication reservation](0007-compact-issue-reservation.md) | Compact transport deployed. [Ready update](0007-compact-issue-reservation.md#2026-10-04-amendment-freeze-readiness-before-claiming-delivery-120): accepted for implementation, rollout/acceptance pending in header. [Supplement amendment](0007-compact-issue-reservation.md#2026-10-09-later-edition-supplementary-evidence-208) |
+| [0014 · Keep an optional humane closing item in preparation](0014-optional-humane-closing-item.md) | Implemented; optional/off by default; activation and editorial acceptance open |
+| [0017 · Apply confirmed delivery through scenario policies](0017-confirmed-delivery-application.md) | Scoped #145 implementation record; [strict preflight](0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09), [receipt ownership](0017-confirmed-delivery-application.md#receipt-owned-prepared-publication--220-slice-3) |
+
+### Feedback and source portfolio
+
+| Decision | Recorded status |
+| --- | --- |
+| [0003 · Separate source configuration and lifecycle state](0003-source-state-split.md) | Proposed (historical header) |
+| [0006 · Message voting for a batch-only runtime](0006-batch-message-voting.md) | Accepted/deployed; ordinary collector acceptance open |
+| [0013 · Keep exploration attempts separate from offers](0013-discovery-exploration-state.md) | Accepted first slice; post-approval protection and recommendation quality open |
+| [0021 · Separate catalog/feedback policy, persistence and Telegram](0021-catalog-feedback-boundaries.md) | #147-C and continuations deployed; [local-collection observation](0021-catalog-feedback-boundaries.md#retained-successful-local-collection--148-g9-2026-10-10) |
+| [0024 · Preserve full article identity in future votes](0024-full-article-vote-identity.md) | Reviewed decision, pre-implementation; [rollback floor](0024-full-article-vote-identity.md#deployment-and-rollback-floor) |
+
+### Investigation and optional source reading
+
+| Decision | Recorded status |
+| --- | --- |
+| [0009 · Bind resumable source admission to candidate work](0009-selected-source-admission.md) | Proposed; local integration under review; [attempt-owned completion](0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10) |
+| [0010 · Group source points with material qualifications](0010-group-source-points-with-qualifications.md) | Proposed; unused offline prototype retired under #207 |
+| [0011 · Ground queries with optional literal provenance](0011-source-anchored-investigation-queries.md) | Revised optional-provenance accepted; mandatory-anchor proposal superseded; full-source activation unaccepted |
+| [0012 · Preserve bounded private ranking evidence](0012-private-ranking-evidence.md) | Accepted bounded private audit; semantic acceptance open |
+| [0022 · Bind investigation to a versioned search policy](0022-versioned-bounded-search-policy.md) | Accepted bounded repair |
+| [0025 · Own ordinary Irritator fan-out results](0025-owned-irritator-fanout-results.md) | Approved bounded decision, pre-implementation |
+
+## Historical context and numbering
+
+The historical records retain their original language and decision context. Current
+English explanations are in [Architecture](../ARCHITECTURE.md) and the canonical
 [domain overview](../domain/digest/overview.md).
 
-ADR0004 was proposed/implemented in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93).
-It is not part of main; the proposal's existence is not a release approval.
+ADR0004 exists only in [closed, unmerged PR #93](https://github.com/Lenivvenil/digest/pull/93).
+It is not on main; the proposal's existence is not a release approval.
 
 Choose the next unused sequence number after checking open PRs. If the local claude-mini
 skill package is installed, its `next_adr_number.sh` helper can assist; that private tool
 installation is not required to read, configure or run Digest.
-
-[0005](0005-optional-presentation-translation.md) records the implemented opt-in
-translation of primary and supplementary generated prose under #94. Narrow real
-verification and ordinary translated output do not establish universal semantic fidelity.
-
-[0006](0006-batch-message-voting.md) records batch-compatible message voting and the
-150-second callback queue limitation. Real message ingestion, persistence, acknowledgement
-and computed priority influence are verified; daily retention limitations remain explicit.
-
-[0007](0007-compact-issue-reservation.md) records compact daily presentation and its
-coarse pre-publication reservation, followed by the ready-edition amendment and the
-#145 application-ownership extraction. No automatic resend lifecycle or exactly-once
-guarantee is implied; the dated record preserves its separate acceptance boundaries.
-
-
-[0008](0008-candidate-selection-progress.md) records accepted candidate accounting,
-bounded preparation and evidence storage under #121. Owner approval on 2026-10-04
-covered PR #125 and its engine-pin rollout; natural-run, disposition-quality and
-throughput acceptance remain separate and open.
-
-[0009](0009-selected-source-admission.md) proposes candidate-bound source admission
-and technical handoff under #122, with the #207 immutable-input/operation-owned
-transport migration. It does not approve semantic publication or runtime activation.
-
-[0010](0010-group-source-points-with-qualifications.md) proposes an offline grouped
-source-point representation for #55, with its unused prototype explicitly retired under
-#207 and preserved at an immutable historical revision. It does not approve a new
-prompt or publication path.
-
-[0011](0011-source-anchored-investigation-queries.md) revises the unaccepted mandatory
-literal-query guard into optional provenance diagnostics for bounded RSS and full-source
-investigation under #77. Useful grounded searches need no copied phrase; neutrality and
-useful retrieval remain empirical gates. The optional-provenance revision is accepted and deployed; full-source activation remains separate.
-
-[0012](0012-private-ranking-evidence.md) records accepted bounded candidate/admission and
-validated ranking-decision evidence in the existing private JSON archive under #77.
-The private archive trace is deployed; recorded decisions are not semantic acceptance.
-
-[0013](0013-discovery-exploration-state.md) records the accepted first slice: configurable exploration areas,
-fair passes with least-recent-offer preference, and finite pending-feed validation
-cooldowns in existing discovery metadata under #132. Approval-to-candidate protection
-and ordinary recommendation quality remain open; owner approval on 2026-10-06 covered PR #133 and its engine-pin rollout.
-
-
-[0014](0014-optional-humane-closing-item.md) proposes a disabled-by-default humane
-closing designation in the existing primary selection response, strict preparation
-v1/v2 compatibility and optional presentation before immutable freeze. Source
-activation, translated capacity and semantic acceptance remain open under #127.
-
-
-[0015](0015-application-workflow-ownership.md) records stage 1 of the structural
-migration: explicit prepared application ownership, removal of lower-to-entrypoint
-imports, and fail-before-effects preparation/preview validation. Implementation and
-rollout are verified through engine PR #149 (`de595797282b7b289561105820a55d467f8379a2`)
-and runtime PR #72 under #143; persisted formats and product acceptance remain separate.
-
-[0016](0016-candidate-contracts-and-retirement.md) records the deployed
-candidate-ownership slice under #144: pure values/proof validators, storage adapters,
-and explicit verified retirement versus persistence without retirement. Engine PR #150
-merged at `6c5d7db7a6c0f5520d36f3a89b60fbb8e73fdda6`; runtime PR #73 merged the one-line
-pin at `9d529cc84d9c1968feebe25d55da0658767cc3e7`. Existing formats/policies remain;
-scheduler ownership, later stages and semantic acceptance are separate.
-
-[0017](0017-confirmed-delivery-application.md) records the implemented #145
-confirmed-outcome application, pure coverage projection and strict delivery-state
-adapter. Explicit prepared/direct policies preserve accounting, write order and
-failure behavior. Successful-repeat counter deduplication does not authorize
-automatic reconciliation of interrupted application; release evidence is tracked in #145.
-PR #151 and runtime PR #74 verified this scoped rollout on 2026-10-07.
-
-[0018](0018-review-reuse-and-source-attribution.md) records the scoped #146
-implementation: shared exact-request review reuse, distinct request validation,
-canonical source occurrences with named compatibility types, and general exact-feed
-notices separated from optional closing. Immutable main-packet resolution remains an
-application boundary; existing hashes, recovery and presentation ordering are preserved.
-PR #152 and runtime PR #75 verified the scoped deployment on 2026-10-07;
-source activation and editorial acceptance remain separate.
-
-[0019](0019-remaining-application-scenarios.md) records the #147-A execution,
-legacy and discovery application boundary with explicit CLI output adapters.
-Public entrypoints, guard finalization and the discovery persistence/output/send
-barrier remain compatible.
-
-[0020](0020-explicit-model-execution.md) records #147-B separation of provider
-settings from explicit lazy model-execution holders, preserved copy/reset and budget
-policy, and the deliberate internal helper signature migration. Release evidence
-and editorial acceptance remain separately tracked.
-
-[0021](0021-catalog-feedback-boundaries.md) records #147-C proposal/feedback
-rules, storage codecs, Telegram protocol and explicit collect/persist/ack ownership.
-Exact proposal revalidation, persisted bytes, write order and failure behavior remain
-compatible. Its deployed continuations give source quality/trial rules and exploration
-policy explicit domain owners, codecs/Telegram transport explicit adapters, and source
-scoring/discovery explicit application owners. Telegram presentation/transport is deployed
-through engine PR #158/runtime PR #81.
-Prepared delivery is deployed through engine PR #159/runtime PR #82; investigation
-validation and shared contracts are deployed through engine PR #160/runtime PR #83. These continuations are recorded in ADR0017/ADR0019; source activation and
-editorial
-acceptance remain separate from these ownership releases.
-
-[0022](0022-versioned-bounded-search-policy.md) records the existing DEV adapter's
-Forem V1 repair, unchanged bounded attempt/deadline ceilings, and explicit future-only
-search-policy binding. Old attempts and results remain intact; transport reachability
-and genuinely useful counter-evidence are separate acceptance facts.
-
-[0023](0023-response-owned-editorial-outcome.md) records #181's response-owned
-attempt and single ordinary editorial resolver. Mutable capture outputs and repeated
-live slot joins are removed while persisted trust checks, card projection and
-historical recovery remain distinct contracts.
-
-[0024](0024-full-article-vote-identity.md) records full article identities for future
-votes, ready-only schema 2, preserved historical feedback and the compatible-reader
-floor for both sending and polling. Legacy ambiguity and mixed-token scoring remain
-explicit limitations rather than a guessed history migration.
-
-[0025](0025-owned-irritator-fanout-results.md) records #204's owned ordinary query
-and search batches, exported-helper return/keyword migration and explicit query-child
-cancellation correction. Public run status and bounded persisted evidence remain separate.
-
-[0026](0026-public-acquisition-boundary.md) records the #218 connection-scoped public
-acquisition operation, bounded bodies/deadlines, per-hop validation and deliberate
-compression/source limits. Publication and rollout evidence are tracked on the issue.

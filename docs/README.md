@@ -8,24 +8,24 @@ Choose the task in front of you. Each route leads to the guide that owns the det
 
 - **[Try the safe example](../README.md#try-it-safely)** — install and run an offline,
   empty-input check
-- **[Set up a live runtime](BLIND_REVIEW.md#runtime-configuration)** — keep secrets,
+- **[Set up a live runtime](CONFIGURATION.md#runtime-configuration)** — keep secrets,
   source configuration, schedules and saved state separate from the engine
-- **[Choose models and sources](BLIND_REVIEW.md#model-routes)** — configure entitled
-  routes, then [source categories](BLIND_REVIEW.md#sources-and-categories) and
-  [language](BLIND_REVIEW.md#language-and-optional-post-translation)
-- **[Find a command](BLIND_REVIEW.md#cli-options)** — previews can call external services;
+- **[Choose models and sources](CONFIGURATION.md#model-routes)** — configure entitled
+  routes, then [source categories](CONFIGURATION.md#sources-and-categories) and
+  [language](CONFIGURATION.md#language-and-optional-post-translation)
+- **[Find a command](CONFIGURATION.md#cli-options)** — previews can call external services;
   compact publishing needs the managed sequence below
 
 ## Operate or recover
 
-- **[Prepare, persist, claim and send](BLIND_REVIEW.md#persist-claim-and-send)** — follow
+- **[Prepare, persist, claim and send](OPERATIONS.md#persist-claim-and-send)** — follow
   the publication barriers in order
-- **[Inspect an interrupted edition](BLIND_REVIEW.md#delivery-states-and-recovery)** —
+- **[Inspect an interrupted edition](OPERATIONS.md#inspect-an-interrupted-edition)** —
   distinguish ready work, uncertain sends and unapplied confirmations
-- **[Upgrade with retained state](BLIND_REVIEW.md#upgrades-and-retained-state)** —
+- **[Upgrade with retained state](OPERATIONS.md#upgrades-and-retained-state)** —
   check compatibility before changing or rolling back the engine pin
-- **[Manage feedback and sources](BLIND_REVIEW.md#feedback-and-source-decisions)** —
-  handle votes, approvals and [source discovery](BLIND_REVIEW.md#source-discovery)
+- **[Manage feedback and sources](OPERATIONS.md#feedback-and-source-decisions)** —
+  handle votes, approvals and [source discovery](OPERATIONS.md#source-discovery)
 
 <a id="contribute-a-change"></a>
 <a id="understand-the-architecture"></a>
@@ -35,7 +35,7 @@ Choose the task in front of you. Each route leads to the guide that owns the det
 - **[Follow one edition](domain/digest/overview.md#one-story-through-the-system)** —
   candidate, accepted work, ready edition and confirmed delivery
 - **[Explore the architecture](ARCHITECTURE.md#prepared-edition-data-flow)** — current
-  lifecycle and ownership; [target and migration](ARCHITECTURE.md#target-architecture-and-migration)
+  lifecycle and ownership; [target and migration](MIGRATION.md#target-architecture-and-migration)
   remain distinct from implemented guarantees
 - **[Understand counter-evidence](domain/irritator/overview.md#current-domain-model)** —
   independent external evidence and its relation to the original claim
