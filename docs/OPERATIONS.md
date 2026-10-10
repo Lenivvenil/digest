@@ -32,8 +32,10 @@ source activation and schedules belong to the operator's runtime.
 <a id="review-led-delivery-without-legacy-enrichment"></a>
 
 The ordinary mode uses `review.enabled: true`, `review.review_led_only: true` and
-`telegram.delivery_mode: compact`. It does not generate legacy category summaries
-or wait for an independent comparison before preparing selected cards.
+`telegram.delivery_mode: compact`. First pin both slots using the
+[ordinary review route example](CONFIGURATION.md#ordinary-review-routes).
+It does not generate legacy category summaries or wait for an independent comparison
+before preparing selected cards.
 
 The managed runtime owns feedback collection, durable persistence and acknowledgement
 of the exact saved batch. Pass `--feedback-precollected` whenever that separate stage
