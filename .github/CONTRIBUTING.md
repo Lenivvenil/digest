@@ -19,8 +19,14 @@ and runtime evidence belong in the private instance; use synthetic examples in P
 
 ## Make and verify a bounded change
 
-Use the [development setup and commands](../README.md#development). During editing,
-run the affected offline checks. For the final code change, `make check` runs lint,
+Use the [development setup and commands](../README.md#development). In an activated
+virtual environment, `make install` installs the engine and runtime requirements;
+`make install-dev` also installs the development requirements. Both are normally
+networked source installations with dependency resolution and build isolation.
+They can replace incompatible installed packages; neither requests an upgrade or
+an editable install.
+
+During editing, run the affected offline checks. For the final code change, `make check` runs lint,
 type checking and tests together. Prefer an existing test at the decision owner;
 add a case when it protects a distinct failure or contract. Retire an assertion only
 when its behavior is covered elsewhere or the underlying contract is explicitly retired.
