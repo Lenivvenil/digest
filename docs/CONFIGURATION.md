@@ -88,9 +88,43 @@ llm:
       model: YOUR_GEMINI_MODEL_ID
 ```
 
-Review slots are separately pinned. See [ordinary primary/fallback preparation](OPERATIONS.md#ordinary-preparation)
-and [independent comparison](ADVANCED_OPERATIONS.md#independent-comparison-and-resume) rather than assuming
-category routing supplies the same fallback semantics for every operation.
+#### Ordinary review routes
+
+Review slots are pinned separately from `llm.providers` and `llm.routing`; changing
+category routes does not replace the review slots' defaults. Before enabling review,
+set both `review.primary` and `review.secondary` explicitly. Each slot must use a
+distinct provider/model identity.
+
+The example below uses the same provider/model placeholders as the category example
+above. Replace every `YOUR_*_MODEL_ID` with an intended model that your account can
+use; these are not runnable model IDs or promises of availability, free quota or
+access. Review slots can use different models from category analysis. Merge these
+fields into the existing sections of your runtime config rather than adding duplicate
+YAML keys. Keep Telegram and Markdown delivery disabled while reviewing a preview:
+
+```yaml
+review:
+  enabled: true
+  review_led_only: true
+  primary:
+    provider: gemini
+    model: YOUR_GEMINI_MODEL_ID
+  secondary:
+    provider: groq
+    model: YOUR_GROQ_MODEL_ID
+telegram:
+  enabled: false
+  delivery_mode: compact
+obsidian:
+  enabled: false
+```
+
+[Ordinary preparation](OPERATIONS.md#ordinary-preparation) uses one primary attempt
+and, only if its output is invalid or unavailable, at most one secondary fallback.
+[Independent comparison](ADVANCED_OPERATIONS.md#independent-comparison-and-resume)
+is optional and has different execution and completion rules. Enabling review and
+choosing compact formatting do not replace the managed
+[prepare, persist, claim and send sequence](OPERATIONS.md#persist-claim-and-send).
 
 ### Sources and categories
 
