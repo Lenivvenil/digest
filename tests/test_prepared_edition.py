@@ -412,6 +412,7 @@ async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(
     assert "applied_marker=False" in caplog.text and "fully_covered_articles=1" in caplog.text
     assert "write prefix is unknown" in caplog.text and "retained operational records" in caplog.text
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    caplog.clear()
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
             ready,
@@ -420,6 +421,9 @@ async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(
             config=sender_config(),
             now=NOW,
         )
+    assert "application incomplete" in caplog.text and "receipt_state=confirmed" in caplog.text
+    assert "applied_marker=False" in caplog.text and "write prefix is unknown" in caplog.text
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     assert route.call_count == 1
     assert json.loads((tmp_path / edition.RECEIPTS_FILE).read_text())["applied"] is False
 

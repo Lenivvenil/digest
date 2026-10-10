@@ -239,6 +239,7 @@ async def send_prepared_edition(
     if existing is not None:
         if existing.state == "confirmed" and existing.applied:
             return project_result(data, existing)
+        _warn_dispatch_hold(data, existing)
         raise ValueError("Edition dispatch is held; automatic replay is blocked.")
     storage.validate_manifest_record(asdict(data), owner, instant)
     validate_dispatch_identity(data)
@@ -380,11 +381,13 @@ def inspect_edition(
     *,
     cache_dir: str | Path = ".cache",
     now: datetime | None = None,
+    warn_held: bool = True,
 ) -> tuple[dict[str, Any] | None, str, str]:
     """Inspect persisted selection without rendering, fetching or generation.
 
     Status is ready, pending_window, confirmed, held, expired or missing. A claim is held until
     its sender proves completion; callers never regenerate or reclaim it.
+    The send phase defers warnings to the sender's actual refusal boundary.
     """
     instant = _instant(now)
     cache = safe_issue_path(Path(cache_dir))
@@ -414,7 +417,8 @@ def inspect_edition(
         receipts = storage.load_receipts(cache, claim.ready_sha256, claim_sha, len(data.payloads), owner_sha)
         if receipts is not None and receipts.applied and receipts.state == "confirmed":
             return asdict(data), ready_sha, "confirmed" if instant < parse_instant(data.window_end) else "expired"
-        _warn_dispatch_hold(data, receipts)
+        if warn_held:
+            _warn_dispatch_hold(data, receipts)
         return asdict(data), ready_sha, "held"
     if storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Orphaned edition receipts; publishing blocked.")
