@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -21,11 +21,14 @@ from digest.reading_brief_state import (
     BriefState,
     Selection,
     checksum,
+    completed,
     load_source,
     load_state,
     now,
+    page_wire,
     save_state,
     state_root,
+    state_wire,
 )
 from digest.reading_reconciliation import build_reconciliation_input
 from scripts.review_fixture import fixture_config
@@ -108,12 +111,14 @@ async def test_direct_full_body_and_late_qualification_reach_checked_evidence(tm
         state, source = ready_brief_evidence(tmp_path, identity)
         assert state.status == "ready" and len(state.pages) == 1
         assert "".join(span["text"] for span in payload(requests[0])["spans"]) == text
-        result = state.pages[0].result
+        finished = completed(state.pages[0])
+        assert finished is not None
+        result = finished.result
         assert result is not None
-        assert result.covered_span_ids == [span.id for span in source.spans]
-        assert result.qualification_span_ids == [source.spans[-1].id]
+        assert result.covered_span_ids == tuple(span.id for span in source.spans)
+        assert result.qualification_span_ids == (source.spans[-1].id,)
         handoff = json.loads(Path(prepared.handoff_paths[0]).read_text())
-        assert handoff["state"] == asdict(state)
+        assert handoff["state"] == state_wire(state)
         assert handoff["source_sha256"] == state.source_sha256
         assert handoff["source_body_sha256"] == source.body_sha256
         assert handoff["state"]["pages"][0]["result"]["qualification_span_ids"] == [source.spans[-1].id]
@@ -127,7 +132,7 @@ async def test_direct_full_body_and_late_qualification_reach_checked_evidence(tm
         assert "FINAL QUALIFICATION" in evidence.evidence[-1].text
         assert evidence.source_published == "2026-09-20T09:00:00+00:00"
         assert "Uninspected images." in evidence.source_coverage_notes
-        assert state.pages[0].usage == {"prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180}
+        assert dict(finished.usage) == {"prompt_tokens": 100, "completion_tokens": 80, "total_tokens": 180}
         state_bytes = (state_root(tmp_path) / f"{identity}.json").read_bytes()
         assert ready_brief_evidence(tmp_path, identity) == (state, source)
         assert (state_root(tmp_path) / f"{identity}.json").read_bytes() == state_bytes
@@ -168,18 +173,19 @@ async def test_only_real_exact_overflow_sweeps_every_page_and_resumes_without_dr
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         state = load_state(tmp_path, identity)
         assert state.status == "pending" and state.error_class == "technical_quota_or_budget" and state.attempts == 1
-        assert state.pages[0].result is not None
-        completed_page = asdict(state.pages[0])
+        assert completed(state.pages[0]) is not None
+        completed_page = page_wire(state, state.pages[0])
         source_hash = state.source_sha256
         assert generated == [[1, 2], [3, 4]]
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
         state, source = ready_brief_evidence(tmp_path, identity)
         assert state.status == "ready" and state.attempts == 2
-        assert asdict(state.pages[0]) == completed_page and state.source_sha256 == source_hash
+        assert page_wire(state, state.pages[0]) == completed_page and state.source_sha256 == source_hash
         assert counted[0] == list(range(1, 9))
         assert generated == [[1, 2], [3, 4], [3, 4], [5, 6], [7, 8]]
         assert counted.count([3, 4]) == 1 and fetch.call_count == 1
-        assert [span for page in state.pages for span in page.result.covered_span_ids] == list(range(1, 9))
+        covered = [span for page in state.pages if (value := completed(page)) for span in value.result.covered_span_ids]
+        assert covered == list(range(1, 9))
         assert "".join(source.text[s.start : s.end] for s in source.spans) == text
         evidence = build_reconciliation_input(source, state)
         assert [span for page in evidence.pages for span in page.qualification_span_ids] == list(range(1, 9))
@@ -217,7 +223,7 @@ async def test_invalid_or_truncated_output_stays_pending_without_repair(tmp_path
     ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
-    assert state.status == "pending" and state.pages[0].result is None and call.call_count == 1
+    assert state.status == "pending" and completed(state.pages[0]) is None and call.call_count == 1
     assert state.pages[0].request_attempts[-1].status == "accepted"
     with pytest.raises(ValueError, match="brief_not_ready"):
         ready_brief_evidence(tmp_path, state.selection.identity)
@@ -249,7 +255,7 @@ async def test_abstention_is_semantic_only_after_every_page_completes(tmp_path: 
         state = load_state(tmp_path, state.selection.identity)
         _validate_progress(state, load_source(tmp_path, state))
         assert state.status == "abstained" and generated == [[1, 1], [2, 2]]
-        assert all(page.result is not None and page.result.abstain for page in state.pages)
+        assert all((value := completed(page)) is not None and value.result.abstain for page in state.pages)
         with pytest.raises(ValueError, match="brief_not_ready"):
             ready_brief_evidence(tmp_path, state.selection.identity)
     assert call.call_count == 2
@@ -276,7 +282,7 @@ async def test_incomplete_fetch_and_exhausted_budget_never_become_editorial_reje
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state = load_state(tmp_path, state.selection.identity)
     assert state.status == "pending" and state.error_class == "technical_quota_or_budget"
-    assert state.source_sha256 is not None and state.pages[0].result is None and count.call_count == 0
+    assert state.source_sha256 is not None and completed(state.pages[0]) is None and count.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -542,11 +548,12 @@ async def test_abstaining_later_page_qualification_remains_literal_in_retained_e
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=execution)
     state, source = ready_brief_evidence(tmp_path, state.selection.identity)
     assert generated_pages == [[1], [2]] and state.status == "ready"
-    assert state.pages[1].result is not None and state.pages[1].result.abstain is True
+    finished = completed(state.pages[1])
+    assert finished is not None and finished.result.abstain is True
     evidence = build_reconciliation_input(source, state)
     assert evidence.pages[1].abstain and evidence.pages[1].qualification_span_ids == (2,)
     assert evidence.pages[1].route == state.route
-    assert evidence.pages[1].request_sha256 == state.pages[1].prompt_sha256
+    assert evidence.pages[1].request_sha256 == finished.request_sha256
     assert evidence.evidence[1].id == 2 and evidence.evidence[1].text == condition
     assert "".join(span.text for span in evidence.evidence) == text
 

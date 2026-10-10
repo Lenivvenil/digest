@@ -12,7 +12,7 @@ import copy
 import json
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,10 +27,14 @@ from digest.reading_brief_state import (
     BriefState,
     Page,
     PageResult,
+    PendingRequest,
     RequestAttempt,
     Route,
     Source,
+    _complete_page,
+    _response_envelope,
     checksum,
+    completed,
     has_unresolved_generation,
     load_source,
     load_state,
@@ -120,9 +124,12 @@ def _prompt_sha(state: BriefState, messages: list[dict[str, str]], route: Route 
 
 
 def _response_sha(state: BriefState, page: Page) -> str:
-    return checksum({"source": state.source_sha256, "route": asdict(page.route or state.route),
-                     "prompt": page.prompt_sha256, "response": page.response,
-                     "finish_reason": page.finish_reason, "usage": page.usage})
+    value = completed(page)
+    assert value is not None
+    # Recheck against the current state, not just the owner's original binding.
+    route = state.route if value.page_route_spelling == "null" else value.route
+    return _response_envelope(state.source_sha256, route, value.request_sha256,
+                              value.response, value.finish_reason, dict(value.usage))
 
 
 def _routes(config: Config) -> list[Route]:
@@ -140,7 +147,11 @@ def _routes(config: Config) -> list[Route]:
 
 
 def _admitted(state: BriefState, page: Page, messages: list[dict[str, str]]) -> bool:
-    route = page.route or state.route
+    value = completed(page)
+    pending = page.work if isinstance(page.work, PendingRequest) else None
+    route = (value.route if value.page_route_spelling == "explicit" else state.route) if value else (
+        pending.route or state.route if pending else state.route
+    )
     prompt = _prompt_sha(state, messages, route)
     if route.provider == "gemini":
         return prompt in state.exact_counts and state.exact_counts[prompt] <= route.input_tokens
@@ -174,11 +185,11 @@ def _ids(value: Any, available: set[int], *, required: bool = False) -> list[int
 
 def _validate_result(result: PageResult, page: Page, source: Source) -> None:
     available = {span.id for span in source.spans[page.start:page.stop]}
-    if _ids(result.covered_span_ids, available, required=True) != sorted(available):
+    if _ids(list(result.covered_span_ids), available, required=True) != sorted(available):
         raise ValueError("incomplete_page_coverage")
-    _ids(result.selected_span_ids, available, required=not result.abstain)
-    _ids(result.qualification_span_ids, available)
-    _ids(result.angle_span_ids, available, required=result.reading_angle is not None)
+    _ids(list(result.selected_span_ids), available, required=not result.abstain)
+    _ids(list(result.qualification_span_ids), available)
+    _ids(list(result.angle_span_ids), available, required=result.reading_angle is not None)
     if type(result.abstain) is not bool:
         raise ValueError("invalid_abstention")
     if result.abstain and (result.selected_span_ids or result.reading_angle is not None or result.angle_span_ids):
@@ -206,26 +217,16 @@ def _parse_result(text: str, usage: dict[str, Any], page: Page, source: Source) 
     angle = data["reading_angle"]
     if angle is not None and (not isinstance(angle, dict) or set(angle) != {"text", "span_ids"}):
         raise ValueError("invalid_reading_angle")
-    result = PageResult(expected, data["selected_span_ids"], data["qualification_span_ids"],
+    # JSON arrays remain mandatory; freezing must not normalize their saved order.
+    available = set(expected)
+    for values in (data["selected_span_ids"], data["qualification_span_ids"],
+                   angle["span_ids"] if angle is not None else []):
+        _ids(values, available)
+    result = PageResult(tuple(expected), tuple(data["selected_span_ids"]), tuple(data["qualification_span_ids"]),
                         angle["text"] if angle is not None else None,
-                        angle["span_ids"] if angle is not None else [], data["abstain"])
+                        tuple(angle["span_ids"]) if angle is not None else (), data["abstain"])
     _validate_result(result, page, source)
     return result
-
-
-def _validate_completed_attempt(state: BriefState, page: Page) -> None:
-    if page.request_history_version == 0 and not page.request_attempts:
-        return
-    attempts = [attempt for attempt in page.request_attempts
-                if attempt.kind == "generate" and attempt.status != "definite_failed"]
-    if len(attempts) != 1:
-        raise ValueError("result_attempt_binding_mismatch")
-    attempt = attempts[0]
-    if (attempt.status != "accepted" or (attempt.start, attempt.stop) != (page.start, page.stop)
-            or attempt.route != (page.route or state.route) or attempt.request_sha256 != page.prompt_sha256
-            or attempt.response_sha256 != checksum(page.response) or attempt.finish_reason != page.finish_reason
-            or attempt.usage != page.usage):
-        raise ValueError("result_attempt_binding_mismatch")
 
 
 def _validate_progress(state: BriefState, source: Source) -> None:
@@ -240,30 +241,35 @@ def _validate_progress(state: BriefState, source: Source) -> None:
             original_page = Page(attempt.start, attempt.stop)
             if attempt.request_sha256 != _prompt_sha(state, _messages(state, source, original_page), attempt.route):
                 raise ValueError("request_prompt_mismatch")
-        if not page.prompt_sha256 and page.result is None:
+        value = completed(page)
+        pending = page.work if isinstance(page.work, PendingRequest) else None
+        request_sha = value.request_sha256 if value else pending.request_sha256 if pending else ""
+        route = (value.route if value.page_route_spelling == "explicit" else None) if value else (
+            pending.route if pending else None
+        )
+        if not request_sha and value is None:
             # No provider request exists yet to bind. A former unknown-profile
             # hold may now use the explicitly configured supported route.
             continue
         messages = _messages(state, source, page)
-        prompt_sha = _prompt_sha(state, messages, page.route)
-        if page.prompt_sha256 and page.prompt_sha256 != prompt_sha:
+        prompt_sha = _prompt_sha(state, messages, route)
+        if request_sha and request_sha != prompt_sha:
             raise ValueError("page_prompt_mismatch")
-        if page.result is not None:
-            if page.prompt_sha256 != prompt_sha or not _admitted(state, page, messages):
+        if value is not None:
+            if request_sha != prompt_sha or not _admitted(state, page, messages):
                 raise ValueError("uncounted_completed_page")
-            _validate_result(page.result, page, source)
-            if not isinstance(page.response, str) or page.response_sha256 != _response_sha(state, page):
+            _validate_result(value.result, page, source)
+            if value.response_sha256 != _response_sha(state, page):
                 raise ValueError("result_response_binding_mismatch")
-            _validate_completed_attempt(state, page)
-            reparsed = _parse_result(page.response, {"finish_reason": page.finish_reason}, page, source)
-            if reparsed != page.result:
+            reparsed = _parse_result(value.response, {"finish_reason": value.finish_reason}, page, source)
+            if reparsed != value.result:
                 raise ValueError("result_response_binding_mismatch")
     if expected_start != len(source.spans):
         raise ValueError("incomplete_manifest_coverage")
     if state.status in {"ready", "abstained", "delivered"}:
-        if any(page.result is None for page in state.pages):
+        if any(completed(page) is None for page in state.pages):
             raise ValueError("unfinished_terminal_state")
-        all_abstained = all(page.result is not None and page.result.abstain for page in state.pages)
+        all_abstained = all((value := completed(page)) is not None and value.result.abstain for page in state.pages)
         if all_abstained != (state.status == "abstained"):
             raise ValueError("inconsistent_terminal_state")
 
@@ -314,48 +320,56 @@ def _error_class(exc: Exception, phase: str) -> str:
 
 def _reserve_attempt(
     state: BriefState, page: Page, route: Route, kind: Literal["count", "generate"], state_dir: Path,
-) -> RequestAttempt:
+) -> int:
     if state.source_sha256 is None:
         raise ValueError("missing_source")
-    attempt = RequestAttempt(kind, route, page.start, page.stop, state.source_sha256, page.prompt_sha256, now())
+    assert isinstance(page.work, PendingRequest)
+    attempt = RequestAttempt(kind, route, page.start, page.stop, state.source_sha256, page.work.request_sha256, now())
     page.request_attempts.append(attempt)
     # The adapter may still wait for pacing, credentials or its shared request budget.
     # This is durable intent, not evidence that a physical request was sent.
     save_state(state_dir, state)
-    return attempt
+    return len(page.request_attempts) - 1
 
 
-def _fail_attempt(state: BriefState, attempt: RequestAttempt | None, exc: Exception, state_dir: Path) -> None:
-    if attempt is not None and attempt.status == "reserved":
+def _fail_attempt(
+    state: BriefState, page: Page, attempt_index: int | None, exc: Exception, state_dir: Path,
+) -> None:
+    if attempt_index is not None and (attempt := page.request_attempts[attempt_index]).status == "reserved":
+        # Read the current slot: an acceptance save may have failed after replacing it.
         # The shared guard raises only before provider dispatch; it is not transport ambiguity.
-        attempt.status = "definite_failed" if _can_fallback(exc) or isinstance(exc, ModelBudgetError) else "unknown"
-        attempt.finished_at = now()
-        attempt.error_class = _error_class(exc, attempt.kind)
+        page.request_attempts[attempt_index] = replace(
+            attempt, status="definite_failed" if _can_fallback(exc) or isinstance(exc, ModelBudgetError) else "unknown",
+            finished_at=now(), error_class=_error_class(exc, attempt.kind),
+        )
         save_state(state_dir, state)
 
 
 def _accept_generation(
-    state: BriefState, attempt: RequestAttempt, text: str, usage: dict[str, Any], state_dir: Path,
+    state: BriefState, page: Page, attempt_index: int, text: str, usage: dict[str, Any], state_dir: Path,
 ) -> None:
-    attempt.status = "accepted"
-    attempt.finished_at = now()
-    attempt.response_sha256 = checksum(text)
+    finished = now()
+    response_sha = checksum(text)
     ending = usage.get("finish_reason")
-    attempt.finish_reason = ending if ending in {"STOP", "stop", "length", "MAX_TOKENS", "tool_calls",
-                                                "content_filter", "SAFETY", "RECITATION", "OTHER", "error"} else None
-    attempt.usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                     if type(usage.get(key)) is int and usage[key] >= 0}
+    page.request_attempts[attempt_index] = replace(
+        page.request_attempts[attempt_index], status="accepted", finished_at=finished, response_sha256=response_sha,
+        finish_reason=ending if ending in {"STOP", "stop", "length", "MAX_TOKENS", "tool_calls",
+                                           "content_filter", "SAFETY", "RECITATION", "OTHER", "error"} else None,
+        usage=tuple((key, usage[key]) for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                    if type(usage.get(key)) is int and usage[key] >= 0),
+    )
     # Save acceptance before validation; bad or incomplete output must not buy a second generation.
     # Retain hashes and bounded metadata, never an invalid response body or hidden provider thoughts.
     save_state(state_dir, state)
 
 
 def _legacy_count_request(state: BriefState, page: Page) -> str:
-    if (page.result is None and page.request_history_version == 0
-            and page.prompt_sha256 and not page.request_attempts
-            and (page.route or state.route).provider == "gemini"
-            and page.prompt_sha256 not in state.exact_counts):
-        return page.prompt_sha256
+    pending = page.work
+    if (isinstance(pending, PendingRequest) and page.request_history_version == 0
+            and pending.request_sha256 and not page.request_attempts
+            and (pending.route or state.route).provider == "gemini"
+            and pending.request_sha256 not in state.exact_counts):
+        return pending.request_sha256
     return page.legacy_count_request_sha256
 
 
@@ -371,7 +385,7 @@ def _count_routes_held(state: BriefState, source: Source, routes: list[Route]) -
     """Check exact count holds and local admission availability without provider calls."""
     if state.status != "pending" or not routes:
         return False
-    page = next((page for page in state.pages if page.result is None), None)
+    page = next((page for page in state.pages if completed(page) is None), None)
     if page is None:
         return False
     messages = _messages(state, source, page)
@@ -393,7 +407,7 @@ def _count_routes_held(state: BriefState, source: Source, routes: list[Route]) -
 
 def _track_legacy_pages(state: BriefState, state_dir: Path) -> None:
     for page in state.pages:
-        if page.result is None and page.request_history_version == 0:
+        if completed(page) is None and page.request_history_version == 0:
             # Preserve the unrecorded old count without inventing its dispatch or timestamp.
             page.legacy_count_request_sha256 = _legacy_count_request(state, page)
             page.request_history_version = 1
@@ -436,23 +450,24 @@ async def _advance(
         index = 0
         while index < len(state.pages):
             page = state.pages[index]
-            if page.result is not None:
+            if completed(page) is not None:
                 index += 1
                 continue
+            assert isinstance(page.work, PendingRequest)
             candidates = list(routes)
-            if page.route in candidates:
-                candidates.remove(page.route)
-                candidates.insert(0, page.route)
+            if page.work.route in candidates:
+                candidates.remove(page.work.route)
+                candidates.insert(0, page.work.route)
             split = False
             for candidate_index, route in enumerate(candidates):
                 call_config.llm.min_request_interval_seconds = request_interval(
                     route.provider, config.llm.min_request_interval_seconds,
                 )
                 attempt = None
-                page.route = route if route != state.route else None
+                page.work = replace(page.work, route=route if route != state.route else None)
                 messages = _messages(state, source, page)
                 prompt_sha = _prompt_sha(state, messages, route)
-                page.prompt_sha256 = prompt_sha
+                page.work = replace(page.work, request_sha256=prompt_sha)
                 provider = ProviderConfig(route.provider, route.model)
                 try:
                     phase = "count"
@@ -474,11 +489,13 @@ async def _advance(
                                 provider_override=provider, temperature=TEMPERATURE,
                                 max_output_tokens=route.max_output_tokens,
                             )
-                        attempt.status = "accepted"
-                        attempt.finished_at = now()
+                        page.request_attempts[attempt] = replace(
+                            page.request_attempts[attempt], status="accepted", finished_at=now(),
+                        )
                         if type(count) is int and count > 0:
-                            attempt.exact_count = count
-                            attempt.response_sha256 = checksum(count)
+                            page.request_attempts[attempt] = replace(
+                                page.request_attempts[attempt], exact_count=count, response_sha256=checksum(count),
+                            )
                             state.exact_counts[prompt_sha] = count
                         save_state(state_dir, state)
                         if type(count) is not int or count <= 0:
@@ -493,10 +510,10 @@ async def _advance(
                             return
                         middle = (page.start + page.stop) // 2
                         # Keep the historical parent-page intents when its admitted range splits.
-                        state.pages[index:index + 1] = [Page(page.start, middle, route=page.route,
+                        state.pages[index:index + 1] = [Page(page.start, middle, work=PendingRequest(page.work.route),
                                                             request_attempts=page.request_attempts,
                                                             legacy_count_request_sha256=page.legacy_count_request_sha256),
-                                                       Page(middle, page.stop, route=page.route)]
+                                                       Page(middle, page.stop, work=PendingRequest(page.work.route))]
                         save_state(state_dir, state)
                         split = True
                         break
@@ -510,14 +527,13 @@ async def _advance(
                             temperature=TEMPERATURE, max_output_tokens=route.max_output_tokens,
                             request_timeout_seconds=request_timeout,
                         )
-                    _accept_generation(state, attempt, text, usage, state_dir)
-                    page.result = _parse_result(text, usage, page, source)
-                    page.response = text
-                    page.finish_reason = attempt.finish_reason
-                    page.usage = dict(attempt.usage)
-                    if route.provider == "groq" and "prompt_tokens" in page.usage:
+                    _accept_generation(state, page, attempt, text, usage, state_dir)
+                    result = _parse_result(text, usage, page, source)
+                    _complete_page(page, attempt, text, result, "null" if page.work.route is None else "explicit")
+                    accepted_usage = dict(page.request_attempts[attempt].usage)
+                    if route.provider == "groq" and "prompt_tokens" in accepted_usage:
                         admission = state.admissions[prompt_sha]
-                        actual = page.usage["prompt_tokens"]
+                        actual = accepted_usage["prompt_tokens"]
                         logger.info(
                             "Reading admission %s/%s local=%s estimate=%s actual=%s "
                             "actual_minus_local=%+d actual_minus_estimate=%+d output_reserve=%s",
@@ -525,11 +541,10 @@ async def _advance(
                             actual, actual - int(admission["local_input_count"]),
                             actual - int(admission["input_estimate"]), admission["output_reserve"],
                         )
-                    page.response_sha256 = _response_sha(state, page)
                     save_state(state_dir, state)
                     break
                 except (OSError, RuntimeError, ValueError, TypeError, KeyError, TimeoutError, httpx.HTTPError) as exc:
-                    _fail_attempt(state, attempt, exc, state_dir)
+                    _fail_attempt(state, page, attempt, exc, state_dir)
                     if candidate_index + 1 >= len(candidates) or not _can_fallback(exc):
                         raise
                     # The same immutable source page is offered to the next configured route.
@@ -537,7 +552,9 @@ async def _advance(
                     continue
             if not split:
                 index += 1
-        state.status = "abstained" if all(page.result and page.result.abstain for page in state.pages) else "ready"
+        state.status = "abstained" if all(
+            (value := completed(page)) is not None and value.result.abstain for page in state.pages
+        ) else "ready"
         state.error_class = None
         save_state(state_dir, state)
     except (OSError, RuntimeError, ValueError, TypeError, KeyError, TimeoutError, httpx.HTTPError) as exc:

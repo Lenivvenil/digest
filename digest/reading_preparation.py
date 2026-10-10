@@ -36,6 +36,7 @@ from digest.reading_brief_state import (
     now,
     save_state,
     state_root,
+    state_wire,
 )
 
 
@@ -143,7 +144,7 @@ def _bound_state(
                 raise ValueError("technical_generation_unknown")
             archived = _safe(root / "revisions")
             archived.mkdir(exist_ok=True)
-            old = {"binding": asdict(previous) if previous else None, "state": asdict(state)}
+            old = {"binding": asdict(previous) if previous else None, "state": state_wire(state)}
             target = _safe(archived / f"{_hash(old)}.json")
             if not target.exists():
                 atomic_json_write(target, old)
@@ -167,7 +168,7 @@ def _handoff_body(binding: ReadingBinding, state: BriefState, state_dir: Path) -
     source = load_source(state_dir, state)
     _validate_progress(state, source)
     return {"schema_version": 1, "status": "technical_complete_semantic_review_pending",
-            "binding": asdict(binding), "state": asdict(state), "source_sha256": state.source_sha256,
+            "binding": asdict(binding), "state": state_wire(state), "source_sha256": state.source_sha256,
             "source_body_sha256": source.body_sha256,
             "source_path": str(state_root(state_dir) / "sources" / f"{state.source_sha256}.json")}
 

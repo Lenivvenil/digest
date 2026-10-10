@@ -3,6 +3,13 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Changed
+- Optional reader completion now belongs to one frozen accepted attempt (#164).
+  Internal Page constructors/setters migrate to owned completion with separate pending
+  and history-0 evidence; retained valid wire and exact route spelling stay unchanged.
+  Decoding now rejects redundant completion contradictions, orphan pending completion
+  fields and malformed immutable-owner shapes earlier. Reading remains off by default.
+  See the [ADR0009 amendment](docs/decisions/0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10).
+
 - Prepared held-state inspection now explains observable dispatch/application
   evidence and remaining unknowns through a bounded warning, without changing
   status outputs, reading extra state or adding recovery actions. Refs #220.

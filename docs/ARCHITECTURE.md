@@ -157,9 +157,11 @@ natural run does not block an unrelated mechanical safety repair.
    [exploration ADR0013](decisions/0013-discovery-exploration-state.md) and
    [feedback ADR0006](decisions/0006-batch-message-voting.md). A changed cadence or
    transport guarantee needs its own explicit decision and compatible rollout.
-5. **Simplify optional ownership only when justified.** Consider an attempt-owned
-   optional reader outcome only if duplicate mutable generation/completion fields
-   actually disappear and one old-wire projection preserves retained hashes. Defer
+5. **Simplify optional ownership only when justified.** Optional reader completion
+   now belongs to its frozen accepted attempt; Page retains coverage and history,
+   with explicit pending scheduling or history-0 evidence. One old-wire projection
+   preserves retained hashes and exact null/explicit route spelling. See the
+   [reader ownership amendment](decisions/0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10). Defer
    supplement reservation/tombstone redesign until a bounded migration and observed
    need justify it. Keep the [scenario distinctions in ADR0019](decisions/0019-remaining-application-scenarios.md)
    and the [optional closing contract in ADR0014](decisions/0014-optional-humane-closing-item.md).

@@ -17,7 +17,7 @@ from digest import llm
 from digest.adapters.models.execution import ModelExecution
 from digest.config import ProviderConfig
 from digest.reading_brief import _advance, ready_brief_evidence
-from digest.reading_brief_state import BriefState, checksum, load_state, save_state, state_root
+from digest.reading_brief_state import BriefState, checksum, completed, load_state, save_state, state_root
 from digest.reading_brief_tokens import ESTIMATOR_VERSION
 from tests.test_reading_brief import config, fetched, payload, response, saved_brief_state
 
@@ -61,8 +61,8 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
         state, original = ready_brief_evidence(tmp_path, identity)
         assert state.status == "ready" and state.attempts == 1
         assert original.text == source
-        result = state.pages[0].result
-        assert result is not None and result.qualification_span_ids == [2]
+        result = completed(state.pages[0]).result
+        assert result is not None and result.qualification_span_ids == (2,)
         assert [
             original.text[span.start : span.end] for span in original.spans if span.id in result.qualification_span_ids
         ] == ["FINAL QUALIFICATION: pilot only."]
@@ -121,7 +121,7 @@ async def test_known_provider_failure_falls_back_without_resetting_runtime_or_re
     assert calls == ["gemini-3.8-flash", GROQ.model]
     assert llm.request_budget_remaining(cfg, model_execution) == 0 and cfg.llm.max_retries == 3
     assert [call.args[1] for call in pace.call_args_list] == [interval, max(interval, 65)]
-    assert state.route.provider == "gemini" and state.pages[0].route.provider == "groq"
+    assert state.route.provider == "gemini" and completed(state.pages[0]).route.provider == "groq"
     assert len(state.exact_counts) == len(state.admissions) == 1
     assert [(item.kind, item.route.provider, item.status) for item in state.pages[0].request_attempts] == [
         ("count", "gemini", "accepted"),
@@ -165,7 +165,7 @@ async def test_unknown_or_ambiguous_failure_does_not_fallback(tmp_path: Path, fa
     assert (before.attempts, same.attempts, after.attempts) == (1, 2, 3)
     assert before.pages == after.pages and before.source_sha256 == after.source_sha256
     assert after.pages[0].request_attempts[-1].status == "unknown"
-    assert after.pages[0].result is None
+    assert completed(after.pages[0]) is None
     assert after.error_class == "technical_generation_unknown"
 
 
@@ -188,7 +188,7 @@ async def test_groq_incomplete_endings_never_emit_or_fallback(tmp_path: Path, en
     ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state = load_state(tmp_path, state.selection.identity)
-    assert state.status == "pending" and state.pages[0].result is None and call.call_count == 1
+    assert state.status == "pending" and completed(state.pages[0]) is None and call.call_count == 1
     assert state.pages[0].request_attempts[-1].status == "accepted"
 
 
@@ -229,9 +229,9 @@ async def test_changed_primary_resumes_immutable_source_and_keeps_completed_page
     assert before.pages[0] == after.pages[0] and before.source_sha256 == after.source_sha256
     assert calls == [("gemini", [1, 1]), ("gemini", [2, 2]), ("groq", [2, 2])]
     assert original.text == source
-    result = after.pages[1].result
-    assert result is not None and result.qualification_span_ids == [2]
-    assert after.pages[1].route is not None and after.pages[1].route.provider == "groq"
+    result = completed(after.pages[1]).result
+    assert result is not None and result.qualification_span_ids == (2,)
+    assert completed(after.pages[1]).route is not None and completed(after.pages[1]).route.provider == "groq"
     assert [
         original.text[span.start : span.end] for span in original.spans if span.id in result.qualification_span_ids
     ] == ["FINAL QUALIFICATION: pilot only."]
@@ -266,7 +266,7 @@ async def test_legacy_v1_exact_cache_without_new_fields_remains_readable(tmp_pat
         persisted = path.read_bytes()
         again, checked_source = ready_brief_evidence(tmp_path, identity)
     assert again.status == first.status == "ready" and again.attempts == first.attempts == 1
-    assert again.pages[0].result == first.pages[0].result and checked_source == original
+    assert completed(again.pages[0]).result == completed(first.pages[0]).result and checked_source == original
     assert again.pages[0].request_history_version == 0 and not again.pages[0].request_attempts
     assert path.read_bytes() == persisted and call.call_count == 1
 
@@ -316,7 +316,7 @@ async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_
     assert resumed.pending == 0 and resumed.technical_complete == 1
     assert fetch.call_count == call.call_count == 1
     state, _ = ready_brief_evidence(tmp_path, identity)
-    assert state.route.model == "qwen/qwen3.8-27b" and state.pages[0].route.model == GROQ.model
+    assert state.route.model == "qwen/qwen3.8-27b" and completed(state.pages[0]).route.model == GROQ.model
 
 
 @pytest.mark.asyncio
@@ -353,7 +353,7 @@ async def test_accepted_invalid_generation_is_persisted_before_validation_and_ne
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         first = load_state(tmp_path, identity)
         if not invalid_json:
-            assert first.pages[0].result is None
+            assert completed(first.pages[0]) is None
             with pytest.raises(ValueError, match="brief_not_ready"):
                 ready_brief_evidence(tmp_path, identity)
         state = load_state(tmp_path, identity)
@@ -369,8 +369,8 @@ async def test_accepted_invalid_generation_is_persisted_before_validation_and_ne
     assert (first.attempts, second.attempts, state.attempts) == (1, 2, 3)
     assert attempt.kind == "generate" and attempt.status == "accepted"
     assert attempt.finish_reason == ("STOP" if invalid_json else "MAX_TOKENS") and attempt.finished_at is not None
-    assert attempt.usage == {"prompt_tokens": 100, "completion_tokens": 99, "total_tokens": 199}
-    assert len(attempt.response_sha256) == 64 and state.pages[0].response is None
+    assert dict(attempt.usage) == {"prompt_tokens": 100, "completion_tokens": 99, "total_tokens": 199}
+    assert len(attempt.response_sha256) == 64 and completed(state.pages[0]) is None and attempt.completion is None
     assert "private output" not in path.read_text() and "private thoughts" not in path.read_text()
 
 
@@ -417,7 +417,7 @@ async def test_interrupted_generation_intent_prevents_new_invocation(
         state = load_state(tmp_path, identity)
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state = load_state(tmp_path, identity)
-    assert state.status == "pending" and state.pages[0].result is None
+    assert state.status == "pending" and completed(state.pages[0]) is None
     assert call.call_count == 1 and count.call_count == 0
     assert state.pages[0].request_attempts[-1].status == "reserved"
     assert state.error_class == "technical_generation_unknown"
@@ -547,8 +547,13 @@ async def test_new_page_with_no_request_intent_can_resume_after_budget_deferral(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("damage", ["hash", "finish", "usage", "missing"])
-async def test_completed_generation_must_match_its_accepted_attempt(tmp_path: Path, damage: str) -> None:
+@pytest.mark.parametrize("history_version", [0, 1])
+@pytest.mark.parametrize("damage", [
+    "hash", "finish", "usage", "missing", "duplicate", "unknown", "reserved", "failed", "range", "request", "route",
+])
+async def test_completed_generation_must_match_its_accepted_attempt(
+    tmp_path: Path, damage: str, history_version: int,
+) -> None:
     model_execution = ModelExecution()
     cfg = config()
     state = saved_brief_state(tmp_path, cfg)
@@ -564,18 +569,42 @@ async def test_completed_generation_must_match_its_accepted_attempt(tmp_path: Pa
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         identity = state.selection.identity
         state, _ = ready_brief_evidence(tmp_path, identity)
-        attempt = state.pages[0].request_attempts[-1]
-        if damage == "hash":
-            attempt.response_sha256 = "0" * 64
-        elif damage == "finish":
-            attempt.finish_reason = "MAX_TOKENS"
-        elif damage == "usage":
-            attempt.usage = {"prompt_tokens": 999}
-        else:
-            state.pages[0].request_attempts.pop()
-        save_state(tmp_path, state)
         path = state_root(tmp_path) / f"{identity}.json"
+        envelope = json.loads(path.read_text())
+        page = envelope["payload"]["pages"][0]
+        page["request_history_version"] = history_version
+        attempts = page["request_attempts"]
+        attempt = attempts[-1]
+        if damage == "hash":
+            attempt["response_sha256"] = "0" * 64
+        elif damage == "finish":
+            attempt["finish_reason"] = "MAX_TOKENS"
+        elif damage == "usage":
+            attempt["usage"] = {"prompt_tokens": 999}
+        elif damage == "missing":
+            attempts.pop()
+        elif damage == "duplicate":
+            attempts.append(dict(attempt))
+        elif damage == "unknown":
+            attempt["status"] = "unknown"
+        elif damage == "reserved":
+            attempt.update(status="reserved", finished_at=None)
+        elif damage == "failed":
+            attempt["status"] = "definite_failed"
+        elif damage == "range":
+            attempt["stop"] += 1
+        elif damage == "request":
+            attempt["request_sha256"] = "0" * 64
+        else:
+            attempt["route"]["model"] = "another-model"
+        envelope["sha256"] = checksum(envelope["payload"])
+        path.write_text(json.dumps(envelope))
         persisted = path.read_bytes()
+        with patch(
+            "digest.reading_brief_state.load_source", side_effect=AssertionError("No source read during decode")
+        ):
+            with pytest.raises(ValueError, match="result_attempt_binding_mismatch"):
+                load_state(tmp_path, identity)
         with pytest.raises(ValueError, match="result_attempt_binding_mismatch"):
             ready_brief_evidence(tmp_path, identity)
     assert path.read_bytes() == persisted and call.call_count == 1
@@ -617,7 +646,7 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
         saved = load_state(tmp_path, path.stem)
         assert saved.status == "pending" and saved.pages[0].request_history_version == 1
         assert saved.pages[0].legacy_count_request_sha256 == original_prompt
-        assert saved.pages[0].prompt_sha256 != original_prompt and saved.pages[0].route.provider == "groq"
+        assert saved.pages[0].work.request_sha256 != original_prompt and saved.pages[0].work.route.provider == "groq"
         state = load_state(tmp_path, identity)
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         final = load_state(tmp_path, identity)
@@ -626,7 +655,7 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
         final, _ = ready_brief_evidence(tmp_path, identity)
         assert final.status == "ready" and call.call_count == 1
     else:
-        assert final.status == "pending" and final.pages[0].result is None and call.call_count == 2
+        assert final.status == "pending" and completed(final.pages[0]) is None and call.call_count == 2
         assert final.error_class == "technical_count_unknown"
 
 
@@ -656,3 +685,63 @@ async def test_shared_budget_predispatch_failure_remains_resumable(tmp_path: Pat
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
     state, _ = ready_brief_evidence(tmp_path, identity)
     assert state.status == "ready" and state.attempts == 2 and call.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_stage", ["reservation", "acceptance", "completion"])
+async def test_failed_save_retains_conservative_attempt_owner_without_duplicate_generation(
+    tmp_path: Path, failed_stage: str,
+) -> None:
+    model_execution = ModelExecution()
+    cfg = config()
+    cfg.reading_brief = replace(cfg.reading_brief, provider=GROQ.name, model=GROQ.model)
+    state = saved_brief_state(tmp_path, cfg)
+    identity = state.selection.identity
+    failed = False
+    successful_stages = []
+    snapshots = []
+
+    def save_or_fail(state_dir: Path, current: BriefState) -> None:
+        nonlocal failed
+        stage = "pending"
+        if current.pages and current.pages[0].request_attempts:
+            attempt = current.pages[0].request_attempts[-1]
+            stage = (
+                "completion" if attempt.completion is not None
+                else "acceptance" if attempt.status == "accepted"
+                else "reservation"
+            )
+            snapshots.append(attempt)
+        if stage == failed_stage and not failed:
+            failed = True
+            raise OSError("Synthetic atomic-write interruption")
+        save_state(state_dir, current)
+        successful_stages.append(stage)
+
+    async def generate(_role: Any, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
+        retained = load_state(tmp_path, identity)
+        assert retained.pages[0].request_attempts[-1].status == "reserved"
+        return response(messages)
+
+    with (
+        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.llm.complete", side_effect=generate) as call,
+        patch("digest.reading_brief.save_state", side_effect=save_or_fail),
+    ):
+        await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
+        held = load_state(tmp_path, identity)
+        owner = held.pages[0].request_attempts[-1]
+        assert failed and held.status == "pending"
+        assert call.call_count == (0 if failed_stage == "reservation" else 1)
+        assert owner.status == ("reserved" if failed_stage == "reservation" else "accepted")
+        assert (owner.completion is not None) is (failed_stage == "completion")
+        assert successful_stages[-1] == failed_stage
+        assert snapshots[0].status == "reserved" and snapshots[0].completion is None
+        await _advance(held, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
+        final = load_state(tmp_path, identity)
+    assert fetch.call_count == 1 and call.call_count == (0 if failed_stage == "reservation" else 1)
+    assert final.status == ("ready" if failed_stage == "completion" else "pending")
+    if failed_stage != "completion":
+        assert final.error_class == "technical_generation_unknown" and completed(final.pages[0]) is None
+    else:
+        assert completed(final.pages[0]) is not None

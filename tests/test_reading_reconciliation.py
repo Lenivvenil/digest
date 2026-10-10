@@ -17,17 +17,21 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest import llm, source_admission
-from digest.reading_brief import _messages, _parse_result, _prompt_sha, _response_sha
+from digest.reading_brief import _messages, _parse_result, _prompt_sha
 from digest.reading_brief_state import (
     BriefState,
     Page,
+    PendingRequest,
     RequestAttempt,
     Selection,
     Source,
+    _complete_page,
     checksum,
+    completed,
     load_source,
     load_state,
     now,
+    page_wire,
     save_source,
     save_state,
     state_root,
@@ -52,22 +56,21 @@ def _saved_synthetic(tmp_path: Path, text: str) -> tuple[Source, BriefState]:
     assert gemini is not None and groq is not None
     state = BriefState(selection, gemini, now(), now(), status="ready", source_sha256=source_hash)
     last = len(source.spans) - 1
-    state.pages = [Page(0, last), Page(last, last + 1, route=groq)]
+    state.pages = [Page(0, last), Page(last, last + 1, work=PendingRequest(route=groq))]
     for index, page in enumerate(state.pages):
-        route = page.route or state.route
+        assert isinstance(page.work, PendingRequest)
+        route = page.work.route or state.route
         messages = _messages(state, source, page)
-        page.prompt_sha256 = _prompt_sha(state, messages, route)
+        request_sha256 = _prompt_sha(state, messages, route)
         raw, usage = response(messages, abstain=bool(index))
         result = json.loads(raw)
         if index == 0:
             result["reading_angle"]["span_ids"] = [last]
-            state.exact_counts[page.prompt_sha256] = 400
+            state.exact_counts[request_sha256] = 400
         else:
-            state.admissions[page.prompt_sha256] = source_admission.estimate_record(route, 100)
-        page.response = json.dumps(result)
-        page.finish_reason = usage["finish_reason"]
-        page.result = _parse_result(page.response, usage, page, source)
-        page.response_sha256 = _response_sha(state, page)
+            state.admissions[request_sha256] = source_admission.estimate_record(route, 100)
+        raw = json.dumps(result)
+        parsed = _parse_result(raw, usage, page, source)
         page.request_attempts = [
             RequestAttempt(
                 "generate",
@@ -75,14 +78,15 @@ def _saved_synthetic(tmp_path: Path, text: str) -> tuple[Source, BriefState]:
                 page.start,
                 page.stop,
                 source_hash,
-                page.prompt_sha256,
+                request_sha256,
                 now(),
                 status="accepted",
                 finished_at=now(),
-                response_sha256=checksum(page.response),
-                finish_reason=page.finish_reason,
+                response_sha256=checksum(raw),
+                finish_reason=usage["finish_reason"],
             )
         ]
+        _complete_page(page, 0, raw, parsed, "null" if index == 0 else "explicit")
     save_state(tmp_path, state)
     loaded = load_state(tmp_path, selection.identity)
     return load_source(tmp_path, loaded), loaded
@@ -137,12 +141,14 @@ def test_sparse_union_retains_late_abstaining_condition_and_actual_page_proofs(
     assert [page.route.provider for page in value.pages] == ["gemini", "groq"]
     assert value.pages[-1].abstain and value.pages[-1].qualification_span_ids == (last,)
     assert value.pages[0].exact_count == 400 and value.pages[-1].exact_count is None
-    assert dict(value.pages[-1].admission) == state.admissions[state.pages[-1].prompt_sha256]
+    assert dict(value.pages[-1].admission) == state.admissions[completed(state.pages[-1]).request_sha256]
     for frozen, original in zip(value.pages, state.pages, strict=True):
-        assert frozen.page_sha256 == checksum(asdict(original))
+        owner = completed(original)
+        assert owner is not None
+        assert frozen.page_sha256 == checksum(page_wire(state, original))
         assert frozen.history_evidence == "accepted_attempt"
-        assert frozen.request_sha256 == original.prompt_sha256
-        assert frozen.response_sha256 == original.response_sha256
+        assert frozen.request_sha256 == owner.request_sha256
+        assert frozen.response_sha256 == owner.response_sha256
     for span in value.evidence:
         assert span.text == source.text[span.start : span.end]
     assert before == (asdict(source), asdict(state))
@@ -177,9 +183,10 @@ def test_frozen_input_cannot_change_through_original_mutable_lists(
     value = build_reconciliation_input(source, state)
     before = asdict(value)
     source.coverage_notes.append("Changed after binding")
-    result = state.pages[-1].result
-    assert result is not None
-    result.qualification_span_ids.clear()
+    owner = completed(state.pages[-1])
+    assert owner is not None
+    with pytest.raises(FrozenInstanceError):
+        owner.result.qualification_span_ids = ()  # type: ignore[misc]
     state.pages[-1].request_attempts.clear()
     state.admissions.clear()
     assert asdict(value) == before
@@ -195,8 +202,9 @@ def test_rebound_source_identity_still_requires_original_page_requests(
     source = replace(source, text=changed, body_sha256=hashlib.sha256(changed.encode()).hexdigest())
     state.source_sha256 = checksum(asdict(source))
     for page in state.pages:
-        for attempt in page.request_attempts:
-            attempt.source_sha256 = state.source_sha256
+        page.request_attempts = [
+            replace(attempt, source_sha256=state.source_sha256) for attempt in page.request_attempts
+        ]
     with pytest.raises(ValueError, match="request_prompt_mismatch"):
         build_reconciliation_input(source, state)
 
@@ -219,9 +227,14 @@ def test_rebound_source_identity_still_requires_original_page_requests(
 )
 def test_incomplete_or_mismatched_evidence_is_rejected(
     saved_synthetic: tuple[Source, BriefState],
+    tmp_path: Path,
     damage: str,
 ) -> None:
     source, state = saved_synthetic
+    path = state_root(tmp_path) / f"{state.selection.identity}.json"
+    envelope = json.loads(path.read_text())
+    page_data = envelope["payload"]["pages"][-1]
+    damaged_wire = False
     if damage == "body":
         source = replace(source, text=source.text + "Changed")
     elif damage == "source_hash":
@@ -233,20 +246,28 @@ def test_incomplete_or_mismatched_evidence_is_rejected(
     elif damage == "missing_page":
         state.pages.pop()
     elif damage == "unknown":
-        state.status = "pending"
-        state.pages[-1].result = None
-        state.pages[-1].request_attempts[-1].status = "unknown"
+        envelope["payload"]["status"] = "pending"
+        page_data.update(result=None, response=None, response_sha256="", finish_reason=None, usage={})
+        page_data["request_attempts"][-1]["status"] = "unknown"
+        damaged_wire = True
     elif damage == "pending":
         state.status = "pending"
     elif damage == "request":
-        state.pages[-1].prompt_sha256 = "0" * 64
+        page_data["prompt_sha256"] = "0" * 64
+        damaged_wire = True
     elif damage == "response":
-        state.pages[-1].response = "{}"
+        page_data["response"] = "{}"
+        damaged_wire = True
     elif damage == "attempt":
-        state.pages[-1].request_attempts[-1].source_sha256 = "0" * 64
+        page_data["request_attempts"][-1]["source_sha256"] = "0" * 64
+        damaged_wire = True
     elif damage == "admission":
         state.admissions.clear()
     with pytest.raises(ValueError):
+        if damaged_wire:
+            envelope["sha256"] = checksum(envelope["payload"])
+            path.write_text(json.dumps(envelope))
+            state = load_state(tmp_path, state.selection.identity)
         build_reconciliation_input(source, state)
 
 

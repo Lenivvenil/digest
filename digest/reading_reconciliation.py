@@ -25,7 +25,9 @@ from digest.reading_brief_state import (
     _validate_source,
     _validate_state,
     checksum,
+    completed,
     has_unresolved_generation,
+    page_wire,
 )
 from digest.reading_brief_tokens import TokenProfileUnavailable
 
@@ -171,20 +173,21 @@ class ReconciliationResponse:
 
 
 def _completed_page(state: BriefState, page: Page) -> CompletedPage:
-    result = page.result
-    assert result is not None  # Validated before copying into immutable tuples.
-    route = page.route or state.route
+    value = completed(page)
+    assert value is not None  # Source and progress were validated before deriving this proof.
+    result = value.result
+    route = value.route
     legacy = page.request_history_version == 0 and not page.request_attempts
     return CompletedPage(
         page.start,
         page.stop,
-        checksum(asdict(page)),
+        checksum(page_wire(state, page)),
         route,
-        page.prompt_sha256,
-        page.response_sha256,
+        value.request_sha256,
+        value.response_sha256,
         "legacy_completed_response" if legacy else "accepted_attempt",
-        state.exact_counts.get(page.prompt_sha256) if route.provider == "gemini" else None,
-        tuple(sorted(state.admissions.get(page.prompt_sha256, {}).items())) if route.provider == "groq" else (),
+        state.exact_counts.get(value.request_sha256) if route.provider == "gemini" else None,
+        tuple(sorted(state.admissions.get(value.request_sha256, {}).items())) if route.provider == "groq" else (),
         tuple(result.selected_span_ids),
         tuple(result.qualification_span_ids),
         result.reading_angle,
@@ -212,7 +215,7 @@ def build_reconciliation_input(
     if has_unresolved_generation(state):
         raise ValueError("reconciliation_generation_unresolved")
     _validate_progress(state, source)
-    if state.status not in {"ready", "abstained", "delivered"} or any(page.result is None for page in state.pages):
+    if state.status not in {"ready", "abstained", "delivered"} or any(completed(page) is None for page in state.pages):
         raise ValueError("reconciliation_pages_incomplete")
     known = {span.id for span in source.spans}
     if any(type(span_id) is not int or span_id not in known for span_id in extra_context_span_ids) or len(
