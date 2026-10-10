@@ -13,10 +13,32 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from digest.adapters.storage.feedback import FEEDBACK_FILE, load_feedback
+from digest.adapters.storage.feedback import FEEDBACK_FILE, decode_feedback, load_feedback
 from digest.application.feedback import acknowledge_feedback, collect_feedback
+
+
+def _log_local_collection(timestamp: str, *, now: datetime, previous: bool) -> None:
+    """Report retained local evidence without exposing unusable timestamp strings."""
+    label = "Previous retained successful local collection" if previous else "Persisted successful local collection"
+    reason = "missing"
+    if timestamp:
+        try:
+            retained = datetime.fromisoformat(timestamp)
+            if retained.tzinfo is None:
+                reason = "naive"
+            else:
+                retained = retained.astimezone(timezone.utc)
+                age = (now - retained).total_seconds()
+                if age >= 0:
+                    logging.info("%s: at=%s age_seconds=%d", label, retained.isoformat(), int(age))
+                    return
+                reason = "future"
+        except (ValueError, OverflowError):
+            reason = "malformed"
+    logging.info("%s: at=unknown age_seconds=unknown reason=%s", label, reason)
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -34,14 +56,18 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "collect":
             store = load_feedback(args.cache_dir, strict=True)
+            _log_local_collection(store.last_successful_poll_at, now=datetime.now(timezone.utc), previous=True)
             store = await collect_feedback(token, store, cache_dir=args.cache_dir, acknowledge=False)
             stats = store.last_poll_counts
             path = Path(args.cache_dir) / FEEDBACK_FILE
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            content = path.read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            persisted = decode_feedback(content, strict=True)
             output = os.environ.get("GITHUB_OUTPUT")
             if output:
                 with Path(output).open("a", encoding="utf-8") as handle:
                     handle.write(f"feedback_sha256={digest}\n")
+            _log_local_collection(persisted.last_successful_poll_at, now=datetime.now(timezone.utc), previous=False)
         else:
             if not args.expected_sha256 or not re.fullmatch(r"[a-f0-9]{64}", args.expected_sha256):
                 raise ValueError("Acknowledgement requires the exact committed feedback SHA256.")

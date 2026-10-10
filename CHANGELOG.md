@@ -3,6 +3,11 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Changed
+- Retain one successful local feedback-collection observation, including empty polls,
+  and log its previous/current age in the existing collect CLI. Cursor trust and
+  acknowledgement barriers stay separate; the added field changes saved bytes/SHA,
+  and older compatible writers drop it. No cadence or recovery change. Refs #148.
+
 - Optional reader completion now belongs to one frozen accepted attempt (#164).
   Internal Page constructors/setters migrate to owned completion with separate pending
   and history-0 evidence; retained valid wire and exact route spelling stay unchanged.

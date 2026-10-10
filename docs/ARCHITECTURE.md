@@ -558,6 +558,12 @@ poller validates identity/replay, saves votes, cursor and pending acknowledgemen
 then acknowledges the exact saved batch. Managed runtimes persist that batch remotely
 before acknowledgement. A later send failure does not roll votes back.
 
+Only `application/feedback.collect_feedback` refreshes `last_successful_poll_at`,
+the UTC observation retained by a successful local save, including empty batches.
+Cursor trust remains separate. See [ADR0021](decisions/0021-catalog-feedback-boundaries.md#retained-successful-local-collection--148-g9-2026-10-10)
+for persistence/compatibility and the [operations guide](BLIND_REVIEW.md#feedback-and-source-decisions)
+for the existing collect CLI's diagnostic logs.
+
 Only the latest valid vote per exact stored token contributes within the existing
 14-day feedback window. New tokens carry the full article identity; historical
 eight-character tokens remain a separate namespace. They cannot safely be joined

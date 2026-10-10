@@ -30,6 +30,7 @@ from digest.feedback import (
 
 FULL_ARTICLE_A = "cdb96691fa65888074dc4008dd039e3f"
 FULL_ARTICLE_B = "cdb96691b648d61a1fbaba5907095a7d"
+PRIOR_POLL = "2026-10-01T08:00:00+00:00"
 
 # ---------------------------------------------------------------------------
 # load_feedback / save_feedback round-trip
@@ -42,6 +43,7 @@ def test_load_feedback_missing_file(tmp_path: Path) -> None:
     assert store.last_update_id == 0
     assert store.pending_replies == [] and store.seen_callback_ids == [] and store.last_poll_counts == {}
     assert store.seen_message_ids == []
+    assert store.last_successful_poll_at == ""
 
 
 def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
@@ -72,6 +74,7 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
         ],
         seen_callback_ids=[str(index) for index in range(1005)],
         seen_message_ids=[f"owner:{index}" for index in range(1005)],
+        last_successful_poll_at=PRIOR_POLL,
     )
     save_feedback(original, str(tmp_path))
 
@@ -89,6 +92,7 @@ def test_save_and_load_feedback_round_trip(tmp_path: Path) -> None:
     assert loaded.pending_replies == original.pending_replies
     assert len(loaded.seen_callback_ids) == 1000 and loaded.seen_callback_ids[0] == "5"
     assert len(loaded.seen_message_ids) == 1000 and loaded.seen_message_ids[0] == "owner:5"
+    assert loaded.last_successful_poll_at == original.last_successful_poll_at == PRIOR_POLL
 
 
 def test_load_feedback_invalid_json(tmp_path: Path) -> None:
@@ -473,11 +477,25 @@ async def test_collect_feedback_non_feedback_callback_ignored(tmp_path: Path) ->
 @respx.mock
 async def test_collect_feedback_empty_updates(tmp_path: Path) -> None:
     route = _poll([])
-    result = await collect_feedback(TOKEN, FeedbackStore(), cache_dir=str(tmp_path))
+    store = FeedbackStore(last_successful_poll_at=PRIOR_POLL)
+    started = datetime(2026, 10, 10, 8, tzinfo=timezone.utc)
+    observed = started + timedelta(seconds=2)
+    with (
+        patch("digest.application.feedback.datetime", wraps=datetime) as clock,
+        patch("digest.application.feedback.save_feedback", wraps=save_feedback) as save,
+    ):
+        clock.now.side_effect = [started, observed]
+        result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
+    assert clock.now.call_count == 2 and save.call_count == 1
     assert result.last_update_id == 0 and result.ratings == []
     assert route.call_count == 1
+    assert len(respx.calls) == 2  # Existing webhook check and one bounded poll only.
     assert json.loads(route.calls[0].request.content)["limit"] == 100
     assert result.last_poll_counts["received"] == 0
+    assert result.cursor_observed_at == ""
+    assert result.last_successful_poll_at == observed.isoformat()
+    assert load_feedback(str(tmp_path), strict=True).last_successful_poll_at == observed.isoformat()
+    assert store.last_successful_poll_at == PRIOR_POLL
 
 
 @pytest.mark.asyncio
@@ -517,11 +535,13 @@ async def test_collect_feedback_uses_offset(tmp_path: Path) -> None:
         last_update_id=500,
         seen_callback_ids=["old-receipt"],
         article_source_map={"abcd1234": "My Source"},
+        last_successful_poll_at=PRIOR_POLL,
     )
     route = _poll([])
     result = await collect_feedback(TOKEN, store, cache_dir=str(tmp_path), acknowledge=False)
     assert "offset" not in json.loads(route.calls[0].request.content)
     assert result.last_update_id == 500 and result.cursor_observed_at == ""
+    assert result.last_successful_poll_at != PRIOR_POLL
     route.mock(
         return_value=httpx.Response(
             200,
@@ -537,9 +557,13 @@ async def test_collect_feedback_uses_offset(tmp_path: Path) -> None:
     assert len(result.ratings) == 1 and result.last_poll_counts["duplicates"] == 1
     route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [_callback(10)]}))
     anchored = result.cursor_observed_at
-    result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
+    duplicate_poll_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+    with patch("digest.application.feedback.datetime", wraps=datetime) as clock:
+        clock.now.return_value = duplicate_poll_at
+        result = await collect_feedback(TOKEN, result, cache_dir=str(tmp_path), acknowledge=False)
     assert json.loads(route.calls[2].request.content)["offset"] == 12
     assert len(result.ratings) == 1 and result.cursor_observed_at == anchored
+    assert result.last_successful_poll_at == duplicate_poll_at.isoformat()
     assert result.pending_replies == [] and result.last_poll_counts["superseded_replies"] == 1
     result.cursor_observed_at = (datetime.now(tz=timezone.utc) - timedelta(days=6)).isoformat()
     save_feedback(result, str(tmp_path), strict=True)
@@ -575,6 +599,7 @@ async def test_collect_feedback_handles_failed_answer_callback(
     assert counts == {"attempted": 2, "ack_ok": 0, "ack_failed": 2}
     durable = load_feedback(str(tmp_path), strict=True)
     assert len(durable.ratings) == 2 and durable.last_update_id == 101 and durable.pending_replies == []
+    assert durable.last_successful_poll_at == result.last_successful_poll_at != ""
     assert "callback-" not in caplog.text and TOKEN not in caplog.text
     route.mock(return_value=httpx.Response(200, json={"ok": True, "result": [_callback(102)]}))
     result = await collect_feedback(TOKEN, durable, cache_dir=str(tmp_path))
@@ -606,13 +631,14 @@ async def test_collect_feedback_handles_failed_answer_callback(
     assert counts == {"attempted": 3, "ack_ok": 0, "ack_failed": 3}
     durable = load_feedback(str(tmp_path), strict=True)
     assert len(durable.ratings) == 5 and durable.last_update_id == 106 and durable.pending_replies == []
+    assert durable.last_successful_poll_at == result.last_successful_poll_at != ""
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_getupdates_not_ok(tmp_path: Path) -> None:
     """Reject the complete malformed envelope before recording any update."""
-    store = FeedbackStore(last_update_id=10)
+    store = FeedbackStore(last_update_id=10, last_successful_poll_at=PRIOR_POLL)
     save_feedback(store, str(tmp_path))
     original = (tmp_path / "feedback.json").read_bytes()
     with pytest.raises(ValueError, match="store changed"):
@@ -630,12 +656,15 @@ async def test_collect_feedback_getupdates_not_ok(tmp_path: Path) -> None:
             await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
         assert (tmp_path / "feedback.json").read_bytes() == original
         assert store.last_update_id == 10 and store.ratings == []
+        assert store.last_successful_poll_at == PRIOR_POLL
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_network_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    store = FeedbackStore(last_update_id=5)
+    store = FeedbackStore(last_update_id=5, last_successful_poll_at=PRIOR_POLL)
+    save_feedback(store, str(tmp_path), strict=True)
+    original_bytes = (tmp_path / "feedback.json").read_bytes()
     route = _poll([])
     route.mock(side_effect=httpx.ConnectError("Connection refused"))
     with pytest.raises(httpx.ConnectError):
@@ -653,12 +682,14 @@ async def test_collect_feedback_network_error(tmp_path: Path, monkeypatch: pytes
         await collect_feedback(TOKEN, store, cache_dir=str(tmp_path))
     assert route.call_count == 1
     assert not any("deleteWebhook" in str(call.request.url) for call in respx.calls)
+    assert store.last_successful_poll_at == PRIOR_POLL
+    assert (tmp_path / "feedback.json").read_bytes() == original_bytes
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_collect_feedback_write_failure_preserves_store(tmp_path: Path) -> None:
-    store = FeedbackStore(article_source_map={"abcd1234": "My Source"})
+    store = FeedbackStore(article_source_map={"abcd1234": "My Source"}, last_successful_poll_at=PRIOR_POLL)
     save_feedback(store, str(tmp_path))
     original = deepcopy(store)
     original_bytes = (tmp_path / "feedback.json").read_bytes()
@@ -824,6 +855,18 @@ def test_article_source_map_missing_key_loads_empty(tmp_path: Path) -> None:
     assert loaded.pending_replies == [] and loaded.seen_callback_ids == [] and loaded.last_poll_counts == {}
     assert loaded.seen_message_ids == []
     assert loaded.cursor_observed_at == "" and loaded.previous_update_id == 0
+    assert loaded.last_successful_poll_at == ""
+
+
+@pytest.mark.parametrize("timestamp", [None, 1, []])
+def test_successful_poll_metadata_requires_a_string(tmp_path: Path, timestamp: object) -> None:
+    path = tmp_path / "feedback.json"
+    path.write_text(json.dumps({"last_successful_poll_at": timestamp}))
+    with pytest.raises(ValueError, match="Invalid feedback metadata"):
+        load_feedback(str(tmp_path), strict=True)
+    assert load_feedback(str(tmp_path)) == FeedbackStore()
+    path.write_text(json.dumps({"last_successful_poll_at": "unusable legacy timestamp"}))
+    assert load_feedback(str(tmp_path), strict=True).last_successful_poll_at == "unusable legacy timestamp"
 
 
 # ---------------------------------------------------------------------------
@@ -944,6 +987,7 @@ async def test_unreadable_proposals_preserve_source_batch_until_repaired(
         seen_callback_ids=["prior-callback"],
         pending_replies=[PendingReply("vote", "unknown_article")],
         pending_owner_sha256=owner_hash,
+        last_successful_poll_at=PRIOR_POLL,
     )
     save_feedback(store, str(tmp_path), strict=True)
     original_bytes = (tmp_path / "feedback.json").read_bytes()
@@ -1087,6 +1131,8 @@ async def test_collect_feedback_status_command(tmp_path: Path) -> None:
 async def test_managed_cli_exports_exact_saved_hash_without_ack_and_rejects_uncommitted_ack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from unittest.mock import AsyncMock
 
@@ -1097,21 +1143,96 @@ async def test_managed_cli_exports_exact_saved_hash_without_ack_and_rejects_unco
     output = tmp_path / "step-output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     cache = tmp_path / "cache"
+    save_feedback(FeedbackStore(last_successful_poll_at=PRIOR_POLL), str(cache), strict=True)
+    now = datetime(2026, 10, 2, 8, tzinfo=timezone.utc)
+    observed = now - timedelta(seconds=2)
+    previous_log = f"Previous retained successful local collection: at={PRIOR_POLL} age_seconds=86400"
+    caplog.set_level(logging.INFO)
 
     async def collected(_token, store, *, cache_dir, acknowledge):
         assert acknowledge is False
+        assert caplog.messages == [previous_log]
         store.last_poll_counts = {"received": 1, "recorded_votes": 1}
+        store.last_successful_poll_at = observed.isoformat()
         save_feedback(store, cache_dir, strict=True)
+        # Hash actual bytes, not a reserialization, and log their retained observation.
+        with (Path(cache_dir) / "feedback.json").open("ab") as handle:
+            handle.write(b"\n")
+        store.last_successful_poll_at = "not-the-persisted-observation"
         return store
 
     with (
-        patch("digest.feedback_poll.collect_feedback", side_effect=collected),
+        patch("digest.feedback_poll.collect_feedback", side_effect=collected) as collect,
         patch("digest.feedback_poll.acknowledge_feedback", AsyncMock()) as ack,
+        patch("digest.feedback_poll.datetime", wraps=datetime) as clock,
+        patch.object(Path, "read_bytes", autospec=True, side_effect=Path.read_bytes) as reads,
     ):
+        clock.now.return_value = now
         assert await main(["collect", "--cache-dir", str(cache)]) == 0
+        collect.assert_awaited_once()
         ack.assert_not_called()
+        assert [call.args[0] for call in reads.call_args_list] == [cache / "feedback.json"] * 2
     saved = (cache / "feedback.json").read_bytes()
     assert output.read_text() == f"feedback_sha256={hashlib.sha256(saved).hexdigest()}\n"
+    assert caplog.messages == [
+        previous_log,
+        f"Persisted successful local collection: at={observed.isoformat()} age_seconds=2",
+    ]
+    assert capsys.readouterr().out == '{"counts": {"received": 1, "recorded_votes": 1}, "stage": "collect"}\n'
     with patch("httpx.AsyncClient", side_effect=AssertionError("No uncommitted acknowledgement")):
         assert await main(["ack", "--cache-dir", str(cache), "--expected-sha256", "0" * 64]) == 1
     assert (cache / "feedback.json").read_bytes() == saved
+
+
+@pytest.mark.parametrize("timestamp, expected", [
+    ("2026-10-02T10:00:00+02:00", "at=2026-10-02T08:00:00+00:00 age_seconds=1"),
+    ("2026-10-02T08:00:01+00:00", "at=2026-10-02T08:00:01+00:00 age_seconds=0"),
+    ("", "at=unknown age_seconds=unknown reason=missing"),
+    ("private\ninvalid" * 1000, "at=unknown age_seconds=unknown reason=malformed"),
+    ("2026-10-02T08:00:00", "at=unknown age_seconds=unknown reason=naive"),
+    ("2026-10-02T08:00:02+00:00", "at=unknown age_seconds=unknown reason=future"),
+    ("0001-01-01T00:00:00+01:00", "at=unknown age_seconds=unknown reason=malformed"),
+])
+def test_local_collection_observation_is_bounded_and_does_not_guess_age(
+    timestamp: str, expected: str, caplog: pytest.LogCaptureFixture,
+) -> None:
+    from digest.feedback_poll import _log_local_collection
+
+    with caplog.at_level(logging.INFO):
+        _log_local_collection(timestamp, now=datetime(2026, 10, 2, 8, 0, 1, 500000, timezone.utc), previous=True)
+    assert caplog.messages == [f"Previous retained successful local collection: {expected}"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("failure", ["poll", "output"])
+async def test_managed_collection_failure_keeps_historical_log_without_reread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str], failure: str,
+) -> None:
+    from digest.feedback_poll import main
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path))  # Opening a directory fails after saving.
+    save_feedback(FeedbackStore(last_successful_poll_at=PRIOR_POLL), str(tmp_path), strict=True)
+    original_bytes = (tmp_path / "feedback.json").read_bytes()
+    route = _poll([])
+    if failure == "poll":
+        route.mock(side_effect=httpx.ConnectError("private failure details"))
+    with (
+        caplog.at_level(logging.INFO),
+        patch.object(Path, "read_bytes", autospec=True, side_effect=Path.read_bytes) as reads,
+    ):
+        assert await main(["collect", "--cache-dir", str(tmp_path)]) == 1
+        assert reads.call_count == (2 if failure == "poll" else 3)
+    assert route.call_count == 1 and len(respx.calls) == 2
+    observations = [message for message in caplog.messages if "successful local collection" in message]
+    assert len(observations) == 1 and observations[0].startswith("Previous retained successful local collection:")
+    assert "private failure details" not in caplog.text and TOKEN not in caplog.text
+    assert capsys.readouterr().out == ""
+    if failure == "poll":
+        assert (tmp_path / "feedback.json").read_bytes() == original_bytes
+    else:
+        retained = load_feedback(str(tmp_path), strict=True)
+        assert retained.last_successful_poll_at != PRIOR_POLL
+        assert retained.last_poll_counts["received"] == 0 and retained.cursor_observed_at == ""
