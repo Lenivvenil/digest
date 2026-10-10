@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Identify known evidence items in bounded disposition contradiction/duplicate errors
+  without retaining raw output or changing editorial decisions. Refs #55.
 - Reject malformed explicit Telegram/Markdown enabled flags instead of coercing
   quoted `"false"` into enabled delivery; omitted defaults are unchanged. Refs #148.
 - Keep non-finite or negative feed Retry-After values inside the existing bounded

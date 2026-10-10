@@ -195,7 +195,15 @@ def _parse_dispositions(
         except ValueError as exc:
             if isinstance(identity, str) and identity in known:
                 invalid.add(identity)
-            errors.append(f"disposition {index}: {exc}")
+            message = f"disposition {index}: {exc}"
+            if isinstance(identity, str) and identity in known and str(exc) in {
+                "disposition contradicts accepted selection",
+                "duplicated disposition evidence id",
+            }:
+                identified = f"{message} (evidence_id={identity})"
+                if len(identified) <= 600:
+                    message = identified
+            errors.append(message)
     for identity in invalid:
         parsed.pop(identity, None)
     # Only one-hop retention of a validated selected item is supported. This
