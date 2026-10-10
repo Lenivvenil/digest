@@ -292,3 +292,20 @@ persisted: a valid applied record allows the existing no-op; an unapplied record
 holds. Do not reset, roll back, resend or infer replay safety. Ready/claim/receipt
 schemas, canonical encoding, output payloads and optional-source policy do not
 change; no record migration, ledger or transaction framework is introduced.
+
+
+## Read-only prepared hold diagnosis — #220
+
+Accepted on 2026-10-10. The existing inspect owner emits a bounded English warning
+from already-loaded valid edition/claim/receipt facts. Three groups correspond to
+different inspection targets: unresolved dispatch, terminal-unapplied operational
+prefix, and applied-marker-present but incomplete transport. Transport state is data,
+not a new failure taxonomy. Missing receipt counts are unknown; marker presence
+proves neither accounting nor replay safety. Warnings name existing evidence files
+without payloads, recipient identifiers or fabricated receipt hashes.
+
+The existing tuple, CLI outputs and exit mapping remain unchanged. Corrupt bindings
+still fail through existing validation; legacy compact policy is separate. No extra
+read, saved diagnostic, recovery API or state mutation is introduced. The current
+[architecture and recovery contract](../ARCHITECTURE.md#applying-confirmed-outcomes)
+remains authoritative; inspection never permits automatic resend or reapplication.

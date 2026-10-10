@@ -175,12 +175,12 @@ requires a separate reader/rollback compatibility decision.
 The measured baseline and migration constraints are recorded in
 [#164](https://github.com/Lenivvenil/digest/issues/164). The execution constraint for
 this work is at least 92.93% statement coverage; the repository's current CI floor
-is still 80% and is not evidence that the stronger constraint passed. The eventual
-goal of at most 1,500 cases is subordinate to working behavior and maintainability:
-retire tests only when production states or duplicate contracts genuinely disappear,
-never by packing cases, weakening assertions or adding exclusions. The abandoned
-test-only 46-case consolidation is not architectural progress and is not part of
-this migration.
+is still 80% and is not evidence that the stronger constraint passed. Architectural
+boundaries, cohesive state ownership, clear contracts and removal of duplicated
+logic define progress; there is no test-count target. Preserve meaningful behavioral
+and security checks. Retire tests only when production states or duplicate contracts
+genuinely disappear, never by packing cases, weakening assertions or adding exclusions.
+The abandoned test-only consolidation is not part of this migration.
 
 Close the learning loop with a concise linked record of incident evidence, confirmed
 cause versus hypothesis, change, regression proof, deployed revision, natural-run
@@ -432,6 +432,15 @@ A normal confirmed-and-applied edition is a no-op. Confirmed transport with
 `applied: false` is a hold: some operational files may already have changed. There
 is no automatic multi-file rollback or counter reconciliation. An expired unresolved
 claim is still unresolved; expiry does not make a resend safe.
+
+Read-only prepared inspection emits one bounded diagnostic for held work from the
+records it already loaded. Claim-without-receipts and sending share an unresolved-
+dispatch action; terminal-unapplied work directs inspection to operational write
+prefixes; applied-incomplete work identifies marker presence without claiming
+accounting proof or replay safety. Missing receipt counts remain unknown. Persisted
+coverage does not describe unsaved effects. The status tuple, workflow output keys,
+exit codes and legacy compact policy stay unchanged; no new reads or recovery API
+are added. See the [recovery guide](BLIND_REVIEW.md#delivery-states-and-recovery).
 
 An uninterrupted managed workflow may send its newly persisted claim when no receipt
 exists yet. Rediscovering a claim in a later run is different: missing remote receipts

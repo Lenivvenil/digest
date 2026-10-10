@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Changed
+- Prepared held-state inspection now explains observable dispatch/application
+  evidence and remaining unknowns through a bounded warning, without changing
+  status outputs, reading extra state or adding recovery actions. Refs #220.
+
+
+### Changed
 - Prepared publication now owns exact receipt readback, strict accounting, supplement
   consumption and verified applied marking in one operation. Its Python sender takes
   `config`; the separate prepared policy/apply branch, `_merge_delivery` and public
