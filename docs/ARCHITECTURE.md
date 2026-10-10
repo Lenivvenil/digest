@@ -1,35 +1,24 @@
 # Architecture — Daily News Digest
 
-Digest separates choosing an edition from publishing its exact bytes. One Python
-engine owns the decisions; a private runtime supplies configuration, credentials,
-scheduling and durable Git storage. Telegram is an external effect that cannot be rolled back.
+Digest separates choosing an edition from publishing its exact bytes.
 
-- [Follow the prepared edition](#prepared-edition-data-flow) and its two recovery checkpoints
-- [Find a boundary owner](#entities-contracts-and-enforcement) or [code entry point](#modules-and-responsibilities)
-- [Compare supported scenarios](#supported-application-scenarios)
-- For commands, use [Operations](OPERATIONS.md); for exact contracts, [State and effects](STATE_AND_EFFECTS.md)
+[![Ordinary prepared path: sources become accepted work, then a frozen edition and delivery receipts. Feedback informs future preparation; optional investigation follows confirmed, persisted delivery.](assets/edition-flow.svg)](#prepared-edition-data-flow)
 
 ## Overview
 
-The ordinary daily path is review-led compact delivery. It observes configured RSS
-sources, reviews one bounded evidence packet, saves accepted canonical work, prepares
-its presentation and freezes a sendable edition. Sending uses only that frozen edition.
-Optional comparison and external investigation use retained evidence after primary
-publication. Their results are archived; eligible target-bound investigation material
-can enter a later ordinary edition without a separate supplementary dispatch. Optionality
-and useful-counter-evidence acceptance remain separate; see [supplementary investigation](ADVANCED_OPERATIONS.md#supplementary-investigation).
+For an ordinary publishable edition:
 
-There are two recovery boundaries before transport:
+1. **Prepare.** Review one bounded RSS packet, save accepted work and freeze its presentation.
+2. **Persist.** The runtime verifies the ready edition and claim remotely before sending.
+3. **Publish.** Send frozen bytes, record confirmations and apply known complete coverage.
 
-- **Accepted preparation** preserves the reading decision before translation,
-  attribution, archive writing or rendering can fail
-- **Ready edition** preserves the final payloads before a sending process begins;
-  the sender does not run selection, translation or rendering again
+One Python engine owns the decisions; a private runtime supplies configuration,
+credentials, scheduling and durable Git storage. Telegram is an external effect
+that cannot be rolled back.
 
-A claim and transport receipts distinguish an unused ready edition from an attempt
-that may already have reached Telegram. Confirmed transport and completed local
-accounting are separate facts. The [domain story](domain/digest/overview.md#one-story-through-the-system)
-traces these distinctions through one illustrative reading decision.
+[Recover an edition](OPERATIONS.md#inspect-an-interrupted-edition) · [Find an owner](#entities-contracts-and-enforcement) · [Find code](#modules-and-responsibilities) · [Compare scenarios](#supported-application-scenarios)
+
+Commands live in [Operations](OPERATIONS.md); exact contracts in [State and effects](STATE_AND_EFFECTS.md).
 
 ## Prepared-edition data flow
 
@@ -52,6 +41,20 @@ This overview follows a publishable edition; see [preparation outcomes](STATE_AN
 [interruption recovery](OPERATIONS.md#inspect-an-interrupted-edition) for other results.
 The arrows are ordered operations, not a transaction. Failure between them leaves
 recoverable work or a hold, according to the boundary already crossed.
+
+### Two recovery checkpoints
+
+There are two recovery boundaries before transport:
+
+- **Accepted preparation** preserves the reading decision before translation,
+  attribution, archive writing or rendering can fail
+- **Ready edition** preserves the final payloads before a sending process begins;
+  the sender does not run selection, translation or rendering again
+
+A claim and transport receipts distinguish an unused ready edition from an attempt
+that may already have reached Telegram. Confirmed transport and completed local
+accounting are separate facts. The [domain story](domain/digest/overview.md#one-story-through-the-system)
+traces these distinctions through one illustrative reading decision.
 
 ## Preparing an edition
 
@@ -105,6 +108,11 @@ claim does not become safe merely by expiring.
 | Source discovery | Propose, validate, persist and request approval; source activation requires a separately verified operator decision. |
 | Supplementary investigation | Search external sources from frozen evidence under its own attempt. New compact attempts bind actually delivered canonical cards and may retain one accepted fragment for a later ordinary edition; unbound standalone results have no fragment eligibility. |
 | Experimental source preparation | Optional source-bound acquisition/analysis with its own technical handoff and uncertainty holds; it does not publish a concatenated prototype as an edition. |
+
+Optional comparison and external investigation use retained evidence after primary
+publication. Their results are archived; eligible target-bound investigation material
+can enter a later ordinary edition without a separate supplementary dispatch. Optionality
+and useful-counter-evidence acceptance remain separate; see [supplementary investigation](ADVANCED_OPERATIONS.md#supplementary-investigation).
 
 See [transport protocols](STATE_AND_EFFECTS.md#transport-protocols) for distinct
 confirmation, retry and fallback rules, and [experimental source reading](ADVANCED_OPERATIONS.md#experimental-source-reading)
