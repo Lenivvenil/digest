@@ -124,17 +124,18 @@ async def test_count_deferral_requires_current_request_route_and_binding_proof(
     state = load_state(tmp_path, identity)
     page = state.pages[0]
     if evidence == "reserved":
-        page.request_attempts[0].status = "reserved"
-        page.request_attempts[0].finished_at = None
+        page.request_attempts[0] = replace(page.request_attempts[0], status="reserved", finished_at=None)
     elif evidence == "accepted_without_count":
-        page.request_attempts[0].status = "accepted"
+        page.request_attempts[0] = replace(page.request_attempts[0], status="accepted")
     elif evidence == "legacy_marker":
-        page.legacy_count_request_sha256 = page.prompt_sha256
+        page.legacy_count_request_sha256 = page.work.request_sha256
         page.request_attempts = []
     elif evidence == "definite_failed":
-        page.request_attempts[0].status = "definite_failed"
+        page.request_attempts[0] = replace(page.request_attempts[0], status="definite_failed")
     elif evidence in {"exact_count", "overflow_count"}:
-        state.exact_counts[page.prompt_sha256] = 100 if evidence == "exact_count" else state.route.input_tokens + 1
+        state.exact_counts[page.work.request_sha256] = (
+            100 if evidence == "exact_count" else state.route.input_tokens + 1
+        )
     elif evidence == "different_request":
         config.reading_brief = replace(config.reading_brief, max_output_tokens=1024)
     elif evidence == "unsupported_routes":
@@ -263,7 +264,7 @@ async def test_local_profile_deferral_requires_count_hold_and_explicit_profile_f
     config.llm.providers = [ProviderConfig("groq", "openai/gpt-oss-120b")]
     if local_admission == "unavailable_without_count_hold":
         state = load_state(tmp_path, identity)
-        state.pages[0].request_attempts[0].status = "definite_failed"
+        state.pages[0].request_attempts[0] = replace(state.pages[0].request_attempts[0], status="definite_failed")
         save_state(tmp_path, state)
     error = (
         TokenProfileUnavailable("Fixture assets unavailable")

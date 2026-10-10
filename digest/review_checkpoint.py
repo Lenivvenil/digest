@@ -143,6 +143,7 @@ def build_full_source_evidence(
 ) -> FullSourceEvidence:
     """Bind all delivered-brief citations; never truncate a passage or qualification."""
     from digest.reading_brief import ready_brief_evidence
+    from digest.reading_brief_state import completed
 
     items: list[FullSourcePassage] = []
     for identity in dict.fromkeys(article_ids):
@@ -151,15 +152,16 @@ def build_full_source_evidence(
         prompts: dict[int, set[str]] = {}
         routes: dict[int, tuple[str, str]] = {}
         for page in state.pages:
-            if page.result is None:
+            value = completed(page)
+            if value is None:
                 raise ValueError("Incomplete full-source reading brief.")
-            for role, selected in (("selected", page.result.selected_span_ids),
-                                   ("qualification", page.result.qualification_span_ids),
-                                   ("angle_support", page.result.angle_span_ids)):
+            for role, selected in (("selected", value.result.selected_span_ids),
+                                   ("qualification", value.result.qualification_span_ids),
+                                   ("angle_support", value.result.angle_span_ids)):
                 for span_id in selected:
                     roles.setdefault(span_id, set()).add(role)
-                    prompts.setdefault(span_id, set()).add(page.prompt_sha256)
-                    actual_route = page.route or state.route
+                    prompts.setdefault(span_id, set()).add(value.request_sha256)
+                    actual_route = value.route
                     routes[span_id] = (actual_route.provider, actual_route.model)
         for span_id in sorted(roles):
             span = source.spans[span_id - 1]

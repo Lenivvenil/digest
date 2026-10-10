@@ -567,7 +567,17 @@ def _full_source_evidence(
     final_url: str | None = None,
 ) -> FullSourceEvidence:
     from digest.article_source import FetchedArticle
-    from digest.reading_brief_state import BriefState, Page, PageResult, Route, Selection, save_source
+    from digest.reading_brief_state import (
+        BriefState,
+        Page,
+        PageResult,
+        RequestAttempt,
+        Route,
+        Selection,
+        _complete_page,
+        checksum,
+        save_source,
+    )
     from digest.review_checkpoint import build_full_source_evidence
 
     # This stored backlog article intentionally is not a member of today's RSS bundle.
@@ -590,30 +600,46 @@ def _full_source_evidence(
             "article",
         ),
     )
+    primary = Route("gemini", "exact-source-reader", 10000, 2000)
+    route = Route("groq", "actual-fallback", 8000, 2000) if fallback else primary
+    result = PageResult(
+        tuple(span.id for span in source.spans),
+        (2,),
+        (3,),
+        "A model-only reading angle",
+        (2,),
+        False,
+    )
+    raw = json.dumps(
+        {
+            "coverage": {"first_span_id": 1, "last_span_id": len(source.spans)},
+            "selected_span_ids": [2],
+            "qualification_span_ids": [3],
+            "reading_angle": {"text": result.reading_angle, "span_ids": [2]},
+            "abstain": False,
+        }
+    )
     page = Page(
         0,
         len(source.spans),
-        "a" * 64,
-        PageResult(
-            [span.id for span in source.spans],
-            [2],
-            [3],
-            "A model-only reading angle",
-            [2],
-            False,
-        ),
+        request_attempts=[
+            RequestAttempt(
+                "generate", route, 0, len(source.spans), snapshot, "a" * 64, "2026-10-02T12:00:00+00:00",
+                status="accepted", finished_at="2026-10-02T12:00:00+00:00",
+                response_sha256=checksum(raw), finish_reason="STOP",
+            )
+        ],
     )
+    _complete_page(page, 0, raw, result, "explicit" if fallback else "null")
     state = BriefState(
         selection,
-        Route("gemini", "exact-source-reader", 10000, 2000),
+        primary,
         "2026-10-02T12:00:00+00:00",
         "2026-10-02T12:00:00+00:00",
         status="ready",
         source_sha256=snapshot,
         pages=[page],
     )
-    if fallback:
-        page.route = Route("groq", "actual-fallback", 8000, 2000)
     # Reading-brief validation is tested by its owner; this adapter receives only checked states.
     with patch("digest.reading_brief.ready_brief_evidence", return_value=(state, source)):
         result = build_full_source_evidence(bundle, tmp_path, [selection.identity])

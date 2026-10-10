@@ -455,3 +455,53 @@ retain locks, remote barriers, source/eligibility reload and before/after byte g
 
 These mechanical proofs do not certify semantic completeness, improve the failed
 research results, activate optional reading or complete the wider #164 target.
+
+
+### Attempt-owned page completion — 2026-10-10
+
+The bounded [#164 ownership slice](https://github.com/Lenivvenil/digest/issues/164#issuecomment-6093747785)
+applies [ADR0023's ownership convention](0023-response-owned-editorial-outcome.md)
+to the optional reader. A frozen accepted `RequestAttempt` owns raw response text,
+frozen `PageResult` and the saved page route's null/explicit spelling. Attempt
+metadata supplies the route, request, finish reason and immutable usage. `Page`
+retains its manifest range and ordered history, with separate `PendingRequest`
+scheduling context until completion. History-0 completed records without attempts
+have an explicit `LegacyCompletedEvidence` owner; no attempt or clock is fabricated.
+The owner resolver enforces these alternatives and the unique accepted-generation
+invariant for decoded records and typed-state consumers.
+
+The seven old page completion fields are wire fields only. `page_wire` and
+`state_wire` are the single compatibility projection for state saves, prior-binding
+revisions, frozen handoffs and downstream page proofs. Preserve three distinct
+checksums: raw attempt text, source/route/request/response envelope, and the complete
+old page projection including history. A null route and an explicit route equal to
+the primary remain different page/state/handoff identities. Restoring either must
+preserve that spelling, ID array order and the original historical primary route.
+Loading alone does not rewrite a retained file.
+
+Before discarding redundant wire facts, decoding verifies their matching accepted
+attempt and response envelope. Source-independent contradictions now fail before
+source loading or a processing-attempt rewrite. Result-null pages carrying orphan
+page response/hash/finish/usage fields fail with `invalid_pending_completion`;
+previous decoding tolerated that combination, but no inspected writer emitted it.
+Accepted-invalid attempt metadata, unknown intents and prospective/count fields
+remain retained. These are explicit input narrowings, not a claim of universal
+historical compatibility. Malformed scalar/container shapes also reject during
+decoding so frozen owners cannot retain nested mutable raw values. Result decoding
+checks immutable scalar shapes only;
+source membership, contiguous coverage, exact prompts, actual-route admission,
+response reparsing and terminal consistency stay at the loaded-source boundary.
+
+Generation acceptance still replaces and saves safe attempt metadata before parsing.
+Successful parsing installs completion on that attempt and clears pending context.
+Call-local history slots ensure a failed acceptance save cannot be mistaken for a
+still-reserved attempt. Reservation, request, clock and write order, unknown-generation
+holds, count recovery, splits, configured fallback and budgets remain unchanged.
+
+`Page`, `PageResult` and `RequestAttempt` constructors/setters are intentional internal
+Python API changes. Repository callers migrate with the owner; no alternate mutable
+completion protocol remains. The known configured private workflow/script consumers
+were scanned for reader-state imports, constructors and serialization assumptions;
+unknown external Python callers are outside that scan. Retained valid wire remains
+readable by the compatible old engine. Reading stays optional and off by default;
+this change grants no semantic acceptance, publication authority or runtime activation.
