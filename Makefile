@@ -16,7 +16,7 @@ test:
 check: lint typecheck test
 
 install:
-	pip install --no-deps -r requirements.txt
+	python -m pip install -r requirements.txt .
 
 install-dev:
-	pip install --no-deps -r requirements-dev.txt
+	python -m pip install -r requirements-dev.txt .
