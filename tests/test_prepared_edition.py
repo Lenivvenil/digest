@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -237,7 +237,9 @@ async def test_http_errors_never_retry_or_fallback(tmp_path: Path, status: int) 
 
 
 @respx.mock
-async def test_partial_receipts_keep_only_complete_article_coverage(tmp_path: Path) -> None:
+async def test_partial_receipts_keep_only_complete_article_coverage(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
     manifest, ready, claim = prepare(tmp_path, long=True)
     route = respx.post(API).mock(side_effect=[success(), httpx.ReadTimeout("lost receipt")])
     result = await edition.send_prepared_edition(
@@ -246,6 +248,13 @@ async def test_partial_receipts_keep_only_complete_article_coverage(tmp_path: Pa
     assert result.confirmed_chunks == 1 and result.attempted_chunks == 2 and result.outcome == "unknown"
     assert result.delivered_hashes == {manifest["articles"][0]["full_hash"]}
     assert route.call_count == 2
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "held"
+    assert "applied marker present, transport incomplete" in caplog.text
+    assert "receipt_state=unknown" in caplog.text and "applied_marker=True" in caplog.text
+    assert "persisted_attempted=2" in caplog.text and "confirmed_chunks=1/" in caplog.text
+    assert "fully_covered_articles=1" in caplog.text and "neither accounting nor replay safety" in caplog.text
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
             ready, claim, cache_dir=tmp_path, config=sender_config(), now=NOW
@@ -321,9 +330,25 @@ async def test_validation_blocks_before_http(
     assert not respx.calls
 
 
-def test_inspect_claim_and_no_ready_overwrite(tmp_path: Path) -> None:
+def test_inspect_claim_and_no_ready_overwrite(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _, ready, _ = prepare(tmp_path)
-    assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "held"
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    forbidden = Mock(side_effect=AssertionError("read-only inspection attempted an effect"))
+    with (
+        patch.object(edition_storage, "write_record", forbidden),
+        patch.object(prepared_delivery, "_apply_receipt", forbidden),
+        patch.object(prepared_delivery, "send_prepared_chunk", forbidden),
+    ):
+        assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "held"
+    forbidden.assert_not_called()
+    assert "dispatch unresolved" in caplog.text and "receipt_state=absent" in caplog.text
+    assert "persisted_attempted=unknown" in caplog.text and "confirmed_chunks=unknown/" in caplog.text
+    assert "fully_covered_articles=unknown" in caplog.text and "applied_marker=unknown" in caplog.text
+    assert "Unsaved transport effects are unknown" in caplog.text
+    assert all(name in caplog.text for name in (edition.READY_FILE, edition.CLAIM_FILE, edition.RECEIPTS_FILE))
+    assert "No automatic resend or reapplication" in caplog.text
+    assert "Frozen title" not in caplog.text and "https://example.com/1" not in caplog.text
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     with pytest.raises(FileExistsError):
         edition.claim_edition(ready, cache_dir=tmp_path, now=NOW)
     with pytest.raises(ValueError, match="held"):
@@ -366,7 +391,7 @@ def test_expired_unclaimed_edition_can_be_replaced(tmp_path: Path) -> None:
 
 @respx.mock
 async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     _, ready, claim = prepare(tmp_path)
     route = respx.post(API).mock(return_value=success())
@@ -381,7 +406,12 @@ async def test_unapplied_confirmation_holds_across_days_and_cannot_replay(
             config=sender_config(),
             now=NOW,
         )
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
     assert edition.inspect_edition(cache_dir=tmp_path, now=NOW + timedelta(days=1))[2] == "held"
+    assert "application incomplete" in caplog.text and "receipt_state=confirmed" in caplog.text
+    assert "applied_marker=False" in caplog.text and "fully_covered_articles=1" in caplog.text
+    assert "write prefix is unknown" in caplog.text and "retained operational records" in caplog.text
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(
             ready,
@@ -1095,7 +1125,7 @@ async def test_final_applied_write_preserves_actual_persisted_outcome(
 
 
 async def test_cancelled_dispatch_keeps_attempted_receipt_without_implicit_application(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     import asyncio
     from unittest.mock import AsyncMock
@@ -1109,6 +1139,12 @@ async def test_cancelled_dispatch_keeps_attempted_receipt_without_implicit_appli
     assert receipt["state"] == "sending" and receipt["attempted"] == 1
     assert receipt["confirmed"] == [] and receipt["applied"] is False
     assert not (tmp_path / "feedback.json").exists() and not (tmp_path / "seen_articles.json").exists()
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    assert edition.inspect_edition(cache_dir=tmp_path, now=NOW)[2] == "held"
+    assert "dispatch unresolved" in caplog.text and "receipt_state=sending" in caplog.text
+    assert "persisted_attempted=1" in caplog.text and "confirmed_chunks=0/" in caplog.text
+    assert "fully_covered_articles=0" in caplog.text and "Unsaved transport effects are unknown" in caplog.text
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
     send.assert_awaited_once()

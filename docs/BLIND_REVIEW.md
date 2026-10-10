@@ -173,9 +173,15 @@ inspection output even when the command reports a hold.
 
 <a id="prepared-editions-and-delivery-recovery-120"></a>
 
-The inspector reports a conservative summary. `held` is not a diagnosis: inspect
-the underlying files, their ready/claim bindings and the workflow attempt that wrote
-them. Never infer that a message was not sent merely because a later file is absent.
+The inspector keeps its conservative status contract and adds a bounded warning for
+valid prepared holds. It distinguishes unresolved dispatch, incomplete application,
+and an applied marker with incomplete transport. The warning uses already-read
+records: state, persisted attempted/confirmed/total chunks, fully covered articles
+and existing evidence filenames. Absent receipt counts are unknown, not zero.
+Unrecorded transport effects and the accounting write prefix cannot be inferred.
+Inspect the retained files, bindings and workflow attempt; never treat missing
+receipts or marker presence as permission to resend or reapply. Legacy compact
+holds and malformed-binding errors retain their separate existing behavior.
 
 | Observed evidence | Meaning | Safe next action |
 | --- | --- | --- |

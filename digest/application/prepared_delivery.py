@@ -7,6 +7,7 @@ atomic files neither provide that barrier nor make interrupted application a tra
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from dataclasses import asdict
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from digest.config import Config
 
 _DISPATCH_SECONDS = 30.0
+logger = logging.getLogger(__name__)
 
 
 def _instant(now: datetime | None) -> datetime:
@@ -347,6 +349,33 @@ def _apply_receipt(data: Edition, receipts: Receipts, config: Config, cache: Pat
     delivery_state.save_delivery_cache(delivered, cache_dir)
 
 
+def _warn_dispatch_hold(data: Edition, receipts: Receipts | None) -> None:
+    """Explain existing evidence; never infer an unsaved effect or recovery right."""
+    if receipts is None or receipts.state == "sending":
+        group = "dispatch unresolved"
+        guidance = "Unsaved transport effects are unknown; inspect workflow, remote persistence and transport evidence."
+    elif not receipts.applied:
+        group = "application incomplete"
+        guidance = "Accounting/supplement/final-marker write prefix is unknown; inspect retained operational records."
+    else:
+        group = "applied marker present, transport incomplete"
+        guidance = ("Inspect unresolved transport coverage; "
+                    "marker presence alone proves neither accounting nor replay safety.")
+    logger.warning(
+        "Prepared edition held (%s): receipt_state=%s, applied_marker=%s, "
+        "persisted_attempted=%s, confirmed_chunks=%s/%s, fully_covered_articles=%s. "
+        "%s Evidence: %s, %s, %s. No automatic resend or reapplication.",
+        group,
+        receipts.state if receipts is not None else "absent",
+        receipts.applied if receipts is not None else "unknown",
+        receipts.attempted if receipts is not None else "unknown",
+        len(receipts.confirmed) if receipts is not None else "unknown",
+        len(data.payloads),
+        len(project_result(data, receipts).delivered_hashes) if receipts is not None else "unknown",
+        guidance, READY_FILE, CLAIM_FILE, RECEIPTS_FILE,
+    )
+
+
 def inspect_edition(
     *,
     cache_dir: str | Path = ".cache",
@@ -383,10 +412,9 @@ def inspect_edition(
     if storage.exists(claim_path):
         claim, claim_sha = storage.load_claim(claim_path, ready_sha, owner_sha)
         receipts = storage.load_receipts(cache, claim.ready_sha256, claim_sha, len(data.payloads), owner_sha)
-        if receipts is not None and not receipts.applied:
-            return asdict(data), ready_sha, "held"
-        if receipts is not None and receipts.state == "confirmed":
+        if receipts is not None and receipts.applied and receipts.state == "confirmed":
             return asdict(data), ready_sha, "confirmed" if instant < parse_instant(data.window_end) else "expired"
+        _warn_dispatch_hold(data, receipts)
         return asdict(data), ready_sha, "held"
     if storage.exists(cache / RECEIPTS_FILE):
         raise ValueError("Orphaned edition receipts; publishing blocked.")
