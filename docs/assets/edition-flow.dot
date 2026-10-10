@@ -1,0 +1,29 @@
+// Reader navigation, not the architecture authority.
+// Regenerate: dot -Tsvg docs/assets/edition-flow.dot -o docs/assets/edition-flow.svg
+// Canonical lifecycle: ../ARCHITECTURE.md#prepared-edition-data-flow
+// A narrow vertical path remains legible without shrinking a desktop-wide chart.
+digraph EditionFlow {
+  graph [
+    bgcolor="#f6f8fa", fontname="DejaVu Sans", fontcolor="#24344a",
+    rankdir=TB, ranksep=0.20, pad=0.18, splines=ortho,
+    outputorder=edgesfirst, label="ORDINARY PREPARED PATH", labelloc=t, fontsize=12
+  ];
+  node [
+    shape=box, style="rounded,filled", fontname="DejaVu Sans",
+    fontsize=16, fontcolor="#152b44", color="#bdcad8", penwidth=1.1,
+    fillcolor="#ffffff", margin="0.12,0.10", width=2.8, height=0.61
+  ];
+  edge [color="#4e6987", penwidth=1.5, arrowsize=0.65];
+
+  sources [label=<<FONT POINT-SIZE="10" COLOR="#52677f">01 · COLLECT</FONT><BR/><B>RSS / Atom sources</B>>];
+  accepted [label=<<FONT POINT-SIZE="10" COLOR="#52677f">02 · SELECT &amp; SAVE</FONT><BR/><B>Accepted work</B>>];
+  frozen [fillcolor="#e7f2ee", color="#85ae9a", label=<<FONT POINT-SIZE="10" COLOR="#355e4d">03 · FREEZE</FONT><BR/><B>Ready edition</B>>];
+  delivery [fillcolor="#173f4c", color="#173f4c", fontcolor="#ffffff", label=<<FONT POINT-SIZE="10" COLOR="#c0ded9">04 · PERSIST, CLAIM, SEND</FONT><BR/><B>Delivery + receipts</B>>];
+
+  sources -> accepted -> frozen -> delivery;
+
+  feedback [shape=plain, width=0, height=0, fontsize=12, label=<<B>Feedback + approved sources</B><BR/>inform future preparation>];
+  investigation [style="rounded,dashed,filled", fillcolor="#fff8ec", color="#c8a875", fontsize=12, label=<<B>Optional investigation</B><BR/>Independent counter-evidence<BR/><FONT POINT-SIZE="10">After confirmed, persisted delivery</FONT>>];
+  delivery -> feedback [style=dashed, color="#769184", arrowsize=0.55];
+  feedback -> investigation [style=invis];
+}

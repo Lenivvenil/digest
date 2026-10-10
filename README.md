@@ -1,36 +1,59 @@
 # Daily News Digest
 
-A personal news-reading engine for a technology architect: collect RSS/Atom sources,
-select developments worth reading, and explain why the original source may matter.
-Read a compact edition in Telegram and keep a Markdown archive for Obsidian.
+**A personal reading list for banking, fintech and architecture, with room to look beyond work.**
 
-The current reading focus is banking, fintech and architecture, with useful
-discoveries from other fields.
+Turn your RSS sources into selected reading with a reason to open the original.
+Read in Telegram; keep a Markdown archive for Obsidian.
 
-This is the **engine repository**. A separate runtime owns its source portfolio,
-configuration, credentials, schedule and saved state. It can run on GitHub Actions
-without a VPS or continuously running service. Installing the engine does not create
-a schedule or enable delivery.
+[Try it safely](#try-it-safely) · [Run your runtime](docs/BLIND_REVIEW.md#runtime-configuration) · [Recover an edition](docs/BLIND_REVIEW.md#delivery-states-and-recovery)
 
-## Why Digest
+## A glance at an edition
 
-A useful reading list should help the reader make a better judgment:
+> **FICTIONAL EXAMPLE · BANKING / ARCHITECTURE**
+>
+> ### A payment queue survives a settlement-service outage
+>
+> [Original-source link · trial note](https://example.com/) · Placeholder URL
+>
+> The trial keeps accepting payment requests while settlement is unavailable.
+> For an architect, the useful detail would be how it reconciles balances and handles
+> duplicate requests once the service returns.
+>
+> **Keep in mind:** The trial supplies no production-scale or recovery measurements;
+> it would not establish that the design is ready to deploy.
 
-- **Radar** collects the supplied evidence and selects relevant developments
-- **Irritator** looks for independent evidence that challenges or complicates a
-  narrative; another model opinion does not replace an external source
-- **Feedback and discovery** help evolve the source portfolio, with new sources
-  requiring operator approval
+*Illustrative format only. This is not actual news or production-quality evidence.*
 
-Useful, faithful daily output remains an acceptance goal under
-[#55](https://github.com/Lenivvenil/digest/issues/55). Successful model calls, delivery
-receipts and passing tests each establish narrower facts.
+<a id="why-digest"></a>
 
-## Quick start
+## More than a list of headlines
 
-### 1. Install the engine
+- **A reason to read.** The ordinary review-led path selects attributed cards from
+  bounded RSS evidence. Source links let you inspect the original; a card does not
+  imply that the whole article was read.
+- **Room to question the story.** Optional [Irritator investigation](docs/BLIND_REVIEW.md#supplementary-investigation)
+  looks for independent external evidence that challenges or complicates a claim.
+  A second model opinion is a different kind of analysis.
+- **A reading list that can evolve.** [Votes and source proposals](docs/BLIND_REVIEW.md#feedback-and-source-decisions)
+  inform future preparation. New sources need operator approval, with room to
+  explore science, culture, society and other fields alongside the professional radar.
 
-Python **3.12 or newer** is required. From a checkout:
+There is also an optional [humane closing story](docs/decisions/0014-optional-humane-closing-item.md):
+a small moment of kindness, connection or everyday wonder when suitable evidence
+exists. It is off by default and needs approved sources; it is not a daily promise.
+
+Prefer broader synthesis? The supported [category-summary mode](docs/BLIND_REVIEW.md#legacy-format-and-optional-features)
+offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
+separately from ordinary review-led cards.
+
+<a id="quick-start"></a>
+<a id="1-install-the-engine"></a>
+<a id="2-validate-an-example-without-credentials-or-external-requests"></a>
+
+## Try it safely
+
+Use **Python 3.12+**. From a checkout, install the engine and try the
+[disabled example](examples/config.example.yaml):
 
 ```sh
 git clone https://github.com/Lenivvenil/digest.git
@@ -38,177 +61,134 @@ cd digest
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install .
-python -m digest --help
-```
-
-For a separate runtime, install a reviewed immutable engine commit and retain the
-previous pin and configuration for rollback. Keep runtime data and credentials out
-of this public repository; see [runtime setup](docs/BLIND_REVIEW.md#runtime-configuration).
-
-### 2. Validate an example without credentials or external requests
-
-The [example configuration](examples/config.example.yaml) has English output,
-no enabled feeds and delivery disabled:
-
-```sh
-python - <<'PY'
-from digest.config import load_config
-c = load_config('examples/config.example.yaml')
-print('Configuration valid:', c.radar.language)
-PY
 python -m digest --config examples/config.example.yaml --dry-run --radar-only
 ```
 
-This is an offline empty-input smoke check, **not a demonstrated news digest**.
-The example's feed URL and model ID are placeholders.
+Installation downloads dependencies. The final command is an **offline, empty-input
+smoke check**: no enabled feeds, model requests or delivery, and no news edition.
+The feed URL and model ID are placeholders. Use `python -m digest --help` to explore
+available commands.
 
-### 3. Configure a live runtime
+<a id="3-configure-a-live-runtime"></a>
 
-Copy the example into an isolated runtime working directory. Follow the
-[operator setup and configuration guide](docs/BLIND_REVIEW.md#runtime-configuration)
-to choose entitled model routes, enable real sources and preview their output before
-enabling delivery. The engine does **not** automatically load `.env`.
+### Ready for real sources?
 
-With live configuration, `--check` probes feeds and `--dry-run` can fetch sources and
-call models. Neither flag generally means offline. The example selects compact
-delivery, which requires the managed
-[prepare, persist, claim and send sequence](docs/BLIND_REVIEW.md#persist-claim-and-send).
+Follow [live runtime setup](docs/BLIND_REVIEW.md#runtime-configuration) to choose
+model routes, enable sources and review output before enabling delivery. This is
+the engine repository; keep configuration, secrets, schedules and saved state in a
+separate runtime. The engine does not automatically load `.env` or create a schedule.
+
+**Live previews can make external calls:** `--check` probes feeds and `--dry-run`
+can fetch sources and call models, consuming quotas. Compact delivery requires the
+managed [prepare → persist → claim → send sequence](docs/BLIND_REVIEW.md#persist-claim-and-send).
 Enabling Telegram alone does not make a plain `python -m digest` publishable.
-
-## How it works
-
-The ordinary review-led path selects cards from bounded RSS evidence, saves accepted
-work, then freezes an edition for publication. The runtime persists readiness and a
-claim before sending, and preserves confirmed receipts and resulting state afterward.
-Optional Irritator work follows confirmed, persisted primary delivery; in compact mode
-its result stays in the archive without another Telegram push.
-
-Follow the [illustrated edition lifecycle](docs/ARCHITECTURE.md#prepared-edition-data-flow)
-and [domain story](docs/domain/digest/overview.md#one-story-through-the-system) for the
-distinctions between a candidate, accepted work, a ready edition and confirmed delivery.
-For an interrupted run, start with
-[delivery states and recovery](docs/BLIND_REVIEW.md#delivery-states-and-recovery).
-
-Legacy category summaries, optional three-perspective output and direct delivery have
-[different operating contracts](docs/BLIND_REVIEW.md#legacy-format-and-optional-features).
-Full-source reading is experimental and off by default. It is not required by the
-ordinary RSS-review path, and its technical output does not establish editorial
-acceptance. See [experimental scope](docs/BLIND_REVIEW.md#experimental-source-reading).
-
-## Development
-
-Start with the [contributor guide](.github/CONTRIBUTING.md) for a focused change and review.
-
-After installing the engine in your virtual environment:
-
-```sh
-python -m pip install -r requirements-dev.txt
-make lint
-make typecheck
-make test
-# Or all three:
-make check
-```
-
-Read the [working agreement](AGENTS.md#working-agreement),
-[project principles](docs/principles.md#definition-of-done) and
-[ADR index](docs/decisions/README.md) before changing a contract. Optional local
-pre-commit hooks are configured in `.pre-commit-config.yaml`.
-
-The configured pytest coverage gate is **80%**, matching the principles' default.
-[#148](https://github.com/Lenivvenil/digest/issues/148) records the correction of the
-inherited 70% setting. Unit tests mock external calls; editorial usefulness and
-operational delivery need their own evidence.
-
-## Find the right guide
-
-- [Documentation map](docs/README.md): operator, contributor and architecture routes
-- [Operator guide](docs/BLIND_REVIEW.md): configuration, CLI, publication and recovery
-- [Architecture](docs/ARCHITECTURE.md): lifecycle, persisted records and code ownership
-- [Target architecture and migration](docs/ARCHITECTURE.md#target-architecture-and-migration):
-  editable diagram, ownership boundaries and staged exit evidence
-- [Digest domain model](docs/domain/digest/overview.md) and
-  [Irritator model](docs/domain/irritator/overview.md): purpose, identities and invariants
-- [Prior README](docs/history/readme-2026-10-08.md): retained examples, decisions and
-  dated rollout evidence
-
-## Releases and licensing
-
-Use the package version in [pyproject.toml](pyproject.toml), an immutable commit and
-the [changelog](CHANGELOG.md) together when upgrading. A historical release entry is
-not current quality evidence. Preserve runtime state and check compatibility before
-rollback; follow the [upgrade and recovery guidance](docs/BLIND_REVIEW.md#upgrades-and-retained-state).
-
-**No software license grant is currently supplied.** There is no LICENSE file or
-declared package license. A future grant requires an explicit owner decision.
-
-## Earlier README section links
 
 <a id="architecture"></a>
 
-- [Architecture and ordinary lifecycle](docs/ARCHITECTURE.md#prepared-edition-data-flow)
+## How it works
 
+[![Ordinary prepared path: sources become accepted work, then a frozen edition and delivery receipts. Feedback informs future preparation; optional investigation follows confirmed, persisted delivery.](docs/assets/edition-flow.svg)](docs/ARCHITECTURE.md#prepared-edition-data-flow)
+
+**Preparation** saves accepted editorial work before freezing the edition.
+**The runtime** persists readiness and a claim before sending.
+**Publication** records confirmed receipts and applies known coverage; the runtime
+preserves the resulting state. Interrupted or uncertain delivery needs inspection.
+
+The map follows the ordinary prepared path, not every mode or recovery outcome.
+The [canonical lifecycle](docs/ARCHITECTURE.md#prepared-edition-data-flow) owns the
+sequence and boundaries. [Full-source reading](docs/BLIND_REVIEW.md#experimental-source-reading)
+is experimental, off by default and unnecessary for ordinary RSS-review cards.
+
+<a id="find-the-right-guide"></a>
+
+## Choose your next step
+
+- **[Run your runtime](docs/BLIND_REVIEW.md#runtime-configuration)** — sources, models,
+  language and delivery settings
+- **[Recover an edition](docs/BLIND_REVIEW.md#delivery-states-and-recovery)** — inspect
+  saved evidence and choose a safe next action
+- **[Change the engine](.github/CONTRIBUTING.md)** — make a focused, tested contribution
+
+[All documentation](docs/README.md) · [Domain story](docs/domain/digest/overview.md#one-story-through-the-system) · [Architecture decisions](docs/decisions/README.md)
+
+<a id="development"></a>
+
+<details>
+<summary><strong>Development setup and checks</strong></summary>
+
+After the installation above:
+
+```sh
+python -m pip install -r requirements-dev.txt
+make check
+```
+
+`make check` runs lint, type checking and tests; `make lint`, `make typecheck` and
+`make test` run them separately. Unit tests mock external calls. Read the
+[working agreement](AGENTS.md#working-agreement) and
+[definition of done](docs/principles.md#definition-of-done) before changing a contract.
+
+</details>
+
+<a id="releases-and-licensing"></a>
+
+## Status and license
+
+A runtime can run on GitHub Actions without a VPS. Model access still requires an
+entitled provider route, and provider quotas or charges apply; free operation is
+not guaranteed. Useful, faithful daily output is still being validated under
+[#55](https://github.com/Lenivvenil/digest/issues/55).
+Passing tests and confirmed delivery establish narrower facts.
+
+Use the [package version](pyproject.toml), an immutable engine commit and the
+[changelog](CHANGELOG.md) together. Follow [upgrade and retained-state guidance](docs/BLIND_REVIEW.md#upgrades-and-retained-state)
+before changing a runtime pin.
+
+**No software license grant is supplied.** The repository has no LICENSE file or
+declared package license; a grant needs an explicit owner decision.
+
+<a id="earlier-readme-section-links"></a>
 <a id="3-configure-a-live-report-only-run"></a>
 <a id="4-enable-delivery-in-your-runtime"></a>
 <a id="5-add-a-runtime-workflow"></a>
-
-- [Live runtime setup and delivery](docs/BLIND_REVIEW.md#runtime-configuration)
-
 <a id="cli-reference"></a>
-
-- [CLI reference](docs/BLIND_REVIEW.md#cli-options)
-
 <a id="project-status"></a>
-
-- [Dated project status](docs/history/readme-2026-10-08.md#project-status)
-
 <a id="llm-providers-and-fallback"></a>
 <a id="category-routing"></a>
 <a id="choosing-models"></a>
-
-- [Model routes and category routing](docs/BLIND_REVIEW.md#model-routes)
-
 <a id="experimental-source-reading"></a>
-
-- [Experimental source reading](docs/BLIND_REVIEW.md#experimental-source-reading)
-
 <a id="sources-and-categories"></a>
-
-- [Sources and categories](docs/BLIND_REVIEW.md#sources-and-categories)
-
 <a id="обратная-связь-и-адаптивная-система"></a>
 <a id="adaptive-source-management-and-feedback"></a>
-
-- [Feedback and source decisions](docs/BLIND_REVIEW.md#feedback-and-source-decisions)
-
 <a id="формат-дайджеста"></a>
 <a id="digest-format-and-perspectives"></a>
-
-- [Legacy format and optional features](docs/BLIND_REVIEW.md#legacy-format-and-optional-features)
-
 <a id="автоматическое-обнаружение-источников"></a>
 <a id="external-counter-signals-and-source-discovery"></a>
-
-- [External investigation](docs/BLIND_REVIEW.md#supplementary-investigation) and
-  [source discovery](docs/BLIND_REVIEW.md#source-discovery)
-
 <a id="cache-and-persistence"></a>
-
-- [Persisted state](docs/ARCHITECTURE.md#cache-architecture)
-
 <a id="language-and-optional-post-translation"></a>
-
-- [Language and optional post translation](docs/BLIND_REVIEW.md#language-and-optional-post-translation)
-
 <a id="compact-daily-presentation"></a>
-
-- [Compact presentation](docs/BLIND_REVIEW.md#delivery-settings) and
-  [persist, claim and send](docs/BLIND_REVIEW.md#persist-claim-and-send)
-
 <a id="candidate-coverage-during-preparation"></a>
-
-- [Candidate continuation](docs/BLIND_REVIEW.md#candidate-continuation)
-
 <a id="environment-variables"></a>
 
-- [Environment variables](docs/BLIND_REVIEW.md#environment-variables)
+<details>
+<summary><strong>Following an older README link? Find its current guide</strong></summary>
+
+These retained section anchors lead here. Open the relevant guide:
+
+- **Setup and CLI:** [live runtime and workflow](docs/BLIND_REVIEW.md#runtime-configuration),
+  [CLI](docs/BLIND_REVIEW.md#cli-options), [environment variables](docs/BLIND_REVIEW.md#environment-variables)
+- **Models and sources:** [model/category routes](docs/BLIND_REVIEW.md#model-routes),
+  [source settings](docs/BLIND_REVIEW.md#sources-and-categories),
+  [experimental source reading](docs/BLIND_REVIEW.md#experimental-source-reading)
+- **Reading and presentation:** [format and perspectives](docs/BLIND_REVIEW.md#legacy-format-and-optional-features),
+  [language and translation](docs/BLIND_REVIEW.md#language-and-optional-post-translation),
+  [compact delivery](docs/BLIND_REVIEW.md#delivery-settings)
+- **Feedback and exploration:** [feedback/source decisions](docs/BLIND_REVIEW.md#feedback-and-source-decisions),
+  [external investigation](docs/BLIND_REVIEW.md#supplementary-investigation),
+  [source discovery](docs/BLIND_REVIEW.md#source-discovery)
+- **Saved work and delivery:** [persisted state](docs/ARCHITECTURE.md#cache-architecture),
+  [candidate continuation](docs/BLIND_REVIEW.md#candidate-continuation),
+  [persist, claim and send](docs/BLIND_REVIEW.md#persist-claim-and-send)
+- **History:** [prior README and dated status](docs/history/readme-2026-10-08.md#project-status)
+
+</details>

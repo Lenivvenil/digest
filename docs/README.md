@@ -1,91 +1,74 @@
-# Documentation map and status
+# Documentation
 
-Choose a route for the work you need to do. These are the existing canonical guides;
-dated decisions and archived models remain linked for context.
+Choose the task in front of you. Each route leads to the guide that owns the detail.
 
-## Operate a runtime
+<a id="operate-a-runtime"></a>
 
-1. [Purpose and safe quick start](../README.md#quick-start): install the engine and
-   validate the [disabled example configuration](../examples/config.example.yaml)
-   without credentials or external requests
-2. [Runtime configuration](BLIND_REVIEW.md#runtime-configuration) and
-   [CLI options](BLIND_REVIEW.md#cli-options): distinguish offline validation,
-   report-only model work and enabled delivery
-3. [Prepared publication and recovery](BLIND_REVIEW.md#prepared-editions-and-delivery-recovery-120):
-   use the runtime's saved-state, reservation and recovery boundaries
-4. [Primary-first supplementary processing](BLIND_REVIEW.md#primary-first-runtime-with-preserved-irritator):
-   run bounded Irritator work from saved evidence after primary delivery
+## Try or run
 
-The engine does not install a schedule. The separate runtime owns secrets, source
-configuration, delivery destinations, the engine pin and durable state.
+- **[Try the safe example](../README.md#try-it-safely)** — install and run an offline,
+  empty-input check
+- **[Set up a live runtime](BLIND_REVIEW.md#runtime-configuration)** — keep secrets,
+  source configuration, schedules and saved state separate from the engine
+- **[Choose models and sources](BLIND_REVIEW.md#model-routes)** — configure entitled
+  routes, then [source categories](BLIND_REVIEW.md#sources-and-categories) and
+  [language](BLIND_REVIEW.md#language-and-optional-post-translation)
+- **[Find a command](BLIND_REVIEW.md#cli-options)** — previews can call external services;
+  compact publishing needs the managed sequence below
 
-## Contribute a change
+## Operate or recover
 
-1. [Contributor guide](../.github/CONTRIBUTING.md): the short issue, check and PR workflow,
-   with the [working agreement](../AGENTS.md#working-agreement) and
-   [development commands](../README.md#development) as references
-2. [Project principles](principles.md#definition-of-done): required evidence, optional
-   local tooling and the aligned 80% coverage floor with its historical disposition
-3. [Decision index](decisions/README.md): accepted decisions, proposals and release scope
+- **[Prepare, persist, claim and send](BLIND_REVIEW.md#persist-claim-and-send)** — follow
+  the publication barriers in order
+- **[Inspect an interrupted edition](BLIND_REVIEW.md#delivery-states-and-recovery)** —
+  distinguish ready work, uncertain sends and unapplied confirmations
+- **[Upgrade with retained state](BLIND_REVIEW.md#upgrades-and-retained-state)** —
+  check compatibility before changing or rolling back the engine pin
+- **[Manage feedback and sources](BLIND_REVIEW.md#feedback-and-source-decisions)** —
+  handle votes, approvals and [source discovery](BLIND_REVIEW.md#source-discovery)
 
-## Understand the architecture
+<a id="contribute-a-change"></a>
+<a id="understand-the-architecture"></a>
 
-1. [Digest domain story and identities](domain/digest/overview.md): explain what a
-   candidate, accepted preparation, ready edition and receipt actually establish
-2. [Ordinary prepare → deliver lifecycle](ARCHITECTURE.md#prepared-edition-data-flow),
-   [persisted records](ARCHITECTURE.md#cache-architecture) and
-   [code entrypoints](ARCHITECTURE.md#modules-and-responsibilities)
-3. [Observed state → safe action](BLIND_REVIEW.md#delivery-states-and-recovery):
-   distinguish a ready edition, uncertain send and unapplied confirmation
-4. [Irritator current model](domain/irritator/overview.md#current-domain-model):
-   independent external evidence has a different purpose from model comparison
+## Understand or contribute
 
-The [target architecture and staged migration](ARCHITECTURE.md#target-architecture-and-migration)
-distinguishes accepted direction from implemented guarantees and natural-run acceptance.
+- **[Follow one edition](domain/digest/overview.md#one-story-through-the-system)** —
+  candidate, accepted work, ready edition and confirmed delivery
+- **[Explore the architecture](ARCHITECTURE.md#prepared-edition-data-flow)** — current
+  lifecycle and ownership; [target and migration](ARCHITECTURE.md#target-architecture-and-migration)
+  remain distinct from implemented guarantees
+- **[Understand counter-evidence](domain/irritator/overview.md#current-domain-model)** —
+  independent external evidence and its relation to the original claim
+- **[Make a contribution](../.github/CONTRIBUTING.md)** — workflow and checks, supported by
+  [project principles](principles.md#definition-of-done) and the [decision index](decisions/README.md)
 
-## Historical material
+Daily editorial usefulness remains under validation in
+[#55](https://github.com/Lenivvenil/digest/issues/55). Use that acceptance record rather
+than historical release entries to assess current quality.
 
-The following retain their original language, date and decision context. They are not
-current onboarding instructions or newly ratified operating contracts:
+<a id="documentation-map-and-status"></a>
+<a id="historical-material"></a>
+<a id="current-work-boundary--2026-10-07"></a>
 
-- [Prior README and onboarding/reference examples](history/readme-2026-10-08.md):
-  preserved before the README became a concise reader entry point
-- [Prior Digest domain/acceptance record](history/digest-domain-2026-10-08.md),
+<details>
+<summary><strong>Historical material and older documentation links</strong></summary>
+
+Older status links land here. The following preserve their dates, original language
+and decision context; they are not current setup instructions:
+
+- [Prior README](history/readme-2026-10-08.md),
+  [Digest domain record](history/digest-domain-2026-10-08.md),
   [architecture/migration record](history/architecture-2026-10-08.md) and
-  [review/operations record](history/review-operations-2026-10-08.md): preserved before
-  the current maintainer guides were rewritten. Their dated release claims are history.
+  [review/operations record](history/review-operations-2026-10-08.md)
+- [Original ADRs and later decisions](decisions/README.md) and
+  [completed implementation plans](plans/completed/)
+- [Superseded Irritator diagnostic](domain/irritator-bc.md),
+  [terse summaries and bubble plan](plans/completed/terse-summaries-and-bubble.md) and
+  [Reddit QA report](history/reddit-qa.md)
+- [April 24 historical output](history/output/2026-04-24.md) and
+  [changelog](../CHANGELOG.md), retained as history rather than current quality evidence
 
-- `decisions/0001-*.md`, `0002-*.md`, `0003-*.md`: original ADR records; their decisions
-  remain relevant, while implementation must be checked against current source.
-- `plans/completed/`: completed implementation plans.
-- [Archived Irritator diagnostic](domain/irritator-bc.md): explicitly superseded by the
-  canonical Irritator overview; do not rewrite its diagnostic history.
-- [Terse summaries and bubble plan](plans/completed/terse-summaries-and-bubble.md) and
-  [Reddit QA report](history/reddit-qa.md): earlier implementation records, not a second active backlog.
-- [April 24 output](history/output/2026-04-24.md): preserved historical publication,
-  not a current output example or runtime directory.
-- [CHANGELOG.md](../CHANGELOG.md): historical release entries, not current quality evidence.
+Original versions of translated documents remain in Git history. ADR bodies and
+historical issue/PR discussions retain their original context.
 
-Original versions of translated documents remain available through git history. Legacy
-section anchors referenced by existing documents are retained where required. Historical
-issues and PR discussions are not translated or erased.
-
-## Current work boundary — 2026-10-07
-
-English documentation/onboarding and configurable primary/supplementary translation
-are implemented and deployed. The finite acceptance under
-[#94](https://github.com/Lenivvenil/digest/issues/94) covers an independently reviewed
-ordinary archived narrative using prompt v2, exact canonical fallback after a provider
-rate limit, and a confirmed compact edition with persisted archive/state. It does not
-claim general translation accuracy or Russian delivery for that English-fallback edition.
-
-[#55](https://github.com/Lenivvenil/digest/issues/55) remains open for useful, faithful
-daily content. Full-source processing is an optional experimental mechanism. [PR #93](https://github.com/Lenivvenil/digest/pull/93) was
-closed without merging; its experimental enrichment is not available on main. The
-ordered requirements and acceptance status live in [#91](https://github.com/Lenivvenil/digest/issues/91).
-
-An absent translation section preserves legacy direct `radar.language` generation.
-The [operator guide](BLIND_REVIEW.md#language-and-optional-post-translation) and
-ADR-0005 document explicit English canonical generation and optional translation
-of generated publication prose. No software-license grant is supplied;
-choosing a distribution license is outside this personal-runtime milestone.
+</details>
