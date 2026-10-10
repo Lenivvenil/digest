@@ -28,8 +28,12 @@ python -m digest --config config.yaml --check
 python -m digest --config config.yaml --dry-run --radar-only
 ```
 
-`--check` probes feed URLs and checks expected environment variables. It does not
-establish editorial quality. `--dry-run` can fetch sources and call models, consuming
+`--check` probes enabled feeds and checks credential presence for category
+`llm.providers`/`llm.routing` and enabled Telegram delivery, not separately pinned
+review routes. Its totals cover feeds only; configuration or feed failures return
+a nonzero exit, while warnings do not. It does not authenticate model or Telegram
+access, establish live readiness or prove editorial quality.
+`--dry-run` can fetch sources and call models, consuming
 their quotas, while suppressing normal digest delivery and saved digest output.
 Use the README's disabled-example commands for an offline empty-input check.
 

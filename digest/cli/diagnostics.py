@@ -45,12 +45,15 @@ async def check_config(config_path: str) -> int:
             print(f"  [OK] {var} is set ({provider_name})")
         else:
             print(f"  [WARN] {var} is not set (required for {provider_name})")
-    for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
-        val = os.environ.get(var, "")
-        if val:
-            print(f"  [OK] {var} is set")
-        else:
-            print(f"  [WARN] {var} is not set (required for production)")
+    if config.telegram.enabled:
+        for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+            val = os.environ.get(var, "")
+            if val:
+                print(f"  [OK] {var} is set")
+            else:
+                print(f"  [WARN] {var} is not set (required for enabled Telegram delivery)")
+    else:
+        print("  [SKIP] Telegram delivery is disabled; delivery credentials are not required.")
 
     print("\nChecking for duplicates...")
     seen_names: dict[str, int] = {}
@@ -100,12 +103,13 @@ async def check_config(config_path: str) -> int:
     warn_count = sum(1 for _, s, _ in results if s == "WARN")
     ok_count_feeds = sum(1 for _, s, _ in results if s == "OK")
     print(
-        f"\nResult: {ok_count_feeds} OK, {warn_count} WARN, {fail_count} FAIL"
+        f"\nFeed results: {ok_count_feeds} OK, {warn_count} WARN, {fail_count} FAIL"
         f" out of {len(config.enabled_sources)} feeds"
     )
     if ok:
-        print("All checks passed.")
+        print("Feed probes completed without failures. Review any warnings above.")
     else:
-        print("Some checks FAILED — fix the issues above before running the digest.")
+        print("Some feed checks FAILED — fix the issues above before running the digest.")
+    print("Model and Telegram access were not tested.")
 
     return 0 if ok else 1

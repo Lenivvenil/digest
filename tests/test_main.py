@@ -209,7 +209,9 @@ class TestCleanSummary:
 
 @pytest.mark.asyncio
 class TestCheckConfig:
-    async def test_valid_config(self) -> None:
+    async def test_valid_config(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
         import httpx
 
         from digest.adapters.http.public_fetch import PublicResponse
@@ -218,21 +220,34 @@ class TestCheckConfig:
             "https://example.com/feed", 200, httpx.Headers(),
             b"<rss><channel><item><title>A</title></item></channel></rss>", "utf-8",
         )
+        cfg = _mock_config()
+        cfg.telegram.enabled = True
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-token")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "synthetic-chat")
         with (
-            patch("digest.config.load_config", return_value=_mock_config()),
+            patch("digest.config.load_config", return_value=cfg),
             patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(return_value=response)) as fetch,
         ):
             result = await check_config("config.yaml")
         assert result == 0
         assert all(call.kwargs == {"timeout": 15.0, "max_bytes": 2 * 1024 * 1024, "max_redirects": 3}
                    for call in fetch.await_args_list)
+        output = capsys.readouterr().out
+        assert "[OK] TELEGRAM_BOT_TOKEN is set" in output
+        assert "[OK] TELEGRAM_CHAT_ID is set" in output
+        assert "synthetic-token" not in output and "synthetic-chat" not in output
+        assert "Feed results: 1 OK, 0 WARN, 0 FAIL out of 1 feeds" in output
+        assert "Model and Telegram access were not tested." in output
+        assert "All checks passed" not in output
 
     async def test_invalid_config(self) -> None:
         with patch("digest.config.load_config", side_effect=FileNotFoundError("nope")):
             result = await check_config("missing.yaml")
         assert result == 1
 
-    async def test_warns_missing_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_warns_missing_env_vars(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
         import httpx
 
         from digest.adapters.http.public_fetch import PublicResponse
@@ -250,6 +265,11 @@ class TestCheckConfig:
         ):
             result = await check_config("config.yaml")
         assert result == 0
+        output = capsys.readouterr().out
+        assert "[WARN] TELEGRAM_BOT_TOKEN is not set (required for enabled Telegram delivery)" in output
+        assert "[WARN] TELEGRAM_CHAT_ID is not set (required for enabled Telegram delivery)" in output
+        assert "Review any warnings above." in output
+        assert "All checks passed" not in output
 
     async def test_unsafe_url_is_blocked(self, capsys: pytest.CaptureFixture[str]) -> None:
         from digest.adapters.http.public_fetch import UnsafePublicURL
@@ -292,7 +312,13 @@ class TestCheckConfig:
             patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock(return_value=response)),
         ):
             assert await check_config("config.yaml") == 0
-        assert "[WARN  ]" in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "[WARN  ]" in output
+        assert "[SKIP] Telegram delivery is disabled; delivery credentials are not required." in output
+        assert "TELEGRAM_BOT_TOKEN" not in output and "TELEGRAM_CHAT_ID" not in output
+        assert "Feed results: 0 OK, 1 WARN, 0 FAIL out of 1 feeds" in output
+        assert "Review any warnings above." in output
+        assert "Model and Telegram access were not tested." in output
 
 
 # ---------------------------------------------------------------------------
