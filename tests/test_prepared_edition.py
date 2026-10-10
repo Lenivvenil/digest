@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,9 +39,9 @@ def sender_config(*, enabled: bool = True, bot_username: str = "mybot") -> Any:
     )
 
 
-def prepare(tmp_path: Path, *, long: bool = False) -> tuple[dict[str, Any], str, str]:
+def prepare(tmp_path: Path, *, long: bool = False, title: str = "Frozen title") -> tuple[dict[str, Any], str, str]:
     config = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
-    articles = [ArticleSummary("Frozen title", "https://example.com/1", "Source", "AI", "Frozen summary")]
+    articles = [ArticleSummary(title, "https://example.com/1", "Source", "AI", "Frozen summary")]
     if long:
         articles.append(ArticleSummary("Second", "https://example.com/2", "Other", "AI", "word " * 1600))
     path, ready_sha = edition.prepare_edition(
@@ -69,7 +70,13 @@ async def test_sender_uses_frozen_payload_without_rendering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manifest, ready, claim = prepare(tmp_path)
+    with monkeypatch.context() as old_encoder:
+        old_encoder.setattr(
+            "digest.presentation.telegram.escape_markdownv2",
+            lambda text: re.sub(r"([\_*\[\]()~`>#\+\-=|{}.!])", r"\\\1", text),
+        )
+        manifest, ready, claim = prepare(tmp_path, title=r"Frozen \*title\*")
+    assert r"Frozen \\*title\\*" in manifest["payloads"][0]["text"]
     renderer = Mock(side_effect=AssertionError("sender rendered"))
     monkeypatch.setattr(prepared_delivery, "render_compact_publication", renderer)
     route = respx.post(API).mock(return_value=success())

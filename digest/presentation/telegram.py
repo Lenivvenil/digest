@@ -81,7 +81,7 @@ def _labels(config: Any) -> dict[str, str]:
 
 def escape_markdownv2(text: str) -> str:
     """Escape special characters for Telegram MarkdownV2."""
-    return re.sub(r"([\_*\[\]()~`>#\+\-=|{}.!])", r"\\\1", text)
+    return re.sub(r"([\\_*\[\]()~`>#\+\-=|{}.!])", r"\\\1", text)
 
 
 def to_markdownv2(text: str) -> str:
