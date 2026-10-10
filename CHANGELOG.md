@@ -8,6 +8,10 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Retain a bounded parser-owned reason for failed required translation batches,
+  preserving canonical fallback, legacy error spelling and terminal cache behavior.
+  No raw response or exception text is added. Refs #55.
+
 - Retain one successful local feedback-collection observation, including empty polls,
   and log its previous/current age in the existing collect CLI. Cursor trust and
   acknowledgement barriers stay separate; the added field changes saved bytes/SHA,
