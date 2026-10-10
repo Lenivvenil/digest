@@ -548,6 +548,25 @@ including if its optional feedback stage fails, so the digest cannot consume ano
 uncommitted batch. Direct local use saves votes and polling offset together before
 acknowledgement; local saving alone does not establish remote durability.
 
+The collect command emits two INFO observations:
+
+- **Previous retained successful local collection**, before polling, shows the
+  retained UTC time and age in seconds. It stays historical if this invocation fails.
+- **Persisted successful local collection**, after the output-file write, reports
+  the observation from the same saved bytes used for the exported SHA-256.
+
+Missing, malformed, naive or future times mean unknown; a skipped invocation emits
+nothing. Empty polls count as local success. Recent age proves neither complete vote
+capture nor remote persistence/acknowledgement; old age does not count lost votes.
+A post-save hash/output failure may leave newer state without the second log line.
+Keep these observations private. Stdout stage/counts and `feedback_sha256` output
+remain unchanged, but the new field changes saved bytes/hashes: verify the exact
+remotely committed bytes before acknowledgement.
+
+See [ADR0021](decisions/0021-catalog-feedback-boundaries.md#retained-successful-local-collection--148-g9-2026-10-10)
+for timestamp semantics and older-writer field loss, and preserve the
+[full-token rollback floor](decisions/0024-full-article-vote-identity.md#deployment-and-rollback-floor).
+
 Ordinary vote/decision messages remain available for at most 24 hours. Legacy callback
 buttons are best effort, with about 150 seconds of server retention. A sleeping or
 failed schedule can lose uncollected feedback; see [ADR-0006](decisions/0006-batch-message-voting.md).

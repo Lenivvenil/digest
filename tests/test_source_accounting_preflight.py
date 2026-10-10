@@ -255,7 +255,10 @@ async def _dispatch(cache: Path, *, adaptive: bool = True, delivered: bool = Tru
 async def test_prepared_application_preloads_every_applicable_store_before_first_write(
     tmp_path: Path, adaptive: bool,
 ) -> None:
-    feedback_storage.save_feedback(FeedbackStore(last_update_id=999), str(tmp_path), strict=True)
+    prior_poll = "2026-10-01T08:00:00+00:00"
+    feedback_storage.save_feedback(
+        FeedbackStore(last_update_id=999, last_successful_poll_at=prior_poll), str(tmp_path), strict=True,
+    )
     storage.save_stats({"Source": SourceStats("Source", total_fetches=2, successful_fetches=1)}, str(tmp_path))
     if not adaptive:
         (tmp_path / storage.SOURCE_STATE_FILE).write_text("corrupt but inapplicable")
@@ -289,7 +292,8 @@ async def test_prepared_application_preloads_every_applicable_store_before_first
         manager.load_source_state.assert_called_once_with(str(tmp_path), strict=True)
     else:
         assert (tmp_path / storage.SOURCE_STATE_FILE).read_text() == "corrupt but inapplicable"
-    assert feedback_storage.load_feedback(str(tmp_path), strict=True).last_update_id == 999
+    feedback = feedback_storage.load_feedback(str(tmp_path), strict=True)
+    assert feedback.last_update_id == 999 and feedback.last_successful_poll_at == prior_poll
     stats = storage.load_stats(str(tmp_path), strict=True)["Source"]
     assert stats.total_fetches == 2 and stats.successful_fetches == 1
     assert stats.articles_included_in_digest == 1

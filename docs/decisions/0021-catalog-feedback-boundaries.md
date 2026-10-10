@@ -222,3 +222,43 @@ parity, not runtime durability, deployment, source activation or editorial accep
 Broader delivery codec/transport separation and historical domain-documentation
 reconciliation remain open. No source policy, model route, call budget, schedule,
 schema or state migration changed. #147 remains open.
+
+## Retained successful local collection — #148 G9, 2026-10-10
+
+`FeedbackStore.last_successful_poll_at` is one appended optional string, defaulting
+to empty for legacy files. Only `application/feedback.collect_feedback` refreshes
+it: sample timezone-aware UTC after validation/reduction, immediately before the
+existing strict candidate save. Successful local persistence makes that sample
+retained evidence; it is not the precise completion time of atomic replacement.
+Empty and duplicate-only batches qualify. Cursor observation still requires a
+newly observed update ID and retains its independent six-day freshness rule.
+
+Pre-save failures preserve the prior bytes and input store. Subsequent acknowledgement
+or output failure does not undo local persistence. Generic saves, acknowledgement,
+source application and prepared delivery attribution preserve this observation
+without refreshing it. No additional write, request, retry or ledger is introduced.
+
+The existing `feedback_poll collect` CLI logs the previous retained successful local
+collection and its age after strict loading, before polling. It then reuses its one
+saved-file read for both exact-byte SHA-256 and strict decoding. After the existing
+`GITHUB_OUTPUT` write succeeds, it logs the persisted successful local collection
+before the unchanged stdout stage/counts JSON. The logs render canonical UTC and
+nonnegative integer age seconds; missing, malformed, naive or future times yield a
+bounded unknown reason, never the raw unusable string. Failure adds no reread or
+post-success claim; the pre-poll line remains explicitly historical.
+
+This intentionally changes saved bytes and their hashes, while preserving stdout,
+`GITHUB_OUTPUT` and exact committed-byte acknowledgement contracts. Present non-string
+values follow the existing metadata error; unusable strings stay readable. There is
+no eager migration or backfill from cursors, counts, file/Git times or intended cadence.
+An older compatible reader accepts the new field but drops it on its next write;
+returning to a new reader then truthfully reports unknown. Rollback must still retain
+the [full-vote-token compatibility floor](0024-full-article-vote-identity.md#deployment-and-rollback-floor).
+
+One locally saved bounded batch does not prove remote durability, acknowledgement,
+a drained queue, complete historical feedback or digest delivery. A skipped invocation
+emits no evidence; age cannot reconstruct missed invocations or lost votes. No alarm,
+threshold, schedule, activation or recovery policy follows. Keep observations in the
+existing private state/logs; public evidence uses synthetic cases and aggregate results.
+This is partial G9 progress under #148; release, rollout and natural-run observation
+remain separate gates, not full reliability or editorial acceptance.

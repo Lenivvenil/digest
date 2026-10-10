@@ -65,6 +65,7 @@ async def collect_feedback(
         candidate.cursor_observed_at = datetime.now(tz=timezone.utc).isoformat()
     candidate.last_poll_counts = counts
     candidate.pending_owner_sha256 = owner_hash if candidate.pending_replies else ""
+    candidate.last_successful_poll_at = datetime.now(tz=timezone.utc).isoformat()
     save_feedback(candidate, cache_dir, strict=True)
     if acknowledge:
         expected = feedback_sha256(cache_dir)

@@ -61,3 +61,4 @@ class FeedbackStore:
     seen_callback_ids: list[str] = field(default_factory=list)
     last_poll_counts: dict[str, int] = field(default_factory=dict)
     seen_message_ids: list[str] = field(default_factory=list)
+    last_successful_poll_at: str = ""

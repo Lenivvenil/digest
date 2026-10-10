@@ -71,12 +71,14 @@ def parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
     offset = data.get("last_update_id", 0)
     digest_time = data.get("last_digest_time", "")
     cursor_observed = data.get("cursor_observed_at", "")
+    successful_poll = data.get("last_successful_poll_at", "")
     previous = data.get("previous_update_id", 0)
     if (
         type(offset) is not int
         or offset < 0
         or not isinstance(digest_time, str)
         or not isinstance(cursor_observed, str)
+        or not isinstance(successful_poll, str)
         or type(previous) is not int
         or previous < 0
     ):
@@ -124,6 +126,7 @@ def parse_feedback(data: Any, *, strict: bool) -> FeedbackStore:
         seen_callback_ids=_string_list(data.get("seen_callback_ids", []))[-SEEN_CALLBACK_LIMIT:],
         seen_message_ids=_string_list(data.get("seen_message_ids", []))[-SEEN_MESSAGE_LIMIT:],
         last_poll_counts=counts,
+        last_successful_poll_at=successful_poll,
     )
 
 
