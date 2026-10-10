@@ -207,190 +207,145 @@ preserves dated requirements, rollout evidence and the earlier domain model.
 Current behavior is described above and in Architecture; historical tables retain
 their original context.
 
-<details>
-<summary>Links to prior sections</summary>
-
 <a id="bounded-context-digest"></a>
+<a id="current-ownership-and-release-scope"></a>
+<a id="source-ownership-reconciliation--2026-10-07"></a>
+<a id="telegram-delivery-ownership-reconciliation--2026-10-07"></a>
+<a id="appendix-requirements-and-decision-history"></a>
+<a id="decision-and-evidence-register--2026-10-01"></a>
+<a id="product-intent-comes-before-the-latest-implementation"></a>
+<a id="how-to-read-authority-and-status"></a>
+<a id="historical-decisions-that-must-not-be-rediscovered"></a>
+<a id="dated-constraint-evidence--do-not-substitute-an-assumed-quota"></a>
+<a id="current-implementation-versus-intended-product"></a>
+<a id="rejected-proposals-and-decisions-still-open"></a>
+<a id="verification-gate-for-the-next-55-change"></a>
+<a id="historical-domain-snapshot--april-2026"></a>
+<a id="purpose"></a>
+<a id="actors"></a>
+<a id="events-event-storming"></a>
+<a id="boundary"></a>
+<a id="aggregate-root"></a>
+<a id="policies"></a>
+<a id="context-map"></a>
+<a id="use-cases"></a>
+<a id="uc-1-daily-pipeline-run"></a>
+<a id="uc-2-user-votes-on-an-article"></a>
+<a id="uc-3-user-requests-a-filter-bubble-report"></a>
+<a id="uc-4-operator-approvesrejects-a-new-source"></a>
+<a id="uc-5-trial-source-evaluation-graduateddemoted"></a>
+<a id="domain-data-model"></a>
+<a id="article"></a>
+<a id="categorysummary"></a>
+<a id="articlesummary"></a>
+<a id="source-aggregate"></a>
+<a id="feedbackstore"></a>
+<a id="sourcestats"></a>
+<a id="bubblereport-read-model"></a>
+<a id="interface-contracts"></a>
+<a id="nfr"></a>
+<a id="internal-compliance"></a>
+<a id="red-hotspots"></a>
+<a id="ready-edition-boundary-120"></a>
+<a id="source-ownership-reconciliation--local-implementation-2026-10-07"></a>
+<a id="telegram-delivery-ownership-reconciliation--local-implementation-2026-10-07"></a>
+<a id="uc-1-ежедневный-запуск-пайплайна"></a>
+<a id="uc-2-пользователь-голосует-за-статью"></a>
+<a id="uc-3-пользователь-запрашивает-filter-bubble-отчёт"></a>
+<a id="uc-4-оператор-одобряетотклоняет-новый-источник"></a>
+
+<details>
+<summary>Open dated section links (historical references)</summary>
 
 - [Bounded Context: Digest](../../history/digest-domain-2026-10-08.md#bounded-context-digest)
 
-<a id="current-ownership-and-release-scope"></a>
-
 - [Current ownership and release scope](../../history/digest-domain-2026-10-08.md#current-ownership-and-release-scope)
-
-<a id="source-ownership-reconciliation--2026-10-07"></a>
 
 - [Source ownership reconciliation — 2026-10-07](../../history/digest-domain-2026-10-08.md#source-ownership-reconciliation--2026-10-07)
 
-<a id="telegram-delivery-ownership-reconciliation--2026-10-07"></a>
-
 - [Telegram delivery ownership reconciliation — 2026-10-07](../../history/digest-domain-2026-10-08.md#telegram-delivery-ownership-reconciliation--2026-10-07)
-
-<a id="appendix-requirements-and-decision-history"></a>
 
 - [Appendix: requirements and decision history](../../history/digest-domain-2026-10-08.md#appendix-requirements-and-decision-history)
 
-<a id="decision-and-evidence-register--2026-10-01"></a>
-
 - [Decision and evidence register — 2026-10-01](../../history/digest-domain-2026-10-08.md#decision-and-evidence-register--2026-10-01)
-
-<a id="product-intent-comes-before-the-latest-implementation"></a>
 
 - [Product intent comes before the latest implementation](../../history/digest-domain-2026-10-08.md#product-intent-comes-before-the-latest-implementation)
 
-<a id="how-to-read-authority-and-status"></a>
-
 - [How to read authority and status](../../history/digest-domain-2026-10-08.md#how-to-read-authority-and-status)
-
-<a id="historical-decisions-that-must-not-be-rediscovered"></a>
 
 - [Historical decisions that must not be rediscovered](../../history/digest-domain-2026-10-08.md#historical-decisions-that-must-not-be-rediscovered)
 
-<a id="dated-constraint-evidence--do-not-substitute-an-assumed-quota"></a>
-
 - [Dated constraint evidence — do not substitute an assumed quota](../../history/digest-domain-2026-10-08.md#dated-constraint-evidence--do-not-substitute-an-assumed-quota)
-
-<a id="current-implementation-versus-intended-product"></a>
 
 - [Current implementation versus intended product](../../history/digest-domain-2026-10-08.md#current-implementation-versus-intended-product)
 
-<a id="rejected-proposals-and-decisions-still-open"></a>
-
 - [Rejected proposals and decisions still open](../../history/digest-domain-2026-10-08.md#rejected-proposals-and-decisions-still-open)
-
-<a id="verification-gate-for-the-next-55-change"></a>
 
 - [Verification gate for the next #55 change](../../history/digest-domain-2026-10-08.md#verification-gate-for-the-next-55-change)
 
-<a id="historical-domain-snapshot--april-2026"></a>
-
 - [Historical domain snapshot — April 2026](../../history/digest-domain-2026-10-08.md#historical-domain-snapshot--april-2026)
-
-<a id="purpose"></a>
 
 - [Purpose](../../history/digest-domain-2026-10-08.md#purpose)
 
-<a id="actors"></a>
-
 - [Actors](../../history/digest-domain-2026-10-08.md#actors)
-
-<a id="events-event-storming"></a>
 
 - [Events (Event Storming)](../../history/digest-domain-2026-10-08.md#events-event-storming)
 
-<a id="boundary"></a>
-
 - [Boundary](../../history/digest-domain-2026-10-08.md#boundary)
-
-<a id="aggregate-root"></a>
 
 - [Aggregate Root](../../history/digest-domain-2026-10-08.md#aggregate-root)
 
-<a id="policies"></a>
-
 - [Policies](../../history/digest-domain-2026-10-08.md#policies)
-
-<a id="context-map"></a>
 
 - [Context Map](../../history/digest-domain-2026-10-08.md#context-map)
 
-<a id="use-cases"></a>
-
 - [Use Cases](../../history/digest-domain-2026-10-08.md#use-cases)
-
-<a id="uc-1-daily-pipeline-run"></a>
 
 - [UC-1: Daily pipeline run](../../history/digest-domain-2026-10-08.md#uc-1-daily-pipeline-run)
 
-<a id="uc-2-user-votes-on-an-article"></a>
-
 - [UC-2: User votes on an article](../../history/digest-domain-2026-10-08.md#uc-2-user-votes-on-an-article)
-
-<a id="uc-3-user-requests-a-filter-bubble-report"></a>
 
 - [UC-3: User requests a filter-bubble report](../../history/digest-domain-2026-10-08.md#uc-3-user-requests-a-filter-bubble-report)
 
-<a id="uc-4-operator-approvesrejects-a-new-source"></a>
-
 - [UC-4: Operator approves/rejects a new source](../../history/digest-domain-2026-10-08.md#uc-4-operator-approvesrejects-a-new-source)
-
-<a id="uc-5-trial-source-evaluation-graduateddemoted"></a>
 
 - [UC-5: Trial source evaluation (graduated/demoted)](../../history/digest-domain-2026-10-08.md#uc-5-trial-source-evaluation-graduateddemoted)
 
-<a id="domain-data-model"></a>
-
 - [Domain Data Model](../../history/digest-domain-2026-10-08.md#domain-data-model)
-
-<a id="article"></a>
 
 - [Article](../../history/digest-domain-2026-10-08.md#article)
 
-<a id="categorysummary"></a>
-
 - [CategorySummary](../../history/digest-domain-2026-10-08.md#categorysummary)
-
-<a id="articlesummary"></a>
 
 - [ArticleSummary](../../history/digest-domain-2026-10-08.md#articlesummary)
 
-<a id="source-aggregate"></a>
-
 - [Source (aggregate)](../../history/digest-domain-2026-10-08.md#source-aggregate)
-
-<a id="feedbackstore"></a>
 
 - [FeedbackStore](../../history/digest-domain-2026-10-08.md#feedbackstore)
 
-<a id="sourcestats"></a>
-
 - [SourceStats](../../history/digest-domain-2026-10-08.md#sourcestats)
-
-<a id="bubblereport-read-model"></a>
 
 - [BubbleReport (read model)](../../history/digest-domain-2026-10-08.md#bubblereport-read-model)
 
-<a id="interface-contracts"></a>
-
 - [Interface Contracts](../../history/digest-domain-2026-10-08.md#interface-contracts)
-
-<a id="nfr"></a>
 
 - [NFR](../../history/digest-domain-2026-10-08.md#nfr)
 
-<a id="internal-compliance"></a>
-
 - [Internal Compliance](../../history/digest-domain-2026-10-08.md#internal-compliance)
-
-<a id="red-hotspots"></a>
 
 - [Red Hotspots](../../history/digest-domain-2026-10-08.md#red-hotspots)
 
-<a id="ready-edition-boundary-120"></a>
-
 - [Ready-edition boundary (#120)](../../history/digest-domain-2026-10-08.md#ready-edition-boundary-120)
-
-<a id="source-ownership-reconciliation--local-implementation-2026-10-07"></a>
 
 - [source-ownership-reconciliation--local-implementation-2026-10-07](../../history/digest-domain-2026-10-08.md#source-ownership-reconciliation--local-implementation-2026-10-07)
 
-<a id="telegram-delivery-ownership-reconciliation--local-implementation-2026-10-07"></a>
-
 - [telegram-delivery-ownership-reconciliation--local-implementation-2026-10-07](../../history/digest-domain-2026-10-08.md#telegram-delivery-ownership-reconciliation--local-implementation-2026-10-07)
-
-<a id="uc-1-ежедневный-запуск-пайплайна"></a>
 
 - [uc-1-ежедневный-запуск-пайплайна](../../history/digest-domain-2026-10-08.md#uc-1-ежедневный-запуск-пайплайна)
 
-<a id="uc-2-пользователь-голосует-за-статью"></a>
-
 - [uc-2-пользователь-голосует-за-статью](../../history/digest-domain-2026-10-08.md#uc-2-пользователь-голосует-за-статью)
 
-<a id="uc-3-пользователь-запрашивает-filter-bubble-отчёт"></a>
-
 - [uc-3-пользователь-запрашивает-filter-bubble-отчёт](../../history/digest-domain-2026-10-08.md#uc-3-пользователь-запрашивает-filter-bubble-отчёт)
-
-<a id="uc-4-оператор-одобряетотклоняет-новый-источник"></a>
 
 - [uc-4-оператор-одобряетотклоняет-новый-источник](../../history/digest-domain-2026-10-08.md#uc-4-оператор-одобряетотклоняет-новый-источник)
 
