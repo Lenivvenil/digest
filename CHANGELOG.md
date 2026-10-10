@@ -3,6 +3,9 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Make `--check` credential guidance respect disabled Telegram delivery and label
+  feed-only results without implying model or delivery readiness. Refs #148.
+
 - Avoid an inspection hold warning during a legitimate first prepared send.
   Actual sender refusals still explain retained receipt evidence; status, transport
   and accounting rules are unchanged. Refs #220.
