@@ -346,3 +346,20 @@ prove faithful humane selection or translation. Before activation, review a fini
 real editorial sample and measure ordinary request, time and presentation capacity.
 No suitable story in one bounded packet is not evidence that the whole inventory
 contains none; the mechanism cannot guarantee a daily closing story.
+
+## Positive-basis prompt clarification (#127)
+
+The existing v2 `reason` and `quote` must explain and support a positive basis,
+not merely human impact. A beneficial act/change identifies who or what benefits;
+wonder and connection need no measured outcome. Good intentions or routine
+administration alone are insufficient, while concrete good announcements remain
+eligible with honest timing. Unsupported optimism still requires null.
+
+This is a provisional prompt clarification, not a semantic gate. The actual
+secondary model has not been evaluated against it. Captured v2 work keeps its
+original prompt/evidence identity and is not re-reviewed; new requests receive
+the changed prompt hash. Response shape, admission, configured ceilings and source
+eligibility are unchanged. The longer enabled prompt consumes additional input;
+its exact provider token cost has not been measured. Independently reviewed examples establish expectations, not model
+performance or completion of the daily good-story goal. Useful supply outside a
+packet remains a separate opportunity question.

@@ -8,6 +8,10 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Clarify the humane closer's supported positive basis using its existing reason
+  and quote. This provisional prompt change preserves captured work and configured limits;
+  reliable daily selection remains unverified. Refs #127.
+
 - Retain a bounded parser-owned reason for failed required translation batches,
   preserving canonical fallback, legacy error spelling and terminal cache behavior.
   No raw response or exception text is added. Refs #55.
