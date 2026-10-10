@@ -50,7 +50,7 @@ sending an already prepared edition.
 | Ready edition | A frozen manifest with an edition ID, exact Telegram payloads, article-to-chunk coverage, recipient binding, publication window and referenced evidence hashes. | The bytes eligible for publication after the runtime persists them. Later prompt or model changes cannot rewrite this edition. |
 | Claim | A unique claim bound to the exact ready-file hash and owner. | The managed workflow has reserved this frozen edition for its sending attempt. |
 | Chunk receipt | A confirmed chunk index, positive Telegram message ID and owner binding, inside a receipt record tied to the ready and claim hashes. | Known transport acceptance. Missing confirmation can mean uncertainty, not proof that nothing was sent. |
-| Applied outcome | The receipt record's applied flag, set after attribution, statistics and deduplication effects succeed. | The caller finished applying known coverage. It does not turn partial or unknown transport into a complete edition. |
+| Applied outcome | The receipt record's applied flag, set after attribution, statistics and deduplication effects succeed. | The prepared sender finished applying known coverage. It does not turn partial or unknown transport into a complete edition. |
 | Feedback or source decision | An owner-authorized article vote, or approval/rejection bound to an exact saved source proposal. | Input to future source choices. Repeated votes on one exact token use only the latest opinion. Legacy short/full token ambiguity remains explicit in [ADR0024](../../decisions/0024-full-article-vote-identity.md#feedback-history-and-limits); discovery alone does not activate a source. |
 
 The implementation names and persisted records are mapped in
@@ -122,7 +122,7 @@ returns that subset to planning. Handoff therefore never means delivery.
 ### Publication has two completion facts
 
 **Confirmed** means all transport chunks were accepted, including a notice-only
-chunk. **Applied** means the caller finished recording the known article coverage.
+chunk. **Applied** means the prepared sender finished recording the known article coverage.
 A confirmed receipt with `applied: false` is held, because some accounting writes
 may already have happened. A partial or unknown transport remains held even if its
 known coverage was applied.
@@ -159,7 +159,7 @@ a new preparation must not be used to conceal that uncertainty.
 | D-01: keep a free operating path and avoid exclusive dependence on one vendor | Runtime routes must respect actual account entitlement and budgets; a change cannot silently add a paid dependency. |
 | D-02: provide useful, faithful reading with a specific reason to visit the original | Generated reasons distinguish supplied facts from relevance inference and preserve material qualifications. Translation changes generated prose, not evidence. |
 | D-03: separate technical limits from editorial rejection | Bounded admission, provider failure and publication capacity remain visible unfinished/deferred work. Full-source processing is an optional mechanism. |
-| D-04: preserve genuine external counter-evidence while primary delivery can succeed independently | Supplementary investigation uses retained evidence and its own bounded operation. In compact mode its result is archived, without another Telegram push. |
+| D-04: preserve genuine external counter-evidence while primary delivery can succeed independently | Supplementary investigation uses retained evidence and its own bounded operation. In compact mode results are archived; eligible target-bound material can enter a later ordinary edition without a separate supplementary dispatch. Useful-counter-evidence acceptance remains separate. |
 | D-05: treat Telegram delivery and durable state honestly | Complete article coverage, complete issue transport and applied accounting are separate. Unknown sending cannot be retried blindly. |
 | D-06: preserve domain knowledge and trace changes to explicit decisions | Current design lives here and in Architecture; dated requirements, decisions and acceptance evidence remain linked in history. |
 
@@ -195,7 +195,7 @@ capacity can be drained. The [admission decision](../../decisions/0008-candidate
 records freshness, source-diversity and character-budget tradeoffs; admission is
 not an editorial judgment or a delivery claim.
 
-The [operational guide](../../BLIND_REVIEW.md) explains publication and recovery.
+The [operational guide](../../OPERATIONS.md) explains publication and recovery.
 The [historical operating record](../../history/digest-domain-2026-10-08.md#operating-envelope-and-daily-edition-decision--2026-10-02)
 retains measured costs and dated allocation decisions.
 

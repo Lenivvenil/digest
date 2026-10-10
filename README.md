@@ -5,7 +5,7 @@
 Turn your RSS sources into selected reading with a reason to open the original.
 Read in Telegram; keep a Markdown archive for Obsidian.
 
-[Try it safely](#try-it-safely) · [Run your runtime](docs/BLIND_REVIEW.md#runtime-configuration) · [Recover an edition](docs/BLIND_REVIEW.md#delivery-states-and-recovery)
+[Try it safely](#try-it-safely) · [Run your runtime](docs/CONFIGURATION.md#runtime-configuration) · [Recover an edition](docs/OPERATIONS.md#inspect-an-interrupted-edition)
 
 ## A glance at an edition
 
@@ -31,10 +31,10 @@ Read in Telegram; keep a Markdown archive for Obsidian.
 - **A reason to read.** The ordinary review-led path selects attributed cards from
   bounded RSS evidence. Source links let you inspect the original; a card does not
   imply that the whole article was read.
-- **Room to question the story.** Optional [Irritator investigation](docs/BLIND_REVIEW.md#supplementary-investigation)
+- **Room to question the story.** Optional [Irritator investigation](docs/ADVANCED_OPERATIONS.md#supplementary-investigation)
   looks for independent external evidence that challenges or complicates a claim.
   A second model opinion is a different kind of analysis.
-- **A reading list that can evolve.** [Votes and source proposals](docs/BLIND_REVIEW.md#feedback-and-source-decisions)
+- **A reading list that can evolve.** [Votes and source proposals](docs/OPERATIONS.md#feedback-and-source-decisions)
   inform future preparation. New sources need operator approval, with room to
   explore science, culture, society and other fields alongside the professional radar.
 
@@ -42,7 +42,7 @@ There is also an optional [humane closing story](docs/decisions/0014-optional-hu
 a small moment of kindness, connection or everyday wonder when suitable evidence
 exists. It is off by default and needs approved sources; it is not a daily promise.
 
-Prefer broader synthesis? The supported [category-summary mode](docs/BLIND_REVIEW.md#legacy-format-and-optional-features)
+Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATION.md#legacy-format-and-optional-features)
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
 separately from ordinary review-led cards.
 
@@ -73,14 +73,14 @@ available commands.
 
 ### Ready for real sources?
 
-Follow [live runtime setup](docs/BLIND_REVIEW.md#runtime-configuration) to choose
+Follow [live runtime setup](docs/CONFIGURATION.md#runtime-configuration) to choose
 model routes, enable sources and review output before enabling delivery. This is
 the engine repository; keep configuration, secrets, schedules and saved state in a
 separate runtime. The engine does not automatically load `.env` or create a schedule.
 
 **Live previews can make external calls:** `--check` probes feeds and `--dry-run`
 can fetch sources and call models, consuming quotas. Compact delivery requires the
-managed [prepare → persist → claim → send sequence](docs/BLIND_REVIEW.md#persist-claim-and-send).
+managed [prepare → persist → claim → send sequence](docs/OPERATIONS.md#persist-claim-and-send).
 Enabling Telegram alone does not make a plain `python -m digest` publishable.
 
 <a id="architecture"></a>
@@ -96,16 +96,16 @@ preserves the resulting state. Interrupted or uncertain delivery needs inspectio
 
 The map follows the ordinary prepared path, not every mode or recovery outcome.
 The [canonical lifecycle](docs/ARCHITECTURE.md#prepared-edition-data-flow) owns the
-sequence and boundaries. [Full-source reading](docs/BLIND_REVIEW.md#experimental-source-reading)
+sequence and boundaries. [Full-source reading](docs/ADVANCED_OPERATIONS.md#experimental-source-reading)
 is experimental, off by default and unnecessary for ordinary RSS-review cards.
 
 <a id="find-the-right-guide"></a>
 
 ## Choose your next step
 
-- **[Run your runtime](docs/BLIND_REVIEW.md#runtime-configuration)** — sources, models,
+- **[Run your runtime](docs/CONFIGURATION.md#runtime-configuration)** — sources, models,
   language and delivery settings
-- **[Recover an edition](docs/BLIND_REVIEW.md#delivery-states-and-recovery)** — inspect
+- **[Recover an edition](docs/OPERATIONS.md#inspect-an-interrupted-edition)** — inspect
   saved evidence and choose a safe next action
 - **[Change the engine](.github/CONTRIBUTING.md)** — make a focused, tested contribution
 
@@ -141,7 +141,7 @@ not guaranteed. Useful, faithful daily output is still being validated under
 Passing tests and confirmed delivery establish narrower facts.
 
 Use the [package version](pyproject.toml), an immutable engine commit and the
-[changelog](CHANGELOG.md) together. Follow [upgrade and retained-state guidance](docs/BLIND_REVIEW.md#upgrades-and-retained-state)
+[changelog](CHANGELOG.md) together. Follow [upgrade and retained-state guidance](docs/OPERATIONS.md#upgrades-and-retained-state)
 before changing a runtime pin.
 
 **No software license grant is supplied.** The repository has no LICENSE file or
@@ -175,20 +175,20 @@ declared package license; a grant needs an explicit owner decision.
 
 These retained section anchors lead here. Open the relevant guide:
 
-- **Setup and CLI:** [live runtime and workflow](docs/BLIND_REVIEW.md#runtime-configuration),
-  [CLI](docs/BLIND_REVIEW.md#cli-options), [environment variables](docs/BLIND_REVIEW.md#environment-variables)
-- **Models and sources:** [model/category routes](docs/BLIND_REVIEW.md#model-routes),
-  [source settings](docs/BLIND_REVIEW.md#sources-and-categories),
-  [experimental source reading](docs/BLIND_REVIEW.md#experimental-source-reading)
-- **Reading and presentation:** [format and perspectives](docs/BLIND_REVIEW.md#legacy-format-and-optional-features),
-  [language and translation](docs/BLIND_REVIEW.md#language-and-optional-post-translation),
-  [compact delivery](docs/BLIND_REVIEW.md#delivery-settings)
-- **Feedback and exploration:** [feedback/source decisions](docs/BLIND_REVIEW.md#feedback-and-source-decisions),
-  [external investigation](docs/BLIND_REVIEW.md#supplementary-investigation),
-  [source discovery](docs/BLIND_REVIEW.md#source-discovery)
-- **Saved work and delivery:** [persisted state](docs/ARCHITECTURE.md#cache-architecture),
-  [candidate continuation](docs/BLIND_REVIEW.md#candidate-continuation),
-  [persist, claim and send](docs/BLIND_REVIEW.md#persist-claim-and-send)
+- **Setup and CLI:** [live runtime and workflow](docs/CONFIGURATION.md#runtime-configuration),
+  [CLI](docs/CONFIGURATION.md#cli-options), [environment variables](docs/CONFIGURATION.md#environment-variables)
+- **Models and sources:** [model/category routes](docs/CONFIGURATION.md#model-routes),
+  [source settings](docs/CONFIGURATION.md#sources-and-categories),
+  [experimental source reading](docs/ADVANCED_OPERATIONS.md#experimental-source-reading)
+- **Reading and presentation:** [format and perspectives](docs/CONFIGURATION.md#legacy-format-and-optional-features),
+  [language and translation](docs/CONFIGURATION.md#language-and-optional-post-translation),
+  [compact delivery](docs/CONFIGURATION.md#delivery-settings)
+- **Feedback and exploration:** [feedback/source decisions](docs/OPERATIONS.md#feedback-and-source-decisions),
+  [external investigation](docs/ADVANCED_OPERATIONS.md#supplementary-investigation),
+  [source discovery](docs/OPERATIONS.md#source-discovery)
+- **Saved work and delivery:** [persisted state](docs/STATE_AND_EFFECTS.md#publication-records),
+  [candidate continuation](docs/ADVANCED_OPERATIONS.md#candidate-continuation),
+  [persist, claim and send](docs/OPERATIONS.md#persist-claim-and-send)
 - **History:** [prior README and dated status](docs/history/readme-2026-10-08.md#project-status)
 
 </details>
