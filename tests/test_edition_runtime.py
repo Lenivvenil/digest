@@ -272,7 +272,8 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[SimpleNamesp
 
 @pytest.mark.asyncio
 async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_frozen_bytes(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     execution = ModelExecution()
     config, snapshot = setup
@@ -316,12 +317,14 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     current = load_feedback(".cache", strict=True)
     current.last_update_id = 999
     save_feedback(current, ".cache", strict=True)
+    caplog.clear()
     with respx.mock(assert_all_called=True) as router:
         route = router.post("https://api.telegram.org/bottest-token/sendMessage").mock(
             return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 52, "chat": {"id": 12345}}}),
         )
         assert await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha) == 0
         assert json.loads(route.calls[0].request.content) == frozen["payloads"][0]
+    assert "Prepared edition held" not in caplog.text
     assert load_feedback(".cache", strict=True).last_update_id == 999
     assert load_feedback(".cache", strict=True).article_source_map
     assert json.loads(Path(".cache/seen_articles.json").read_text())
@@ -332,6 +335,7 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     with respx.mock(assert_all_called=False) as router:
         assert await delivery_phase("send", "config.yaml", stats.ready_sha256, claim_sha) == 0
         assert not router.calls
+    assert "Prepared edition held" not in caplog.text
 
 
 @pytest.mark.asyncio

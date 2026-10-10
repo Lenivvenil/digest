@@ -2,6 +2,11 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+### Fixed
+- Avoid an inspection hold warning during a legitimate first prepared send.
+  Actual sender refusals still explain retained receipt evidence; status, transport
+  and accounting rules are unchanged. Refs #220.
+
 ### Changed
 - Retain one successful local feedback-collection observation, including empty polls,
   and log its previous/current age in the existing collect CLI. Cursor trust and

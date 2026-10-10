@@ -237,7 +237,7 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
     from digest.config import load_config
 
     config = load_config(config_path)
-    manifest, actual_sha, status = inspect_edition()
+    manifest, actual_sha, status = inspect_edition(warn_held=phase != "send")
     publish_outputs(edition_status=status, ready_sha256=actual_sha)
     if status == "confirmed":
         return 0
