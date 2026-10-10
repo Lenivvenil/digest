@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Render source article-title link labels literally in Markdown archives and review
+  previews, preserving canonical evidence, destinations and formatted prose. Refs #148.
 - Escape literal backslashes in Telegram MarkdownV2 text while preserving saved
   ready payloads and the separate link-destination encoding rules. Refs #148.
 - Identify known evidence items in bounded disposition contradiction/duplicate errors

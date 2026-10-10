@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import string
+
 from digest.domain.catalog.articles import Article
 from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.evidence import ordered_unique_articles
 from digest.domain.editorial.reviews import BlindReviewReport
 from digest.domain.editorial.summaries import ArticleSummary
+
+
+def literal_article_title(title: str) -> str:
+    """Represent a source title as one literal Markdown link label."""
+    return "".join("\\" + char if char in string.punctuation else char for char in " ".join(title.split()))
 
 
 def primary_notice(result: ResolvedReview, language: str) -> str:
@@ -57,7 +64,10 @@ def render_review(report: BlindReviewReport) -> str:
                      f"generated: {review.generated_at or 'not recorded'}")
         for selection in review.selections:
             item = evidence[selection.evidence_id]
-            lines.append(f"- [{item.title}]({item.url}): {selection.reason} (confidence: {selection.confidence})")
+            lines.append(
+                f"- [{literal_article_title(item.title)}]({item.url}): {selection.reason} "
+                f"(confidence: {selection.confidence})"
+            )
             lines.append(f"  Evidence excerpt: {selection.quote}")
             if selection.typography_normalized:
                 lines.append("  Quote provenance: hyphen/space typography aligned to exact supplied source text.")

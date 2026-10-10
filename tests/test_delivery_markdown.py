@@ -154,7 +154,9 @@ class TestWriteDigestWithTopArticles:
         config = _make_config(output_dir=str(tmp_path))
         articles = [
             _make_article_summary(title="Key Story", source="HN", summary="Why architects care."),
-            _make_article_summary(title="Second", source="Reddit"),
+            _make_article_summary(
+                title="![badge](https://example.invalid/pixel)", source="Reddit", summary="**Useful** prose.",
+            ),
         ]
         result = write_digest(
             "# Overview",
@@ -166,7 +168,9 @@ class TestWriteDigestWithTopArticles:
         text = result.read_text(encoding="utf-8")
         assert "## Top Articles" in text
         assert "Key Story" in text
-        assert "Second" in text
+        assert r"[\!\[badge\]\(https\:\/\/example\.invalid\/pixel\)](https://example.com/ai)" in text
+        assert "**Useful** prose." in text
+        assert articles[1].title == "![badge](https://example.invalid/pixel)"
         assert "https://example.com/ai" in text
         assert "HN" in text
         assert "Reddit" in text
@@ -216,14 +220,19 @@ def test_reading_appendix_preserves_original_qualifications_and_safe_fences(tmp_
     config.obsidian.enabled = True
     config.obsidian.output_dir = str(tmp_path)
     config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
-    card = _make_article_summary(summary="Substantive brief. Only pilot clients; source conflict is unresolved.")
+    card = _make_article_summary(
+        title="![badge](https://example.invalid/pixel)",
+        summary="Substantive brief. Only pilot clients; source conflict is unresolved.",
+    )
     original = (
         "[S1] Original claim.\n```\n[S2] QUALIFICATION: only pilot clients.\n[S3] Contradictory source statement."
     )
     quotations = {article_hash(card.title, card.link): original}
     path = write_digest("Global status.", config, top_articles=[card], source_quotations=quotations)
     assert path is not None
+    saved = path.read_bytes()
     brief, appendix = path.read_text().split("## Original source evidence (archive only)")
+    assert r"### [\!\[badge\]\(https\:\/\/example\.invalid\/pixel\)](https://example.com/ai)" in appendix
     assert card.summary in brief and "Original claim" not in brief
     assert original in appendix and "````text\n" + original + "\n````" in appendix
     assert quotations == {article_hash(card.title, card.link): original}
@@ -231,3 +240,4 @@ def test_reading_appendix_preserves_original_qualifications_and_safe_fences(tmp_
     legacy = write_digest("Global status.", config, top_articles=[card], source_quotations=quotations)
     assert legacy is not None
     assert "Original source evidence" not in legacy.read_text() and card.summary in legacy.read_text()
+    assert path.read_bytes() == saved and legacy != path

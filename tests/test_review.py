@@ -18,8 +18,14 @@ from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
 from digest.domain.editorial.attempts import restore_review
 from digest.domain.editorial.reviews import _parse_review
-from digest.presentation.review import primary_cards
+from digest.presentation.review import literal_article_title, primary_cards, render_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
+
+
+def test_title_label_preserves_literal_punctuation_and_folds_only_display_whitespace() -> None:
+    assert literal_article_title("Plain title") == "Plain title"
+    assert literal_article_title("Bank & Fintech [update]") == r"Bank \& Fintech \[update\]"
+    assert literal_article_title("line one\n\nline two") == "line one line two"
 
 
 def test_evidence_is_deterministic_and_changes_when_excerpt_changes() -> None:
@@ -158,8 +164,16 @@ def test_duplicate_slot_identity_rejected() -> None:
 @pytest.mark.asyncio
 async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp_path: Path) -> None:
     execution = ModelExecution()
-    with patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP is forbidden")):
+    articles = fixture_articles()
+    for group in articles.values():
+        for article in group:
+            article.title = "![badge](https://example.invalid/pixel)"
+    with (
+        patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP is forbidden")),
+        patch("scripts.review_fixture.fixture_articles", return_value=articles),
+    ):
         report = await run_fixture(execution=execution)
+    original = deepcopy(asdict(report))
     config = fixture_config()
     config.obsidian.enabled = True
     config.obsidian.output_dir = str(tmp_path)
@@ -168,6 +182,16 @@ async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp
     archive = json.loads(path.with_suffix(".review.json").read_text())
     assert archive == json.loads(json.dumps(asdict(report)))
     assert "Independent Blind Review" in path.read_text()
+    evidence = {item.evidence_id: item for item in report.evidence.items}
+    preview = render_review(report)
+    assert any(review.selections for review in report.reviews)
+    for review in report.reviews:
+        for selected in review.selections:
+            item = evidence[selected.evidence_id]
+            label = r"\!\[badge\]\(https\:\/\/example\.invalid\/pixel\)"
+            assert f"[{label}]({item.url}): {selected.reason}" in preview
+    assert preview in path.read_text()
+    assert asdict(report) == original
 
 
 @pytest.mark.asyncio

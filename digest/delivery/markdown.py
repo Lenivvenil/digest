@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from digest.adapters.storage.review_checkpoints import save_review_archive
+from digest.presentation.review import literal_article_title
 from digest.presentation.supplement import signal_text
 
 if TYPE_CHECKING:
@@ -49,7 +50,9 @@ def _build_top_articles_section(
     lines = [f"\n\n## {heading}\n"]
     for a in top_articles:
         summary = "\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages else f"> {a.summary}"
-        lines.append(f"> [!note] [{a.title}]({a.link})\n{summary}\n> *{a.source} · {a.category}*\n")
+        lines.append(
+            f"> [!note] [{literal_article_title(a.title)}]({a.link})\n{summary}\n> *{a.source} · {a.category}*\n"
+        )
     return "\n".join(lines)
 
 
@@ -79,7 +82,7 @@ def _build_source_evidence_appendix(top_articles: list[Any], quotations: dict[st
             continue
         # Choose a fence that cannot be closed by the unmodified source text.
         fence = "`" * max(3, 1 + max((len(match) for match in re.findall(r"`+", quotation)), default=0))
-        lines.append(f"### [{card.title}]({card.link})\n\n{fence}text\n{quotation}\n{fence}\n")
+        lines.append(f"### [{literal_article_title(card.title)}]({card.link})\n\n{fence}text\n{quotation}\n{fence}\n")
     return "\n".join(lines)
 
 
