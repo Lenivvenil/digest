@@ -145,3 +145,26 @@ Invalid/oversized detail is omitted without removing other accepted diagnostics.
 Old readers ignore it; saved failure records stay terminal and are never rewritten.
 This attributes a later structural failure only. Missing details remain unknown;
 neither semantic fidelity nor a historical failure's exact cause is established.
+
+## Attached numeric literals and saved-cache compatibility (#55)
+
+Numeric extraction retains the complete recognized literal when a suffix touches
+the digits: `20ms`, `1.5ms` and `100MB/s` protect `20`, `1.5` and `100` respectively.
+Faithful spacing or localized suffixes can therefore pass, while changed attached
+values fail. The leading word boundary, signs, separators, percent and exact literal
+spelling remain significant; there is no unit catalog or numeric normalization.
+Punctuation can begin a recognized digit run even in identifier-like text. This
+lexical check does not validate unit meaning, mathematical equivalence, scientific
+notation or semantic fidelity.
+
+Prompt/request identities, cache schemas and bindings are unchanged. Successful
+main-only and combined main/optional records are already revalidated on read:
+unchanged valid records still reuse, while previously accepted changed attached
+values now take the existing canonical fallback without rewriting bytes or making
+another call. A newly invalid cached optional result retains the existing whole-batch
+fallback; fresh optional parsing still isolates an invalid closer from valid main
+prose. Failed/reserved records stay terminal. On rollback, an old reader can reject
+newly accepted unit-spacing translations through its existing fallback, also without
+rewrite or retry. Frozen ready payloads remain authoritative and are not reparsed.
+These synthetic compatibility checks do not identify a historical failure's cause
+or establish broader #55 runtime acceptance.

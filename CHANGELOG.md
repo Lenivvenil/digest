@@ -3,6 +3,9 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Preserve full numeric literals beside unit suffixes during presentation translation,
+  admitting unchanged-value spacing and rejecting changed attached values. Saved
+  translations retain existing revalidation/fallback without rewrite or retry. Refs #55.
 - Point missing-runtime-config errors to the actual disabled-example setup guide,
   preserving the missing path, exception and CLI exit behavior. Refs #148.
 - Show known future source-feed timestamps on prepared review-backed main cards in
