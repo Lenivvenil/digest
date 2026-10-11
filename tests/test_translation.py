@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import textwrap
@@ -169,6 +170,89 @@ def test_structural_contract_rejects_changed_numbers_urls_quotes_and_missing_ids
         _parse('{"translations":[{"id":"a","text":"Все клиенты."}]}', {"a": "Only participating clients."})["a"]
         == "Все клиенты."
     )
+
+
+@pytest.mark.parametrize(("original", "translated", "accepted"), [
+    ("20ms", "20 мс", True),
+    ("1.5ms", "1.5 мс", True),
+    ("100MB/s", "100 МБ/с", True),
+    ("+20ms -1,5ms 20-30ms 10:20ms 1/2ms 20%load", "+20 мс -1,5 мс 20-30 мс 10:20 мс 1/2 мс 20% загрузки", True),
+    ("model20", "model30", True),  # The leading word boundary is unchanged.
+    ("20ms", "30ms", False),
+    ("1.5ms", "1.9ms", False),
+    ("100MB/s", "200MB/s", False),
+    ("1.5ms", "1,5 мс", False),  # Literal spelling, not numeric equivalence.
+    ("+20ms", "20ms", False),
+    ("-20ms", "20ms", False),
+    ("20%load", "20load", False),
+    ("model.20ms", "model.30ms", False),  # Punctuation can start a recognized digit run.
+    ("20ms 20ms", "20ms", False),
+])
+def test_numeric_contract_preserves_full_attached_literals(
+    original: str, translated: str, accepted: bool,
+) -> None:
+    raw = json.dumps({"translations": [{"id": "a", "text": translated}]})
+    if accepted:
+        assert _parse(raw, {"a": original}) == {"a": translated}
+    else:
+        with pytest.raises(ValueError, match="protected") as caught:
+            _parse(raw, {"a": original})
+        assert caught.value.field_id == "a" and caught.value.changed == ("numeric_literal",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("combined", "changed_field"), [(False, "a"), (True, "a"), (True, "closing.summary")])
+async def test_saved_attached_numbers_revalidate_without_rewrite_or_retry(
+    tmp_path: Path, combined: bool, changed_field: str,
+) -> None:
+    from digest.translation import _digest
+
+    cfg, execution = config(), ModelExecution()
+    fields = {"a": "Latency 20ms."}
+    closing = "Help arrived in 20ms." if combined else None
+    translated = {"a": "Задержка 20ms."}
+    if combined:
+        translated["closing.summary"] = "Помощь за 20ms."
+    raw = json.dumps({"translations": [{"id": key, "text": value} for key, value in translated.items()]})
+    with patch("digest.translation.complete", AsyncMock(return_value=(raw, {"finish_reason": "stop"}))) as call:
+        first = await translate_fields(fields, cfg, tmp_path, execution=execution, closing_summary=closing)
+    call.assert_awaited_once()
+    assert first.status == "translated"
+    path = next(tmp_path.glob("*.json"))
+    saved = path.read_bytes()
+    with patch("digest.translation.complete", AsyncMock(side_effect=AssertionError("No request"))) as call:
+        reused = await translate_fields(fields, cfg, tmp_path, execution=execution, closing_summary=closing)
+        assert reused.status == "translated" and reused.fields == first.fields
+        assert reused.calls == 0 and reused.cache_hits == 1 and path.read_bytes() == saved
+        if combined:
+            assert reused.optional.status == "translated" and reused.optional.cache_hits == 1
+            assert reused.optional.fields == {"closing.summary": translated["closing.summary"]}
+
+        # Rehash a formerly accepted changed value, so rejection must come from the numeric contract.
+        record = json.loads(saved)
+        translated[changed_field] = translated[changed_field].replace("20ms", "30ms")
+        if changed_field == "a":
+            record["translated"]["a"] = translated["a"]
+            record["translated_sha256"] = _digest(record["translated"])
+        else:
+            record["optional"]["fields"][changed_field] = translated[changed_field]
+            record["optional_sha256"] = _digest(record["optional"])
+        if combined:
+            changed_raw = json.dumps({
+                "translations": [{"id": key, "text": value} for key, value in translated.items()],
+            })
+            record["response_sha256"] = hashlib.sha256(changed_raw.encode()).hexdigest()
+        path.write_text(json.dumps(record, indent=2))
+        changed_bytes = path.read_bytes()
+        rejected = await translate_fields(fields, cfg, tmp_path, execution=execution, closing_summary=closing)
+    call.assert_not_called()
+    assert rejected.status == "fallback" and rejected.fields == fields
+    assert rejected.reasons == ["cache_unavailable_or_invalid"]
+    assert rejected.calls == rejected.cache_hits == 0 and path.read_bytes() == changed_bytes
+    assert list(tmp_path.glob("*.json")) == [path]
+    if combined:
+        # Cached optional rejection retains the existing whole-batch fallback, unlike fresh parsing.
+        assert rejected.optional.status == "fallback" and rejected.optional.fields == {"closing.summary": closing}
 
 
 @pytest.mark.asyncio
@@ -710,7 +794,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("defect", ["missing", "number", "duplicate", "wrong_id", "invalid_id"])
+@pytest.mark.parametrize("defect", ["missing", "number", "attached_number", "duplicate", "wrong_id", "invalid_id"])
 async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
     tmp_path: Path,
     defect: str,
@@ -722,6 +806,8 @@ async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
     cfg.telegram.delivery_mode = "compact"
     main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Only 20 clients.")
     closing = replace(main, title="Closing", link="https://example.com/good", summary="Helped 10 people.")
+    if defect == "attached_number":
+        closing = replace(closing, summary="Help arrived in 20ms.")
 
     async def answer(_role, messages, _config, **_kwargs):
         fields = json.loads(messages[1]["content"])["fields"]
@@ -731,6 +817,8 @@ async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
         optional = {"id": "closing.summary", "text": "Помогли 10 людям."}
         if defect == "number":
             optional["text"] = "Помогли 99 людям."
+        elif defect == "attached_number":
+            optional["text"] = "Помощь за 30ms."
         elif defect == "wrong_id":
             optional["id"] = "unexpected.optional"
         elif defect == "invalid_id":

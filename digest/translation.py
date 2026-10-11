@@ -48,7 +48,7 @@ SYSTEM = (
     "Return exactly one entry for each supplied ID, with no other fields."
 )
 _URL = re.compile(r"https?://[^\s<>]+")
-_NUMBER = re.compile(r"(?<!\w)[+-]?\d+(?:[.,:/-]\d+)*(?:%|\b)")
+_NUMBER = re.compile(r"(?<!\w)[+-]?\d+(?:[.,:/-]\d+)*%?")
 _QUOTE = re.compile(r'"[^"\n]+"|“[^”\n]+”|«[^»\n]+»|`[^`\n]+`')
 MAX_CACHE_BYTES = 2 * 1024 * 1024
 
