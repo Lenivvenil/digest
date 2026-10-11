@@ -94,10 +94,19 @@ _ValidationReason = Literal[
 ]
 
 
+_ProtectedClass = Literal["url", "numeric_literal", "quotation"]
+_PROTECTED_CLASSES: tuple[_ProtectedClass, ...] = ("url", "numeric_literal", "quotation")
+
+
 class _TranslationValidationError(ValueError):
-    def __init__(self, reason: _ValidationReason, message: str) -> None:
+    def __init__(
+        self, reason: _ValidationReason, message: str, *, field_id: str | None = None,
+        changed: tuple[_ProtectedClass, ...] = (),
+    ) -> None:
         super().__init__(message)
         self.reason = reason
+        self.field_id = field_id
+        self.changed = changed
 
 
 def _translation_json(text: str) -> object:
@@ -119,9 +128,12 @@ def _parse(text: str, originals: dict[str, str]) -> dict[str, str]:
         if (not isinstance(identity, str) or identity not in originals or identity in result
                 or not isinstance(translated, str) or not translated.strip()):
             raise _TranslationValidationError("identity_or_text", "Invalid translation identity or text.")
-        if _invariants(translated) != _invariants(originals[identity]):
+        before, after = _invariants(originals[identity]), _invariants(translated)
+        changed = tuple(name for name, old, new in zip(_PROTECTED_CLASSES, before, after, strict=True) if old != new)
+        if changed:
             raise _TranslationValidationError(
                 "protected_content", "Translation changed a protected URL, numeric literal or quotation.",
+                field_id=identity, changed=changed,
             )
         result[identity] = translated
     if set(result) != set(originals):
@@ -302,6 +314,7 @@ def _check_combined_size(record: dict[str, object]) -> None:
 
 def _with_failure_diagnostics(
     record: dict[str, object], rejections: list[HTTPRejection], reason: _ValidationReason | None = None,
+    validation: _TranslationValidationError | None = None,
 ) -> dict[str, object]:
     """Project optional safe facts after existing failure-record sizing."""
     try:
@@ -316,6 +329,20 @@ def _with_failure_diagnostics(
             enriched = {**candidate, "validation_reason": reason}
             if len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES:
                 candidate = enriched
+        if reason == "protected_content" and validation is not None and validation.reason == reason:
+            try:
+                canonical = record.get("canonical")
+                identity, changed = validation.field_id, validation.changed
+                if (isinstance(canonical, dict) and isinstance(identity, str) and identity in canonical
+                        and 0 < len(identity.encode("utf-8")) <= 256 and changed
+                        and changed == tuple(name for name in _PROTECTED_CLASSES if name in changed)):
+                    detail = {"field_id": identity, "changed": list(changed)}
+                    enriched = {**candidate, "validation_detail": detail}
+                    if (len(json.dumps(detail, indent=2).encode("utf-8")) <= 1024
+                            and len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
+                        candidate = enriched
+            except Exception:
+                pass  # Optional detail must not discard already accepted base diagnostics.
         return candidate
     except Exception:
         return record
@@ -483,11 +510,12 @@ async def translate_fields(
                 result.optional = optional or result.optional
             except (Exception, asyncio.CancelledError) as exc:
                 error = "ValueError" if isinstance(exc, _TranslationValidationError) else type(exc).__name__
-                reason = (exc.reason if isinstance(exc, _TranslationValidationError)
-                          and phase == "contract_invalid" else None)
+                validation = (exc if isinstance(exc, _TranslationValidationError)
+                              and phase == "contract_invalid" else None)
+                reason = validation.reason if validation is not None else None
                 record.update(status="incomplete", error=error, error_kind=phase)
                 _check_combined_size(record)
-                atomic_json_write(path, _with_failure_diagnostics(record, http_rejections, reason))
+                atomic_json_write(path, _with_failure_diagnostics(record, http_rejections, reason, validation))
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 result.reasons.append("translation_failed")
