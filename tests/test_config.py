@@ -600,9 +600,16 @@ def test_duplicate_source_name(tmp_path: Path) -> None:
         load_config(cfg_path)
 
 
-def test_file_not_found() -> None:
-    with pytest.raises(FileNotFoundError):
-        load_config("/nonexistent/path/config.yaml")
+def test_file_not_found(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.yaml"
+    with pytest.raises(FileNotFoundError) as exc:
+        load_config(missing)
+    assert str(exc.value) == (
+        f"Config file not found: {missing.resolve()}. "
+        "Create a separate runtime config from the disabled example; see "
+        "https://github.com/Lenivvenil/digest/blob/main/docs/CONFIGURATION.md#runtime-configuration."
+    )
+    assert not missing.exists()
 
 
 def test_invalid_yaml(tmp_path: Path) -> None:

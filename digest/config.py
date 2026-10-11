@@ -891,7 +891,8 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     if not path.exists():
         raise FileNotFoundError(
             f"Config file not found: {path.resolve()}. "
-            "Copy config.yaml from the repository root and edit it."
+            "Create a separate runtime config from the disabled example; see "
+            "https://github.com/Lenivvenil/digest/blob/main/docs/CONFIGURATION.md#runtime-configuration."
         )
     with path.open("r", encoding="utf-8") as fh:
         try:
