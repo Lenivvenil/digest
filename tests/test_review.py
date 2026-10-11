@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -17,8 +18,9 @@ from digest.application.review_request import build_evidence_bundle
 from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
 from digest.domain.editorial.attempts import restore_review
-from digest.domain.editorial.reviews import _parse_review
-from digest.presentation.review import literal_article_title, primary_cards, render_review
+from digest.domain.editorial.reviews import BlindReviewReport, _parse_review
+from digest.domain.editorial.summaries import ArticleSummary
+from digest.presentation.review import future_feed_date_cards, literal_article_title, primary_cards, render_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
 
 
@@ -125,6 +127,59 @@ def _valid_output() -> tuple:
         "limitations": [],
     }
     return bundle, data
+
+
+@pytest.mark.parametrize(
+    "published,language,normalized",
+    [
+        ("2026-11-25T15:00:00+00:00", "en", "2026-11-25T15:00:00+00:00"),
+        ("2026-10-11T23:30:00-02:00", "ru", "2026-10-12T01:30:00+00:00"),
+        ("2026-10-12T00:00:00.123456Z", "de", "2026-10-12T00:00:00.123456+00:00"),
+        ("2026-10-11T23:59:59+00:00", "en", None),
+        ("2026-10-12T01:00:00+02:00", "en", None),
+        ("2026-10-10T23:59:59+00:00", "en", None),
+        (None, "en", None),
+        ("not a feed date", "en", None),
+        ("2026-11-25T15:00:00", "en", None),
+        ("0001-01-01T00:00:00+01:00", "en", None),
+        ("9999-12-31T23:59:59-01:00", "en", None),
+    ],
+)
+def test_future_feed_date_cards_use_only_known_aware_utc_days(
+    published: str | None, language: str, normalized: str | None,
+) -> None:
+    bundle, _ = _valid_output()
+    item = replace(bundle.items[0], published=published)
+    report = BlindReviewReport(1, replace(bundle, items=(item,)), [], "incomplete", None, [], "Fixture")
+    original = deepcopy(asdict(report))
+    card = ArticleSummary(item.title, item.url, item.source, item.category, "Canonical reason.")
+    presented = future_feed_date_cards([card], report, date(2026, 10, 11), language)
+    if normalized is None:
+        expected = card.summary
+    elif language == "ru":
+        expected = (
+            f"Дата и время в ленте источника (UTC): {normalized}; "
+            "позже даты этого выпуска (2026-10-11). Canonical reason."
+        )
+    else:
+        expected = (
+            f"Source feed timestamp (UTC): {normalized}; "
+            "later than this edition’s date (2026-10-11). Canonical reason."
+        )
+    assert presented == [replace(card, summary=expected)]
+    assert presented[0] is not card and card.summary == "Canonical reason."
+    assert asdict(report) == original
+
+
+def test_future_feed_date_cards_need_exact_article_identity_and_a_report() -> None:
+    bundle, _ = _valid_output()
+    item = replace(bundle.items[0], published="2026-11-25T15:00:00+00:00")
+    report = BlindReviewReport(1, replace(bundle, items=(item,)), [], "incomplete", None, [], "Fixture")
+    card = ArticleSummary(item.title, item.url, item.source, item.category, "Canonical reason.")
+    cards = [replace(card, title="Another title"), replace(card, link="https://example.com/another")]
+    unchanged = future_feed_date_cards(cards, report, date(2026, 10, 11), "en")
+    assert unchanged == cards and all(actual is not original for actual, original in zip(unchanged, cards, strict=True))
+    assert future_feed_date_cards([card], None, date(2026, 10, 11), "en") == [card]
 
 
 @pytest.mark.parametrize(

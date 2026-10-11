@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import string
+from dataclasses import replace
+from datetime import date, datetime, timezone
 
-from digest.domain.catalog.articles import Article
+from digest.domain.catalog.articles import Article, article_hash
 from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.evidence import ordered_unique_articles
 from digest.domain.editorial.reviews import BlindReviewReport
@@ -44,6 +46,39 @@ def primary_cards(
         summary = f"{label}: {selection.reason}" if include_attribution else selection.reason
         cards.append(ArticleSummary(article.title, article.link, article.source, article.category, summary))
     return cards
+
+
+def future_feed_date_cards(
+    cards: list[ArticleSummary],
+    report: BlindReviewReport | None,
+    publication_date: date,
+    language: str,
+) -> list[ArticleSummary]:
+    """Copy presented main cards with known future feed times, never infer event dates."""
+    evidence = {item.evidence_id: item for item in report.evidence.items} if report is not None else {}
+    presented = [replace(card) for card in cards]
+    for card in presented:
+        item = evidence.get(article_hash(card.title, card.link))
+        if item is None or item.published is None:
+            continue
+        try:
+            published = datetime.fromisoformat(item.published)
+            if published.tzinfo is None:
+                continue
+            published = published.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            continue
+        if published.date() <= publication_date:
+            continue
+        notice = (
+            f"Дата и время в ленте источника (UTC): {published.isoformat()}; "
+            f"позже даты этого выпуска ({publication_date.isoformat()})."
+            if language == "ru"
+            else f"Source feed timestamp (UTC): {published.isoformat()}; "
+            f"later than this edition’s date ({publication_date.isoformat()})."
+        )
+        card.summary = f"{notice} {card.summary}"
+    return presented
 
 
 def render_review(report: BlindReviewReport) -> str:

@@ -53,12 +53,14 @@ These contracts do not establish deployment or observed editorial quality.
    not a hash of the indented file bytes. Candidate handoff precedes fetch statistics;
    category statistics and its source map follow verified acceptance. This is local
    readback, not remote persistence or power-loss durability. A handoff is not delivery.
-8. **Present and freeze.** `present_preparation` first reloads the requested publication
-   day from the publication-owned `.cache` and compares path, body hash and the full
+8. **Present and freeze.** `present_preparation` binds an omitted publication date to
+   the UTC day at entry, then reloads that day from the publication-owned `.cache`
+   and compares path, body hash and the full
    snapshot with the supplied reference, even for empty work. It consumes the separately
    restored snapshot. Then validate required immutable source provenance before model
-   presentation calls. Translate generated prose, append literal credits, check chunk
-   coverage, write the enabled archive and freeze the exact edition. Clear the pending
+   presentation calls. Translate generated prose, qualify future source-feed timestamps,
+   append literal credits, check chunk coverage, write the enabled archive and freeze
+   the exact edition. Clear the pending
    preparation only after the ready file is written. An accepted empty result stays
    as its canonical checkpoint and creates no ready edition.
 
@@ -126,6 +128,32 @@ existing reason. The archive and frozen edition consume the same derived card
 sequence. The coordinator then writes the archive, hashes its references, freezes
 readiness and clears accepted preparation, in that order. Assembly itself does
 not persist a new checkpoint or change translation's request/cache contract.
+
+For ordinary prepared review-backed main cards, the pure review-presentation owner
+matches exact article identities to the accepted report's evidence. An aware feed
+timestamp later than the intended UTC calendar day receives a static source-feed
+timestamp prefix with normalized ISO time and edition date; this does not verify
+publication/event timing. Missing, invalid, naive or UTC-unrepresentable timestamps,
+absent evidence and same-day/past timestamps receive no prefix. The configured output
+language selects Russian for `ru` and English otherwise: `translation.target_language`
+when enabled, `radar.language` otherwise. Added after translation, a Russian notice
+may accompany canonical English prose; the existing notice still discloses fallback.
+
+The prefix changes copied presentation cards only; canonical cards/review/evidence,
+model inputs, translation request/cache hashes and source eligibility stay unchanged.
+Optional closing cards, direct/legacy/preview and no-review output retain their prior
+behavior. Normal lossless chunk splitting and archive bounds apply; the date alone
+adds no whole-card hold. Existing required source-credit rules still apply. Newly
+rendered archives, presentation/content hashes and chunk boundaries may change;
+previously frozen payloads, receipts and saved archives are never rendered again.
+
+The same intended date reaches accepted-reference loading, assembly, pending-fragment
+lookup, archive and ready freeze. An explicit future day remains exact. If implicit
+presentation crosses UTC midnight, the existing past-date freeze guard rejects it
+instead of rolling it to a new edition day. Translation/cache writes and the archive
+with review/candidate evidence may already exist. Accepted canonical work remains
+uncleared; no ready edition, claim or send is created. This is a preparation failure,
+not a new durable hold record or clock schema.
 
 These are ordinary-path contracts. Category preparation and experimental source work
 retain their own terminal behavior; they must not be inferred from a generic success

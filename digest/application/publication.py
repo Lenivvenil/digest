@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from datetime import date
+
     from digest.adapters.models.execution import ModelExecution
     from digest.domain.editorial.summaries import ArticleSummary
     from digest.irritator import IrritatorStatus
@@ -61,6 +63,7 @@ async def assemble_publication(
     snapshot: PreparationSnapshot,
     config: Any,
     *,
+    publication_date: date,
     execution: ModelExecution,
     verbose: bool = False,
 ) -> PublicationAssembly:
@@ -75,6 +78,7 @@ async def assemble_publication(
     from digest.closing import attribute_closing_card
     from digest.domain.catalog.occurrences import occurrence_sha256
     from digest.irritator import IrritatorStatus
+    from digest.presentation.review import future_feed_date_cards
     from digest.presentation.source_attribution import attribute_source_card
     from digest.presentation.telegram import render_compact_issue
     from digest.translation import ClosingPresentation, translate_publication_with_closing
@@ -117,6 +121,8 @@ async def assemble_publication(
         )
         if closing is not None:
             closing_presentation = ClosingPresentation(closing.status, closing.reason)
+    language = config.translation.target_language if config.translation.enabled else config.radar.language
+    cards = future_feed_date_cards(cards, snapshot.review_report, publication_date, language)
     # Credits stay outside canonical text and model/cache inputs, but enter both
     # archive and frozen delivery. Missing provenance was checked before calls.
     from digest.radar.collector import article_hash

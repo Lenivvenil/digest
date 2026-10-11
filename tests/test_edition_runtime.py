@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -53,6 +54,7 @@ def bound_snapshot(
     *,
     closing_feed: str = NHS_FEED,
     main_feed: str = "https://example.com/feed",
+    published: datetime = NOW,
 ) -> PreparationSnapshot:
     """Persist actual accepted report/occurrences; presentation tests make no model calls."""
     config = fixture_config()
@@ -73,7 +75,7 @@ def bound_snapshot(
     articles: dict[str, list[Article]] = {}
     for card in cards:
         articles.setdefault(card.category, []).append(
-            Article(card.title, card.link, "Raw evidence.", card.source, card.category, NOW)
+            Article(card.title, card.link, "Raw evidence.", card.source, card.category, published)
         )
     packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=NOW), config, NOW)
     assert packet is not None and len(packet.articles) == len(cards)
@@ -277,6 +279,9 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
 ) -> None:
     execution = ModelExecution()
     config, snapshot = setup
+    today = datetime.now(timezone.utc).date()
+    published = datetime.combine(today + timedelta(days=1), datetime.min.time(), timezone.utc)
+    snapshot = bound_snapshot(snapshot, published=published)
     save_preparation(snapshot)
     presentation = AsyncMock(side_effect=RuntimeError("presentation failed"))
     monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
@@ -294,6 +299,13 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     stats = preparation_stats(await present_preparation(recovered, config, execution=execution))
     assert stats.edition_status == "ready"
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
+    notice = (
+        f"Source feed timestamp (UTC): {published.isoformat()}; later than this edition’s date ({today.isoformat()})."
+    )
+    assert frozen["articles"][0]["card"]["summary"] == f"{notice} {snapshot.top_articles[0].summary}"
+    assert frozen["canonical_metadata"]["cards"] == [asdict(card) for card in snapshot.top_articles]
+    assert notice in Path(stats.markdown_path).read_text()
+    assert all(call.args[1] == snapshot.top_articles for call in presentation.await_args_list)
     assert not Path(".cache", CLAIM_FILE).exists()
     assert load_preparation() is None
 
@@ -541,6 +553,7 @@ async def test_future_edition_archive_and_delivery_day_accounting(
                        contributing_sources=["Source", "Retained"])
     today = datetime.now(timezone.utc).date()
     target = today + timedelta(days=1)
+    snapshot = bound_snapshot(snapshot, published=datetime.combine(target, datetime.min.time(), timezone.utc))
     accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=target)
     result = preparation_stats(
         await present_preparation(accepted, config, publication_date=target, execution=execution)
@@ -548,6 +561,9 @@ async def test_future_edition_archive_and_delivery_day_accounting(
     assert result.edition_status == "pending_window"
     archive = Path("digests", f"{target.isoformat()}.md")
     assert archive.exists() and f"date: {target.isoformat()}" in archive.read_text()
+    manifest = json.loads(Path(".cache", READY_FILE).read_text())
+    assert manifest["presentation_metadata"]["cards"] == [asdict(card) for card in snapshot.top_articles]
+    assert "Source feed timestamp" not in archive.read_text()
     assert inspect_edition()[2] == "pending_window"
     with pytest.raises(ValueError):
         await delivery_phase("claim", "config.yaml", result.ready_sha256, None)
@@ -586,6 +602,69 @@ async def test_future_edition_archive_and_delivery_day_accounting(
 
 
 @pytest.mark.asyncio
+async def test_implicit_day_crossing_midnight_retains_translation_archive_and_accepted_work_without_freezing(
+    setup: tuple[SimpleNamespace, PreparationSnapshot],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.application.supplement import pending_fragment
+    from tests.test_translation import config as translation_config
+
+    config, snapshot = setup
+    start = datetime(2026, 10, 11, 23, 59, 59, tzinfo=timezone.utc)
+    instant = start
+    monkeypatch.setattr(
+        "digest.edition_runtime.datetime",
+        SimpleNamespace(now=lambda _zone: instant, combine=datetime.combine, min=datetime.min),
+    )
+    monkeypatch.setattr("digest.preparation._instant", lambda now: now or instant)
+    monkeypatch.setattr("digest.application.prepared_delivery._instant", lambda now: now or instant)
+    snapshot = bound_snapshot(snapshot, published=start + timedelta(days=1))
+    settings = translation_config()
+    config.translation, config.llm = settings.translation, settings.llm
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
+    accepted_bytes = accepted.path.read_bytes()
+
+    async def translate(role: Any, messages: list[dict[str, str]], *args: Any, **kwargs: Any) -> tuple[str, dict]:
+        nonlocal instant
+        fields = json.loads(messages[1]["content"])["fields"]
+        instant = start + timedelta(seconds=2)
+        return json.dumps(
+            {"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]}
+        ), {"finish_reason": "stop"}
+
+    completion = AsyncMock(side_effect=translate)
+    fragment_lookup = MagicMock(wraps=pending_fragment)
+    monkeypatch.setattr("digest.translation.complete", completion)
+    monkeypatch.setattr("digest.application.supplement.pending_fragment", fragment_lookup)
+    with pytest.raises(ValueError, match=r"^Publication date must be today or a future UTC date\.$"):
+        await present_preparation(accepted, config, execution=ModelExecution())
+    completion.assert_awaited_once()
+    fragment_lookup.assert_called_once_with(config.obsidian.output_dir, start.date())
+    translation_path, = Path(".cache/translations").glob("*.json")
+    cached = json.loads(translation_path.read_text())
+    card = snapshot.top_articles[0]
+    assert cached["status"] == "translated"
+    assert cached["canonical"] == {
+        "category_digest": snapshot.combined,
+        f"article:{article_hash(card.title, card.link)}": card.summary,
+    }
+    assert cached["translated"] == {key: "Перевод: " + value for key, value in cached["canonical"].items()}
+    archive = Path("digests/2026-10-11.md")
+    assert archive.exists() and "date: 2026-10-11" in archive.read_text()
+    assert (
+        "Дата и время в ленте источника (UTC): 2026-10-12T23:59:59+00:00; "
+        "позже даты этого выпуска (2026-10-11). Перевод: Canonical claim"
+    ) in archive.read_text()
+    assert json.loads(archive.with_suffix(".review.json").read_text()) == json.loads(
+        _canonical(asdict(snapshot.review_report))
+    )
+    assert not Path("digests/2026-10-12.md").exists()
+    assert accepted.path.read_bytes() == accepted_bytes
+    assert not Path(".cache", READY_FILE).exists() and not Path(".cache", CLAIM_FILE).exists()
+    assert not Path(".cache/seen_articles.json").exists()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("translation", ["canonical", "translated", "main_canonical_fallback"])
 async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_edition(
     setup: tuple[SimpleNamespace, PreparationSnapshot],
@@ -599,7 +678,9 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
 
     config, original = setup
     card = ArticleSummary("Closing title", "https://example.com/good", "Closing source", "World", "Volunteers helped.")
-    snapshot = bound_snapshot(original, card, main_feed=EA_FEED)
+    today = datetime.now(timezone.utc).date()
+    published_at = datetime.combine(today + timedelta(days=1), datetime.min.time(), timezone.utc)
+    snapshot = bound_snapshot(original, card, main_feed=EA_FEED, published=published_at)
     decision = snapshot.closing
     canonical = _canonical(asdict(snapshot))
 
@@ -608,8 +689,13 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
         assert request["target_language"] == "ru"
         fields = request["fields"]
         assert next(item["text"] for item in fields if item["id"] == "closing.summary") == card.summary
+        assert next(item["text"] for item in fields if item["id"].startswith("article:")) == (
+            original.top_articles[0].summary
+        )
         assert NHS_CREDIT not in json.dumps(fields)
         assert EA_CREDIT not in json.dumps(fields)
+        assert "Source feed timestamp" not in json.dumps(fields)
+        assert "Дата и время в ленте источника" not in json.dumps(fields, ensure_ascii=False)
         return json.dumps(
             {"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]}
         ), {"finish_reason": "stop"}
@@ -619,13 +705,21 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     if translation != "canonical":
         settings = translation_config()
         config.translation, config.llm = settings.translation, settings.llm
+    else:
+        config.radar.language = "ru"
     accepted = persist_accepted_preparation(snapshot, cache_dir=".cache")
     stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     prefix = "Перевод: " if translation == "translated" else ""
+    notice = (
+        f"Дата и время в ленте источника (UTC): {published_at.isoformat()}; "
+        f"позже даты этого выпуска ({today.isoformat()})."
+    )
     presented = replace(card, summary=f"{prefix}{card.summary} {NHS_CREDIT}")
     published = [
-        asdict(replace(original.top_articles[0], summary=f"{prefix}{original.top_articles[0].summary} {EA_CREDIT}")),
+        asdict(replace(
+            original.top_articles[0], summary=f"{notice} {prefix}{original.top_articles[0].summary} {EA_CREDIT}"
+        )),
         asdict(presented),
     ]
     assert frozen["presentation_metadata"]["cards"] == published
@@ -637,9 +731,14 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     assert frozen["presentation_metadata"]["closing"]["card"] == asdict(presented)
     assert _canonical(asdict(snapshot)) == canonical
     assert completion.await_count == (0 if translation == "canonical" else 1)
+    if translation == "main_canonical_fallback":
+        assert "Translation incomplete or unavailable; canonical English text retained." in (
+            frozen["presentation_metadata"]["combined"]
+        )
     markdown = Path(stats.markdown_path).read_text()
     assert markdown.index(original.top_articles[0].title) < markdown.index(card.title)
     assert presented.summary in markdown and card.link in markdown
+    assert published[0]["summary"] in markdown
     assert markdown.count(NHS_CREDIT) == 1
     assert markdown.count(EA_CREDIT) == 1
     assert _canonical(json.loads(Path(stats.review_checkpoint).read_text())) == _canonical(
