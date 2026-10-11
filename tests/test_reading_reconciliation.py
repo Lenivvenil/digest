@@ -17,8 +17,15 @@ from unittest.mock import AsyncMock
 import pytest
 
 from digest import llm, source_admission
-from digest.reading_brief import _messages, _parse_result, _prompt_sha
-from digest.reading_brief_state import (
+from digest.reading_brief_tokens import TokenProfileUnavailable
+from digest.source_reading.brief import _messages, _parse_result, _prompt_sha
+from digest.source_reading.reconciliation import (
+    ReconciliationInput,
+    build_reconciliation_input,
+    parse_reconciliation_response,
+    plan_reconciliation_request,
+)
+from digest.source_reading.state import (
     BriefState,
     Page,
     PendingRequest,
@@ -35,13 +42,6 @@ from digest.reading_brief_state import (
     save_source,
     save_state,
     state_root,
-)
-from digest.reading_brief_tokens import TokenProfileUnavailable
-from digest.reading_reconciliation import (
-    ReconciliationInput,
-    build_reconciliation_input,
-    parse_reconciliation_response,
-    plan_reconciliation_request,
 )
 from tests.factories import make_article
 from tests.test_reading_brief import fetched, response

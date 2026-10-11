@@ -25,8 +25,8 @@ from digest.domain.editorial.candidates import accepted_empty_packet as _accepte
 from digest.domain.editorial.candidates import proof_packets as _proof_packets
 from digest.domain.editorial.reviews import BlindReviewReport, validated_cached_selections
 from digest.llm import request_budget_remaining, set_request_limit
-from digest.reading_brief import _advance, _count_routes_held, _routes, _validate_progress
-from digest.reading_brief_state import (
+from digest.source_reading.brief import _advance, _count_routes_held, _routes, _validate_progress
+from digest.source_reading.state import (
     BriefState,
     Route,
     Selection,

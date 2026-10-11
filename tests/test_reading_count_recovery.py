@@ -13,9 +13,9 @@ from digest.adapters.models.execution import ModelExecution
 from digest.application.preparation import CandidatePool, CandidateWork, _candidate_inputs
 from digest.config import ProviderConfig
 from digest.radar.collector import CollectionInventory, SourceCollectionOutcome, _capture_candidates, article_hash
-from digest.reading_brief_state import load_state, save_state
 from digest.reading_brief_tokens import TokenProfileUnavailable
-from digest.reading_preparation import deferred_source_reports, prepare_selected_sources
+from digest.source_reading.preparation import deferred_source_reports, prepare_selected_sources
+from digest.source_reading.state import load_state, save_state
 from tests.test_candidate_review import NOW, population
 from tests.test_main_reading_brief import generate, saved_selection
 from tests.test_reading_brief import fetched
@@ -34,7 +34,8 @@ async def test_count_held_packet_releases_planning_only_without_a_configured_fal
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
         patch("digest.llm.complete", side_effect=generate) as complete,
         patch("digest.source_admission.count_gpt_input", return_value=1000),
@@ -114,7 +115,7 @@ async def test_count_deferral_requires_current_request_route_and_binding_proof(
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)),
         patch("digest.llm.complete", side_effect=AssertionError("No generation after uncertain count")),
     ):
@@ -162,7 +163,7 @@ async def test_mixed_count_held_and_resumable_sources_keep_the_packet_eligible(t
     config, progress, packet, report = await saved_selection(tmp_path, execution=model_execution, all_selected=True)
     config.llm.providers = []
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=[TimeoutError(), RuntimeError("HTTP 503")])),
         patch("digest.llm.complete", side_effect=AssertionError("No admitted source")),
     ):
@@ -184,7 +185,8 @@ async def test_unavailable_local_fallback_releases_planning_and_restored_profile
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
         patch("digest.llm.complete", side_effect=generate) as complete,
         patch(
@@ -254,7 +256,7 @@ async def test_local_profile_deferral_requires_count_hold_and_explicit_profile_f
     config.llm.providers = []
     identity = report.reviews[0].selections[0].evidence_id
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)),
         patch("digest.llm.complete", side_effect=AssertionError("No admitted route")),
     ):

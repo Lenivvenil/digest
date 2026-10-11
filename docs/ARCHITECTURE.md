@@ -180,6 +180,8 @@ owns fresh/shared execution, reservations, cache identity and hash encodings.
 | Apply known article coverage | `application/prepared_delivery.py:send_prepared_edition` for exact persisted prepared receipts through accounting and verified applied marking; `application/delivery.py` for legacy direct output, with feedback/catalog policy owners |
 | Feedback and approved source application | `application/feedback.py`, `application/run_state.py` |
 | Discovery and external investigation | `application/discovery.py`; `post_delivery.py`, `irritator/evidence_stage.py` |
+| Optional source reading and technical handoff | [reader](../digest/source_reading/brief.py), [state and wire projection](../digest/source_reading/state.py), [candidate-bound preparation](../digest/source_reading/preparation.py) |
+| Optional immutable reconciliation, operation and Git barrier | [reconciliation input](../digest/source_reading/reconciliation.py), [operation](../digest/source_reading/operation.py), [checkpoint](../digest/source_reading/checkpoint.py) |
 
 Domain code defines values and decision rules. Applications sequence effects; adapters
 perform concrete I/O; presentation builds output copies. The unused RSS review and
@@ -187,6 +189,14 @@ candidate import bridges are retired with an explicit
 [migration map](decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08).
 Feedback, discovery and source-scoring compatibility interfaces remain supported.
 The map describes ownership, not a requirement that every facade disappear.
+
+The optional `source_reading` package groups its six coupled implementations without
+changing activation, state authority or request/transport ordering. Shared acquisition,
+admission, token estimation and model-budget owners stay outside it. Only the documented
+`python -m digest.reconciliation_checkpoint` entrypoint retains the old reader path;
+other old internal reader imports are retired. See the
+[layout migration](decisions/0009-selected-source-admission.md#source-reading-package-layout--2026-10-11)
+for the exact owner map and Python compatibility limits.
 
 Candidate admission returns exact scheduling-order occurrences together with their
 canonical evidence. Its lazy occurrence cache shares the RSS builder's item preparation

@@ -505,3 +505,46 @@ were scanned for reader-state imports, constructors and serialization assumption
 unknown external Python callers are outside that scan. Retained valid wire remains
 readable by the compatible old engine. Reading stays optional and off by default;
 this change grants no semantic acceptance, publication authority or runtime activation.
+
+
+### Source-reading package layout — 2026-10-11
+
+The bounded [#148 layout slice](https://github.com/Lenivvenil/digest/issues/148)
+groups the existing optional subsystem under `digest.source_reading`. This is a
+physical ownership and navigation correction, not a new semantic boundary or
+completion of optional source reading. The package initializer has no registration
+or eager implementation imports.
+
+| Retired internal implementation path | Current owner |
+| --- | --- |
+| `digest.reading_brief` | [`digest.source_reading.brief`](../../digest/source_reading/brief.py) |
+| `digest.reading_brief_state` | [`digest.source_reading.state`](../../digest/source_reading/state.py) |
+| `digest.reading_preparation` | [`digest.source_reading.preparation`](../../digest/source_reading/preparation.py) |
+| `digest.reading_reconciliation` | [`digest.source_reading.reconciliation`](../../digest/source_reading/reconciliation.py) |
+| `digest.reconciliation_operation` | [`digest.source_reading.operation`](../../digest/source_reading/operation.py) |
+| `digest.reconciliation_checkpoint` implementation | [`digest.source_reading.checkpoint`](../../digest/source_reading/checkpoint.py) |
+
+The documented `python -m digest.reconciliation_checkpoint` remains supported as a
+thin CLI entrypoint, delegating arguments, help, exit and execution to the checkpoint
+owner. Repository callers and string-based patch targets use the new owners directly;
+there is no wrapper forest or dynamic module alias. Other module CLIs and existing
+feedback, discovery and source-scoring compatibility surfaces are unchanged.
+
+The other five old module paths are removed. Direct internal Python imports,
+dataclass `__module__`, tracebacks and introspection paths intentionally change.
+Known configured workflow/script consumers are checked before rollout; unknown
+external Python callers and pickle compatibility are not covered. No hydration
+sidecar or alternate owner is introduced.
+
+`article_source`, `source_admission`, `reading_brief_tokens` and `model_budget` retain
+their existing owners: acquisition has an HTTP-adapter responsibility, while
+admission/token estimation and the durable model journal have shared callers.
+Admission's existing `Route` dependency follows `source_reading.state` rather than
+adding a facade or splitting value types in this slice.
+
+Serialized JSON/asdict state and page/state wire projections, exact request/cache
+hashes, prior-binding revisions, frozen accepted evidence, acceptance-save-before-parse
+and transport/retry/failure ordering remain unchanged. Conventional root packaging,
+configuration, requirements, notices and README paths stay in place. Reading remains
+optional and off by default; this move authorizes no runtime state migration,
+replay, archive rewrite, model request or activation.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import runpy
 import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
@@ -17,14 +18,22 @@ import pytest
 import yaml
 
 from digest import llm, model_budget
-from digest import reconciliation_checkpoint as checkpoint
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.domain.editorial.candidates import CandidateProgress
-from digest.reading_preparation import prepare_selected_sources, setup_reading_budget
+from digest.source_reading import checkpoint
+from digest.source_reading.preparation import prepare_selected_sources, setup_reading_budget
 from tests.test_candidate_review import NOW
 from tests.test_main_reading_brief import generate, saved_selection
 from tests.test_reading_brief import fetched
+
+
+def test_legacy_cli_delegates_to_source_reading_owner() -> None:
+    with patch.object(checkpoint, "main", return_value=7) as main:
+        with pytest.raises(SystemExit) as exited:
+            runpy.run_module("digest.reconciliation_checkpoint", run_name="__main__")
+    assert exited.value.code == 7
+    main.assert_called_once_with()
 
 
 def git(root: Path, *args: str) -> str:
@@ -98,7 +107,7 @@ async def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Runtime:
     setup_reading_budget(config, execution=model_execution)
     with (
         patch(
-            "digest.reading_brief.fetch_article",
+            "digest.source_reading.brief.fetch_article",
             AsyncMock(return_value=fetched("Complete source finding.\n\nQUALIFICATION: only the selected pilot.")),
         ),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
@@ -170,7 +179,7 @@ async def test_batched_checkpoint_execute_finalize_persist_and_cache(runtime: Ru
     outcome = checkpoint._json(Path(".cache/reconciliation_outcomes/123456789.json"))
     assert outcome["unstarted"] == {}
     # Final persistence binds changed operation bytes; initial pre-dispatch hashes are not reused.
-    from digest import reconciliation_operation as operation
+    from digest.source_reading import operation
 
     for item in checkpoint._load_batch(path).items:
         value = checkpoint._input(item.handoff, Path(".cache"))
@@ -255,7 +264,7 @@ async def test_fresh_checkout_cannot_execute_or_finalize(runtime: Runtime, monke
     with pytest.raises((ValueError, OSError)):
         await checkpoint.finalize_batch(path, fresh(runtime.config))
     assert model_budget.inspect_budget(runtime.execution.cycle_id).active_stage == "prepare"
-    from digest import reconciliation_operation as operation
+    from digest.source_reading import operation
 
     for item in batch.items:
         value = checkpoint._input(item.handoff, Path(".cache"))
@@ -368,7 +377,7 @@ async def test_partial_batch_rebinds_only_proved_unstarted_peer(
 ) -> None:
     path = await runtime.prepare()
     assert path is not None
-    from digest import reconciliation_operation as operation
+    from digest.source_reading import operation
 
     original = operation.execute_reconciliation_operation
     calls = 0
@@ -422,7 +431,7 @@ from pathlib import Path
 import httpx
 from digest.config import load_config
 from digest.adapters.models.execution import ModelExecution
-from digest import reconciliation_checkpoint as checkpoint
+from digest.source_reading import checkpoint
 from digest import model_budget
 calls = []
 def transport(request):
@@ -578,7 +587,7 @@ async def test_main_preparation_emits_executable_batch_in_both_reading_branches(
         patch("digest.application.run_state.collect_run_feedback", AsyncMock(return_value=(FeedbackStore(), True, 0))),
         patch("digest.radar.collect", side_effect=collect),
         patch(
-            "digest.reading_brief.fetch_article",
+            "digest.source_reading.brief.fetch_article",
             AsyncMock(return_value=fetched("Complete source finding.\n\nQUALIFICATION: only the selected pilot.")),
         ),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),

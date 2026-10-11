@@ -16,7 +16,7 @@ from digest.application.preparation import prepare_sources
 from digest.application.review import run_primary_review
 from digest.config import ReadingBriefConfig
 from digest.domain.editorial.candidates import CandidateProgress
-from digest.reading_preparation import prepare_selected_sources, reading_deadline, setup_reading_budget
+from digest.source_reading.preparation import prepare_selected_sources, reading_deadline, setup_reading_budget
 from tests.test_candidate_review import NOW, population
 from tests.test_reading_brief import fetched, response
 
@@ -55,7 +55,7 @@ async def generate(_role: Any, messages: list[dict[str, str]], *_args: Any, **_k
 async def test_saved_candidate_selection_becomes_technical_handoff_without_presentation(tmp_path: Path) -> None:
     execution = ModelExecution()
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
-    with (patch("digest.reading_brief.fetch_article",
+    with (patch("digest.source_reading.brief.fetch_article",
                 AsyncMock(return_value=fetched("Complete source mechanism."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as model,
@@ -94,7 +94,7 @@ async def test_current_selection_policy_and_exact_lineage_gate_before_calls(tmp_
         candidate.status = "not_selected"
     else:
         report.reviews[0].response_sha256 = None
-    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No unbound request")):
+    with patch("digest.source_reading.preparation._advance", side_effect=AssertionError("No unbound request")):
         result = await prepare_selected_sources(
             progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
         )
@@ -112,7 +112,8 @@ async def test_accepted_preparation_resume_never_reenters_reading(
 
     expected = ExistingEdition("ready", "fixture-ready-sha")
     with (patch("digest.edition_runtime.recover_preparation", return_value=expected) as resume,
-          patch("digest.reading_preparation.prepare_selected_sources", side_effect=AssertionError("No source work"))):
+          patch("digest.source_reading.preparation.prepare_selected_sources",
+              side_effect=AssertionError("No source work"))):
         assert (await prepare_sources(
             config, "config.yaml", verbose=False, feedback_precollected=True, publication_date=None,
             started_at=time.monotonic(), execution=execution,
@@ -165,7 +166,7 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
           patch("digest.config.load_config", return_value=config),
           patch("digest.radar.collect", side_effect=collect),
           patch("digest.application.review.complete", side_effect=select) as selection,
-          patch("digest.reading_brief.fetch_article",
+          patch("digest.source_reading.brief.fetch_article",
                 AsyncMock(return_value=fetched("Full source evidence."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
           patch("digest.llm.complete", side_effect=generate) as model,
@@ -184,7 +185,7 @@ async def test_real_prepare_path_advances_after_source_handoff_without_accepting
 async def test_changed_occurrence_cannot_bypass_prior_unknown_generation(tmp_path: Path) -> None:
     execution = ModelExecution()
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
-    with (patch("digest.reading_brief.fetch_article",
+    with (patch("digest.source_reading.brief.fetch_article",
                 AsyncMock(return_value=fetched("Complete public source."))) as fetch,
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=TimeoutError("fixture uncertainty")) as model):
@@ -195,7 +196,7 @@ async def test_changed_occurrence_cannot_bypass_prior_unknown_generation(tmp_pat
     config, progress, packet, report = await saved_selection(
         tmp_path, description="Changed RSS description only", execution=execution,
     )
-    with (patch("digest.reading_brief.fetch_article", side_effect=AssertionError("No new acquisition")),
+    with (patch("digest.source_reading.brief.fetch_article", side_effect=AssertionError("No new acquisition")),
           patch("digest.llm.complete", side_effect=AssertionError("No unknown replay"))):
         held = await prepare_selected_sources(
             progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
@@ -206,10 +207,11 @@ async def test_changed_occurrence_cannot_bypass_prior_unknown_generation(tmp_pat
 @pytest.mark.asyncio
 async def test_matching_legacy_completed_evidence_has_explicit_current_adoption(tmp_path: Path) -> None:
     execution = ModelExecution()
-    from digest.reading_brief_state import load_state
+    from digest.source_reading.state import load_state
 
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+    with (patch("digest.source_reading.brief.fetch_article",
+        AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate)):
         first = await prepare_selected_sources(
@@ -218,7 +220,7 @@ async def test_matching_legacy_completed_evidence_has_explicit_current_adoption(
     identity = report.reviews[0].selections[0].evidence_id
     source_sha = load_state(tmp_path, identity).source_sha256
     (tmp_path / "reading_bindings" / f"{identity}.json").unlink()
-    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No completed-page replay")):
+    with patch("digest.source_reading.preparation._advance", side_effect=AssertionError("No completed-page replay")):
         adopted = await prepare_selected_sources(
             progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
         )
@@ -247,7 +249,8 @@ async def test_unsupported_source_invocation_fails_before_feedback_collection_or
 async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Path) -> None:
     execution = ModelExecution()
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+    with (patch("digest.source_reading.brief.fetch_article",
+        AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=generate)):
         await prepare_selected_sources(
@@ -255,7 +258,7 @@ async def test_lost_bound_state_never_restarts_source_or_generation(tmp_path: Pa
         )
     identity = report.reviews[0].selections[0].evidence_id
     (tmp_path / "reading_briefs" / f"{identity}.json").unlink()
-    with patch("digest.reading_preparation._advance", side_effect=AssertionError("No lost-state replay")):
+    with patch("digest.source_reading.preparation._advance", side_effect=AssertionError("No lost-state replay")):
         held = await prepare_selected_sources(
             progress, packet, report, config, tmp_path, time.monotonic() + 1000, execution=execution,
         )
@@ -269,10 +272,11 @@ async def test_source_recovery_filter_retains_proofs_and_exposes_later_candidate
 ) -> None:
     execution = ModelExecution()
     from digest.domain.editorial.candidate_policy import pending_completed_report
-    from digest.reading_preparation import deferred_source_reports
+    from digest.source_reading.preparation import deferred_source_reports
 
     config, progress, packet, report = await saved_selection(tmp_path, execution=execution)
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+    with (patch("digest.source_reading.brief.fetch_article",
+        AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=TimeoutError if state_kind == "unknown" else generate)):
         result = await prepare_selected_sources(
@@ -296,8 +300,8 @@ async def test_managed_preparation_deadline_includes_setup_and_barrier_time(
     execution = ModelExecution()
     config, _, _, _ = await saved_selection(tmp_path, execution=execution)
     monkeypatch.setenv("PREPARATION_DEADLINE", "1100")
-    with patch("digest.reading_preparation.time.time", return_value=1000), patch(
-        "digest.reading_preparation.time.monotonic", return_value=500,
+    with patch("digest.source_reading.preparation.time.time", return_value=1000), patch(
+        "digest.source_reading.preparation.time.monotonic", return_value=500,
     ):
         assert reading_deadline(config, 490) == 555  # 100 seconds left, less45 for persistence.
 
@@ -308,7 +312,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
     from digest.adapters.storage.candidate_objects import load_candidate
     from digest.adapters.storage.candidate_progress import load_candidate_progress
     from digest.application.candidate_lifecycle import checkpoint_candidates
-    from digest.reading_preparation import deferred_source_reports
+    from digest.source_reading.preparation import deferred_source_reports
 
     config, articles = population(2)
     config.reading_brief = ReadingBriefConfig(True, "gemini", "gemini-3.8-flash")
@@ -344,7 +348,7 @@ async def test_complete_empty_source_packet_retires_resolved_metadata_without_fa
 async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_path: Path) -> None:
     execution = ModelExecution()
     from digest.domain.editorial.candidate_policy import pending_completed_report
-    from digest.reading_preparation import deferred_source_reports
+    from digest.source_reading.preparation import deferred_source_reports
 
     config, progress, packet, report = await saved_selection(tmp_path, all_selected=True, execution=execution)
     calls = 0
@@ -356,7 +360,8 @@ async def test_mixed_complete_and_resumable_source_packet_is_not_skipped(tmp_pat
             raise RuntimeError("HTTP 503")
         return response(messages)
 
-    with (patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete public source."))),
+    with (patch("digest.source_reading.brief.fetch_article",
+        AsyncMock(return_value=fetched("Complete public source."))),
           patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
           patch("digest.llm.complete", side_effect=partial)):
         result = await prepare_selected_sources(

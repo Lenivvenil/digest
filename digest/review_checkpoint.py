@@ -142,8 +142,8 @@ def build_full_source_evidence(
     rss_bundle: EvidenceBundle, state_dir: Path, article_ids: list[str],
 ) -> FullSourceEvidence:
     """Bind all delivered-brief citations; never truncate a passage or qualification."""
-    from digest.reading_brief import ready_brief_evidence
-    from digest.reading_brief_state import completed
+    from digest.source_reading.brief import ready_brief_evidence
+    from digest.source_reading.state import completed
 
     items: list[FullSourcePassage] = []
     for identity in dict.fromkeys(article_ids):

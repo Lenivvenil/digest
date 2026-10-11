@@ -35,6 +35,13 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Group the six optional source-reading implementations under `digest.source_reading`
+  and shorten the working guide around canonical documentation. Retire old internal
+  Python imports; preserve `python -m digest.reconciliation_checkpoint` as the CLI
+  entrypoint. Retained wire, request hashes and execution ordering stay unchanged;
+  reading remains off by default. Refs #148. See the
+  [ADR0009 layout migration](docs/decisions/0009-selected-source-admission.md#source-reading-package-layout--2026-10-11).
+
 - Clarify the humane closer's supported positive basis using its existing reason
   and quote. This provisional prompt change preserves captured work and configured limits;
   reliable daily selection remains unverified. Refs #127.
