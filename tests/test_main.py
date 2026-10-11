@@ -265,10 +265,19 @@ class TestCheckConfig:
         assert "Model and Telegram access were not tested." in output
         assert "All checks passed" not in output
 
-    async def test_invalid_config(self) -> None:
-        with patch("digest.config.load_config", side_effect=FileNotFoundError("nope")):
-            result = await check_config("missing.yaml")
+    async def test_invalid_config(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        missing = tmp_path / "missing.yaml"
+        with patch("digest.adapters.http.public_fetch.fetch_public", AsyncMock()) as fetch:
+            result = await check_config(str(missing))
         assert result == 1
+        output = capsys.readouterr().out
+        assert f"Config file not found: {missing.resolve()}" in output
+        assert "Create a separate runtime config from the disabled example" in output
+        assert "https://github.com/Lenivvenil/digest/blob/main/docs/CONFIGURATION.md#runtime-configuration" in output
+        fetch.assert_not_awaited()
+        assert not missing.exists()
 
     async def test_warns_missing_env_vars(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],

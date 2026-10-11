@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Point missing-runtime-config errors to the actual disabled-example setup guide,
+  preserving the missing path, exception and CLI exit behavior. Refs #148.
 - Show known future source-feed timestamps on prepared review-backed main cards in
   the configured output language, after translation and without changing canonical
   evidence or model inputs. Bind the intended UTC day once at presentation entry;
