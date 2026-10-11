@@ -14,12 +14,12 @@ import httpx
 import pytest
 
 from digest import llm, model_budget, source_admission
-from digest import reconciliation_operation as operation
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
-from digest.reading_brief_state import BriefState, Source, checksum
 from digest.reading_brief_tokens import TokenProfileUnavailable
-from digest.reading_reconciliation import ReconciliationInput, build_reconciliation_input
+from digest.source_reading import operation
+from digest.source_reading.reconciliation import ReconciliationInput, build_reconciliation_input
+from digest.source_reading.state import BriefState, Source, checksum
 from tests.test_reading_brief import config
 from tests.test_reading_reconciliation import saved_synthetic as saved_synthetic
 

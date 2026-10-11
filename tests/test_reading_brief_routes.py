@@ -16,9 +16,9 @@ import pytest
 from digest import llm
 from digest.adapters.models.execution import ModelExecution
 from digest.config import ProviderConfig
-from digest.reading_brief import _advance, ready_brief_evidence
-from digest.reading_brief_state import BriefState, checksum, completed, load_state, save_state, state_root
 from digest.reading_brief_tokens import ESTIMATOR_VERSION
+from digest.source_reading.brief import _advance, ready_brief_evidence
+from digest.source_reading.state import BriefState, checksum, completed, load_state, save_state, state_root
 from tests.test_reading_brief import config, fetched, payload, response, saved_brief_state
 
 
@@ -52,7 +52,7 @@ async def test_groq_full_source_uses_distinct_admission_and_normal_completion(tm
         return text, usage
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched(source))),
         patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -110,7 +110,7 @@ async def test_known_provider_failure_falls_back_without_resetting_runtime_or_re
         return text, usage
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", side_effect=count),
         patch("digest.llm._call_provider", side_effect=provider_call),
         patch("digest.llm._pace_request", AsyncMock()) as pace,
@@ -148,7 +148,7 @@ async def test_unknown_or_ambiguous_failure_does_not_fallback(tmp_path: Path, fa
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
         patch("digest.llm.complete", AsyncMock(side_effect=failure)) as call,
     ):
@@ -183,7 +183,7 @@ async def test_groq_incomplete_endings_never_emit_or_fallback(tmp_path: Path, en
         return text, usage
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
@@ -212,7 +212,7 @@ async def test_changed_primary_resumes_immutable_source_and_keeps_completed_page
 
     with (
         patch("digest.source_admission.INPUT_LIMITS", {("gemini", "gemini-3.8-flash"): 115}),
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched(source))) as fetch,
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched(source))) as fetch,
         patch("digest.llm.count_gemini_tokens", side_effect=count),
         patch("digest.llm.complete", side_effect=generate),
     ):
@@ -247,7 +247,7 @@ async def test_legacy_v1_exact_cache_without_new_fields_remains_readable(tmp_pat
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -273,7 +273,7 @@ async def test_legacy_v1_exact_cache_without_new_fields_remains_readable(tmp_pat
 
 @pytest.mark.asyncio
 async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_change(tmp_path: Path) -> None:
-    from digest.reading_preparation import prepare_selected_sources
+    from digest.source_reading.preparation import prepare_selected_sources
     from tests.test_main_reading_brief import saved_selection
 
     model_execution = ModelExecution()
@@ -287,7 +287,8 @@ async def test_unknown_profile_hold_can_resume_after_explicit_supported_primary_
         return text, usage
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
         first = await prepare_selected_sources(
@@ -346,7 +347,7 @@ async def test_accepted_invalid_generation_is_persisted_before_validation_and_ne
         )
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -404,12 +405,12 @@ async def test_interrupted_generation_intent_prevents_new_invocation(
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.complete", side_effect=generate) as call,
         patch("digest.llm.count_gemini_tokens", AsyncMock()) as count,
     ):
         with (
-            patch("digest.reading_brief.save_state", side_effect=save_or_interrupt),
+            patch("digest.source_reading.brief.save_state", side_effect=save_or_interrupt),
             pytest.raises(asyncio.CancelledError),
         ):
             await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
@@ -439,7 +440,8 @@ async def test_unknown_count_is_not_repeated_but_supported_local_admission_can_r
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -488,7 +490,8 @@ async def test_legacy_admitted_unfinished_page_cannot_replay_its_unrecorded_gene
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
         patch("digest.llm.complete", AsyncMock(side_effect=TimeoutError)) as call,
     ):
@@ -530,7 +533,8 @@ async def test_new_page_with_no_request_intent_can_resume_after_budget_deferral(
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)) as count,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -562,7 +566,7 @@ async def test_completed_generation_must_match_its_accepted_attempt(
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(return_value=100)),
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -601,7 +605,7 @@ async def test_completed_generation_must_match_its_accepted_attempt(
         path.write_text(json.dumps(envelope))
         persisted = path.read_bytes()
         with patch(
-            "digest.reading_brief_state.load_source", side_effect=AssertionError("No source read during decode")
+            "digest.source_reading.state.load_source", side_effect=AssertionError("No source read during decode")
         ):
             with pytest.raises(ValueError, match="result_attempt_binding_mismatch"):
                 load_state(tmp_path, identity)
@@ -624,7 +628,7 @@ async def test_legacy_count_binding_survives_local_route_progress_and_failures(t
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.count_gemini_tokens", AsyncMock(side_effect=TimeoutError)) as count,
         patch("digest.llm.complete", side_effect=generate) as call,
     ):
@@ -669,7 +673,7 @@ async def test_shared_budget_predispatch_failure_remains_resumable(tmp_path: Pat
     state = saved_brief_state(tmp_path, cfg)
     identity = state.selection.identity
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
+        patch("digest.source_reading.brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))),
         patch("digest.llm.complete", side_effect=ModelBudgetError("Local usage write failed before dispatch")),
     ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
@@ -724,9 +728,10 @@ async def test_failed_save_retains_conservative_attempt_owner_without_duplicate_
         return response(messages)
 
     with (
-        patch("digest.reading_brief.fetch_article", AsyncMock(return_value=fetched("Complete source."))) as fetch,
+        patch("digest.source_reading.brief.fetch_article",
+            AsyncMock(return_value=fetched("Complete source."))) as fetch,
         patch("digest.llm.complete", side_effect=generate) as call,
-        patch("digest.reading_brief.save_state", side_effect=save_or_fail),
+        patch("digest.source_reading.brief.save_state", side_effect=save_or_fail),
     ):
         await _advance(state, cfg, tmp_path, time.monotonic() + 1000, execution=model_execution)
         held = load_state(tmp_path, identity)

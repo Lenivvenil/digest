@@ -47,7 +47,7 @@ async def _run(
     """Resolve the application once; each workflow owns its execution sequence."""
     from digest.application.preparation import prepare_edition, prepare_sources
     from digest.config import load_config
-    from digest.reading_preparation import validate_reading_mode
+    from digest.source_reading.preparation import validate_reading_mode
 
     if prepare_only and (dry_run or radar_only):
         raise ValueError("Edition preparation cannot be combined with preview modes.")

@@ -567,7 +567,8 @@ def _full_source_evidence(
     final_url: str | None = None,
 ) -> FullSourceEvidence:
     from digest.article_source import FetchedArticle
-    from digest.reading_brief_state import (
+    from digest.review_checkpoint import build_full_source_evidence
+    from digest.source_reading.state import (
         BriefState,
         Page,
         PageResult,
@@ -578,7 +579,6 @@ def _full_source_evidence(
         checksum,
         save_source,
     )
-    from digest.review_checkpoint import build_full_source_evidence
 
     # This stored backlog article intentionally is not a member of today's RSS bundle.
     selection = Selection(
@@ -641,7 +641,7 @@ def _full_source_evidence(
         pages=[page],
     )
     # Reading-brief validation is tested by its owner; this adapter receives only checked states.
-    with patch("digest.reading_brief.ready_brief_evidence", return_value=(state, source)):
+    with patch("digest.source_reading.brief.ready_brief_evidence", return_value=(state, source)):
         result = build_full_source_evidence(bundle, tmp_path, [selection.identity])
     assert source.text == body
     return result

@@ -15,8 +15,9 @@ from typing import Any, Literal
 import httpx
 
 from digest import source_admission
-from digest.reading_brief import _validate_progress
-from digest.reading_brief_state import (
+from digest.reading_brief_tokens import TokenProfileUnavailable
+from digest.source_reading.brief import _validate_progress
+from digest.source_reading.state import (
     BriefState,
     Page,
     Route,
@@ -29,7 +30,6 @@ from digest.reading_brief_state import (
     has_unresolved_generation,
     page_wire,
 )
-from digest.reading_brief_tokens import TokenProfileUnavailable
 
 INPUT_VERSION = "article-reconciliation-input-v1"
 RESPONSE_VERSION = "article-reconciliation-response-v1"

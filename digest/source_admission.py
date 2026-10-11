@@ -20,8 +20,8 @@ from digest import llm
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
 from digest.model_budget import ModelBudgetError
-from digest.reading_brief_state import Route
 from digest.reading_brief_tokens import ESTIMATOR_VERSION, GPT_HASH, TokenProfileUnavailable, count_gpt_input
+from digest.source_reading.state import Route
 
 # Existing reading-brief profiles only; these are not remaining account quota.
 # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash

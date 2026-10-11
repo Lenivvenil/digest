@@ -888,7 +888,7 @@ async def test_stricter_stage_pacing_covers_previous_start_and_deadline_without_
     import copy
 
     from digest import llm
-    from digest.reading_brief import _generation_timeout
+    from digest.source_reading.brief import _generation_timeout
 
     config = _make_config([{"name": "gemini", "model": "fixture", "role": ["summarize"]}])
     config.llm.min_request_interval_seconds = 20

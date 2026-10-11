@@ -146,7 +146,7 @@ def _candidate_inputs(
         delivery_history=delivered,
         cache_dir=cache_dir,
     )
-    from digest.reading_preparation import deferred_source_reports
+    from digest.source_reading.preparation import deferred_source_reports
 
     deferred = (
         deferred_source_reports(progress, Path(cache_dir), config)
@@ -338,7 +338,7 @@ async def _collect_and_review(
     from digest.domain.catalog.source_rules import calculate_feedback_priorities
     from digest.domain.feedback.rules import get_source_feedback_score
     from digest.radar import AllFeedsFailedError, collect
-    from digest.reading_preparation import reading_deadline, setup_reading_budget
+    from digest.source_reading.preparation import reading_deadline, setup_reading_budget
 
     config, execution, cache_dir = run.config, run.execution, ".cache"
     setup_reading_budget(config, execution=execution)
@@ -401,7 +401,7 @@ async def _collect_and_review(
         )
     collected = CollectedArticles(source_config, articles, fetch_metrics, collection_failed, collected_articles)
     if not articles:
-        from digest.reconciliation_checkpoint import prepare_current_batch
+        from digest.source_reading.checkpoint import prepare_current_batch
 
         await prepare_current_batch(
             pool.progress if pool is not None else None,
@@ -646,8 +646,8 @@ async def prepare_sources(
     """Experimental compatibility path ends in a technical handoff, not an edition."""
     from digest.edition_runtime import ExistingEdition, preparation_stats, present_preparation, recover_preparation
     from digest.preparation import AcceptedPreparation
-    from digest.reading_preparation import prepare_selected_sources, reading_deadline
-    from digest.reconciliation_checkpoint import prepare_current_batch
+    from digest.source_reading.checkpoint import prepare_current_batch
+    from digest.source_reading.preparation import prepare_selected_sources, reading_deadline
 
     run = await _start_preparation(
         config,

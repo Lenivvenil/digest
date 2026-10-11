@@ -29,10 +29,9 @@ from digest import llm, model_budget, source_admission
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig
-from digest.reading_brief import _can_fallback, _generation_timeout, _routes
-from digest.reading_brief_state import Route, checksum, now
 from digest.reading_brief_tokens import TokenProfileUnavailable
-from digest.reading_reconciliation import (
+from digest.source_reading.brief import _can_fallback, _generation_timeout, _routes
+from digest.source_reading.reconciliation import (
     RESPONSE_INSTRUCTION,
     RESPONSE_VERSION,
     ReconciliationCompletion,
@@ -41,6 +40,7 @@ from digest.reading_reconciliation import (
     _reconciliation_messages,
     parse_reconciliation_response,
 )
+from digest.source_reading.state import Route, checksum, now
 
 OPERATION_VERSION = "article-reconciliation-operation-v1"
 TEMPERATURE = 0.1

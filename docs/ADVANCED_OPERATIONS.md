@@ -159,10 +159,10 @@ factual-quality, reconciliation and throughput gates. The separate
 ### Reconciliation ownership
 
 Experimental source preparation reloads the current handoff, source, page state and
-eligibility through [`reconciliation_checkpoint`](../digest/reconciliation_checkpoint.py).
-[`build_reconciliation_input`](../digest/reading_reconciliation.py) then validates and
+eligibility through [`source_reading.checkpoint`](../digest/source_reading/checkpoint.py).
+[`build_reconciliation_input`](../digest/source_reading/reconciliation.py) then validates and
 freezes one evidence input for offline planning and execution. The
-[`reconciliation_operation`](../digest/reconciliation_operation.py) owns its exact
+[`source_reading.operation`](../digest/source_reading/operation.py) owns its exact
 request, admission, attempt history and completion envelope; its decoder verifies
 persisted records against the fresh input before cache reuse, uncertainty holds or
 fallback. Fresh generation saves accepted metadata before validating terminal output.
@@ -171,3 +171,10 @@ qualifications. Complete source access and sparse evidence remain distinct; none
 these checks establishes semantic completeness or publication acceptance. Reading
 remains optional and off by default. [ADR0009](decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
 records the direct-call migration and retained trust boundaries.
+
+The supported `python -m digest.reconciliation_checkpoint` command remains a thin
+[CLI entrypoint](../digest/reconciliation_checkpoint.py) to that checkpoint owner,
+with the same arguments, help and exit behavior. Other old direct reader/reconciliation
+Python imports are retired; use the
+[package migration map](decisions/0009-selected-source-admission.md#source-reading-package-layout--2026-10-11).
+This layout change does not activate reading or change retained state and request hashes.

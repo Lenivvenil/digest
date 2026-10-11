@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from digest.article_source import FetchedArticle
-from digest.reading_brief_state import (
+from digest.source_reading.state import (
     BriefState,
     Page,
     RequestAttempt,
@@ -150,8 +150,8 @@ def test_invalid_request_intent_metadata_is_rejected(tmp_path: Path, damage: str
 
 def _saved_completed(tmp_path: Path) -> BriefState:
     """Build one accepted owner, without assigning redundant page completion facts."""
-    from digest.reading_brief import _messages, _parse_result, _prompt_sha
-    from digest.reading_brief_state import _complete_page
+    from digest.source_reading.brief import _messages, _parse_result, _prompt_sha
+    from digest.source_reading.state import _complete_page
 
     item = state()
     item.source_sha256, source = save_source(
@@ -186,7 +186,7 @@ def _saved_completed(tmp_path: Path) -> BriefState:
 def test_completed_owner_is_deeply_immutable_and_page_has_no_completion_aliases(tmp_path: Path) -> None:
     from dataclasses import FrozenInstanceError, fields
 
-    from digest.reading_brief_state import PageCompletion, completed, page_wire
+    from digest.source_reading.state import PageCompletion, completed, page_wire
 
     item = _saved_completed(tmp_path)
     page = item.pages[0]
@@ -223,8 +223,8 @@ def test_completed_owner_is_deeply_immutable_and_page_has_no_completion_aliases(
 def test_decoder_preserves_exact_route_spelling_and_unsorted_arrays_without_writes(
     tmp_path: Path, legacy: bool, explicit_primary: bool,
 ) -> None:
-    from digest.reading_brief import ready_brief_evidence
-    from digest.reading_brief_state import LegacyCompletedEvidence, completed, page_wire, state_wire
+    from digest.source_reading.brief import ready_brief_evidence
+    from digest.source_reading.state import LegacyCompletedEvidence, completed, page_wire, state_wire
 
     item = _saved_completed(tmp_path)
     path = state_root(tmp_path) / f"{item.selection.identity}.json"
@@ -256,7 +256,7 @@ def test_decoder_preserves_exact_route_spelling_and_unsorted_arrays_without_writ
 def test_decoder_rejects_orphan_pending_completion_fields(
     tmp_path: Path, field: str, value: object,
 ) -> None:
-    from digest.reading_brief_state import PendingRequest
+    from digest.source_reading.state import PendingRequest
 
     item = state()
     item.source_sha256, source = save_source(
@@ -283,8 +283,8 @@ def test_decoder_rejects_orphan_pending_completion_fields(
 def test_decoded_owner_still_requires_source_validation(
     tmp_path: Path, damage: str, expected: str,
 ) -> None:
-    from digest.reading_brief import ready_brief_evidence
-    from digest.reading_brief_state import completed
+    from digest.source_reading.brief import ready_brief_evidence
+    from digest.source_reading.state import completed
 
     item = _saved_completed(tmp_path)
     path = state_root(tmp_path) / f"{item.selection.identity}.json"
@@ -306,8 +306,8 @@ def test_decoded_owner_still_requires_source_validation(
 
 
 def test_typed_consumers_reject_ambiguous_modern_and_illicit_legacy_owners(tmp_path: Path) -> None:
-    from digest.reading_brief_state import decode_page, page_wire
-    from digest.reading_reconciliation import build_reconciliation_input
+    from digest.source_reading.reconciliation import build_reconciliation_input
+    from digest.source_reading.state import decode_page, page_wire
 
     item = _saved_completed(tmp_path)
     source = load_source(tmp_path, item)
