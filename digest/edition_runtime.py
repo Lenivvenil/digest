@@ -121,6 +121,9 @@ async def present_preparation(
     publication_date: date | None = None,
 ) -> FrozenPreparation | NoEdition:
     """Verify the active accepted reference before any presentation or readiness effect."""
+    if publication_date is None:
+        publication_date = datetime.now(timezone.utc).date()
+
     from digest.application.prepared_delivery import prepare_edition
     from digest.application.publication import assemble_publication
     from digest.application.supplement import archive_fragment, pending_fragment
@@ -139,10 +142,12 @@ async def present_preparation(
     if not snapshot.top_articles:
         logger.info("Edition preparation: no selected articles; no ready edition created")
         return NoEdition("no_ready", review_status)
-    publication = await assemble_publication(snapshot, config, execution=execution, verbose=verbose)
+    publication = await assemble_publication(
+        snapshot, config, publication_date=publication_date, execution=execution, verbose=verbose
+    )
     pending, supplement_reason = pending_fragment(
         config.obsidian.output_dir,
-        publication_date or datetime.now(timezone.utc).date(),
+        publication_date,
     )
     placement = None
     if pending is not None and supplement_reason == "eligible":
@@ -172,7 +177,7 @@ async def present_preparation(
         irritator_status=publication.irritator_status,
         sources_count=snapshot.source_count,
         articles_count=snapshot.article_count,
-        date=datetime.combine(publication_date, datetime.min.time(), timezone.utc) if publication_date else None,
+        date=datetime.combine(publication_date, datetime.min.time(), timezone.utc),
         supplement=placement,
     )
     # An enabled but failed archive is a preparation failure, never sender eligibility.
@@ -214,7 +219,7 @@ async def present_preparation(
         current_review_checkpoint=current_review,
     )
     clear_preparation()
-    future_window = publication_date and publication_date > datetime.now(timezone.utc).date()
+    future_window = publication_date > datetime.now(timezone.utc).date()
     return FrozenPreparation(
         "pending_window" if future_window else "ready",
         digest,

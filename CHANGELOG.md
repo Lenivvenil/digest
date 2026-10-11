@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Show known future source-feed timestamps on prepared review-backed main cards in
+  the configured output language, after translation and without changing canonical
+  evidence or model inputs. Bind the intended UTC day once at presentation entry;
+  crossing midnight now fails the existing past-date freeze guard while preserving
+  accepted work and any translation/archive effects. Saved ready payloads remain
+  unchanged. This does not establish event timing or semantic acceptance. Refs #55.
 - Attribute future protected-content translation failures to a bounded canonical field
   and token class, without retaining translated text or changing fallback. Refs #55.
 - Frame serialized supplement diagnostics as JSON code, preserving the exact JSON
