@@ -3,6 +3,8 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Attribute future protected-content translation failures to a bounded canonical field
+  and token class, without retaining translated text or changing fallback. Refs #55.
 - Frame serialized supplement diagnostics as JSON code, preserving the exact JSON
   payload, companion archive and surrounding formatted prose. Refs #148.
 - Render source article-title link labels literally in Markdown archives and review

@@ -153,13 +153,15 @@ async def test_primary_review_pacing_carries_into_translation_without_reading(
 
 def test_structural_contract_rejects_changed_numbers_urls_quotes_and_missing_ids() -> None:
     originals = {"a": 'Only 20 clients; "preview". https://example.com/a'}
-    for bad in (
-        'Только 21 клиентов; "preview". https://example.com/a',
-        'Только 20 клиентов; "preview". https://example.com/b',
-        'Только 20 клиентов; "GA". https://example.com/a',
+    for bad, changed in (
+        ('Только 21 клиентов; "preview". https://example.com/a', ("numeric_literal",)),
+        ('Только 20 клиентов; "preview". https://example.com/b', ("url",)),
+        ('Только 20 клиентов; "GA". https://example.com/a', ("quotation",)),
+        ('Только 21 клиентов; "GA". https://example.com/b', ("url", "numeric_literal", "quotation")),
     ):
-        with pytest.raises(ValueError, match="protected"):
+        with pytest.raises(ValueError, match="protected") as caught:
             _parse(json.dumps({"translations": [{"id": "a", "text": bad}]}), originals)
+        assert caught.value.field_id == "a" and caught.value.changed == changed
     with pytest.raises(ValueError, match="coverage"):
         _parse('{"translations": []}', originals)
     # This layer deliberately cannot prove that a qualifier's meaning survived.
@@ -754,6 +756,7 @@ async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
     complete.assert_awaited_once()
     record = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert record["status"] == "translated" and record["optional"]["status"] == "fallback"
+    assert "validation_detail" not in record
 
 
 @pytest.mark.asyncio
@@ -1124,6 +1127,8 @@ def test_unavailable_failure_projection_is_omitted_without_mutating_record(monke
     ('{"translations": [{"id": "a"}]}', "field_shape"),
     ('{"translations": [{"id": "unknown", "text": "20 clients."}]}', "identity_or_text"),
     ('{"translations": [{"id": "a", "text": "21 clients."}]}', "protected_content"),
+    ('{"translations": [{"id": "a", "text": "20 clients."}, {"id": "a", "text": "21 clients."}]}',
+     "identity_or_text"),
     ('{"translations": []}', "coverage"),
 ])
 async def test_validation_reason_preserves_safe_failure_and_terminal_cache(
@@ -1137,10 +1142,15 @@ async def test_validation_reason_preserves_safe_failure_and_terminal_cache(
         record = json.loads(path.read_text())
         assert (record["error"], record["error_kind"], record["validation_reason"]) == (
             "ValueError", "contract_invalid", reason)
+        if reason == "protected_content":
+            assert record["validation_detail"] == {"field_id": "a", "changed": ["numeric_literal"]}
+        else:
+            assert "validation_detail" not in record
         before = path.read_bytes()
         repeated = await translate_fields(fields, cfg, tmp_path, execution=execution)
         assert path.read_bytes() == before
-        del record["validation_reason"]  # Historical records lack this optional diagnostic.
+        del record["validation_reason"]  # Historical records lack these optional diagnostics.
+        record.pop("validation_detail", None)
         path.write_text(json.dumps(record, indent=2))
         legacy_bytes = path.read_bytes()
         legacy = await translate_fields(fields, cfg, tmp_path, execution=execution)
@@ -1151,14 +1161,50 @@ async def test_validation_reason_preserves_safe_failure_and_terminal_cache(
     call.assert_awaited_once()
     assert "SENTINEL_PRIVATE_RESPONSE" not in before.decode() + caplog.text
     assert "_TranslationValidationError" not in before.decode() + caplog.text
+    assert "validation_detail" not in caplog.text and "field_id" not in caplog.text
 
 
 async def test_validation_reason_is_not_projected_outside_contract_phase(tmp_path: Path) -> None:
     from digest.translation import _TranslationValidationError
 
-    with patch("digest.translation.complete", AsyncMock(side_effect=_TranslationValidationError("coverage", "safe"))):
+    error = _TranslationValidationError("protected_content", "safe", field_id="a", changed=("quotation",))
+    with patch("digest.translation.complete", AsyncMock(side_effect=error)):
         result = await translate_fields({"a": "Original."}, config(), tmp_path, execution=ModelExecution())
     record = json.loads(next(tmp_path.glob("*.json")).read_text())
     assert result.status == "fallback"
     assert record["error"] == "ValueError" and record["error_kind"] == "provider_failure"
-    assert "validation_reason" not in record
+    assert "validation_reason" not in record and "validation_detail" not in record
+
+
+def test_protected_detail_omission_preserves_base_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.llm import HTTPRejection
+    from digest.translation import _TranslationValidationError, _with_failure_diagnostics
+
+    record = {"schema_version": 1, "status": "incomplete", "canonical": {"a": "Original."}}
+    rejection = [HTTPRejection(http_status=429)]
+    base = _with_failure_diagnostics(record, rejection, "protected_content")
+    error = _TranslationValidationError("protected_content", "safe", field_id="a", changed=("quotation",))
+    enriched = _with_failure_diagnostics(record, rejection, "protected_content", error)
+    assert enriched == {**base, "validation_detail": {"field_id": "a", "changed": ["quotation"]}}
+    assert "validation_detail" not in record
+    error.field_id = "unknown"
+    assert _with_failure_diagnostics(record, rejection, "protected_content", error) == base
+    error.field_id = "a"
+    error.changed = ("SENTINEL_PRIVATE_RESPONSE",)
+    assert _with_failure_diagnostics(record, rejection, "protected_content", error) == base
+    error.changed = ("quotation",)
+    bounded = json.dumps(base, indent=2).encode("utf-8")
+    monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", len(bounded))
+    omitted = _with_failure_diagnostics(record, rejection, "protected_content", error)
+    assert json.dumps(omitted, indent=2).encode() == bounded
+
+
+def test_oversized_canonical_field_detail_is_omitted() -> None:
+    from digest.translation import _TranslationValidationError, _with_failure_diagnostics
+
+    identity = "я" * 129
+    record = {"schema_version": 1, "canonical": {identity: "Original."}}
+    error = _TranslationValidationError("protected_content", "safe", field_id=identity, changed=("quotation",))
+    assert _with_failure_diagnostics(record, [], "protected_content", error) == {
+        **record, "validation_reason": "protected_content",
+    }

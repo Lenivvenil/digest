@@ -132,3 +132,16 @@ Only the closed code is retained, never response excerpts or exception text.
 The optional closer's existing `closing_contract_invalid` fallback is separate
 and is not further diagnosed by this failed-batch field. These reasons identify
 structural rejection, not semantic fidelity or the cause of earlier failures.
+
+
+### Optional protected-content attribution (#55)
+
+The same parser may add `validation_detail` for a required field's protected-content
+mismatch: its already validated canonical `field_id` and a fixed-order `changed`
+subset of `url`, `numeric_literal`, `quotation`. It records no tokens, translated text
+or general-log detail. Field IDs are bounded to 256 UTF-8 bytes; optional detail is
+at most 1024 serialized bytes and must fit the existing cache ceiling after base sizing.
+Invalid/oversized detail is omitted without removing other accepted diagnostics.
+Old readers ignore it; saved failure records stay terminal and are never rewritten.
+This attributes a later structural failure only. Missing details remain unknown;
+neither semantic fidelity nor a historical failure's exact cause is established.
