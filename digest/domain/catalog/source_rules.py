@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from digest.domain.catalog.sources import (
@@ -280,25 +280,45 @@ def apply_trial_decisions_to_cache(
     return store
 
 
-def _diversity_score(source_stats: dict[str, SourceStats]) -> tuple[float, str]:
-    """Shannon entropy over 7-day article inclusion per source → (score 0–100, label)."""
+def recent_source_inclusions(source_stats: dict[str, SourceStats], *, today: date) -> dict[str, int]:
+    """Count recorded inclusions on the seven calendar dates ending on today."""
+    cutoff = today - timedelta(days=6)
     recent: dict[str, int] = {}
-    for name, s in source_stats.items():
-        count = sum(snap.articles_included for snap in s.history[-7:])
+    for name, stats in source_stats.items():
+        count = 0
+        for snapshot in stats.history:
+            if not isinstance(snapshot.date, str):
+                continue
+            try:
+                day = date.fromisoformat(snapshot.date)
+            except ValueError:
+                continue
+            if day.isoformat() == snapshot.date and cutoff <= day <= today:
+                count += snapshot.articles_included
         if count > 0:
             recent[name] = count
-    total = sum(recent.values())
-    n = len(recent)
+    return recent
+
+
+def source_inclusion_evenness(counts: dict[str, int]) -> tuple[float, str]:
+    """Normalized Shannon score (0–100) over positive recorded source counts."""
+    total = sum(counts.values())
+    n = len(counts)
     if total == 0:
-        return 0.0, "No data"
+        return 0.0, "No recorded inclusions"
     if n == 1:
         return 0.0, "Single source"
-    entropy = -sum((c / total) * math.log2(c / total) for c in recent.values())
+    entropy = -sum((c / total) * math.log2(c / total) for c in counts.values())
     score = entropy / math.log2(n) * 100
     if score >= 70:
-        label = "Diverse"
+        label = "Even"
     elif score >= 40:
         label = "Moderate"
     else:
         label = "Concentrated"
     return score, label
+
+
+def _diversity_score(source_stats: dict[str, SourceStats], *, today: date) -> tuple[float, str]:
+    """Retain the private name with an explicit report date and neutral labels."""
+    return source_inclusion_evenness(recent_source_inclusions(source_stats, today=today))

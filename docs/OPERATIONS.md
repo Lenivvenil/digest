@@ -323,6 +323,28 @@ even if later work is empty or fails. Configuration/backup failures retain the d
 for retry; unbound historical decisions cannot authorize replacement proposals.
 [#48](https://github.com/Lenivvenil/digest/issues/48) tracks operational acceptance.
 
+### Source-inclusion report
+
+The owner-only `/bubble` command keeps its Filter Bubble Report heading, but measures
+**recorded source-inclusion evenness**. Its printed window is the seven UTC calendar
+dates ending on the report's observed UTC date, inclusive. It scans all retained
+snapshots rather than each source's last seven records, excluding older, future,
+missing, malformed and noncanonical dates. Missing or unusably dated history is
+unobserved evidence; no recorded inclusions does not establish zero coverage.
+
+The score and displayed source/category totals use the same positive per-source
+counts. Valid same-date records are added as stored, without deduplication or repair.
+Normalized Shannon entropy retains its 70/40 thresholds with labels `Even`,
+`Moderate` and `Concentrated`; empty and one-source counts show `No recorded inclusions`
+and `Single source`. Category percentages use all eligible counts; without a category
+map, the report lists the top five sources. These counts do not establish publisher
+independence, viewpoint or disciplinary diversity, usefulness or filter-bubble reduction.
+
+The separate `Feedback (14d)` section counts raw vote events, including repeated
+votes; effective source allocation still uses the latest valid vote per exact token.
+The lifecycle section and command transport are unchanged. See the
+[report ownership amendment](decisions/0021-catalog-feedback-boundaries.md#source-inclusion-report-window--132-2026-10-12).
+
 ## Source discovery
 
 Discovery is separate from Irritator. `python -m digest --discover` proposes feeds,

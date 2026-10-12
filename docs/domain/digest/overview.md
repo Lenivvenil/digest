@@ -56,6 +56,21 @@ sending an already prepared edition.
 The implementation names and persisted records are mapped in
 [Architecture](../../ARCHITECTURE.md#entities-contracts-and-enforcement).
 
+### Source-inclusion report read model
+
+`/bubble` describes recorded source-inclusion counts on the seven UTC calendar dates
+ending on its observed report date. Its score and source/category totals share those
+counts, omitting older, future and unusably dated history. Missing history is unobserved;
+zero recorded inclusions is not proof of zero coverage. Valid duplicate-date rows remain
+additive as stored, with no repair or change to retained history.
+
+Source-inclusion evenness measures a source-name distribution, not publisher independence,
+viewpoint or disciplinary diversity, usefulness or filter-bubble reduction. The separate
+14-day feedback section counts raw events, while effective allocation uses the latest
+valid vote per exact token. The [current report contract](../../OPERATIONS.md#source-inclusion-report)
+and [ADR0021 amendment](../../decisions/0021-catalog-feedback-boundaries.md#source-inclusion-report-window--132-2026-10-12)
+supersede measurement claims in the historical BubbleReport/UC-3 links below.
+
 ## Decisions that must remain distinct
 
 A candidate has three independent questions:
