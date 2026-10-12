@@ -40,6 +40,12 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Share collection-portfolio composition between fresh preparation and direct
+  execution through the existing source-scoring application. Preserve source
+  identity/order, per-source clocks, allocation rules and scenario effect boundaries;
+  no runtime setting or retained-state change. Refs #148. See the
+  [ADR0021 ownership amendment](docs/decisions/0021-catalog-feedback-boundaries.md#collection-portfolio-ownership--2026-10-12).
+
 - Group the six optional source-reading implementations under `digest.source_reading`
   and shorten the working guide around canonical documentation. Retire old internal
   Python imports; preserve `python -m digest.reconciliation_checkpoint` as the CLI

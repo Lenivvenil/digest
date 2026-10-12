@@ -8,7 +8,6 @@ Markdown consumption, cards transport, and compact confirmation remain distinct.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import time
 from collections.abc import Callable
@@ -83,9 +82,7 @@ async def _collect_legacy(
     """Apply feedback and approved sources before observing the current portfolio."""
     from digest._util import cleanup_stale_tmp
     from digest.adapters.storage.sources import load_source_state, load_stats
-    from digest.application.source_scoring import calculate_effective_priorities
-    from digest.domain.catalog.source_rules import calculate_feedback_priorities
-    from digest.domain.feedback.rules import get_source_feedback_score
+    from digest.application.source_scoring import prepare_collection_portfolio
     from digest.radar import AllFeedsFailedError, collect
 
     compact = getattr(config.telegram, "delivery_mode", "cards") == "compact"
@@ -111,28 +108,8 @@ async def _collect_legacy(
     )
     feeds_count = len(config.enabled_sources)
     saved_article_source_map = dict(feedback_store.article_source_map)
-    feedback_scores: dict[str, float] = {}
-    for source in config.enabled_sources:
-        score = get_source_feedback_score(feedback_store, source.name, now=datetime.now(tz=timezone.utc))
-        if score is not None:
-            feedback_scores[source.name] = score
-    if config.adaptive.enabled:
-        effective_priorities = calculate_effective_priorities(
-            config.effective_sources(source_state),
-            source_stats,
-            feedback_scores,
-            config.adaptive,
-        )
-    else:
-        effective_priorities = calculate_feedback_priorities(
-            config.effective_sources(source_state),
-            feedback_scores,
-            config.adaptive,
-        )
-
-    run_config = dataclasses.replace(
-        config,
-        sources=[s for s in config.sources if s.enabled and not source_state.is_demoted(s.name)],
+    run_config, effective_priorities = prepare_collection_portfolio(
+        config, source_state, source_stats, feedback_store
     )
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
     try:

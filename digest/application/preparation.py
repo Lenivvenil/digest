@@ -7,11 +7,10 @@ share candidate acquisition, then have distinct terminal application operations.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -334,37 +333,14 @@ async def _collect_and_review(
     """Collect before candidate-report replay; keep mode-specific work concrete."""
     from digest.adapters.storage.feedback import save_feedback
     from digest.adapters.storage.sources import save_stats
-    from digest.application.source_scoring import calculate_effective_priorities
-    from digest.domain.catalog.source_rules import calculate_feedback_priorities
-    from digest.domain.feedback.rules import get_source_feedback_score
+    from digest.application.source_scoring import prepare_collection_portfolio
     from digest.radar import AllFeedsFailedError, collect
     from digest.source_reading.preparation import reading_deadline, setup_reading_budget
 
     config, execution, cache_dir = run.config, run.execution, ".cache"
     setup_reading_budget(config, execution=execution)
-    feedback_scores = {}
-    for source in config.enabled_sources:
-        score = get_source_feedback_score(run.feedback_store, source.name, now=datetime.now(tz=timezone.utc))
-        if score is not None:
-            feedback_scores[source.name] = score
-    if config.adaptive.enabled:
-        priorities = calculate_effective_priorities(
-            config.effective_sources(run.source_state),
-            run.source_stats,
-            feedback_scores,
-            config.adaptive,
-        )
-    else:
-        priorities = calculate_feedback_priorities(
-            config.effective_sources(run.source_state),
-            feedback_scores,
-            config.adaptive,
-        )
-    source_config = dataclasses.replace(
-        config,
-        sources=[
-            source for source in config.sources if source.enabled and not run.source_state.is_demoted(source.name)
-        ],
+    source_config, priorities = prepare_collection_portfolio(
+        config, run.source_state, run.source_stats, run.feedback_store
     )
     fetch_metrics: dict[str, SourceFetchMetrics] = {}
     pool = _candidate_setup(cache_dir) if mode is not AnalysisMode.CATEGORY else None

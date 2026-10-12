@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import fields
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -22,6 +25,7 @@ from digest.source_scorer import (
     save_stats,
     update_stats,
 )
+from scripts.review_fixture import fixture_config
 
 
 def test_source_stats_defaults() -> None:
@@ -899,3 +903,151 @@ def test_fetch_accounting_uses_each_explicit_observation_across_midnight(monkeyp
     assert [item.date for item in stats["Feed"].history] == ["2026-10-07", "2026-10-08"]
     assert stats["Feed"].avg_description_length == 130
     assert stats["Feed"].last_seen == "2026-10-08"
+
+
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_collection_portfolio_preserves_values_identities_and_observation_order(
+    monkeypatch: pytest.MonkeyPatch, adaptive: bool,
+) -> None:
+    from digest.application import source_scoring
+    from digest.domain.catalog import source_rules
+    from digest.domain.feedback import rules as feedback_rules
+    from digest.domain.feedback.values import ArticleFeedback, FeedbackStore
+
+    config = fixture_config()
+    config.adaptive.enabled = adaptive
+    config.sources = [
+        _make_source("Rated", 3), _make_source("Disabled", 5), _make_source("Demoted", 3),
+        _make_source("Expired", 2), _make_source("Zero", 4), _make_source("Missing", 1),
+    ]
+    config.sources[1].enabled = False
+    config.sources[-1].trial = True
+    original_sources = config.sources
+    state = SourceStateStore()
+    state.mark_demoted("Demoted")
+    stats = {
+        name: SourceStats(name, 1, 1, 1, 1, 100, "2026-10-04")
+        for name in ("Rated", "Expired", "Demoted", "Disabled")
+    }
+    stats["Zero"] = SourceStats("Zero", last_seen="2026-10-04")
+    feedback = FeedbackStore(ratings=[
+        ArticleFeedback("rated", "Rated", -1, "2026-09-23T00:00:00+00:00"),
+        ArticleFeedback("expired", "Expired", -1, "2026-09-23T00:00:00+00:00"),
+        ArticleFeedback("demoted", "Demoted", -1, "2026-10-07T00:00:00+00:00"),
+    ])
+    before = deepcopy((config, state, stats, feedback))
+    times = [
+        datetime(2026, 10, 7, 23, 59, 59, tzinfo=timezone.utc),
+        *(datetime(2026, 10, 8, 0, 0, second, tzinfo=timezone.utc) for second in range(5)),
+        datetime(2026, 10, 15, tzinfo=timezone.utc),
+    ]
+    clock = Mock(wraps=datetime)
+    clock.now.side_effect = times
+    events: list[str] = []
+    score_feedback, score_quality = feedback_rules.get_source_feedback_score, source_scoring.calculate_score
+
+    def observed_feedback(store: FeedbackStore, name: str, *, now: datetime) -> float | None:
+        assert store is feedback
+        events.append(f"feedback:{name}")
+        return score_feedback(store, name, now=now)
+
+    def observed_quality(value: SourceStats) -> float:
+        assert value is stats[value.name]
+        events.append(f"quality:{value.name}")
+        return score_quality(value)
+
+    feedback_spy = Mock(side_effect=observed_feedback)
+    quality_spy = Mock(side_effect=observed_quality)
+    trending_spy = Mock(wraps=source_rules.detect_trending_sources)
+    effective_spy = Mock(wraps=config.effective_sources)
+    monkeypatch.setattr(source_scoring, "datetime", clock)
+    monkeypatch.setattr(feedback_rules, "get_source_feedback_score", feedback_spy)
+    monkeypatch.setattr(source_scoring, "calculate_score", quality_spy)
+    monkeypatch.setattr(source_rules, "detect_trending_sources", trending_spy)
+    monkeypatch.setattr(config, "effective_sources", effective_spy)
+
+    result, priorities = source_scoring.prepare_collection_portfolio(config, state, stats, feedback)
+
+    assert priorities == ({"Rated": 3, "Expired": 4, "Zero": 3, "Missing": 3} if adaptive else
+                          {"Rated": 2, "Expired": 2, "Zero": 4, "Missing": 1})
+    assert list(priorities) == ["Rated", "Expired", "Zero", "Missing"]
+    assert result is not config and result.sources is not original_sources
+    assert all(actual is original_sources[index] for actual, index in zip(result.sources, (0, 3, 4, 5), strict=True))
+    assert all(getattr(result, field.name) is getattr(config, field.name)
+               for field in fields(config) if field.name != "sources")
+    assert config.sources is original_sources
+    assert (config, state, stats, feedback) == before
+    effective_spy.assert_called_once_with(state)
+    expected_names = ["Rated", "Demoted", "Expired", "Zero", "Missing"]
+    assert feedback_spy.call_args_list == [
+        call(feedback, name, now=observed) for name, observed in zip(expected_names, times[:5], strict=True)
+    ]
+    assert events == [f"feedback:{name}" for name in expected_names] + (
+        ["quality:Rated", "quality:Expired", "quality:Zero"] if adaptive else []
+    )
+    assert clock.now.call_args_list == [call(tz=timezone.utc)] * (7 if adaptive else 5)
+    if adaptive:
+        trending_spy.assert_called_once_with(stats)
+    else:
+        quality_spy.assert_not_called()
+        trending_spy.assert_not_called()
+
+
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_collection_portfolio_empty_effective_sources_still_observes_enabled_feedback(
+    monkeypatch: pytest.MonkeyPatch, adaptive: bool,
+) -> None:
+    from digest.application import source_scoring
+    from digest.domain.feedback.values import FeedbackStore
+
+    config = fixture_config()
+    config.adaptive.enabled = adaptive
+    config.sources = [_make_source("Demoted"), _make_source("Disabled")]
+    config.sources[1].enabled = False
+    state = SourceStateStore()
+    state.mark_demoted("Demoted")
+    feedback = FeedbackStore()
+    sample = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = sample
+    feedback_spy = Mock(wraps=source_scoring.feedback_rules.get_source_feedback_score)
+    monkeypatch.setattr(source_scoring, "datetime", clock)
+    monkeypatch.setattr(source_scoring.feedback_rules, "get_source_feedback_score", feedback_spy)
+    result, priorities = source_scoring.prepare_collection_portfolio(config, state, {}, feedback)
+    assert result is not config and result.sources == [] and priorities == {}
+    feedback_spy.assert_called_once_with(feedback, "Demoted", now=sample)
+    clock.now.assert_called_once_with(tz=timezone.utc)
+
+
+@pytest.mark.parametrize("adaptive", [False, True])
+@pytest.mark.parametrize("failure", ["feedback", "priorities", "copy"])
+def test_collection_portfolio_propagates_failure_without_mutating_inputs(
+    monkeypatch: pytest.MonkeyPatch, adaptive: bool, failure: str,
+) -> None:
+    from digest.application import source_scoring
+    from digest.domain.feedback.values import FeedbackStore
+
+    config = fixture_config()
+    config.adaptive.enabled = adaptive
+    config.sources = [_make_source("Feed")]
+    state, stats, feedback = SourceStateStore(), {}, FeedbackStore()
+    before = deepcopy((config, state, stats, feedback))
+    error = RuntimeError("synthetic portfolio failure")
+    feedback_spy = Mock(wraps=source_scoring.feedback_rules.get_source_feedback_score)
+    priorities_spy = Mock(wraps=(source_scoring.calculate_effective_priorities if adaptive else
+                                source_scoring.source_rules.calculate_feedback_priorities))
+    copy_spy = Mock(wraps=source_scoring.replace)
+    {"feedback": feedback_spy, "priorities": priorities_spy, "copy": copy_spy}[failure].side_effect = error
+    monkeypatch.setattr(source_scoring.feedback_rules, "get_source_feedback_score", feedback_spy)
+    monkeypatch.setattr(
+        source_scoring if adaptive else source_scoring.source_rules,
+        "calculate_effective_priorities" if adaptive else "calculate_feedback_priorities", priorities_spy,
+    )
+    monkeypatch.setattr(source_scoring, "replace", copy_spy)
+
+    with pytest.raises(RuntimeError, match="synthetic portfolio failure") as raised:
+        source_scoring.prepare_collection_portfolio(config, state, stats, feedback)
+    assert raised.value is error and (config, state, stats, feedback) == before
+    assert feedback_spy.call_count == 1
+    assert priorities_spy.call_count == int(failure != "feedback")
+    assert copy_spy.call_count == int(failure == "copy")

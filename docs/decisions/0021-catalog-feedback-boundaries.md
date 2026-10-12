@@ -262,3 +262,21 @@ threshold, schedule, activation or recovery policy follows. Keep observations in
 existing private state/logs; public evidence uses synthetic cases and aggregate results.
 This is partial G9 progress under #148; release, rollout and natural-run observation
 remain separate gates, not full reliability or editorial acceptance.
+
+## Collection-portfolio ownership — 2026-10-12
+
+`application/source_scoring.prepare_collection_portfolio` now owns the duplicated
+feedback, lifecycle filtering and priority composition previously in preparation
+and direct execution. It uses `Config.effective_sources` once, retains the original
+ordered source objects in a shallow config copy, and delegates both allocation
+branches to the existing rules. Feedback still samples once per enabled source,
+including demoted sources; quality scoring retains its separate conditional
+per-source observations. Adaptive-off adds no quality/trending work or trial mutation.
+
+The callers retain bootstrap, approvals and execution-holder ownership. Fresh
+preparation composes after its existing recovery and optional reading-budget
+boundaries; direct execution composes after its enabled-feed count and prior
+attribution snapshot. Recovery does not acquire a fresh portfolio. Exceptions
+propagate before collection, preserving already completed effects. The scenarios,
+collection arguments, policy arithmetic, persisted bytes and runtime settings are
+unchanged; this consolidation adds no class, port, model allowance or migration.

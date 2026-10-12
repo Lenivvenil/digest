@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -21,6 +21,138 @@ from digest.feedback import FeedbackStore, save_feedback
 from digest.main import _run
 from digest.radar.collector import Article, SourceCollectionOutcome, _capture_candidates
 from scripts.review_fixture import fixture_config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adaptive,fail_feedback", [(False, False), (True, False), (False, True)])
+async def test_prepared_collection_uses_real_portfolio_after_recovery_and_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adaptive: bool, fail_feedback: bool,
+) -> None:
+    from digest.adapters.models.execution import ModelExecution
+    from digest.application import source_scoring
+    from digest.domain.catalog.sources import SourceStateStore
+    from digest.edition_runtime import recover_preparation
+    from digest.feedback import ArticleFeedback
+    from digest.source_reading.preparation import setup_reading_budget
+
+    monkeypatch.chdir(tmp_path)
+    config = fixture_config()
+    config.review.review_led_only = True
+    config.adaptive.enabled = adaptive
+    config.sources = [
+        SourceConfig("Rated", "https://example.com/rated", "Tech", True),
+        SourceConfig("Unrated", "https://example.com/unrated", "Tech", True, priority=1),
+        SourceConfig("Demoted", "https://example.com/demoted", "Tech", True),
+    ]
+    state = SourceStateStore()
+    state.mark_demoted("Demoted")
+    feedback = FeedbackStore(ratings=[ArticleFeedback("rated", "Rated", -1, datetime.now(UTC).isoformat())])
+    events: list[str] = []
+    holder: list[ModelExecution] = []
+    real_portfolio = source_scoring.prepare_collection_portfolio
+    portfolio_result = []
+
+    async def collect_feedback(*args: Any, **kwargs: Any) -> tuple[FeedbackStore, bool, int]:
+        events.append("feedback")
+        return feedback, True, 7
+
+    def approve(c: Any, *args: Any, **kwargs: Any) -> tuple[Any, ModelExecution]:
+        events.append("approvals")
+        holder.append(kwargs["execution"])
+        return c, holder[0]
+
+    def recover(*args: Any, **kwargs: Any) -> Any:
+        events.append("recovery")
+        return recover_preparation(*args, **kwargs)
+
+    def budget(c: Any, *, execution: ModelExecution) -> None:
+        assert c is config and execution is holder[0]
+        events.append("budget")
+        setup_reading_budget(c, execution=execution)
+
+    def portfolio(c: Any, source_state: Any, source_stats: Any, feedback_store: Any) -> Any:
+        assert c is config and source_state is state and feedback_store is feedback
+        assert events == ["feedback", "approvals", "recovery", "budget"]
+        events.append("portfolio")
+        result = real_portfolio(c, source_state, source_stats, feedback_store)
+        portfolio_result.append(result)
+        return result
+
+    async def collect(c: Any, **kwargs: Any) -> tuple[dict, dict]:
+        events.append("collect")
+        assert c is portfolio_result[0][0] and kwargs["effective_priorities"] is portfolio_result[0][1]
+        assert kwargs["effective_priorities"] == {"Rated": 2, "Unrated": 3 if adaptive else 1}
+        assert all(actual is expected for actual, expected in zip(c.sources, config.sources[:2], strict=True))
+        assert set(kwargs) == {"effective_priorities", "fetch_metrics", "inventory"}
+        return {}, {}
+
+    monkeypatch.setattr("digest.config.load_config", lambda _: config)
+    monkeypatch.setattr("digest.adapters.storage.sources.load_source_state", lambda _: state)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback", collect_feedback)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", approve)
+    monkeypatch.setattr("digest.edition_runtime.recover_preparation", recover)
+    monkeypatch.setattr("digest.source_reading.preparation.setup_reading_budget", budget)
+    monkeypatch.setattr(source_scoring, "prepare_collection_portfolio", portfolio)
+    collector = AsyncMock(side_effect=collect)
+    monkeypatch.setattr("digest.radar.collect", collector)
+    if fail_feedback:
+        monkeypatch.setattr(source_scoring.feedback_rules, "get_source_feedback_score",
+                            Mock(side_effect=RuntimeError("feedback failure")))
+        with pytest.raises(RuntimeError, match="feedback failure"):
+            await _run("config.yaml", False, False, False, prepare_only=True)
+        collector.assert_not_awaited()
+        assert events == ["feedback", "approvals", "recovery", "budget", "portfolio"]
+        assert not list(tmp_path.iterdir())
+        return
+
+    result = await _run("config.yaml", False, False, False, prepare_only=True)
+    assert events == ["feedback", "approvals", "recovery", "budget", "portfolio", "collect"]
+    assert result.feeds_fetched == 3 and result.feedback_collected == 7 and result.new_articles == 0
+    assert not result.telegram_sent and not Path(".cache", READY_FILE).exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkpoint", ["accepted", "ready"])
+async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str,
+) -> None:
+    from digest.edition_runtime import ExistingEdition, FrozenPreparation
+    from digest.preparation import AcceptedPreparation
+    from tests.test_preparation import _snapshot
+
+    monkeypatch.chdir(tmp_path)
+    config = fixture_config()
+    config.review.review_led_only = True
+    recovered = (AcceptedPreparation(Path(".cache/pending_preparation.json"), "accepted", _snapshot())
+                 if checkpoint == "accepted" else ExistingEdition("ready", "ready"))
+    feedback = AsyncMock(return_value=(FeedbackStore(), True, 7))
+    approve = Mock(side_effect=lambda c, *args, **kwargs: (c, kwargs["execution"]))
+    present = AsyncMock(return_value=FrozenPreparation("ready", "ready", "ok", 1, None, ""))
+    portfolio = Mock(side_effect=AssertionError("Recovery cannot compose a fresh portfolio"))
+    budget = Mock(side_effect=AssertionError("Recovery cannot initialize a reading budget"))
+    collector = AsyncMock(side_effect=AssertionError("Recovery cannot collect"))
+    monkeypatch.setattr("digest.config.load_config", lambda _: config)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback", feedback)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", approve)
+    monkeypatch.setattr("digest.edition_runtime.recover_preparation", lambda _: recovered)
+    monkeypatch.setattr("digest.edition_runtime.present_preparation", present)
+    monkeypatch.setattr("digest.application.source_scoring.prepare_collection_portfolio", portfolio)
+    monkeypatch.setattr("digest.source_reading.preparation.setup_reading_budget", budget)
+    monkeypatch.setattr("digest.radar.collect", collector)
+
+    result = await _run("config.yaml", False, False, False, prepare_only=True)
+    assert result.edition_status == "ready" and result.feedback_collected == 7
+    feedback.assert_awaited_once()
+    approve.assert_called_once()
+    portfolio.assert_not_called()
+    budget.assert_not_called()
+    collector.assert_not_awaited()
+    if checkpoint == "accepted":
+        present.assert_awaited_once()
+        assert present.call_args.args[0] is recovered
+        assert present.call_args.kwargs["execution"] is approve.call_args.kwargs["execution"]
+    else:
+        present.assert_not_awaited()
 
 
 @pytest.mark.asyncio
