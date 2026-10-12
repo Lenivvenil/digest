@@ -53,7 +53,7 @@ separately from ordinary review-led cards.
 ## Try it safely
 
 Use **Python 3.12+**. From a checkout, install the engine and try the
-[disabled example](examples/config.example.yaml):
+[disabled example](docs/examples/config.example.yaml):
 
 ```sh
 git clone https://github.com/Lenivvenil/digest.git
@@ -61,7 +61,7 @@ cd digest
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install .
-python -m digest --config examples/config.example.yaml --dry-run --radar-only
+python -m digest --config docs/examples/config.example.yaml --dry-run --radar-only
 ```
 
 Installation downloads dependencies. The final command is an **offline, empty-input
@@ -119,7 +119,7 @@ is experimental, off by default and unnecessary for ordinary RSS-review cards.
 After the installation above:
 
 ```sh
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements/requirements-dev.txt
 make check
 ```
 
@@ -141,11 +141,12 @@ not guaranteed. Useful, faithful daily output is still being validated under
 Passing tests and confirmed delivery establish narrower facts.
 
 Use the [package version](pyproject.toml), an immutable engine commit and the
-[changelog](CHANGELOG.md) together. Follow [upgrade and retained-state guidance](docs/OPERATIONS.md#upgrades-and-retained-state)
+[changelog](docs/CHANGELOG.md) together. Follow [upgrade and retained-state guidance](docs/OPERATIONS.md#upgrades-and-retained-state)
 before changing a runtime pin.
 
 **No software license grant is supplied.** The repository has no LICENSE file or
 declared package license; a grant needs an explicit owner decision.
+[Third-party notices](docs/THIRD_PARTY_NOTICES.md) cover reused components.
 
 <a id="earlier-readme-section-links"></a>
 <a id="3-configure-a-live-report-only-run"></a>

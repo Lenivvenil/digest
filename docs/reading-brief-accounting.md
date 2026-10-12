@@ -74,7 +74,7 @@ pacer preserves prior request timing across a switch. These are local policies, 
 verified provider/account quotas. Already completed
 checksum-bound evidence can be validated without the optional tokenizer assets. A provider rejection does not trigger truncation or claim success.
 
-See [third-party notice](../THIRD_PARTY_NOTICES.md) for reused tokenizer code.
+See [third-party notice](THIRD_PARTY_NOTICES.md) for reused tokenizer code.
 
 ## Candidate and preparation boundary
 

@@ -142,7 +142,7 @@ source pages are a technical evidence handoff, not an accepted or published edit
 The former standalone reading-angle renderer and delivered-marking Python helpers
 have been retired; they were not a supported CLI path. Existing source snapshots and
 historical delivered records remain readable. See the
-[internal API compatibility note](../CHANGELOG.md#unreleased--reliability-rehabilitation).
+[internal API compatibility note](CHANGELOG.md#unreleased--reliability-rehabilitation).
 For the immutable reconciliation input, saved operation proof and parser limits,
 see [Reconciliation ownership](#reconciliation-ownership).
 The unused `digest.reading_points` grouped-point prototype is retired with immutable

@@ -15,7 +15,7 @@ from its own working directory. Two instances must not share writable state.
 The engine's CI checks source code; it does not install a daily schedule. A managed
 runtime owns its schedule, secrets, engine pin, serialized runs and Git persistence.
 
-Start from the [disabled example](../examples/config.example.yaml), replace the model
+Start from the [disabled example](examples/config.example.yaml), replace the model
 and feed placeholders, and enable the intended source. Keep Telegram and Markdown
 delivery disabled while reviewing an intentional live preview.
 
@@ -40,7 +40,7 @@ Use the README's disabled-example commands for an offline empty-input check.
 ### Environment variables
 
 Load selected credentials securely through the shell or runner. The engine does
-**not** automatically load `.env`; [.env.example](../.env.example) lists reference
+**not** automatically load `.env`; [.env.example](examples/.env.example) lists reference
 names only. Never put real credentials in a committed URL, screenshot, issue or log.
 
 | Variable | Purpose |

@@ -85,7 +85,7 @@ the eligible subset.
 These scenario outcome values add no persisted state machine or new schema. The
 separate supplementary-publication ready3 contract is described under [publication records](#publication-records). Supported CLI and run
 entrypoints remain stable; deliberate internal API retirements are listed in the
-[changelog](../CHANGELOG.md#unreleased--reliability-rehabilitation).
+[changelog](CHANGELOG.md#unreleased--reliability-rehabilitation).
 
 Category admission owns its historical completion and save decisions in
 `_accept_category_preparation`; `_prepare_category_edition` sequences the effects.

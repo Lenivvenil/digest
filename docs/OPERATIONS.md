@@ -348,7 +348,7 @@ editorial evaluation.
 
 ## Upgrades and retained state
 
-Use the package version, immutable commit and [changelog](../CHANGELOG.md) together.
+Use the package version, immutable commit and [changelog](CHANGELOG.md) together.
 Keep the previous engine pin and compatible runtime configuration for rollback.
 The runtime owns its [cache and archived evidence](STATE_AND_EFFECTS.md#publication-records);
 no database or always-on service is required.
