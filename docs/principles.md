@@ -48,7 +48,7 @@ on local installation; the repository CI does not run these checks.
 
 ### 4. Knowledge belongs in tools, not memory
 
-Everything significant belongs in git (`docs/decisions/`, `docs/domain/`, the `CLAUDE.md` index) and GitHub (Issues, Projects v2, PRs). Claude's memory is a cache, not the source of truth.
+Everything significant belongs in git (`docs/decisions/`, `docs/domain/`, the [AGENTS.md working guide](../AGENTS.md)) and GitHub (Issues, Projects v2, PRs). Claude's memory is a cache, not the source of truth.
 
 **Test:** any colleague (or you, three months later) can enter the repository and recover the context within an hour **without chat history or conversations**. If a verbal introduction is required, the documentation has regressed.
 
