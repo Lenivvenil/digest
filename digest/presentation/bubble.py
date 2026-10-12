@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from digest.domain.catalog.source_rules import _diversity_score
+from digest.domain.catalog.source_rules import recent_source_inclusions, source_inclusion_evenness
 from digest.domain.catalog.sources import SourceStateStore, SourceStats
 from digest.domain.feedback.values import FeedbackStore
 
@@ -18,6 +18,8 @@ def compute_bubble_report(
     now: datetime,
 ) -> str:
     """Build a single-screen filter bubble snapshot from cached data. No I/O."""
+    now = now.astimezone(timezone.utc)
+    today = now.date()
     lines: list[str] = ["=== Filter Bubble Report ==="]
     lines.append(f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
@@ -34,15 +36,13 @@ def compute_bubble_report(
     else:
         lines.append("Last digest: never")
 
-    score, label = _diversity_score(source_stats)
-    lines.append(f"Diversity: {label} ({score:.0f}/100)")
+    recent_sources = recent_source_inclusions(source_stats, today=today)
+    score, label = source_inclusion_evenness(recent_sources)
+    lines.append(f"Window: {today - timedelta(days=6)} to {today} (7 UTC calendar dates)")
+    lines.append(f"Source-inclusion evenness: {label} ({score:.0f}/100)")
+    lines.append("Recorded source counts only; missing or invalid dates are unobserved.")
+    lines.append("This does not measure publisher independence or viewpoint diversity.")
     lines.append("")
-
-    recent_sources: dict[str, int] = {}
-    for name, s in source_stats.items():
-        count = sum(snap.articles_included for snap in s.history[-7:])
-        if count > 0:
-            recent_sources[name] = count
 
     if recent_sources:
         total_recent = sum(recent_sources.values())
@@ -51,12 +51,12 @@ def compute_bubble_report(
             for src, count in recent_sources.items():
                 cat = category_map.get(src, "Other")
                 category_counts[cat] = category_counts.get(cat, 0) + count
-            lines.append("Your bubble (7d):")
+            lines.append("Category inclusions (7 UTC dates):")
             for cat, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
                 pct = round(count / total_recent * 100)
                 lines.append(f"  {cat}: {count} art ({pct}%)")
         else:
-            lines.append("Top sources (7d):")
+            lines.append("Top sources (7 UTC dates):")
             for name, count in sorted(recent_sources.items(), key=lambda x: x[1], reverse=True)[:5]:
                 lines.append(f"  {name}: {count} art")
         lines.append("")

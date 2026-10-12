@@ -46,6 +46,10 @@ Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATI
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
 separately from ordinary review-led cards.
 
+The owner-only `/bubble` command reports recorded source-inclusion counts and their
+evenness across seven UTC calendar dates. It does not measure viewpoint diversity;
+see the [report's window and limits](docs/OPERATIONS.md#source-inclusion-report).
+
 <a id="quick-start"></a>
 <a id="1-install-the-engine"></a>
 <a id="2-validate-an-example-without-credentials-or-external-requests"></a>

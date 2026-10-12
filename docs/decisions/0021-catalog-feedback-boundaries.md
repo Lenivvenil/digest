@@ -280,3 +280,44 @@ attribution snapshot. Recovery does not acquire a fresh portfolio. Exceptions
 propagate before collection, preserving already completed effects. The scenarios,
 collection arguments, policy arithmetic, persisted bytes and runtime settings are
 unchanged; this consolidation adds no class, port, model allowance or migration.
+
+## Source-inclusion report window — #132, 2026-10-12
+
+The historical `/bubble` implementation described seven days but summed each source's
+last seven retained records, independently of their dates. The corrected read model
+uses the seven UTC calendar dates ending on the already-observed report time. This
+amends the unchanged-rendering statement in the source-catalog extraction above;
+it does not alter history writers, retention, quality scoring, trending or allocation.
+
+`domain/catalog/source_rules.recent_source_inclusions(source_stats, *, today: date)`
+owns the fixed inclusive D-6 through D window. It scans all retained rows, accepts only
+canonical ISO calendar dates and sums valid in-window inclusions as stored. Older and
+future dates are excluded; missing, malformed, non-string or noncanonical dates cannot
+be assigned to the window.
+The existing permissive loader remains permissive, and the report neither repairs
+history nor invents a duplicate-date policy. Positive-count filtering and source
+iteration order remain unchanged; malformed-count handling is outside this correction.
+
+`source_inclusion_evenness(counts)` owns normalized Shannon arithmetic over that
+positive count map, without dates, history or clock access. The 70/40 thresholds
+remain, with `Even`, `Moderate` and `Concentrated` labels; the empty and one-source
+cases are `No recorded inclusions` and `Single source`. This distribution does not
+measure publisher independence, viewpoint diversity or filter-bubble reduction.
+
+Presentation converts its supplied observation to UTC, derives the date, obtains
+one count map and uses it for the score, source/category totals, percentages and
+source ordering. It prints the exact window and evidence limits. The application
+still samples once per report; feedback raw-event counting, lifecycle, category
+fallback, rounding, top-five limit, command authorization and transport are unchanged.
+
+The private `_diversity_score` name and `digest.source_scorer` re-export remain as a
+tiny delegate to the two functions, but now require keyword-only `today: date` and
+return the neutral labels. The former one-argument private invocation is explicitly
+retired, without a domain wall-clock default or a second window algorithm. The public
+`compute_bubble_report(...)` invocation remains unchanged. No persisted fields,
+configuration, dependencies, source activation or runtime-state migration are added.
+
+Offline calendar, permissive-read, count/score consistency and existing writer/command
+regressions establish the bounded report correction. They do not establish ordinary
+source usefulness, a deployed observation or #132's separate discovery/approval and
+portfolio-allocation acceptance. Refs #132; those obligations remain open.

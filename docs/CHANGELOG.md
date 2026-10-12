@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Make `/bubble` count recorded source inclusions on the seven UTC calendar dates
+  ending on its observed report date. Share those counts across the score and lists,
+  omit unusably dated history, and label source-inclusion evenness without claiming
+  viewpoint diversity. Retain history and transport; the private `_diversity_score`
+  wrapper now requires keyword-only `today`. Refs #132. See the
+  [ADR0021 amendment](decisions/0021-catalog-feedback-boundaries.md#source-inclusion-report-window--132-2026-10-12).
 - Avoid duplicate dependency-update proposals after root cleanup: the single root
   Dependabot pip scan already discovers immediate-child requirement manifests.
   Remove the overlapping directory declaration; retain all pins and moved paths. Refs #148.
