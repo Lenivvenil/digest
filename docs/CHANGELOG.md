@@ -43,6 +43,11 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Retire the import-only root `CLAUDE.md`; `AGENTS.md` remains the working guide.
+  Claude clients now use [native AGENTS support](https://code.claude.com/docs/en/memory#agentsmd)
+  under its documented version, settings and precedence conditions. Older or restricted
+  discovery modes no longer receive a repository-provided import bridge. Refs #148.
+
 - Consolidate pinned manifests under `requirements/`, disabled examples under
   `docs/examples/`, and release history and third-party attribution under `docs/`.
   Old root-relative source paths are retired; maintained commands and links use
