@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Retain each validated, deduplicated discovery proposal before a later validation
+  can be cancelled. Save pending before metadata, preserving valid work without
+  inventing provenance if the second write fails; ordinary preparation still
+  revalidates and may generate for remaining slots. Schema and send barriers are
+  unchanged. Refs #132. See the
+  [ADR0013 amendment](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
 - Make `/bubble` count recorded source inclusions on the seven UTC calendar dates
   ending on its observed report date. Share those counts across the score and lists,
   omit unusably dated history, and label source-inclusion evenness without claiming

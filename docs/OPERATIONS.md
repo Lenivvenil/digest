@@ -360,6 +360,15 @@ that skip. Confirmed messages, uncertain possible sends, reservations and explic
 API rejections remain distinct. Follow the [discovery state contract](ARCHITECTURE.md#trial-source-lifecycle-and-discovery)
 and [ADR-0013](decisions/0013-discovery-exploration-state.md) for persistence and cooldowns.
 
+After interrupted discovery preparation, inspect the existing pending and delivery
+files: each validated generated proposal is saved pending first, then its provenance.
+A metadata-write failure can leave valid pending work without a new area binding;
+do not delete it or invent the missing attribution. Normal preparation revalidates
+that same identity and deduplicates its saved final URL, while remaining slots may
+still call the model. No new reservation, prepare hashes or send follows the interrupted
+prepare. Local recovery depends on the runtime actually preserving both files;
+see [validated-prefix recovery and its limits](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
+
 Approval adds a priority-3 trial source; configuration and lifecycle state are separate
 under [ADR-0003](decisions/0003-source-state-split.md). Discovery does not change engine
 source files or install a weekly schedule. The proposal-generation slice of

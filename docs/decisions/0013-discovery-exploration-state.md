@@ -106,3 +106,45 @@ legacy metadata, persisted exact binding, same-run cooldown retries, expiry, ret
 area history and malformed/oversized state. Existing feed safety, configured fallback,
 pair-barrier and Add/Reject regressions remain required. No live feed/model calls or
 feed activation are part of this verification.
+
+## Validated-prefix recovery — #132, 2026-10-12
+
+After each generated feed passes the existing validator and final-URL deduplication,
+`application.discovery._generate_offers` saves the complete pending list strictly,
+then saves the existing delivery metadata, before the next validation await. Retain
+the safe final URL, original discovery timestamp, five-field proposal identity,
+requested area and generation binding/outcome. The pre-generation `started` save
+and final pending → reservation/batch → metadata → prepare-output barrier stay in place.
+
+These two checkpoint writes are ordered, not transactional:
+
+- If pending replacement fails, its metadata write and the next validation do not run;
+  the previously persisted prefix remains the recovery point
+- If pending succeeds but metadata replacement fails, the new valid proposal remains
+  pending, with absent or earlier-prefix attribution. Do not roll it back, infer its
+  area or reconstruct missing generation provenance
+- If both succeed and a later validation is cancelled, the saved prefix and metadata
+  remain. The cancelled, unsafe, rejected, malformed or duplicate suggestion adds
+  no pending identity or proposal-area binding
+
+Cancellation and strict write errors propagate. Existing handled generation/validation
+errors keep their current behavior. Interrupted preparation returns no prepared pair,
+emits no prepare output/hashes, creates no new reservation/batch and enters no send.
+Earlier receipts still obey existing holds and pruning. A saved attempt or validated
+proposal is neither an offer nor approval, confirmed delivery or source activation.
+
+The next ordinary preparation loads the same pending identity, revalidates eligible
+work under the existing three-check/cooldown rules, and includes its saved final URL
+in pending-URL prompt/deduplication handling. It need not be generated again to remain
+available; remaining slots may still call the model. There is no no-model-call,
+no-revalidation, automatic retry or exactly-once guarantee. Missing provenance stays
+missing. Storage retention still samples its own clock and keeps its existing 30-day
+policy; extra checkpoints do not guarantee byte parity across an expiry boundary.
+
+The schema, codecs, files, identity, call budgets and Add/Reject semantics are unchanged.
+Local atomic replacements are not remote durability: the runtime must preserve both
+files using its existing persistence step. Cancellation, timeout or runner loss may
+prevent that step; this engine change supplies no workflow-execution guarantee.
+Offline cancellation, ordered-write-failure, restart, success-parity and old-reader
+witnesses establish this bounded recovery behavior only. The wider #132 professional
+protection and ordinary recommendation-quality obligations remain open.

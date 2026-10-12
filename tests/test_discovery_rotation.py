@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import asdict
@@ -90,6 +91,8 @@ async def test_empty_invalid_and_failed_generations_complete_two_fair_passes(
         data = load_delivery(".cache")
         outcomes.append(data["generation"]["outcome"])
         assert data["area_offers"] == {}
+        assert data["proposal_areas"] == {}
+        assert load_pending(".cache", strict=True) == []
         assert data["batch"]["bindings"] == []
     assert requested == config.discovery.exploration_areas * 2
     assert outcomes == [
@@ -274,7 +277,7 @@ def test_metadata_write_bound_preserves_existing_file(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["prepare", "all"])
-@pytest.mark.parametrize("failure", [None, "pending", "reservation", "output"])
+@pytest.mark.parametrize("failure", [None, "pending", "checkpoint_metadata", "reservation", "output", "cancel"])
 async def test_discovery_output_is_between_durable_reservation_and_send(
     discovery_config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str], phase: str, failure: str | None,
@@ -288,10 +291,18 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     if failure == "output":
         output.mkdir()
-    monkeypatch.setattr("digest.llm.complete", AsyncMock(return_value=(
-        "FEED|https://example.com/barrier-feed|science|Barrier feed", {},
-    )))
-    monkeypatch.setattr("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=lambda url: url))
+    response = "FEED|https://example.com/barrier-feed|science|Barrier feed"
+    if failure == "cancel":
+        response += "\nFEED|https://example.com/cancelled|science|Cancelled"
+    monkeypatch.setattr("digest.llm.complete", AsyncMock(return_value=(response, {})))
+
+    async def validate(url: str) -> str:
+        if url.endswith("cancelled"):
+            assert events == ["pending", "checkpoint_metadata"]
+            raise asyncio.CancelledError
+        return url
+
+    monkeypatch.setattr("digest.discovery_feed.validate_feed_url", AsyncMock(side_effect=validate))
     events: list[str] = []
     prepared_outputs: list[PreparedDiscovery] = []
 
@@ -304,16 +315,21 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
             events.append("pending")
 
     def persist_delivery(data: dict[str, Any], cache_dir: str) -> None:
+        checkpoint = data["batch"] is None and data["generation"] and data["generation"]["bindings"]
+        if checkpoint and failure == "checkpoint_metadata":
+            raise OSError("injected checkpoint metadata failure")
         if data["batch"] is not None and failure == "reservation":
             raise OSError("injected reservation write failure")
         save_delivery(data, cache_dir)
+        if checkpoint:
+            events.append("checkpoint_metadata")
         if data["batch"] is not None:
             events.append("reservation")
 
     publish_outputs = reporting.publish_discovery_prepared
 
     def report(prepared: PreparedDiscovery) -> None:
-        assert events == ["pending", "reservation"]
+        assert events == ["pending", "checkpoint_metadata", "pending", "reservation"]
         assert prepared.pending_sha == hashlib.sha256((Path(".cache") / PENDING_FILE).read_bytes()).hexdigest()
         assert prepared.delivery_sha == hashlib.sha256((Path(".cache") / DELIVERY_FILE).read_bytes()).hexdigest()
         data = load_delivery(".cache")
@@ -327,7 +343,7 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
         prepared = prepared_outputs[0]
         assert output.read_text() == (f"discovery_pending_sha256={prepared.pending_sha}\n"
                                       f"discovery_delivery_sha256={prepared.delivery_sha}\n")
-        assert events[:3] == ["pending", "reservation", "output"]
+        assert events[:5] == ["pending", "checkpoint_metadata", "pending", "reservation", "output"]
         data = load_delivery(".cache")
         receipt = data["deliveries"][proposal_binding(proposal)]
         assert receipt["status"] == "unknown"
@@ -343,17 +359,22 @@ async def test_discovery_output_is_between_durable_reservation_and_send(
     monkeypatch.setattr(reporting, "publish_discovery_prepared", report)
     monkeypatch.setattr("digest.adapters.telegram.discovery.send_source_approval_message", transport)
     if failure:
-        with pytest.raises(OSError):
+        with pytest.raises(asyncio.CancelledError if failure == "cancel" else OSError):
             await discover_sources("config.yaml", phase=phase)
         transport.assert_not_awaited()
         assert capsys.readouterr().out == ""
+        if failure in {"cancel", "checkpoint_metadata"}:
+            assert len(load_pending(".cache", strict=True)) == 1
+            data = load_delivery(".cache")
+            assert data["batch"] is None and data["deliveries"] == {}
+            assert data["generation"]["outcome"] == ("proposed" if failure == "cancel" else "started")
         if failure != "output":
             assert not output.exists()
         else:
-            assert events == ["pending", "reservation"]
+            assert events == ["pending", "checkpoint_metadata", "pending", "reservation"]
         return
     assert await discover_sources("config.yaml", phase=phase) == 0
-    assert events[:3] == ["pending", "reservation", "output"]
+    assert events[:5] == ["pending", "checkpoint_metadata", "pending", "reservation", "output"]
     if phase == "all":
         transport.assert_awaited_once()
         assert json.loads(capsys.readouterr().out)["counts"]["confirmed"] == 1
