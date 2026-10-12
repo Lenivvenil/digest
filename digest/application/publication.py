@@ -90,7 +90,8 @@ async def assemble_publication(
         closing_snapshot=getattr(snapshot, "closing", None) is not None,
     )
     ranked: list[RankedSignal] = []
-    if config.review.enabled and config.review.review_led_only:
+    ordinary_review = config.review.enabled and config.review.review_led_only
+    if ordinary_review:
         status = IrritatorStatus(deferred_review_status(config.radar.language), "deferred")
     else:
         _, ranked, status = await run_irritator(snapshot.summaries, config, verbose, execution=execution)
@@ -108,6 +109,7 @@ async def assemble_publication(
             Path(".cache/translations"),
             selection_binding=asdict(closing),
             execution=execution,
+            retry_explicit_429=ordinary_review,
         )
     else:
         text, cards, ranked = await publication_presentation(
@@ -118,6 +120,7 @@ async def assemble_publication(
             Path(".cache/translations"),
             False,
             execution=execution,
+            retry_explicit_429=ordinary_review,
         )
         if closing is not None:
             closing_presentation = ClosingPresentation(closing.status, closing.reason)

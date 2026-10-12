@@ -78,12 +78,24 @@ Reuse requires matching slot/provider/model,
 bundle and current prompt identity plus valid retained selections. Accepted canonical
 preparation and frozen editions are not reinterpreted under this new-request policy.
 
-The scheduled `digest.review_resume` path has separate prepare/execute phases and a
-separately persisted one-attempt marker. The managed runtime persists the marker
-before execution; execution records its start in that marker before provider work.
-Its bounded results are archived as supplements; they do not create another primary
-Telegram edition or alter its deduplication outcome. Follow the current configured
-request allowance rather than assuming comparison is free.
+`digest.review_resume` keeps separate prepare/execute phases and its persisted
+one-time execution marker, validated and atomically marked started before requests.
+It now permits at most one physical attempt, preserving stricter limits and spent
+attempts. Manual invocations share this policy; `digest.review_trial` and ordinary
+independent comparison retain their existing defaults.
+
+Reusable valid slots are free. Resume admits at most one newly needed configured
+slot in primary, secondary, then third order; exhausted remaining allowance admits
+none. The third still requires valid disagreement. Held slots are `unavailable` with
+`new_slot_allowance_exhausted`, no attempt/generation timestamp or response identity,
+and no provider call or pacing wait. Reports render `request allowance exhausted
+(not attempted)`. Incomplete results do not establish comparison agreement.
+
+Results remain report-only supplements, with unchanged marker/output schemas and
+no new primary edition or deduplication effect. The paired
+[prepared-main recovery](decisions/0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55)
+transfers no unused allowance to resume. Primary fallback and investigation
+generation remain unchanged.
 
 ## Supplementary investigation
 

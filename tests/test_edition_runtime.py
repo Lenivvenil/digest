@@ -1035,3 +1035,38 @@ async def test_main_credit_crossing_chunk_boundary_holds_accepted_work_without_d
     assert path.read_bytes() == accepted_bytes and load_preparation() == snapshot
     assert not Path("digests").exists() and not Path(".cache", READY_FILE).exists()
     assert not Path(".cache", CLAIM_FILE).exists() and not Path(".cache/seen_articles.json").exists()
+
+
+@pytest.mark.parametrize(("ordinary", "closing"), [(True, False), (True, True), (False, False)])
+async def test_prepared_publication_owns_retry_opt_in_for_both_ordinary_branches(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    ordinary: bool, closing: bool,
+) -> None:
+    from digest.application.publication import assemble_publication
+    from digest.irritator import IrritatorStatus
+    from digest.translation import TranslationResult
+    from tests.test_translation import config as translation_config
+
+    config, original = setup
+    settings = translation_config()
+    config.translation, config.llm = settings.translation, settings.llm
+    config.review.enabled = config.review.review_led_only = ordinary
+    closer = ArticleSummary("Closing title", "https://example.com/good", "Closing source", "World", "Kindness.")
+    snapshot = bound_snapshot(original, closer if closing else None)
+    received: list[bool] = []
+
+    async def translate(fields: dict[str, str], *args: Any, **kwargs: Any) -> TranslationResult:
+        received.append(kwargs["retry_explicit_429"])
+        optional = TranslationResult({"closing.summary": kwargs["closing_summary"]}, "translated") if closing else None
+        return TranslationResult(fields, "translated", optional=optional)
+
+    monkeypatch.setattr("digest.translation.translate_fields", translate)
+    monkeypatch.setattr(
+        "digest.application.investigation.run_irritator",
+        AsyncMock(return_value=([], [], IrritatorStatus("Offline", "empty"))),
+    )
+    assembled = await assemble_publication(
+        snapshot, config, publication_date=datetime.now(timezone.utc).date(), execution=ModelExecution(),
+    )
+    assert received == [ordinary]
+    assert assembled.main_cards and (assembled.closing is not None) == closing

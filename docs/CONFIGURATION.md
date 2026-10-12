@@ -188,7 +188,7 @@ translation:
   target_language: ru
   provider: gemini             # Must exist in llm.providers or an explicit review route
   model: YOUR_GEMINI_MODEL_ID  # Exact match to that configured provider/model
-  max_calls: 1                # Per presentation pass, without HTTP retries
+  max_calls: 1                # Base batches; prepared main may make one extra 429 attempt
   timeout_seconds: 90         # Total budget, including shared pacing and the request
   max_output_tokens: 2048
   max_input_chars: 12000
@@ -199,20 +199,31 @@ and reasoning. Original titles, source metadata, URLs, literal quotations and ra
 reviews/evidence remain canonical. The target does not change analysis, review input
 or search queries. Telegram and Markdown receive the same presentation.
 
-The route is pinned with no automatic provider fallback or retry. Limits constrain
-optional presentation, not article selection. Oversized input or exhausted allowance
-keeps canonical publication with a visible status. The default total timeout is 90
-seconds; explicit values up to 180 are supported. Include provider pacing in that
-budget: a 65-second shared interval leaves little request time in a short budget.
-A known wait beyond the remaining deadline makes no attempt record or request.
-See [supplementary timing and canonical archives](decisions/0005-optional-presentation-translation.md#bounded-supplementary-presentation)
-for the separate post-delivery allowance; configuration does not establish free quota.
+The route is pinned without provider fallback. Ordinary prepared main presentation
+allows one same-route extra completion after an explicit HTTP 429, within shared
+cooldown and the same absolute deadline. `max_calls` limits base batches; cache hits
+are free, so opted-in invocations allow at most `max_calls + 1` calls, not two per
+batch. Manual preparation and accepted-work resume share that policy. Category,
+standalone, legacy, dry-run and supplementary callers keep their no-retry default.
+See the [exact recovery contract](decisions/0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55).
+
+Oversized input or exhausted allowance retains canonical publication. The default
+timeout remains 90 seconds; explicit values up to 180 remain supported. A separately
+configured 90-to-150 increase also lengthens standalone/legacy deadlines without
+enabling retry; there is no hard-coded 150-second clamp. Include pacing and cooldown
+in this budget: waits at or beyond the deadline cannot admit the extra call.
+Earlier caller and independent runner deadlines still apply. The
+[post-delivery extension](decisions/0005-optional-presentation-translation.md#bounded-supplementary-presentation)
+remains `min(timeout_seconds, 45)`; configuration proves neither free quota nor
+archive/persistence completion.
 
 Persist private `.cache/translations/` for primary reuse and the supplement's
 `.translations/` records beside its canonical `.irritator.json` archive. Compatible
-completed batches can be reused. An attempted failure or interruption ends translation
-for that canonical version; fallback may already have been delivered. Inspect the
-record before an explicit retry, and never delete delivery state to retry translation.
+completed batches can be reused. The bounded in-process extra attempt belongs to a
+single newly reserved batch. Saved failed, reserved or invalid records stay terminal;
+a later invocation cannot resume the extra attempt after interruption. Fallback may
+already have been delivered. Preserve retained state rather than deleting or
+rewriting it to retry translation; frozen ready editions remain authoritative.
 New canonical text, target, model or prompt gets a separate key. Dry-run uses temporary
 translation storage and may still consume quota.
 

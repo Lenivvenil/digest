@@ -90,11 +90,15 @@ def render_review(report: BlindReviewReport) -> str:
         lines.append(f"Selection overlap: {report.selection_overlap:.0%} (not factual agreement)")
     lines.append(f"Third-model decision: {report.third_model_reason}")
     for review in report.reviews:
+        allowance_exhausted = review.error == "new_slot_allowance_exhausted" and review.attempted_at is None
         lines.append(f"\n### {review.slot}: {review.provider}/{review.model} — {review.status}")
-        lines.append(f"Resolved model: {review.resolved_model or 'not reported by provider'}")
+        resolved_model = "not requested" if allowance_exhausted else review.resolved_model or "not reported by provider"
+        lines.append(f"Resolved model: {resolved_model}")
         provenance = "reused checkpoint" if review.reused_from_checkpoint else "new attempt"
         if review.error == "pending_independent_review" and review.attempted_at is None:
             provenance = "pending independent review (not attempted)"
+        elif allowance_exhausted:
+            provenance = "request allowance exhausted (not attempted)"
         lines.append(f"Provenance: {provenance}; attempted: {review.attempted_at or 'not recorded'}; "
                      f"generated: {review.generated_at or 'not recorded'}")
         for selection in review.selections:
@@ -111,5 +115,7 @@ def render_review(report: BlindReviewReport) -> str:
             lines.append(f"- Rejected selection {rejected.index}: {rejected.reason}")
         if review.error:
             label = "Partial review validation" if review.status == "partial" else "Review unavailable"
+            if allowance_exhausted:
+                label = "Review not attempted"
             lines.append(f"- {label}: {review.error}")
     return "\n".join(lines)

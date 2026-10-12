@@ -42,7 +42,7 @@ the remaining fresh/shared policies are preserved:
 | Config-only replacement | Pass the identical holder, including source-portfolio and presentation-language variants. |
 | Nested LLM replacement | Select a fresh holder unless the specific sharing exception below applies. There is no automatic rule inferred from object identity. |
 | Primary review, with or without reading | Initialize caller settings, then give review a separate holder sharing that state. Primary and possible secondary use that same derived holder, with zero-retry settings. |
-| Translation | Initialize caller before shallow-copying its LLM settings; give translation a separate sharing holder and keep its zero-retry policy. |
+| Translation | Initialize caller before shallow-copying its LLM settings; give translation a separate sharing holder and keep provider `max_retries=0`. The [bounded prepared-main amendment](0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55) permits one application-owned extra completion. |
 | Reading and reconciliation operations | Call `request_budget_remaining` first, then derive a separate sharing holder and shallow settings copy. Existing route-specific pacing remains dynamic. |
 | RSS evidence, translation disabled and no full-source evidence | Fresh holder; initialize from the bounded settings (concurrency 1, interval 65 seconds). |
 | Evidence with translation enabled or full-source evidence | Initialize caller settings, then derive a sharing holder. The caller's already-sized semaphore remains authoritative even though bounded settings say concurrency 1. |
@@ -130,9 +130,10 @@ all runtime evidence and budgets; no state migration or reset is required.
 `complete` accepts an optional call-local `http_rejections` list. Only an
 `HTTPStatusError` in its existing catch produces a frozen `HTTPRejection`: supplied
 HTTP status, the existing allowlisted code, numeric Retry-After and four numeric
-request/token limit/remaining headers. Provider helpers, tuples/usage, exceptions,
-routing, retries, reservations, cooldowns and pacing are unchanged. A projection
-failure omits diagnostics without replacing the original error or its policy.
+request/token limit/remaining headers. This diagnostic addition did not change
+provider helpers, tuples/usage, exceptions, routing, retries, reservations, cooldowns
+or pacing. A projection failure omits diagnostics without replacing the original
+error. The bounded recovery amendment below now uses these facts for admission.
 
 Status is an integer 100–599. Retry-After requires at most 32 ASCII decimal
 characters, no sign/exponent, and finite 0–86400 seconds. Quota headers require
@@ -150,3 +151,17 @@ Successful/reserved/cached records gain neither metadata nor writes. Absence mea
 unknown, never zero attempts. This is no complete physical-attempt or quota-cause
 claim. Review/investigation persistence, countTokens, success usage and broader
 G5/free-operation, semantic and runtime acceptance remain open under #55.
+
+### Bounded rejection admission (#55)
+
+[ADR0005](0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55)
+now uses call-local explicit HTTP 429 facts for one prepared-main extra completion.
+Missing diagnostics fail closed; raw shared cooldown controls waiting. Provider
+`max_retries=0`, pacing and physical reservation ordering remain unchanged. Failure
+metadata describes only the final attempted call; successful retries retain none.
+
+`run_evidence_review` adds keyword-only `new_slot_limit: int | None = None`: `None`
+keeps existing admission; explicit values must be nonnegative integers, not booleans.
+[Report-only resume](../ADVANCED_OPERATIONS.md#independent-comparison-and-resume)
+combines bounded slot admission with the existing physical request cap, retaining
+stricter limits and spent attempts. No allowance transfers between executions.
