@@ -3,6 +3,9 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Avoid duplicate dependency-update proposals after root cleanup: the single root
+  Dependabot pip scan already discovers immediate-child requirement manifests.
+  Remove the overlapping directory declaration; retain all pins and moved paths. Refs #148.
 - Preserve full numeric literals beside unit suffixes during presentation translation,
   admitting unchanged-value spacing and rejecting changed attached values. Saved
   translations retain existing revalidation/fallback without rewrite or retry. Refs #55.
