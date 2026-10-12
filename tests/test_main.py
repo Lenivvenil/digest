@@ -847,6 +847,93 @@ async def test_votes_persist_with_adaptation_off_and_delivery_failure_managed_ru
         assert load_feedback(".cache", strict=True).ratings == [vote]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adaptive,fail_scoring", [(False, False), (True, False), (True, True)])
+async def test_direct_collection_uses_real_portfolio_after_approvals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adaptive: bool, fail_scoring: bool,
+) -> None:
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from digest.application import source_scoring
+    from digest.application.legacy import _collect_legacy
+    from digest.config import SourceConfig
+    from digest.domain.catalog.sources import SourceStateStore, SourceStats
+    from digest.feedback import ArticleFeedback
+    from scripts.review_fixture import fixture_config
+
+    monkeypatch.chdir(tmp_path)
+    initial = fixture_config()
+    approved = replace(initial, sources=[
+        SourceConfig("Rated", "https://example.com/rated", "Tech", True),
+        SourceConfig("Unrated", "https://example.com/unrated", "Tech", True, priority=1),
+        SourceConfig("Demoted", "https://example.com/demoted", "Tech", True),
+        SourceConfig("Disabled", "https://example.com/disabled", "Tech", False),
+    ])
+    approved.adaptive.enabled = adaptive
+    state = SourceStateStore()
+    state.mark_demoted("Demoted")
+    stats = {"Rated": SourceStats("Rated")}
+    feedback = FeedbackStore(
+        ratings=[ArticleFeedback("rated", "Rated", -1, datetime.now(timezone.utc).isoformat())],
+        article_source_map={"previous": "Previous"},
+    )
+    initial_execution, approved_execution = ModelExecution(), ModelExecution()
+    events: list[str] = []
+    real_portfolio = source_scoring.prepare_collection_portfolio
+    portfolio_result = []
+
+    async def collect_feedback(*args, **kwargs):
+        events.append("feedback")
+        return feedback, True, 7
+
+    def approve(config, *args, **kwargs):
+        assert config is initial and kwargs["execution"] is initial_execution
+        events.append("approvals")
+        return approved, approved_execution
+
+    def portfolio(config, source_state, source_stats, feedback_store):
+        assert config is approved and source_state is state and source_stats is stats and feedback_store is feedback
+        assert events == ["feedback", "approvals"]
+        events.append("portfolio")
+        result = real_portfolio(config, source_state, source_stats, feedback_store)
+        portfolio_result.append(result)
+        return result
+
+    async def collect(config, **kwargs):
+        assert events == ["feedback", "approvals", "portfolio"]
+        events.append("collect")
+        assert config is portfolio_result[0][0]
+        assert kwargs["effective_priorities"] is portfolio_result[0][1]
+        assert kwargs["effective_priorities"] == {"Rated": 2, "Unrated": 3 if adaptive else 1}
+        assert all(actual is expected for actual, expected in zip(config.sources, approved.sources[:2], strict=True))
+        assert set(kwargs) == {"effective_priorities", "fetch_metrics"}
+        feedback.article_source_map["later"] = "Later"
+        return {}, {"seen": "unchanged"}
+
+    monkeypatch.setattr("digest.adapters.storage.sources.load_source_state", lambda _: state)
+    monkeypatch.setattr("digest.adapters.storage.sources.load_stats", lambda _: stats)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback", collect_feedback)
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals", approve)
+    monkeypatch.setattr(source_scoring, "prepare_collection_portfolio", portfolio)
+    collector = AsyncMock(side_effect=collect)
+    monkeypatch.setattr("digest.radar.collect", collector)
+    if fail_scoring:
+        monkeypatch.setattr(source_scoring, "calculate_score", MagicMock(side_effect=RuntimeError("quality failure")))
+        with pytest.raises(RuntimeError, match="quality failure"):
+            await _collect_legacy(initial, "config.yaml", False, False, True, execution=initial_execution)
+        collector.assert_not_awaited()
+        assert events == ["feedback", "approvals", "portfolio"] and not list(tmp_path.iterdir())
+        return
+
+    collected = await _collect_legacy(initial, "config.yaml", False, False, True, execution=initial_execution)
+    assert events == ["feedback", "approvals", "portfolio", "collect"]
+    assert collected.config is approved and collected.execution is approved_execution
+    assert collected.feeds_count == 3 and collected.feedback_collected == 7
+    assert collected.previous_article_sources == {"previous": "Previous"}
+    assert collected.collected_cache == {"seen": "unchanged"}
+
+
 @pytest.mark.parametrize(
     ("enabled", "decisions"),
     [

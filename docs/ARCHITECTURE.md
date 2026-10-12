@@ -73,6 +73,7 @@ owns outcomes, reference checks and write order.
 
 | Boundary | Rule | Code owner |
 | --- | --- | --- |
+| Source configuration + feedback → collection portfolio | Preserve ordered enabled/non-demoted source objects and per-source observations; choose existing adaptive or feedback-only priorities. Both fresh preparation and direct execution use this owner. | [collection portfolio](../digest/application/source_scoring.py), [preparation caller](../digest/application/preparation.py), [direct caller](../digest/application/legacy.py) |
 | Observation → candidate | Preserve exact source occurrences and distinguish eligibility, review progress and delivery evidence. | [candidate values](../digest/domain/editorial/candidates.py), [candidate policy](../digest/domain/editorial/candidate_policy.py) |
 | Candidate → packet → review | Admission is bounded; persist the planned packet before review. Shared request bytes bind planning, execution and resume. | [candidate application](../digest/application/candidate_review.py), [request builder](../digest/application/review_request.py), [review application](../digest/application/review.py) |
 | Review → accepted preparation | Selected cards or a qualifying primary abstention are canonical work; incomplete output is not an accepted empty edition. | [preparation application](../digest/application/preparation.py), [checkpoint codec and accepted reference](../digest/preparation.py) |
