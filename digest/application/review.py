@@ -228,8 +228,11 @@ async def run_evidence_review(
     cached_reviews: list[ModelReview] | None = None,
     *,
     execution: ModelExecution,
+    new_slot_limit: int | None = None,
 ) -> BlindReviewReport:
     """Resume only independently validated successes for the identical evidence and prompt."""
+    if new_slot_limit is not None and (type(new_slot_limit) is not int or new_slot_limit < 0):
+        raise ValueError("New review slot limit must be a nonnegative integer.")
     settings = config.review
     validate_request_evidence_bundle(
         bundle, max_evidence_articles=settings.max_evidence_articles, max_excerpt_chars=settings.max_excerpt_chars
@@ -255,9 +258,17 @@ async def run_evidence_review(
         if reused is not None:
             reusable[name] = reused
 
+    missing = [name for name, model in models.items() if model is not None and name not in reusable]
+    admitted = set(missing[:new_slot_limit])
+
     async def slot(name: str, model: ReviewModelConfig, *, execution: ModelExecution) -> ModelReview:
         if name in reusable:
             return reusable[name]
+        if name not in admitted:
+            return ModelReview(
+                name, model.provider, model.model, bundle.bundle_id, prompt_hash, "unavailable",
+                error="new_slot_allowance_exhausted",
+            )
         return (await _review_slot(name, model, bundle, messages, config, execution=execution)).review
 
     reviews = list(
@@ -277,8 +288,13 @@ async def run_evidence_review(
     if valid and overlap is not None and overlap < settings.disagreement_threshold:
         reason = "third_model_not_configured"
         if settings.tie_breaker:
-            reviews.append(await slot("third", settings.tie_breaker, execution=execution))
-            reason = "selection_overlap_below_threshold"
+            third = await slot("third", settings.tie_breaker, execution=execution)
+            reviews.append(third)
+            reason = (
+                "new_slot_allowance_exhausted"
+                if third.error == "new_slot_allowance_exhausted" and third.attempted_at is None
+                else "selection_overlap_below_threshold"
+            )
     return BlindReviewReport(
         SCHEMA_VERSION,
         bundle,

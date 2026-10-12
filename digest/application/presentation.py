@@ -101,6 +101,7 @@ async def publication_presentation(
     dry_run: bool,
     *,
     execution: ModelExecution,
+    retry_explicit_429: bool = False,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal]]:
     if not getattr(getattr(config, "translation", None), "enabled", False):
         return combined, cards, ranked
@@ -117,5 +118,8 @@ async def publication_presentation(
                 config,
                 Path(temporary),
                 execution=execution,
+                retry_explicit_429=retry_explicit_429,
             )
-    return await translate_publication_presentation(combined, cards, ranked, config, cache, execution=execution)
+    return await translate_publication_presentation(
+        combined, cards, ranked, config, cache, execution=execution, retry_explicit_429=retry_explicit_429,
+    )

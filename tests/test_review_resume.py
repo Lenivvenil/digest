@@ -12,9 +12,10 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from httpx import AsyncClient, MockTransport, Request, Response
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.review import run_blind_review
+from digest.application.review import run_blind_review, run_evidence_review
 from digest.review_resume import execute_resume, prepare_resume
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response
 
@@ -136,13 +137,18 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
         return await fixture_response(role, messages, config, **kwargs)
 
     with patch("digest.application.review.complete", side_effect=response):
-        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 0
-    assert calls == ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
+    assert calls == ["openai/gpt-oss-120b"]
     assert path.read_bytes() == before
     resumed = json.loads((path.parent / "day.review-resumed.json").read_text())
     assert resumed["evidence"] == json.loads(before)["evidence"]
     assert resumed["reviews"][0] == {**payload["reviews"][0], "reused_from_checkpoint": True}
-    assert (path.parent / "day.review-resumed.md").exists()
+    third = resumed["reviews"][2]
+    assert third["error"] == resumed["third_model_reason"] == "new_slot_allowance_exhausted"
+    assert third["attempted_at"] is None and third["generated_at"] is None
+    markdown = (path.parent / "day.review-resumed.md").read_text()
+    assert "request allowance exhausted (not attempted)" in markdown
+    assert "new attempt" not in markdown.split("### third:")[1]
     with patch("digest.application.review.complete", AsyncMock()) as complete:
         with pytest.raises(ValueError):
             await execute_resume(Path("config.yaml"), path, execution=execution)
@@ -150,17 +156,20 @@ async def test_resume_calls_only_missing_slots_and_keeps_production_evidence(tmp
 
 
 @pytest.mark.asyncio
-async def test_both_main_failures_recover_with_two_calls_and_explicit_escalation_budget(tmp_path: Path) -> None:
+async def test_both_main_failures_admit_only_primary_and_leave_comparison_incomplete(tmp_path: Path) -> None:
     execution = ModelExecution()
     path = tmp_path / "digests/day.review.json"
     await _checkpoint(path, failed=("primary", "secondary"))
     assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
     with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
         assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
-    assert complete.call_count == 2
+    assert complete.call_count == 1
+    assert complete.call_args.kwargs["provider_override"].model == fixture_config().review.primary.model
     resumed = json.loads((path.parent / "day.review-resumed.json").read_text())
     assert [review["slot"] for review in resumed["reviews"]] == ["primary", "secondary"]
-    assert resumed["third_model_reason"] == "resume_request_budget_exhausted"
+    assert resumed["third_model_reason"] == "incomplete_primary_comparison"
+    assert resumed["reviews"][1]["error"] == "new_slot_allowance_exhausted"
+    assert resumed["reviews"][1]["attempted_at"] is None
     assert resumed["status"] == "incomplete"
 
 
@@ -235,3 +244,138 @@ async def test_resume_preserves_separate_source_provenance_without_promoting_rss
     assert {key: resumed[key] for key in provenance} == provenance
     assert resumed["evidence"] == json.loads(json.dumps(payload["evidence"]))
     assert "full_source_evidence" not in resumed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agree", [False, True])
+async def test_resume_reuses_both_primaries_and_only_calls_needed_third(agree: bool, tmp_path: Path) -> None:
+    path = tmp_path / "digests/day.review.json"
+    payload = await _checkpoint(path, failed=())
+    payload["status"] = "incomplete"
+    if agree:
+        payload["reviews"][1]["selections"] = payload["reviews"][0]["selections"]
+    path.write_text(json.dumps(payload))
+    before = path.read_bytes()
+    assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
+        assert await execute_resume(Path("config.yaml"), path, execution=ModelExecution()) == 0
+    assert complete.call_count == (0 if agree else 1)
+    if not agree:
+        assert complete.call_args.kwargs["provider_override"].model == "qwen/qwen3.8-27b"
+    assert path.read_bytes() == before
+    resumed = json.loads(path.with_name("day.review-resumed.json").read_text())
+    assert all(review["reused_from_checkpoint"] for review in resumed["reviews"][:2])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("local_limit", "spent"), [(0, 0), (1, 1), (5, 2), (None, 1)])
+async def test_resume_keeps_stricter_or_spent_allowance_without_attempt_timestamps(
+    local_limit: int | None, spent: int, tmp_path: Path,
+) -> None:
+    execution = ModelExecution()
+    state = execution.request_state(fixture_config().llm)
+    state.request_limit = local_limit
+    state.requests_attempted = spent
+    path = tmp_path / "digests/day.review.json"
+    await _checkpoint(path, failed=("primary", "secondary"))
+    before = path.read_bytes()
+    assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
+    with (patch("digest.application.review.complete", AsyncMock()) as complete,
+          patch("digest.llm._pace_request", AsyncMock()) as pace):
+        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
+    complete.assert_not_called()
+    pace.assert_not_called()
+    assert state.requests_attempted == spent
+    assert state.request_limit == (0 if local_limit == 0 else 1)
+    assert path.read_bytes() == before
+    assert json.loads(_marker(path).read_text())["execution_started_at"]
+    resumed = json.loads(path.with_name("day.review-resumed.json").read_text())
+    for review in resumed["reviews"]:
+        assert review["error"] == "new_slot_allowance_exhausted"
+        assert review["attempted_at"] is None and review["generated_at"] is None
+        assert review["response_sha256"] is None and review["resolved_model"] is None
+        assert review["usage"] == {} and review["selections"] == []
+
+
+@pytest.mark.asyncio
+async def test_resume_shared_budget_exhaustion_denies_admission_before_pacing(tmp_path: Path) -> None:
+    path = tmp_path / "digests/day.review.json"
+    await _checkpoint(path)
+    assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
+    with (patch("digest.review_resume.request_budget_remaining", return_value=0),
+          patch("digest.application.review.complete", AsyncMock()) as complete,
+          patch("digest.llm._pace_request", AsyncMock()) as pace):
+        assert await execute_resume(Path("config.yaml"), path, execution=ModelExecution()) == 2
+    complete.assert_not_called()
+    pace.assert_not_called()
+    resumed = json.loads(path.with_name("day.review-resumed.json").read_text())
+    assert resumed["reviews"][0]["reused_from_checkpoint"]
+    assert resumed["reviews"][1]["error"] == "new_slot_allowance_exhausted"
+    assert resumed["reviews"][1]["attempted_at"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bypass_admission", [False, True])
+async def test_resume_one_physical_request_cap_with_real_completion_owner(
+    bypass_admission: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "digests/day.review.json"
+    await _checkpoint(path)
+    before = path.read_bytes()
+    assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
+    execution = ModelExecution()
+    requests: list[Request] = []
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-test-key")
+
+    def handler(request: Request) -> Response:
+        assert json.loads(_marker(path).read_text())["execution_started_at"]
+        requests.append(request)
+        return Response(200, json={
+            "choices": [{"message": {"content": json.dumps({
+                "selections": [], "limitations": ["Synthetic abstention."],
+            })}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "model": "openai/gpt-oss-120b",
+        })
+
+    def client() -> AsyncClient:
+        return AsyncClient(transport=MockTransport(handler), trust_env=False)
+
+    async def review(*args: Any, **kwargs: Any) -> Any:
+        assert kwargs["new_slot_limit"] == 1
+        if bypass_admission:
+            kwargs.pop("new_slot_limit")
+        return await run_evidence_review(*args, **kwargs)
+
+    with (patch("digest.llm.httpx.AsyncClient", side_effect=client),
+          patch("digest.review_resume.run_evidence_review", side_effect=review),
+          patch("digest.llm._pace_request", AsyncMock()) as pace):
+        assert await execute_resume(Path("config.yaml"), path, execution=execution) == 2
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["model"] == "openai/gpt-oss-120b"
+    state = execution.request_state(fixture_config().llm)
+    assert state.requests_attempted == state.request_limit == 1
+    assert pace.await_count == (2 if bypass_admission else 1)
+    assert path.read_bytes() == before
+    resumed = json.loads(path.with_name("day.review-resumed.json").read_text())
+    third = resumed["reviews"][2]
+    assert third["status"] == "unavailable" and third["usage"] == {}
+    if not bypass_admission:
+        assert third["error"] == "new_slot_allowance_exhausted" and third["attempted_at"] is None
+    else:
+        assert third["error"] == "RuntimeError" and third["attempted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_resume_marker_write_failure_forbids_requests_and_output(tmp_path: Path) -> None:
+    path = tmp_path / "digests/day.review.json"
+    await _checkpoint(path)
+    assert prepare_resume(Path("config.yaml"), path.parent, NOW) == path
+    marker_before = _marker(path).read_bytes()
+    with (patch("digest.review_resume.atomic_json_write", side_effect=OSError("Synthetic disk failure")),
+          patch("digest.application.review.complete", AsyncMock()) as complete):
+        with pytest.raises(OSError, match="Synthetic disk failure"):
+            await execute_resume(Path("config.yaml"), path, execution=ModelExecution())
+    complete.assert_not_called()
+    assert _marker(path).read_bytes() == marker_before
+    assert not path.with_name("day.review-resumed.json").exists()

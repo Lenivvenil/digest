@@ -8,6 +8,7 @@ import os
 import textwrap
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -346,7 +347,7 @@ async def test_primary_preview_cleans_temporary_cache_when_presentation_raises(t
     temporary_cache: Path | None = None
     failure = ValueError("Invalid presentation cache")
 
-    async def fail(_summary, _cards, signals, _config, cache, *, execution):
+    async def fail(_summary, _cards, signals, _config, cache, *, execution, retry_explicit_429=False):
         nonlocal temporary_cache
         assert signals == [] and cache.is_dir()
         temporary_cache = cache
@@ -546,6 +547,7 @@ async def test_supplement_copies_prose_and_preserves_evidence_with_shared_deadli
     from digest.translation import translate_supplement_presentation
 
     cfg = config()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
     source = Signal("https://example.com/source", "Literal title", "Unchanged excerpt.", "hn", "", 0)
     narrative = EvidenceNarrative(
         "Only enrolled clients.", "Category", [], "Reason.", ["S1"], {"S1": "Literal evidence."}
@@ -1296,3 +1298,318 @@ def test_oversized_canonical_field_detail_is_omitted() -> None:
     assert _with_failure_diagnostics(record, [], "protected_content", error) == {
         **record, "validation_reason": "protected_content",
     }
+
+
+@pytest.fixture
+def retry_clock(monkeypatch: pytest.MonkeyPatch) -> tuple[list[float], list[float]]:
+    """Exercise real request owners without real waiting or provider credentials."""
+    clock, waits = [100.0], []
+    for name in tuple(os.environ):
+        if name.startswith("DIGEST_MODEL_BUDGET_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-offline-key")
+
+    async def sleep(delay: float) -> None:
+        waits.append(delay)
+        clock[0] += delay
+
+    monkeypatch.setattr("digest.llm.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("digest.llm.asyncio.sleep", sleep)
+    return clock, waits
+
+
+def translated_response(request: httpx.Request) -> httpx.Response:
+    fields = json.loads(json.loads(request.content)["messages"][1]["content"])["fields"]
+    text = json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]})
+    return httpx.Response(200, json={"choices": [{"message": {"content": text}, "finish_reason": "stop"}]})
+
+
+@respx.mock
+@pytest.mark.parametrize(("retry_after", "combined", "wait"), [
+    (None, False, 60), ("invalid", True, 60), ("30", False, 30), ("1e2", True, 100),
+])
+async def test_opted_in_retry_reuses_raw_cooldown_and_exact_reserved_request(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]],
+    retry_after: str | None, combined: bool, wait: float,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    cfg.llm.min_request_interval_seconds = 20
+    clock, waits = retry_clock
+    starts: list[float] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        starts.append(clock[0])
+        if len(starts) == 1:
+            return httpx.Response(429, json={"error": {"code": "rate_limit_exceeded", "message": "PRIVATE"}},
+                                  headers={"retry-after": retry_after} if retry_after is not None else {})
+        return translated_response(request)
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    fields = {"a": "Only 20 participating clients."}
+    result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True,
+                                    closing_summary="Help arrived." if combined else None)
+    assert result.status == "translated" and result.calls == 2
+    assert execution.request_state(cfg.llm).requests_attempted == route.call_count == 2
+    assert starts == [100, 100 + wait] and waits == [wait]
+    assert route.calls[0].request.content == route.calls[1].request.content
+    assert json.loads(route.calls[1].request.content)["max_completion_tokens"] == cfg.translation.max_output_tokens
+    path, = tmp_path.glob("*.json")
+    record, saved = json.loads(path.read_text()), path.read_bytes()
+    assert record["schema_version"] == (2 if combined else 1) and record["status"] == "translated"
+    assert "http_rejection" not in record and "PRIVATE" not in saved.decode()
+    assert result.optional is None or result.optional.status == "translated"
+    replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True,
+                                    closing_summary="Help arrived." if combined else None)
+    assert replay.cache_hits == 1 and replay.calls == 0 and replay.fields == result.fields
+    assert path.read_bytes() == saved and route.call_count == 2
+
+
+@respx.mock
+@pytest.mark.parametrize("kind", ["deadline", "long_raw", "extended", "pacing", "earlier_deadline"])
+async def test_retry_waits_cannot_cross_original_or_earlier_deadline(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    clock, waits = retry_clock
+    state = execution.request_state(cfg.llm)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        clock[0] += 13
+        if kind == "pacing":
+            state.next_request_at = 250
+        return httpx.Response(429, headers={"retry-after": {"deadline": "137", "long_raw": "86401"}.get(kind, "60")})
+
+    async def extend(delay: float) -> None:
+        waits.append(delay)
+        clock[0] += delay
+        state.unavailable_until[(cfg.translation.provider, cfg.translation.model)] = 250
+
+    if kind == "extended":
+        monkeypatch.setattr("digest.translation.asyncio.sleep", extend)
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    result = await translate_fields({"a": "Original."}, cfg, tmp_path, execution=execution,
+                                    deadline=170 if kind == "earlier_deadline" else None, retry_explicit_429=True)
+    assert result.status == "fallback" and result.calls == route.call_count == state.requests_attempted == 1
+    assert waits == ([60] if kind == "extended" else [])
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert record["status"] == "incomplete" and record["http_rejection"]["http_status"] == 429
+    if kind == "long_raw":
+        assert record["http_rejection"]["retry_after_seconds"] is None
+        assert state.unavailable_until[(cfg.translation.provider, cfg.translation.model)] == 113 + 86401
+
+
+@respx.mock
+@pytest.mark.parametrize("kind", ["default", "server", "transport", "completion", "validation", "repeated"])
+async def test_retry_is_exclusive_to_one_explicit_429(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], kind: str,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if kind == "transport":
+            raise httpx.ReadTimeout("Unknown completion", request=request)
+        if kind == "completion":
+            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}, "finish_reason": "length"}]})
+        if kind == "validation":
+            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]})
+        return httpx.Response(503 if kind == "server" else 429, headers={"retry-after": "0"})
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    fields = {"a": "Original."}
+    result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=kind != "default")
+    expected = 2 if kind == "repeated" else 1
+    assert result.fields == fields and result.status == "fallback"
+    assert result.calls == execution.request_state(cfg.llm).requests_attempted == route.call_count == expected
+    path, = tmp_path.glob("*.json")
+    saved = path.read_bytes()
+    record = json.loads(saved)
+    assert record["error_kind"] == {"completion": "completion_incomplete", "validation": "contract_invalid"}.get(
+        kind, "provider_failure",
+    )
+    if kind == "repeated":
+        assert record["http_rejection"]["http_status"] == 429
+    replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True)
+    assert replay.calls == 0 and replay.reasons == ["previous_attempt_incomplete"]
+    assert path.read_bytes() == saved and route.call_count == expected
+
+
+@respx.mock
+@pytest.mark.parametrize("max_calls", [1, 2])
+async def test_only_one_retry_beyond_base_batch_allowance(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], max_calls: int,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, max_calls=max_calls, max_input_chars=256, timeout_seconds=150)
+    fields = {"a": "Only clients. " * 10, "b": "Only partners. " * 10}
+    attempts: dict[str, int] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        identity = json.loads(json.loads(request.content)["messages"][1]["content"])["fields"][0]["id"]
+        attempts[identity] = attempts.get(identity, 0) + 1
+        if attempts[identity] == 1:
+            return httpx.Response(429, headers={"retry-after": "0"})
+        return translated_response(request)
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True)
+    assert result.calls == route.call_count == execution.request_state(cfg.llm).requests_attempted == max_calls + 1
+    assert attempts == ({"a": 2} if max_calls == 1 else {"a": 2, "b": 1})
+    assert result.fields == fields and result.status == "fallback"
+    assert ("request_allowance" in result.reasons) == (max_calls == 1)
+    if max_calls == 1:
+        resumed = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True)
+        assert resumed.status == "translated" and resumed.cache_hits == 1 and resumed.calls == 2
+        assert attempts == {"a": 2, "b": 2} and route.call_count == 4
+
+
+@respx.mock
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_retry_reservation_stays_exclusive_during_wait_and_interruption(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch, cancel: bool,
+) -> None:
+    import asyncio
+
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    clock, waits = retry_clock
+    fields = {"a": "Original."}
+    observed: list[bytes] = []
+
+    async def observe(delay: float) -> None:
+        path, = tmp_path.glob("*.json")
+        saved = path.read_bytes()
+        assert json.loads(saved)["status"] == "reserved"
+        replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True)
+        assert replay.calls == 0 and replay.reasons == ["previous_attempt_incomplete"]
+        assert path.read_bytes() == saved
+        observed.append(saved)
+        if cancel:
+            raise asyncio.CancelledError
+        waits.append(delay)
+        clock[0] += delay
+
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(429) if requests == 1 else translated_response(request)
+
+    monkeypatch.setattr("digest.translation.asyncio.sleep", observe)
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    if cancel:
+        with pytest.raises(asyncio.CancelledError):
+            await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True)
+    else:
+        result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True)
+        assert result.status == "translated" and result.calls == 2
+    assert len(observed) == 1 and route.call_count == (1 if cancel else 2)
+    path, = tmp_path.glob("*.json")
+    saved = path.read_bytes()
+    assert json.loads(saved)["status"] == ("incomplete" if cancel else "translated")
+    replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True)
+    assert replay.calls == 0 and path.read_bytes() == saved
+
+
+@respx.mock
+@pytest.mark.parametrize("combined", [False, True])
+async def test_retry_final_write_failure_never_releases_reservation_or_makes_third_call(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch, combined: bool,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"retry-after": "0"}) if calls == 1 else translated_response(request)
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    def fail_write(*_: object) -> None:
+        raise OSError("write failed")
+
+    monkeypatch.setattr("digest.translation.atomic_json_write", fail_write)
+    fields = {"a": "Original."}
+    result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True,
+                                    closing_summary="Kind." if combined else None)
+    assert result.calls == route.call_count == execution.request_state(cfg.llm).requests_attempted == 2
+    assert result.status == ("translated" if combined else "fallback")
+    if combined:
+        assert result.optional is not None and result.optional.reasons == ["closing_cache_unavailable"]
+    path, = tmp_path.glob("*.json")
+    saved = path.read_bytes()
+    assert json.loads(saved)["status"] == "reserved"
+    replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True,
+                                    closing_summary="Kind." if combined else None)
+    assert replay.status == "fallback" and replay.calls == 0 and path.read_bytes() == saved
+
+
+@respx.mock
+@pytest.mark.parametrize("failure", ["rejection_projection", "reservation_write"])
+async def test_missing_rejection_facts_or_failed_reservation_cannot_authorize_retry(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    cfg, execution = config(), ModelExecution()
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(429)
+
+    def fail(*_: object) -> None:
+        raise OSError("Unavailable evidence")
+
+    monkeypatch.setattr("digest.llm._http_rejection" if failure == "rejection_projection"
+                        else "digest.translation.os.fsync", fail)
+    result = await translate_fields({"a": "Original."}, cfg, tmp_path, execution=execution, retry_explicit_429=True)
+    assert result.status == "fallback"
+    assert route.call_count == result.calls == (1 if failure == "rejection_projection" else 0)
+    saved = next(tmp_path.glob("*.json")).read_bytes()
+    assert "http_rejection" not in json.loads(saved)
+    replay = await translate_fields(
+        {"a": "Original."}, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True,
+    )
+    assert replay.calls == 0 and next(tmp_path.glob("*.json")).read_bytes() == saved
+
+
+async def test_opted_in_closing_keeps_configured_and_earlier_deadline_minimum(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from digest import translation
+
+    cfg = config()
+    cfg.translation = replace(cfg.translation, timeout_seconds=180)
+    card = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Original.")
+    closer = replace(card, title="Closing", link="https://example.com/closing", summary="Kind.")
+    deadlines: list[float] = []
+    timeout_at = asyncio.timeout_at
+
+    def record_timeout(deadline: float) -> asyncio.Timeout:
+        deadlines.append(deadline)
+        return timeout_at(deadline)
+
+    async def answer(
+        _role: Any, messages: list[dict[str, str]], _config: Any, **_kwargs: Any,
+    ) -> tuple[str, dict[str, str]]:
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": item["text"]} for item in fields]}), {
+            "finish_reason": "stop",
+        }
+
+    original = translation._translate_publication_presentation
+
+    async def delayed_entry(*args: Any, **kwargs: Any) -> Any:
+        retry_clock[0][0] += 10
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr("digest.translation.asyncio.timeout_at", record_timeout)
+    monkeypatch.setattr("digest.translation.complete", answer)
+    monkeypatch.setattr("digest.translation._translate_publication_presentation", delayed_entry)
+    await translation.translate_publication_with_closing(
+        "", [card], [], closer, cfg, tmp_path / "closing", execution=ModelExecution(), retry_explicit_429=True,
+    )
+    await translate_fields({"a": "Original."}, cfg, tmp_path / "earlier", execution=ModelExecution(),
+                           deadline=130, retry_explicit_429=True)
+    assert deadlines == [280, 130]  # Outer closing deadline survives entry delay; no source-level 150 clamp.

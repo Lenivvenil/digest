@@ -13,12 +13,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from digest.adapters.models.execution import ModelExecution
-from digest.application.review import run_blind_review
+from digest.application.review import run_blind_review, run_evidence_review
 from digest.application.review_request import build_evidence_bundle
 from digest.config import ReviewConfig, _load_review
 from digest.delivery.markdown import write_digest
 from digest.domain.editorial.attempts import restore_review
-from digest.domain.editorial.reviews import BlindReviewReport, _parse_review
+from digest.domain.editorial.reviews import BlindReviewReport, ModelReview, RejectedSelection, _parse_review
 from digest.domain.editorial.summaries import ArticleSummary
 from digest.presentation.review import future_feed_date_cards, literal_article_title, primary_cards, render_review
 from scripts.review_fixture import fixture_articles, fixture_config, fixture_response, run_fixture
@@ -449,3 +449,144 @@ def test_review_status_pending_is_not_unavailable_in_russian():
     assert "ожидает отдельного этапа" in text
     assert "secondary" not in text and "unavailable" not in text
     assert "ещё не завершено" in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cached_slots", "limit", "expected_calls", "held_slots"),
+    [
+        ((), 0, [], ["primary", "secondary"]),
+        ((), 1, ["primary"], ["secondary"]),
+        (("primary",), 1, ["secondary"], ["third"]),
+        (("secondary",), 1, ["primary"], ["third"]),
+        (("primary", "secondary"), 1, ["third"], []),
+        (("primary", "secondary", "third"), 0, [], []),
+        (("primary", "third"), 1, ["secondary"], []),
+        ((), None, ["primary", "secondary", "third"], []),
+    ],
+)
+async def test_new_slot_admission_is_ordered_and_reusable_reviews_are_free(
+    cached_slots: tuple[str, ...], limit: int | None, expected_calls: list[str], held_slots: list[str],
+) -> None:
+    original = await run_fixture(execution=ModelExecution())
+    config = fixture_config()
+    models = {
+        "primary": config.review.primary, "secondary": config.review.secondary, "third": config.review.tie_breaker,
+    }
+    cached = [review for review in reversed(original.reviews) if review.slot in cached_slots]
+    before = deepcopy([asdict(review) for review in cached])
+    with patch("digest.application.review.complete", side_effect=fixture_response) as complete:
+        report = await run_evidence_review(
+            original.evidence, config, cached, execution=ModelExecution(), new_slot_limit=limit,
+        )
+    assert [call.kwargs["provider_override"].model for call in complete.call_args_list] == [
+        models[name].model for name in expected_calls
+    ]
+    assert [asdict(review) for review in cached] == before
+    assert [review.slot for review in report.reviews if review.error == "new_slot_allowance_exhausted"] == held_slots
+    for review in report.reviews:
+        if review.slot in cached_slots:
+            previous = next(item for item in before if item["slot"] == review.slot)
+            assert asdict(review) == {**previous, "reused_from_checkpoint": True}
+        if review.slot in held_slots:
+            previous = next(item for item in original.reviews if item.slot == review.slot)
+            assert review == ModelReview(
+                previous.slot, previous.provider, previous.model, previous.bundle_id, previous.prompt_hash,
+                "unavailable", error="new_slot_allowance_exhausted",
+            )
+    assert report.status == ("incomplete" if held_slots else "complete")
+    if held_slots == ["third"]:
+        assert report.third_model_reason == "new_slot_allowance_exhausted"
+    elif held_slots:
+        assert report.third_model_reason == "incomplete_primary_comparison"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [-1, True, 1.5, "1"])
+async def test_new_slot_limit_rejects_non_integer_or_negative_values_before_requests(limit: object) -> None:
+    config = fixture_config()
+    bundle = build_evidence_bundle(fixture_articles(), config.review)
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
+        with pytest.raises(ValueError, match="nonnegative integer"):
+            await run_evidence_review(bundle, config, execution=ModelExecution(), new_slot_limit=limit)
+    complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_slot_limit_preserves_partial_reuse_and_incomplete_comparison() -> None:
+    original = await run_fixture(execution=ModelExecution())
+    original.reviews[0].status = "partial"
+    original.reviews[0].rejected_items = [RejectedSelection(2, "unknown evidence id")]
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
+        report = await run_evidence_review(
+            original.evidence, fixture_config(), original.reviews, execution=ModelExecution(), new_slot_limit=0,
+        )
+    complete.assert_not_called()
+    assert report.reviews[0].status == "partial" and report.reviews[0].reused_from_checkpoint
+    assert len(report.reviews) == 2 and report.status == "incomplete"
+    assert report.selection_overlap is None and report.third_model_reason == "incomplete_primary_comparison"
+
+
+@pytest.mark.asyncio
+async def test_new_slot_limit_still_validates_cache_and_denies_wrong_request_binding() -> None:
+    original = await run_fixture(execution=ModelExecution())
+    config = fixture_config()
+    cached = deepcopy(original.reviews)
+    cached[0].prompt_hash = "another-request"
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
+        held = await run_evidence_review(
+            original.evidence, config, cached, execution=ModelExecution(), new_slot_limit=0,
+        )
+    complete.assert_not_called()
+    assert held.reviews[0].error == "new_slot_allowance_exhausted"
+    assert not held.reviews[0].reused_from_checkpoint
+    cached = deepcopy(original.reviews)
+    cached[0].selections[0] = replace(cached[0].selections[0], quote="Not supplied.")
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
+        with pytest.raises(ValueError):
+            await run_evidence_review(
+                original.evidence, config, cached, execution=ModelExecution(), new_slot_limit=0,
+            )
+    complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disagreement", [False, True])
+async def test_admitted_third_is_not_called_without_disagreement_or_configured_model(disagreement: bool) -> None:
+    original = await run_fixture(execution=ModelExecution())
+    config = fixture_config()
+    if disagreement:
+        config.review.tie_breaker = None
+    else:
+        original.reviews[1].selections = deepcopy(original.reviews[0].selections)
+    with patch("digest.application.review.complete", AsyncMock()) as complete:
+        report = await run_evidence_review(
+            original.evidence, config, original.reviews[:2], execution=ModelExecution(), new_slot_limit=1,
+        )
+    complete.assert_not_called()
+    assert report.status == "complete" and len(report.reviews) == 2
+    assert report.third_model_reason == ("third_model_not_configured" if disagreement else "no_selection_disagreement")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "attempted_at", "expected"),
+    [
+        ("new_slot_allowance_exhausted", None, "request allowance exhausted (not attempted)"),
+        ("new_slot_allowance_exhausted", "2026-10-12T01:00:00+00:00", "new attempt"),
+        ("RuntimeError", None, "new attempt"),
+    ],
+)
+async def test_render_marks_only_closed_unattempted_exhaustion(
+    error: str, attempted_at: str | None, expected: str,
+) -> None:
+    original = await run_fixture(execution=ModelExecution())
+    original.reviews = [replace(
+        original.reviews[0], status="unavailable", selections=[], error=error, attempted_at=attempted_at,
+    )]
+    markdown = render_review(original)
+    assert f"Provenance: {expected};" in markdown
+    if expected == "request allowance exhausted (not attempted)":
+        assert "Resolved model: not requested" in markdown
+        assert "Review not attempted: new_slot_allowance_exhausted" in markdown
+        assert "not reported by provider" not in markdown and "new attempt" not in markdown

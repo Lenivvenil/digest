@@ -1,6 +1,6 @@
 # ADR-0005: Opt-in translation of publication text
 
-Status: accepted, implemented and deployed. Finite runtime acceptance under #94 passed on 2026-10-03: independently reviewed ordinary archived narrative translation using prompt v2, exact canonical fallback on a rate limit, and confirmed compact delivery/archive state. General semantic fidelity is not claimed.
+Status: the original translation slice is accepted, implemented and deployed. Finite runtime acceptance under #94 passed on 2026-10-03: independently reviewed ordinary archived narrative translation using prompt v2, exact canonical fallback on a rate limit, and confirmed compact delivery/archive state. The bounded recovery amendment below is tracked separately under #55; it does not extend that runtime evidence. General semantic fidelity is not claimed.
 
 ## Context and authority
 
@@ -30,8 +30,9 @@ identities and must remain unchanged.
   free-only runtime. No new credentials or provider is configured automatically.
 - Retain canonical text and cache compatible translated batches by canonical content,
   target, provider/model and prompt identity. Reserve before a call; incomplete/unknown
-  attempts do not automatically repeat. A cache failure prevents the call or falls back
-  to canonical text. A partial translated batch is never a mixed-language publication.
+  attempts do not automatically repeat. Only the [bounded prepared-main recovery](#bounded-prepared-main-429-recovery-55)
+  below permits an in-process extra attempt on a newly reserved batch. A cache failure
+  prevents the call or falls back to canonical text. A partial translated batch is never a mixed-language publication.
 - Use the same presentation for Telegram and Markdown; never change delivery accounting
   or resend policy. Dry-run translation uses temporary storage only.
 
@@ -89,9 +90,9 @@ This is headroom, not a delivery or provider-latency guarantee.
 
 The evidence-stage configuration clone explicitly shares its pacing/cooldown runtime
 with presentation when translation is enabled. No quota independence is assumed for
-different models or providers. There are no extra retries, workflow timeout increases,
-new feature flags or scheduling changes. With the existing 65-second shell delay, the
-post-delivery step is bounded by 320 seconds including dispatch, within its 360-second
+different models or providers. This supplementary path adds no retries, workflow
+timeout increases, new feature flags or scheduling changes. With the existing
+65-second shell delay, the post-delivery step is bounded by 320 seconds including dispatch, within its 360-second
 step limit. A full 360-second comparison step leaves 40 seconds of the 720-second job
 for setup/persistence; the hard job timeout remains the final bound, not a guarantee
 that arbitrary runner/install latency will fit. Absent/disabled translation preserves
@@ -126,7 +127,8 @@ Failed required translation batches may retain `validation_reason`: one of
 controlled error during `contract_invalid`; legacy `error="ValueError"` remains.
 The optional field is added after normal record sizing and omitted if it cannot
 fit. Absence means unavailable, including historical records. Old readers ignore
-it and failed reservations remain terminal; no retry or prompt binding changes.
+it and failed reservations remain terminal; this diagnostic addition changes neither
+retry policy nor prompt binding.
 
 Only the closed code is retained, never response excerpts or exception text.
 The optional closer's existing `closing_contract_invalid` fallback is separate
@@ -168,3 +170,64 @@ newly accepted unit-spacing translations through its existing fallback, also wit
 rewrite or retry. Frozen ready payloads remain authoritative and are not reparsed.
 These synthetic compatibility checks do not identify a historical failure's cause
 or establish broader #55 runtime acceptance.
+
+## Bounded prepared-main 429 recovery (#55)
+
+Ordinary prepared publication (`review.enabled` and `review.review_led_only`) opts
+both main-only and selected-closing presentation into keyword-only
+`retry_explicit_429`. Translation helpers and the application wrapper default it to
+false. Manual prepared commands and new translation while resuming accepted work
+share this owner policy, without scheduler detection. Category, standalone, legacy,
+dry-run and supplementary callers keep their false default; frozen editions bypass
+translation.
+
+`translation.max_calls` bounds newly attempted base batches; cache hits are free.
+Opted-in invocations allow at most one extra `complete()` call in total, not per
+batch: at most `max_calls + 1`, or two when configured as one. `TranslationResult.calls`
+includes the extra but is not an exact transport ledger: shared admission can hold a
+call before dispatch. Each physical attempt retains its existing model-budget
+reservation without refund. Other callers retain the existing call ceiling.
+
+Only a first completion raising `RuntimeError` with exactly one call-local rejection
+whose integer HTTP status is 429 permits the extra. Missing diagnostics fail closed;
+exception text, historical metadata and optional provider error codes cannot admit
+it. Route, messages, output limit and provider `max_retries=0` stay unchanged. A second
+429, timeout, cancellation, 5xx, credential failure, unknown/incomplete completion,
+validation failure or persistence failure receives no retry.
+
+The existing shared cooldown, including raw `Retry-After` handling and its 60-second
+fallback, is authoritative; longer waits are not shortened. Bounded diagnostic header
+values do not drive waiting. Before waiting and again before the extra completion,
+admission checks route cooldown and existing pacing against the same absolute
+deadline. At or beyond that deadline, fallback retains the first rejection without
+a second call. Shared cooldown extensions are rechecked after sleeping; waiting and
+completion stay inside one deadline, never renewed per batch or attempt.
+
+The configured timeout and any earlier caller/closing deadline remain authoritative.
+Default 90 and the supported range are unchanged; a separately reviewed setting
+change from 90 to 150 supplies 150, without a hard-coded engine clamp. That shared
+setting also lengthens standalone and legacy deadlines without enabling retry. The
+[post-delivery extension](#bounded-supplementary-presentation) remains
+`min(configured translation seconds, 45)`. Independent runner deadlines still apply;
+translation headroom does not guarantee archive or persistence completion.
+
+Both calls use the same exclusive, flushed/fsynced cache reservation, with no
+intermediate write permitting another process to retry. Concurrent access or a crash
+leaves the reservation terminal. Valid successful records reuse; saved failed,
+reserved, malformed or newly invalid records stay held without rewrite or calls.
+Final atomic replacement gains no directory-fsync guarantee. Existing combined-record
+persistence failure can retain validated main prose in memory while omitting the
+closer and leaving the reservation terminal; it never grants another call.
+
+Failed-record diagnostics describe only the final attempted completion, or the first
+rejection if no extra call was admitted. Success retains no rejection metadata or
+first-attempt history. Cache schemas, prompt/request hashes, canonical text and
+validators are unchanged; retry/time allowance is not request identity. Rollback
+restores the previous engine pin and timeout while preserving caches, accepted
+preparations, markers, archives, ready editions, claims, receipts and coverage.
+Never delete state to unlock recovery.
+
+The paired [one-attempt report-only resume](../ADVANCED_OPERATIONS.md#independent-comparison-and-resume)
+receives no unused translation allowance. Primary fallback and investigation
+generation remain unchanged. This does not identify the limiting provider quota
+or establish semantic fidelity or broader #55 runtime acceptance.

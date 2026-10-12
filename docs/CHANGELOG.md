@@ -43,6 +43,14 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Allow one bounded same-route explicit-429 recovery per ordinary prepared-main
+  translation invocation, paired with one physical attempt in report-only resume.
+  Other translation callers retain no-retry defaults; historical cache/frozen state,
+  request identities and timeout defaults/range stay unchanged. A configured
+  90-to-150-second increase remains separate. Refs #55. See the
+  [recovery contract](decisions/0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55)
+  and [resume admission](ADVANCED_OPERATIONS.md#independent-comparison-and-resume).
+
 - Retire the import-only root `CLAUDE.md`; `AGENTS.md` remains the working guide.
   Claude clients now use [native AGENTS support](https://code.claude.com/docs/en/memory#agentsmd)
   under its documented version, settings and precedence conditions. Older or restricted

@@ -24,7 +24,7 @@ from digest._serialization import extract_json as _extract_json
 from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig, TranslationConfig
-from digest.llm import HTTPRejection, LLMRole, complete
+from digest.llm import HTTPRejection, LLMRole, complete, request_wait_seconds
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
@@ -400,10 +400,26 @@ def _read_batch(
     return main, closing
 
 
+async def _wait_for_translation_retry(
+    config: Config, execution: ModelExecution, route: ProviderConfig, deadline: float,
+) -> None:
+    """Honor the existing route cooldown without restarting the translation deadline."""
+    state = execution.request_state(config.llm)
+    while True:
+        cooldown = state.unavailable_until.get((route.name, route.model), 0.0)
+        now = time.monotonic()
+        if max(cooldown, now + request_wait_seconds(config, execution)) >= deadline:
+            raise RuntimeError("Translation retry wait exceeds its time allowance.")
+        if cooldown <= now:
+            return
+        await asyncio.sleep(cooldown - now)
+
+
 async def translate_fields(
     fields: dict[str, str], config: Config, cache_dir: Path, *, execution: ModelExecution,
     deadline: float | None = None,
     closing_summary: str | None = None, selection_binding: object = None,
+    retry_explicit_429: bool = False,
 ) -> TranslationResult:
     settings = config.translation
     result = TranslationResult(dict(fields), "disabled")
@@ -438,6 +454,8 @@ async def translate_fields(
         cache_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError):
         return TranslationResult(dict(fields), "fallback", reasons=["cache_unavailable"])
+    base_calls = 0
+    retry_used = False
     for batch in batches:
         requested = {**batch, "closing.summary": closing_summary or ""} if batch is closing_batch else batch
         selection_hash = _digest(selection_binding) if batch is closing_batch else None
@@ -456,7 +474,7 @@ async def translate_fields(
             if time.monotonic() >= deadline:
                 result.reasons.append("time_allowance")
                 continue
-            if result.calls >= settings.max_calls:
+            if base_calls >= settings.max_calls:
                 result.reasons.append("request_allowance")
                 continue
             cooldown = shared_state.unavailable_until.get((route.name, route.model), 0.0)
@@ -482,16 +500,33 @@ async def translate_fields(
                 json.dump(record, handle, ensure_ascii=False)
                 handle.flush()
                 os.fsync(handle.fileno())
+            base_calls += 1
             result.calls += 1
             phase = "provider_failure"
             http_rejections: list[HTTPRejection] = []
             try:
                 async with asyncio.timeout_at(deadline):
-                    response, usage = await complete(LLMRole.SUMMARIZE, messages, translation_config,
-                                                     execution=translation_execution,
-                                                     http_rejections=http_rejections,
-                                                     provider_override=route, temperature=0,
-                                                     max_output_tokens=settings.max_output_tokens)
+                    try:
+                        response, usage = await complete(
+                            LLMRole.SUMMARIZE, messages, translation_config,
+                            execution=translation_execution, http_rejections=http_rejections,
+                            provider_override=route, temperature=0, max_output_tokens=settings.max_output_tokens,
+                        )
+                    except RuntimeError:
+                        if (not retry_explicit_429 or retry_used or len(http_rejections) != 1
+                                or http_rejections[0].http_status != 429):
+                            raise
+                        # One extra belongs to this invocation and exclusive reservation.
+                        retry_used = True
+                        await _wait_for_translation_retry(config, execution, route, deadline)
+                        # Final failure diagnostics describe only the final attempted call.
+                        http_rejections = []
+                        result.calls += 1
+                        response, usage = await complete(
+                            LLMRole.SUMMARIZE, messages, translation_config,
+                            execution=translation_execution, http_rejections=http_rejections,
+                            provider_override=route, temperature=0, max_output_tokens=settings.max_output_tokens,
+                        )
                 phase = "completion_incomplete"
                 if usage.get("finish_reason") not in {"stop", "STOP"}:
                     raise ValueError("Translation completion is incomplete or unknown.")
@@ -542,11 +577,11 @@ def _ranked_view(ranked: list["RankedSignal"], result: TranslationResult) -> lis
 
 async def translate_publication_presentation(
     summary: str, cards: list["ArticleSummary"], ranked: list["RankedSignal"], config: Config, cache_dir: Path,
-    *, execution: ModelExecution,
+    *, execution: ModelExecution, retry_explicit_429: bool = False,
 ) -> tuple[str, list["ArticleSummary"], list["RankedSignal"]]:
     """One presentation budget for all generated legacy publication prose."""
     presented, output, signals, _ = await _translate_publication_presentation(
-        summary, cards, ranked, config, cache_dir, execution=execution,
+        summary, cards, ranked, config, cache_dir, execution=execution, retry_explicit_429=retry_explicit_429,
     )
     return presented, output, signals
 
@@ -554,7 +589,7 @@ async def translate_publication_presentation(
 async def _translate_publication_presentation(
     summary: str, cards: list[ArticleSummary], ranked: list[RankedSignal], config: Config, cache_dir: Path,
     *, execution: ModelExecution, deadline: float | None = None, closing_summary: str | None = None,
-    selection_binding: object = None,
+    selection_binding: object = None, retry_explicit_429: bool = False,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal], TranslationResult]:
     """Keep main fields intact; only a fitting closer changes its one batch's request binding."""
     from digest.radar.collector import article_hash
@@ -575,7 +610,8 @@ async def _translate_publication_presentation(
                     [replace(item, reasoning=item.reasoning + "\n\n" + notice) for item in ranked], result)
         fields[identity] = card.summary
     result = await translate_fields(fields, config, cache_dir, execution=execution, deadline=deadline,
-                                    closing_summary=closing_summary, selection_binding=selection_binding)
+                                    closing_summary=closing_summary, selection_binding=selection_binding,
+                                    retry_explicit_429=retry_explicit_429)
     if result.status == "disabled":
         return summary, cards, ranked, result
     presented = result.fields.get("category_digest", summary)
@@ -588,6 +624,7 @@ async def _translate_publication_presentation(
 async def translate_publication_with_closing(
     summary: str, cards: list[ArticleSummary], ranked: list[RankedSignal], closing_card: ArticleSummary,
     config: Config, cache_dir: Path, *, execution: ModelExecution, selection_binding: object = None,
+    retry_explicit_429: bool = False,
 ) -> tuple[str, list[ArticleSummary], list[RankedSignal], ClosingPresentation]:
     """Fit optional prose into an existing main request and validate its response separately."""
     from digest.radar.collector import article_hash
@@ -599,6 +636,7 @@ async def translate_publication_with_closing(
     text, presented, signals, main_result = await _translate_publication_presentation(
         summary, cards, ranked, config, cache_dir, execution=execution, deadline=deadline,
         closing_summary=None if duplicate else closing_card.summary, selection_binding=selection_binding,
+        retry_explicit_429=retry_explicit_429,
     )
     if duplicate:
         return text, presented, signals, ClosingPresentation("incomplete", "duplicate_article_identity")

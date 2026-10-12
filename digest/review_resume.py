@@ -30,6 +30,7 @@ from digest.domain.editorial.reviews import (
     reusable_model_review,
     review_prompt_hash,
 )
+from digest.llm import request_budget_remaining, set_request_limit
 from digest.presentation.review import render_review
 
 _MAX_AGE = timedelta(hours=24)
@@ -173,7 +174,7 @@ def prepare_resume(config_path: Path, reports_dir: Path, now: datetime | None = 
 async def execute_resume(
     config_path: Path, checkpoint_path: Path, *, execution: ModelExecution,
 ) -> int:
-    """Use at most two missing-slot attempts; never overwrite source evidence."""
+    """Use at most one missing-slot attempt; never overwrite source evidence."""
     checkpoint = _safe_path(checkpoint_path)
     marker, output, markdown = _siblings(checkpoint)
     if not marker.is_file() or marker.is_symlink():
@@ -189,16 +190,14 @@ async def execute_resume(
     if (record.get("checkpoint_sha256") != hashlib.sha256(content).hexdigest()
             or record.get("bundle_id") != bundle.bundle_id):
         raise ValueError("Checkpoint no longer matches its persisted attempt marker.")
-    reusable = _reusable_slots(bundle, cached, config)
-    limited_third = config.review.tie_breaker is not None and not ({"primary", "secondary"} & reusable)
-    if limited_third:
-        config.review.tie_breaker = None
     record["execution_started_at"] = datetime.now(UTC).isoformat()
     atomic_json_write(marker, record)
-    report = await run_evidence_review(bundle, config, cached, execution=execution)
-    if limited_third and report.third_model_reason == "third_model_not_configured":
-        report.third_model_reason = "resume_request_budget_exhausted"
-        report.status = "incomplete"
+    previous_limit = execution.request_state(config.llm).request_limit
+    set_request_limit(config, execution, min(1, previous_limit) if previous_limit is not None else 1)
+    remaining = request_budget_remaining(config, execution)
+    report = await run_evidence_review(
+        bundle, config, cached, execution=execution, new_slot_limit=min(1, remaining) if remaining is not None else 1,
+    )
     save_resumed_review_archive(output, report, content)
     with markdown.open("x", encoding="utf-8") as handle:
         handle.write("# Report-only resumed review\n" + render_review(report) + "\n")
