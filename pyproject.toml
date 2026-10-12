@@ -13,7 +13,7 @@ dependencies = [
 reading-brief = ["tiktoken==0.14.0"]
 
 [tool.setuptools]
-license-files = ["THIRD_PARTY_NOTICES.md"]
+license-files = ["docs/THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
 include = ["digest*"]

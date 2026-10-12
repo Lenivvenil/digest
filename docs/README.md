@@ -7,7 +7,8 @@ Choose the task in front of you. Each route leads to the guide that owns the det
 ## Try or run
 
 - **[Try the safe example](../README.md#try-it-safely)** — install and run an offline,
-  empty-input check
+  empty-input check; reference [configuration](examples/config.example.yaml) and
+  [environment variables](examples/.env.example)
 - **[Set up a live runtime](CONFIGURATION.md#runtime-configuration)** — keep secrets,
   source configuration, schedules and saved state separate from the engine
 - **[Choose models and sources](CONFIGURATION.md#model-routes)** — configure entitled
@@ -66,7 +67,7 @@ and decision context; they are not current setup instructions:
   [terse summaries and bubble plan](plans/completed/terse-summaries-and-bubble.md) and
   [Reddit QA report](history/reddit-qa.md)
 - [April 24 historical output](history/output/2026-04-24.md) and
-  [changelog](../CHANGELOG.md), retained as history rather than current quality evidence
+  [changelog](CHANGELOG.md), retained as history rather than current quality evidence
 
 Original versions of translated documents remain in Git history. ADR bodies and
 historical issue/PR discussions retain their original context.

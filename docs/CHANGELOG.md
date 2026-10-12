@@ -40,18 +40,25 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Consolidate pinned manifests under `requirements/`, disabled examples under
+  `docs/examples/`, and release history and third-party attribution under `docs/`.
+  Old root-relative source paths are retired; maintained commands and links use
+  the new paths. The packaged notice's `License-File` metadata and archive-member
+  path migrate with it. Dependency pins, example and notice contents, runtime
+  behavior and retained state are unchanged. Refs #148.
+
 - Share collection-portfolio composition between fresh preparation and direct
   execution through the existing source-scoring application. Preserve source
   identity/order, per-source clocks, allocation rules and scenario effect boundaries;
   no runtime setting or retained-state change. Refs #148. See the
-  [ADR0021 ownership amendment](docs/decisions/0021-catalog-feedback-boundaries.md#collection-portfolio-ownership--2026-10-12).
+  [ADR0021 ownership amendment](decisions/0021-catalog-feedback-boundaries.md#collection-portfolio-ownership--2026-10-12).
 
 - Group the six optional source-reading implementations under `digest.source_reading`
   and shorten the working guide around canonical documentation. Retire old internal
   Python imports; preserve `python -m digest.reconciliation_checkpoint` as the CLI
   entrypoint. Retained wire, request hashes and execution ordering stay unchanged;
   reading remains off by default. Refs #148. See the
-  [ADR0009 layout migration](docs/decisions/0009-selected-source-admission.md#source-reading-package-layout--2026-10-11).
+  [ADR0009 layout migration](decisions/0009-selected-source-admission.md#source-reading-package-layout--2026-10-11).
 
 - Clarify the humane closer's supported positive basis using its existing reason
   and quote. This provisional prompt change preserves captured work and configured limits;
@@ -71,7 +78,7 @@
   and history-0 evidence; retained valid wire and exact route spelling stay unchanged.
   Decoding now rejects redundant completion contradictions, orphan pending completion
   fields and malformed immutable-owner shapes earlier. Reading remains off by default.
-  See the [ADR0009 amendment](docs/decisions/0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10).
+  See the [ADR0009 amendment](decisions/0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10).
 
 - Prepared held-state inspection now explains observable dispatch/application
   evidence and remaining unknowns through a bounded warning, without changing
@@ -94,19 +101,19 @@
   `present_preparation`, `inspect_preparation`/`recover_preparation` and `preparation_stats`.
   Missing or changed checkpoints now stop before presentation and retain evidence.
   Receipt-owned application remains separate work. See the
-  [ADR0015 continuation](docs/decisions/0015-application-workflow-ownership.md#verified-category-acceptance--220-slice-2).
+  [ADR0015 continuation](decisions/0015-application-workflow-ownership.md#verified-category-acceptance--220-slice-2).
 
 - Preserve optional safe HTTP-rejection facts in failed translation records
   (partial #55 / G5): allowlisted status/code and bounded retry/quota headers fit
   within the existing cache allowance. Routing, retries and canonical fallback stay
   unchanged; broader accounting and acceptance remain open. See the
-  [ADR0020 amendment](docs/decisions/0020-explicit-model-execution.md#optional-translation-http-rejection-facts--55--g5).
+  [ADR0020 amendment](decisions/0020-explicit-model-execution.md#optional-translation-http-rejection-facts--55--g5).
 
 - Strictly preload prepared accounting inputs before the first accounting write
   (#220, slice 1). Complete current-writer source history is preserved; malformed,
   sparse or unknown-field records now hold accounting instead of being reset.
   Default legacy reads and ordered nontransactional writes are unchanged. See the
-  [ADR0017 amendment](docs/decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09).
+  [ADR0017 amendment](decisions/0017-confirmed-delivery-application.md#strict-prepared-accounting-preflight--2026-10-09).
 
 - Route feed collection, configuration probes, discovery, article acquisition and optional
   liveness through one public-address fetch boundary (#218). Each hop connects only to
@@ -123,9 +130,9 @@
   retries, receipt interpretation and persistence barriers. Response/error request
   metadata is now a token-free diagnostic copy; sent request bytes are unchanged.
   Safe errors omit raw response reason/Location/body, and feedback no longer temporarily
-  changes global HTTP logger levels. See the [ADR0017 continuation](docs/decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09).
+  changes global HTTP logger levels. See the [ADR0017 continuation](decisions/0017-confirmed-delivery-application.md#telegram-diagnostic-boundary--2026-10-09).
 
-- Record the accepted [target architecture and staged migration](docs/ARCHITECTURE.md#target-architecture-and-migration)
+- Record the accepted [target architecture and staged migration](ARCHITECTURE.md#target-architecture-and-migration)
   under #164, with an editable diagram and explicit ownership, compatibility and
   acceptance boundaries. This documentation change does not implement the target
   or establish runtime, semantic or zero-cost acceptance.
@@ -134,13 +141,13 @@
   callers remove parallel source/state parameters from planning, preparation and
   execution. `verify_reconciliation_input` is removed; parsing takes `(raw, input)`
   and returns frozen content, while the operation owns completion and admission.
-  [ADR0009](docs/decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
+  [ADR0009](decisions/0009-selected-source-admission.md#one-immutable-reconciliation-authority--2026-10-09)
   gives the migration and trust boundaries. Persisted schemas, request bytes, offline
   planning, both providers and conservative uncertain-attempt holds remain unchanged.
 
 - Retired the unintegrated grouped-point prototype `digest.reading_points` (#207)
   and its two dedicated test files. Direct Python imports now fail; no replacement
-  shim is supplied. [ADR0010](docs/decisions/0010-group-source-points-with-qualifications.md#retire-the-unused-grouped-point-prototype--2026-10-09)
+  shim is supplied. [ADR0010](decisions/0010-group-source-points-with-qualifications.md#retire-the-unused-grouped-point-prototype--2026-10-09)
   preserves exact historical code/test links and the failed research findings.
   Supported optional source reading, qualification evidence and source fixtures remain.
 
@@ -151,7 +158,7 @@
   primary/fallback holder sharing remain. The configured interval carries across
   stages without extra calls or allowance. Independent invocations, cross-loop
   rebinding and durable-ledger ownership remain unchanged. See the
-  [ADR0020 amendment](docs/decisions/0020-explicit-model-execution.md#primary-review-pacing-correction--2026-10-09).
+  [ADR0020 amendment](decisions/0020-explicit-model-execution.md#primary-review-pacing-correction--2026-10-09).
   Synthetic timing proof does not establish the cause of HTTP 429 or live success.
 
 - Candidate admission now carries exact selected occurrences and canonical RSS
@@ -184,7 +191,7 @@
   optional output preserves main cards and fallback behavior. Disabled request
   bytes and historical v1 records remain compatible; translation and publication
   use the existing path without extra model calls or token allowances. See the
-  [contract amendment](docs/decisions/0014-optional-humane-closing-item.md#complete-optional-response-card--2026-10-09-amendment).
+  [contract amendment](decisions/0014-optional-humane-closing-item.md#complete-optional-response-card--2026-10-09-amendment).
   Synthetic coverage does not establish the remaining ordinary runtime editorial
   acceptance or activate any source.
 
@@ -193,7 +200,7 @@
   now returns `QueryBatch` (`.queries_by_narrative`, `.diagnostics`), and
   `search_all_sources` returns `SearchBatch` (`.signals`, `.diagnostics`); both remove
   `diagnostics=`. Names/import paths remain; the
-  [migration map](docs/decisions/0025-owned-irritator-fanout-results.md#compatibility-and-migration)
+  [migration map](decisions/0025-owned-irritator-fanout-results.md#compatibility-and-migration)
   lists destinations. Individually cancelled query children now propagate
   `CancelledError` instead of accidental `TypeError` or duplicate-claim masking.
   Non-cancelled `run_irritator` status and bounded persisted evidence remain unchanged.
@@ -210,7 +217,7 @@
   must import their canonical domain/application/storage/presentation owners; no
   replacement shim is supplied. The old `save_candidate_progress(retire=...)`
   dispatcher becomes explicit `checkpoint_candidates` or `persist_candidates`.
-  [ADR0016's migration map](docs/decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08)
+  [ADR0016's migration map](decisions/0016-candidate-contracts-and-retirement.md#retire-the-rss-import-bridges--2026-10-08)
   lists destinations and retired private aliases. Canonical types, persisted formats,
   CLI/run/config and the supported feedback/discovery/source-scoring interfaces remain.
 
@@ -255,7 +262,7 @@
   these names now require migration; no supported CLI command is removed or silently
   redirected. Candidate-bound source preparation, its acquisition/request engine,
   reconciliation and historical state readers remain unchanged. Source fixtures and
-  qualification evidence are preserved; [ADR0010](docs/decisions/0010-group-source-points-with-qualifications.md#retire-the-unintegrated-reading-angle-publication-protocol--2026-10-08)
+  qualification evidence are preserved; [ADR0010](decisions/0010-group-source-points-with-qualifications.md#retire-the-unintegrated-reading-angle-publication-protocol--2026-10-08)
   records the precise retirement and historical implementation reference.
 
 - Explicit model execution ownership (#147-B): `ModelExecution` owns lazy per-loop
@@ -265,7 +272,7 @@
   Approval reloads return both settings and their owner. Public CLI/run entrypoints
   remain compatible. Fresh versus initialized-sharing copies, independent loop resets,
   durable reservations and absolute deadlines retain the policy recorded in
-  [ADR0020](docs/decisions/0020-explicit-model-execution.md). No persisted state migration
+  [ADR0020](decisions/0020-explicit-model-execution.md). No persisted state migration
   or provider/source policy change is introduced.
 
 - Disabled-by-default humane closing slice (#127): optional same-response
