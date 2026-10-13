@@ -5,6 +5,8 @@ Start with an existing issue, or record the problem and acceptance before editin
 The [working agreement](../AGENTS.md#working-agreement) owns tracking and completion;
 this guide is a short route through it.
 
+For usage questions or a reproducible problem, see [Getting help](SUPPORT.md).
+
 ## Find the contract
 
 Read the relevant [domain model](../docs/domain/digest/overview.md),

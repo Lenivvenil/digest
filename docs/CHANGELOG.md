@@ -49,6 +49,9 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+- Add [support](../.github/SUPPORT.md) and [security reporting guidance](../.github/SECURITY.md)
+  with safe reproduction details and explicit reporting limits. Refs #148.
+
 - Allow one bounded same-route explicit-429 recovery per ordinary prepared-main
   translation invocation, paired with one physical attempt in report-only resume.
   Other translation callers retain no-retry defaults; historical cache/frozen state,
