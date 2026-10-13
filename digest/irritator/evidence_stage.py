@@ -919,6 +919,19 @@ async def _run_stages(
     validate_evidence_bundle(bundle, config)
     if delivered is not None:
         validate_delivered_input(delivered, bundle)
+    publication_context = {"publication_day": delivered.publication_day} if delivered is not None else {}
+    publication_instruction = (
+        "publication_day is the originating edition's UTC publication reference, not the execution date "
+        "or proof that an event occurred. Distinguish source publication time, scheduled event dates and "
+        "the edition reference. A scheduled date before publication_day is not still upcoming relative "
+        "to that day; do not infer completion. An event on publication_day has unknown ordering: the "
+        "date alone supplies no execution instant and establishes neither upcoming nor completed. "
+        "When occurrence or ordering is unknown, use source-attributed announced/scheduled-date wording. "
+        "Anchor any future-relative wording explicitly to publication_day. Preserve historical "
+        "future-tense quotations byte-for-byte. "
+        if delivered is not None
+        else ""
+    )
     evidence: EvidenceBundle | FullSourceEvidence = bundle
     if source_evidence is not None:
         validate_full_source_evidence(source_evidence, bundle)
@@ -991,8 +1004,15 @@ async def _run_stages(
             "implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the "
             "supplied evidence unchanged, in their original language; never translate a literal quote. "
             + source_instruction
+            + publication_instruction
         ),
-        {"evidence": evidence_input, **target_input, "language": config.radar.language, "coverage": result.coverage},
+        {
+            "evidence": evidence_input,
+            **target_input,
+            **publication_context,
+            "language": config.radar.language,
+            "coverage": result.coverage,
+        },
         config,
         execution=execution,
         admission_deadline=admission_deadline,
@@ -1074,8 +1094,15 @@ async def _run_stages(
                 "Ignore hypotheses irrelevant to the attributed claim or conflicting with its stated scope "
                 "and qualifications. "
             )
+            + publication_instruction
         ),
-        {"narrative": narrative_input, "evidence": cited_evidence, "max_queries": maximum_queries, **hypotheses},
+        {
+            "narrative": narrative_input,
+            "evidence": cited_evidence,
+            "max_queries": maximum_queries,
+            **hypotheses,
+            **publication_context,
+        },
         config,
         execution=execution,
         admission_deadline=admission_deadline,
@@ -1159,7 +1186,10 @@ async def _run_stages(
             "direct contradiction; 7-8 substantial complication; 5-6 limited supported qualification; "
             "1-4 weak relevance. "
             "Explain an empty ranking list in limitations (up to 5 concise strings). "
-            "Use the requested language for reasoning. " + RANK_RELATION_CONTRACT + context_instruction
+            "Use the requested language for reasoning. "
+            + RANK_RELATION_CONTRACT
+            + context_instruction
+            + publication_instruction
         ),
         {
             "narrative": narrative_input,
@@ -1167,6 +1197,7 @@ async def _run_stages(
             "signals": [_ranking_signal_payload(s) for s in candidates],
             "max_ranked": maximum_ranked,
             "language": config.radar.language,
+            **publication_context,
         },
         config,
         execution=execution,

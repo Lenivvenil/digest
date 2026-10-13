@@ -178,6 +178,50 @@ async def pending_supplement(
 
 
 @pytest.mark.asyncio
+async def test_pre_publication_context_origin_result_and_fragment_remain_readable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import date, datetime, timedelta, timezone
+
+    from digest.adapters.storage import post_delivery as storage
+    from digest.application.supplement import pending_fragment
+    from digest.irritator.evidence_stage import StageDiagnostic
+    from digest.post_delivery import _delivered_input
+
+    old_prompt_hashes = [str(index) * 64 for index in range(1, 4)]
+    build_result = accepted_result
+
+    def historical_result(*args: Any, **kwargs: Any) -> EvidenceIrritatorResult:
+        result = build_result(*args, **kwargs)
+        result.diagnostics = [
+            StageDiagnostic(stage, status="complete", prompt_sha256=digest)
+            for stage, digest in zip(("narrative", "queries", "ranking"), old_prompt_hashes, strict=True)
+        ]
+        return result
+
+    with patch("tests.test_post_delivery.accepted_result", side_effect=historical_result):
+        pending = await pending_supplement(monkeypatch)
+    paths = [Path(pending.attempt), Path(pending.projection), Path(pending.fragment.result)]
+    retained = {path: path.read_bytes() for path in paths}
+    hashes = {path: hashlib.sha256(raw).hexdigest() for path, raw in retained.items()}
+    day = date.fromisoformat(pending.fragment.origin.publication_day)
+    instant = datetime.combine(day, datetime.min.time(), timezone.utc)
+    with patch("digest.irritator.evidence_stage.complete", side_effect=AssertionError("No model replay")):
+        for _ in range(2):
+            marker = storage.read_attempt(Path(pending.attempt))
+            bundle, _ = load_review_checkpoint(Path(pending.fragment.checkpoint), fixture_config())
+            assert _delivered_input(marker, bundle) == pending.fragment.origin
+            assert storage.read_projection(pending.projection, pending.projection_sha256) == pending.fragment
+            result = json.loads(Path(pending.fragment.result).read_text())
+            assert [item["prompt_sha256"] for item in result["diagnostics"]] == old_prompt_hashes
+            assert marker["supplement_status"] == "pending"
+            for offset in (1, 2, 3):
+                assert pending_fragment("digests", day + timedelta(days=offset), now=instant) == (pending, "eligible")
+    assert {path: path.read_bytes() for path in paths} == retained
+    assert {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths} == hashes
+
+
+@pytest.mark.asyncio
 async def test_future_destination_does_not_expire_a_fragment_before_its_actual_utc_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
