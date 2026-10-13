@@ -182,6 +182,11 @@ fence. Its companion JSON and surrounding formatted prose are unchanged; the fen
 only describes the diagnostic block, not a whole-document Markdown safety boundary.
 Previously saved archives and frozen payloads are not rewritten.
 
+Delivered-bound extraction, query and ranking requests share the validated origin
+`publication_day` as the edition's UTC reference, separate from the investigation
+clock, source publication time and evidence of event occurrence. Historical quotes
+remain literal; unbound requests and retained result/fragment readers are unchanged.
+
 The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
 references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
 expired dispositions; mutable state is not a ready checkpoint reference. This adds no

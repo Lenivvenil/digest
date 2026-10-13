@@ -3,6 +3,11 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Supply the frozen origin publication day to all three delivered-bound Irritator
+  requests, distinguishing edition reference, scheduled dates and observed occurrence
+  while retaining literal quotes and exact unbound requests. This repairs missing
+  context without guaranteeing temporal fidelity or counter-evidence quality;
+  retained state and one-attempt rules are unchanged. Refs #77.
 - Make `/bubble` count recorded source inclusions on the seven UTC calendar dates
   ending on its observed report date. Share those counts across the score and lists,
   omit unusably dated history, and label source-inclusion evenness without claiming
