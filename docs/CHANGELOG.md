@@ -55,6 +55,10 @@
 
 ### Changed
 
+- Clarify attribution, uncertainty, negation, scope and material caveats in every
+  shared RSS review reason, including an enabled closer. Future request identities
+  change; accepted and frozen work remains unchanged. This is a prospective prompt
+  clarification, not proof of faithful generated prose. Refs #55.
 - Add a default-off selected-source comparison for ordinary prepared RSS editions,
   with one paired EN/RU response, accepted-reference local no-repeat state and a
   full-publication layout gate. Enabling it surrenders report-only resume generation
