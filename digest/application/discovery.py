@@ -140,6 +140,7 @@ async def _generate_offers(
 ) -> list[PendingSource]:
     """Generate within the remaining three-validation budget and existing routes."""
     from digest.adapters.storage.discovery import save_delivery
+    from digest.adapters.storage.pending_sources import save_pending
     from digest.discovery_feed import validate_feed_url
     from digest.domain.catalog.exploration import select_exploration_area
     from digest.domain.catalog.proposals import PendingSource, proposal_binding
@@ -258,6 +259,9 @@ async def _generate_offers(
         data["proposal_areas"][binding] = requested_area
         generation["bindings"].append(binding)
         generation["outcome"] = "proposed"
+        # Retain the validated prefix before another await; pending first, not a transaction.
+        save_pending(pending, cache_dir, strict=True)
+        save_delivery(data, cache_dir)
     return proposed
 
 

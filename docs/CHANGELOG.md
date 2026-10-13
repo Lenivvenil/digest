@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Retain each validated, deduplicated discovery proposal before a later validation
+  can be cancelled. Save pending before metadata, preserving valid work without
+  inventing provenance if the second write fails; ordinary preparation still
+  revalidates and may generate for remaining slots. Schema and send barriers are
+  unchanged. Refs #132. See the
+  [ADR0013 amendment](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
 - Supply the frozen origin publication day to all three delivered-bound Irritator
   requests, distinguishing edition reference, scheduled dates and observed occurrence
   while retaining literal quotes and exact unbound requests. This repairs missing

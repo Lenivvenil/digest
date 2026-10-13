@@ -234,6 +234,17 @@ The runtime must preserve saved work on failure and serialize writers sharing st
 | `.cache/compact_issue.json` | Legacy direct-compact reservation; unresolved legacy sending also blocks prepared publication. |
 | `digests/*.review.json`, `*.candidates.json` | Review and candidate-accounting evidence associated with archived output. |
 
+Discovery checkpoints each validated, deduplicated generated proposal before the next
+validation await: strict pending replacement, then delivery-metadata replacement.
+Pending failure preserves the prior disk prefix; metadata failure can leave valid
+pending work without its new area/generation attribution. Both errors and cancellation
+propagate without rollback or provenance reconstruction. An interrupted prepare adds
+no reservation/batch or prepare output and does not send; earlier receipt holds remain.
+Normal preparation revalidates retained proposals and may generate for remaining slots.
+These are local writes, not proof that the runtime persisted them remotely; cancellation
+or runner loss may prevent its existing persistence step. Schema and budgets are
+unchanged. See the [validated-prefix amendment](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
+
 ## Send and apply
 
 The sender validates the owner, bot, window, exact ready/claim bytes and referenced
