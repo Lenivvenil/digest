@@ -131,9 +131,8 @@ it and failed reservations remain terminal; this diagnostic addition changes nei
 retry policy nor prompt binding.
 
 Only the closed code is retained, never response excerpts or exception text.
-The optional closer's existing `closing_contract_invalid` fallback is separate
-and is not further diagnosed by this failed-batch field. These reasons identify
-structural rejection, not semantic fidelity or the cause of earlier failures.
+These reasons identify structural rejection, not semantic fidelity or the cause
+of earlier failures.
 
 
 ### Optional protected-content attribution (#55)
@@ -147,6 +146,30 @@ Invalid/oversized detail is omitted without removing other accepted diagnostics.
 Old readers ignore it; saved failure records stay terminal and are never rewritten.
 This attributes a later structural failure only. Missing details remain unknown;
 neither semantic fidelity nor a historical failure's exact cause is established.
+
+### Optional closer rejection diagnostics (#55)
+
+New combined records with valid main translation and a rejected optional closer
+may retain the same top-level `validation_reason` and, for protected content,
+`validation_detail`. The optional parser's existing controlled error supplies the
+reason and canonical `closing.summary` identity with the same fixed categories;
+generic errors add no invented detail. The nested optional result keeps its exact
+six-field shape and `closing_contract_invalid` fallback. No rejected text, malformed
+identity or exception text is retained.
+
+Business-record sizing runs first. Diagnostics are projected only while the final
+optional outcome is still `closing_contract_invalid`; a final
+`closing_output_allowance` outcome carries no stale validation reason. Projection
+is best-effort within the existing ceiling and cannot itself omit the closer,
+discard valid main prose, change fallback or add a write. Persistence failure keeps
+the existing terminal reservation and in-memory main result. Required-failure
+diagnostics retain their existing ordering and meaning.
+
+Readers, schema and prompt identities, request/selection bindings, nested hashes,
+reservation and replay rules are unchanged. Historical records are never enriched,
+rewritten or retried. A missing reason or detail remains unknown, including earlier
+rejected closers. This improves visibility of future structural rejection; it does
+not establish numeric equivalence, semantic corruption or closer quality.
 
 ## Attached numeric literals and saved-cache compatibility (#55)
 

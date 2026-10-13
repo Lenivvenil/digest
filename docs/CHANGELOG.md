@@ -55,6 +55,11 @@
 
 ### Changed
 
+- Retain existing controlled validation reasons and bounded protected-content
+  categories for newly rejected optional closer translations, after business-record
+  sizing. Valid main prose, optional fallback, request/cache identities and terminal
+  replay stay unchanged; historical causes and semantic fidelity remain unknown.
+  Refs #55.
 - Clarify attribution, uncertainty, negation, scope and material caveats in every
   shared RSS review reason, including an enabled closer. Future request identities
   change; accepted and frozen work remains unchanged. This is a prospective prompt
