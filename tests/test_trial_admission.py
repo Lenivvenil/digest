@@ -118,13 +118,15 @@ def test_inactive_or_satisfied_reservation_preserves_exact_packet_and_status(cas
     assert asdict(progress) == asdict(baseline_state)
 
 
-def test_no_trial_golden_packet_prompt_and_state_match_reviewed_baseline() -> None:
+def test_no_trial_golden_packet_and_state_keep_baseline_with_current_prompt() -> None:
     config, progress, _ = _population()
     packet = _packet(progress, config)
     assert _titles(packet) == ["Professional 0", "Professional 1", "Professional 2", "Professional 3"]
-    # Generated from cd14cbbf10e9aa7bd8301a0a0816acad0f315fb0 with these exact frozen inputs.
+    # Evidence and state retain the cd14cbbf10e9aa7bd8301a0a0816acad0f315fb0 frozen-input goldens.
     assert packet.evidence.bundle_id == "6ee89dcdbbcf133314a1c38dc9918cb37493b55ab3de347db4e58086e652cc72"
-    assert packet.prompt_hash == "f8dcdeca50f269f1f432ba918ed7df6371c46e777e8cb1b0532e8d38cd605f9c"
+    # Independently reconstructed after the exact 287-byte shared reason-qualifier insertion.
+    assert packet.prompt_hash == "503f7d953aad2cd52d1ea6c9e92626366e0f6cf6e35aed6f062a83a35c975500"
+    assert packet.prompt_hash != "f8dcdeca50f269f1f432ba918ed7df6371c46e777e8cb1b0532e8d38cd605f9c"
     state_hash = hashlib.sha256(canonical_json_bytes(asdict(progress))).hexdigest()
     assert state_hash == "2cb805954ca4e64d6b168af9099dd9480fdf6032afb69143f7bbee7a4a43f27c"
 

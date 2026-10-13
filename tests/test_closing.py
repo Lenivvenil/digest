@@ -526,17 +526,18 @@ def test_historical_v1_capture_and_terminal_sidecar_bytes_remain_readable(tmp_pa
     assert capture_closing(matching, ambiguous, "stop").status == "incomplete"
 
 
-def test_legacy_disabled_wire_shape_and_prompt_are_unchanged(tmp_path: Path) -> None:
+def test_disabled_wire_shape_is_stable_with_the_current_shared_prompt(tmp_path: Path) -> None:
     config, articles = population()
     bundle = build_evidence_bundle(articles, config.review)
     assert build_review_messages(bundle, config.review, "en", sources=config.sources) == build_review_messages(
         bundle, config.review, "en", sources=config.sources, closing=ClosingConfig()
     )
-    # Captured from the unchanged pre-v2 implementation, not recomputed expected bytes.
     messages = build_review_messages(bundle, config.review, "en", sources=config.sources)
-    assert hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest() == (
-        "7f576740c5ffd6ed14660a4db80d87153add62028ff1de76e76cd5203b8f2505"
-    )
+    prompt_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+    # Independently captured after the unconditional shared reason-qualifier clarification.
+    assert prompt_hash == "390e0a66044fdbf25ddf3d13f407237a6a5b50177a0147e00559208bb082b46d"
+    # Retain the historical pre-v2 prompt identity as explicitly non-current.
+    assert prompt_hash != "7f576740c5ffd6ed14660a4db80d87153add62028ff1de76e76cd5203b8f2505"
     assert hashlib.sha256(json.dumps(groq_review_response_format(), sort_keys=True).encode()).hexdigest() == (
         "a0bcefed74a2e8510d434cae51955f3bd90fa63483657c666667d226b3bb1815"
     )
