@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -112,10 +114,14 @@ async def test_prepared_collection_uses_real_portfolio_after_recovery_and_budget
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("checkpoint", ["accepted", "ready"])
+@pytest.mark.parametrize("checkpoint,experimental", [
+    ("accepted", False), ("ready", False), ("accepted", True), ("ready", True),
+])
 async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str, experimental: bool,
 ) -> None:
+    from digest.adapters.models.execution import ModelExecution
+    from digest.application.preparation import prepare_edition, prepare_sources
     from digest.edition_runtime import ExistingEdition, FrozenPreparation
     from digest.preparation import AcceptedPreparation
     from tests.test_preparation import _snapshot
@@ -140,7 +146,9 @@ async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
     monkeypatch.setattr("digest.source_reading.preparation.setup_reading_budget", budget)
     monkeypatch.setattr("digest.radar.collect", collector)
 
-    result = await _run("config.yaml", False, False, False, prepare_only=True)
+    prepare = prepare_sources if experimental else prepare_edition
+    result = await prepare(config, "config.yaml", execution=ModelExecution(), verbose=False,
+                           feedback_precollected=False, publication_date=None, started_at=time.monotonic())
     assert result.edition_status == "ready" and result.feedback_collected == 7
     feedback.assert_awaited_once()
     approve.assert_called_once()
@@ -392,3 +400,120 @@ async def test_preparation_reports_technical_empty_without_failing_editorial_abs
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     assert await main(["--config", "config.yaml", "--prepare-edition"]) == int(incomplete)
     assert f"edition_status={stats.edition_status or 'no_ready'}" in output.read_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adaptive,mode", [(False, "ordinary"), (True, "fallback"), (False, "sources"),
+                                          (False, "saved_report")])
+async def test_fresh_trial_reservation_uses_loaded_lifecycle_and_shared_preparation_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adaptive: bool, mode: str,
+) -> None:
+    from digest.adapters.models.execution import ModelExecution
+    from digest.application import candidate_review, preparation
+    from digest.application.candidate_lifecycle import checkpoint_candidates
+    from digest.domain.catalog.sources import SourceStateStore
+    from digest.edition_runtime import FrozenPreparation
+    from digest.source_reading.preparation import ReadingPreparationResult
+    from tests.test_trial_admission import NOW, _add, _population, _titles
+
+    monkeypatch.chdir(tmp_path)
+    config, progress, bindings = _population()
+    config.review.review_led_only = True
+    config.adaptive.enabled = adaptive
+    state = SourceStateStore()
+    for name, status in [("Graduated", "graduated"), ("Demoted", "demoted"), ("Disabled", "disabled")]:
+        source = SourceConfig(name, f"https://{name.lower()}.example/feed", "banking", status != "disabled",
+                              trial=True, recency_hours=168)
+        config.sources.append(source)
+        _add(progress, source, name, 35)
+        if status == "graduated":
+            state.mark_graduated(name)
+        elif status == "demoted":
+            state.mark_demoted(name)
+    # A current feed URL still uses the inherited name-keyed lifecycle authority.
+    config.sources[-3].url = "https://replacement.example/feed"
+    graduated = next(item for item in progress.candidates.values() if item.article.title == "Graduated")
+    from dataclasses import replace
+
+    graduated.article = replace(graduated.article, source_url=config.sources[-3].url)
+    original_config, original_state = asdict(config), asdict(state)
+    checkpoint_candidates(progress, ".cache")
+    loaded = Mock(return_value=state)
+    planner = Mock(wraps=candidate_review.plan_packet)
+    collector = AsyncMock(return_value=({}, {}))
+    observed_messages: list[list[dict[str, str]]] = []
+
+    async def model(role: Any, messages: list[dict[str, str]], c: Any, **kwargs: Any) -> tuple[str, dict]:
+        assert c.sources is config.sources and c.review is config.review
+        assert c.llm.max_retries == 0
+        observed_messages.append(messages)
+        if mode == "fallback" and len(observed_messages) == 1:
+            return "invalid response", {}
+        items = json.loads(messages[1]["content"])["evidence"]["items"]
+        selected = items[0]
+        return json.dumps({
+            "selections": [{"evidence_id": selected["evidence_id"], "reason": "Useful synthetic mechanism",
+                            "quote": selected["title"], "confidence": "high"}],
+            "limitations": ["Offline synthetic fixture"],
+            "dispositions": [{"evidence_id": item["evidence_id"], "status": "selected"} if item is selected
+                             else {"evidence_id": item["evidence_id"], "status": "not_selected",
+                                   "reason": "No relevant fixture mechanism"} for item in items],
+        }), {}
+
+    completion = AsyncMock(side_effect=model)
+    presented = AsyncMock(return_value=FrozenPreparation("ready", "ready", "ok", 1, None, ""))
+    source_work = AsyncMock(return_value=ReadingPreparationResult(
+        1, 0, 1, None, "technical_pending", (), None, 0, 0.0, "unknown", (),
+    ))
+    batch = AsyncMock()
+    monkeypatch.setattr("digest.adapters.storage.sources.load_source_state", loaded)
+    monkeypatch.setattr("digest.application.run_state.collect_run_feedback",
+                        AsyncMock(return_value=(FeedbackStore(), True, 0)))
+    monkeypatch.setattr("digest.application.run_state.apply_pending_approvals",
+                        lambda c, *args, **kwargs: (c, kwargs["execution"]))
+    monkeypatch.setattr("digest.radar.collect", collector)
+    monkeypatch.setattr(candidate_review, "_instant", lambda _: NOW + timedelta(hours=1))
+    monkeypatch.setattr(candidate_review, "plan_packet", planner)
+    monkeypatch.setattr("digest.application.review.complete", completion)
+    monkeypatch.setattr("digest.edition_runtime.present_preparation", presented)
+    monkeypatch.setattr("digest.source_reading.preparation.prepare_selected_sources", source_work)
+    monkeypatch.setattr("digest.source_reading.checkpoint.prepare_current_batch", batch)
+    lifecycle = Mock(side_effect=AssertionError("Admission must not evaluate trial lifecycle"))
+    monkeypatch.setattr("digest.application.source_scoring.evaluate_trial_sources", lifecycle)
+    prepare = preparation.prepare_sources if mode == "sources" else preparation.prepare_edition
+
+    async def invoke() -> Any:
+        return await prepare(config, "config.yaml", execution=ModelExecution(), verbose=False,
+                             feedback_precollected=False, publication_date=None, started_at=time.monotonic())
+
+    if mode == "saved_report":
+        original_snapshot = preparation._snapshot
+        monkeypatch.setattr(preparation, "_snapshot", Mock(side_effect=OSError("after review before acceptance")))
+        with pytest.raises(OSError, match="before acceptance"):
+            await invoke()
+        frozen_objects = {p: p.read_bytes() for folder in ("candidate_sources", "candidate_reports")
+                          for p in Path(".cache", folder).glob("*.json")}
+        assert completion.await_count == planner.call_count == 1
+        monkeypatch.setattr(preparation, "_snapshot", original_snapshot)
+        await invoke()
+        assert all(p.read_bytes() == data for p, data in frozen_objects.items())
+    else:
+        await invoke()
+    assert planner.call_count == 1
+    assert planner.call_args.args[1] is config  # Effective sources never replace the prompt's original context.
+    assert planner.call_args.kwargs["trial_sources"] == bindings
+    assert completion.await_count == (2 if mode == "fallback" else 1)
+    assert loaded.call_count == collector.await_count == (2 if mode == "saved_report" else 1)
+    assert asdict(config) == original_config and asdict(state) == original_state
+    lifecycle.assert_not_called()
+    packet = load_candidate_progress().packets[0]
+    assert _titles(packet) == ["Professional 0", "Professional 1", "Trial 0", "Trial 1"]
+    assert len(packet.evidence.items) == 4 and len(packet.disposition_attempts) == (2 if mode == "fallback" else 1)
+    if mode == "sources":
+        source_work.assert_awaited_once()
+        batch.assert_awaited_once()
+        presented.assert_not_awaited()
+    else:
+        source_work.assert_not_awaited()
+        batch.assert_not_awaited()
+        presented.assert_awaited_once()

@@ -126,6 +126,8 @@ def _candidate_inputs(
     priorities: dict[str, int],
     cache_dir: str,
     collection_failed: bool,
+    *,
+    trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> tuple[CandidateWork | EmptyWork, dict[str, list[Article]]]:
     progress, inventory, delivered = pool.progress, pool.inventory, pool.delivered
     from digest.adapters.storage.candidate_progress import MAX_BYTES, progress_size
@@ -156,7 +158,7 @@ def _candidate_inputs(
     packet = (
         next(item for item in reversed(progress.packets) if item.report == report)
         if report is not None
-        else plan_packet(progress, config)
+        else plan_packet(progress, config, trial_sources=trial_sources)
     )
     if packet is not None and report is None:
         begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
@@ -374,6 +376,13 @@ async def _collect_and_review(
             priorities,
             cache_dir,
             collection_failed,
+            trial_sources=frozenset(
+                (source.name, source.url, source.category)
+                for source in source_config.enabled_sources
+                if source.trial
+                and not run.source_state.is_graduated(source.name)
+                and not run.source_state.is_demoted(source.name)
+            ),
         )
     collected = CollectedArticles(source_config, articles, fetch_metrics, collection_failed, collected_articles)
     if not articles:

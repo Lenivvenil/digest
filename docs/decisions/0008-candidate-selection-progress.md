@@ -367,3 +367,68 @@ Oldest-unseen/retry protection, intrinsic technical-pending versus aggregate ski
 closing replacement, laziness and all size limits retain their existing rules.
 Strict request and persisted-proof validators stay separate and unchanged; no schema
 migration, scheduling-policy change or test-count reduction is implied.
+
+
+## Bounded active-trial reservation (#121 / #132, 2026-10-13)
+
+The reviewed reservation first runs the established oldest-fitting unseen,
+actually fitting reserved retries, ordinary backfill and optional closer policy.
+Count every active-trial identity in that baseline packet once, including trials
+admitted by the oldest, retry, closer or ordinary opportunities. Already admitted
+trials remain protected; trial membership is not a ceiling or a relevance label.
+
+Fresh preparation derives ephemeral exact `(name, feed URL, category)` bindings
+from its already-composed effective portfolio and already-loaded source state.
+A source must be enabled, declared `trial: true`, and neither graduated nor demoted.
+A missing lifecycle entry permits the declared trial without inventing a start date.
+Lifecycle authority remains name-keyed, including after a same-name feed change.
+A candidate uses only its chosen exact occurrence; an unchosen alternate cannot
+lend trial status. Current recency, blocklist, delivery and occurrence reconciliation
+remain authoritative. Graduation removes the extra reservation, not ordinary eligibility.
+
+`adaptive.trial_slots` targets at most `review.max_evidence_articles` active-trial
+admissions inside the existing packet. It applies even with `adaptive.enabled: false`;
+automatic scoring and lifecycle transitions keep their existing flag and effect
+boundaries. Zero disables only the extra reservation. Ordinary turns can admit more
+trials than the target, including when it is zero. Large values add no capacity or
+request and can consume all otherwise unprotected ordinary backfill opportunities.
+
+Fill an unmet target with remaining unseen trials in age-only source rounds: one
+oldest head per source per round, ordered by original observation, descending effective
+priority, stable source name and identity. Publication freshness does not override
+this extra opportunity. Then consider trial technical work in the already-established
+exact-attempt-age retry order. No observation rewrite, cursor or fresh-queue rebuild
+is introduced.
+
+Try each whole occurrence with the retained packet. If it cannot fit, try replacing
+only the final unprotected ordinary backfill admission, under count or aggregate
+character pressure. Preserve the original oldest/retry prefix, the first admitted
+exact closer, all baseline trials and all earlier promotions. A closer overlapping
+the prefix needs no second protection. Never search earlier donors, remove several
+items or truncate evidence to force fit. Failed proposals leave the donor unchanged;
+successes preserve retained order and append the promoted trial without ordinary refill.
+Individually unrepresentable examined items remain technical pending; aggregate skips
+and displaced work retain their status, observation and exact disposition/attempt proof.
+
+Additional displacement is at most the unmet target after counting baseline trials,
+and at most one ordinary identity per successful promotion. This is an incremental
+bound, not a guaranteed professional share: a professional source may be a trial and
+a nontrial may be unrelated to professional work. If fresh trials or protected trial
+retries already fill the target, another aging trial gets no additional reservation.
+Sustained arrivals, recency expiry, protected obligations and tight fit can still
+prevent progress. Finite fixtures do not establish useful novelty or sustainable drainage.
+
+The shared fresh-planning owner intentionally applies this rule to both ordinary
+`prepare_edition` and experimental `prepare_sources`. Reading remains opt-in; no
+additional state read, clock sample, lifecycle evaluation or model/feed call is added.
+The original configuration still supplies prompt context. Matching evidence retains
+matching request reuse; changed future membership changes bundle/request hashes.
+Accepted preparation, ready editions, saved-report recovery and immutable historical
+occurrences, packets and dispositions keep their existing bytes and bypass new planning.
+
+This corrects earlier descriptions of a separate trial budget: reservation consumes
+the fixed existing envelope. No runtime settings, sources, approval, state, persisted
+schema, detail/token budget or primary/fallback allowance changes are included.
+#121 and #132 remain open for ordinary outcome evidence, meaningful professional/trial
+contrasts, sustainability and useful cross-field recommendations. Deployment and
+those acceptance outcomes must be established separately.

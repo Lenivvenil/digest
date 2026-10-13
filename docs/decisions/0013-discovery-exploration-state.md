@@ -91,12 +91,15 @@ current check. Full legacy offer batches require no model call. Preserve feed/UR
 safety, deduplication, Add/Reject, exact remotely persisted pair hashes, attempt-owned
 reservations and unknown-send holds. Active sources and daily scheduling are unchanged.
 
-Approval still adds a priority-3 trial source. `adaptive.trial_slots` is not enforced
-by the current candidate scheduler and cannot substantiate professional protection.
-Busy professional backlog and aging exploratory admission need a separate reviewed
-decision. #132 remains open for that path and for ordinary scheduled evidence of
-useful cross-field recommendations. Category names, URL counts and offline green
-tests do not establish actual novelty, publisher diversity or reduced filter bubbles.
+Approval still adds a priority-3 trial source. The separate
+[bounded active-trial reservation](0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13)
+uses `adaptive.trial_slots` inside the existing candidate packet, independently of
+automated management. It counts all already admitted active trials and protects
+oldest/retry/closing obligations while bounding additional ordinary displacement.
+It is neither a trial ceiling nor a professional quota or starvation guarantee.
+#132 remains open for ordinary professional/trial outcomes and useful cross-field
+recommendations. Category names, URL counts and offline green tests do not establish
+actual novelty, publisher diversity or reduced filter bubbles.
 
 ## Validation
 
