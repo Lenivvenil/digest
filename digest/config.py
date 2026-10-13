@@ -149,6 +149,13 @@ class TranslationConfig:
 
 
 @dataclass(frozen=True)
+class SynthesisConfig:
+    """One default-off comparison, funded by surrendering report-only resume."""
+
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
 class ClosingSourceBinding:
     name: str
     url: str
@@ -200,6 +207,7 @@ class Config:
     reading_brief: ReadingBriefConfig = field(default_factory=ReadingBriefConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     closing: ClosingConfig = field(default_factory=ClosingConfig)
+    synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
 
     @property
     def enabled_sources(self) -> list[SourceConfig]:
@@ -880,6 +888,16 @@ def _load_closing(
     return ClosingConfig(enabled, tuple(bindings))
 
 
+def _load_synthesis(data: dict[str, Any]) -> SynthesisConfig:
+    section = data.get("synthesis", {})
+    if not isinstance(section, dict) or set(section) - {"enabled"}:
+        raise ValueError("synthesis must contain only enabled.")
+    enabled = section.get("enabled", False)
+    if type(enabled) is not bool:
+        raise ValueError("synthesis.enabled must be a boolean.")
+    return SynthesisConfig(enabled)
+
+
 def load_config(config_path: str | Path = "config.yaml") -> Config:
     """Load and validate configuration from a YAML file.
 
@@ -915,6 +933,7 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
     reading_brief = _load_reading_brief(data, llm, radar, review)
     discovery = _load_discovery(data)
     closing = _load_closing(data, review, telegram, reading_brief)
+    synthesis = _load_synthesis(data)
 
     logger.info(
         "Config loaded: providers=%s, sources=%d (%d enabled), adaptive=%s",
@@ -937,4 +956,5 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         reading_brief=reading_brief,
         discovery=discovery,
         closing=closing,
+        synthesis=synthesis,
     )

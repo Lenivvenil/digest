@@ -87,6 +87,7 @@ class ReviewedCandidates:
     work: CandidateWork
     result: ResolvedReview
     cards: list[ArticleSummary]
+    fresh_review: bool = False
 
     @property
     def report(self) -> BlindReviewReport:
@@ -126,6 +127,8 @@ def _candidate_inputs(
     priorities: dict[str, int],
     cache_dir: str,
     collection_failed: bool,
+    *,
+    trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> tuple[CandidateWork | EmptyWork, dict[str, list[Article]]]:
     progress, inventory, delivered = pool.progress, pool.inventory, pool.delivered
     from digest.adapters.storage.candidate_progress import MAX_BYTES, progress_size
@@ -156,7 +159,7 @@ def _candidate_inputs(
     packet = (
         next(item for item in reversed(progress.packets) if item.report == report)
         if report is not None
-        else plan_packet(progress, config)
+        else plan_packet(progress, config, trial_sources=trial_sources)
     )
     if packet is not None and report is None:
         begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
@@ -201,6 +204,7 @@ async def _review_candidates(
     from digest.presentation.review import primary_cards
 
     progress, packet = work.progress, work.packet
+    fresh_review = packet.report is None
     if packet.report is not None:
         result = restore_review(packet.report, packet.disposition_attempts)
     else:
@@ -221,7 +225,7 @@ async def _review_candidates(
         max_cards=config.review.max_selections,
         include_attribution=config.telegram.delivery_mode != "compact",
     )
-    return ReviewedCandidates(work, result, cards)
+    return ReviewedCandidates(work, result, cards, fresh_review)
 
 
 def _save_prepared_fetch_stats(
@@ -374,6 +378,13 @@ async def _collect_and_review(
             priorities,
             cache_dir,
             collection_failed,
+            trial_sources=frozenset(
+                (source.name, source.url, source.category)
+                for source in source_config.enabled_sources
+                if source.trial
+                and not run.source_state.is_graduated(source.name)
+                and not run.source_state.is_demoted(source.name)
+            ),
         )
     collected = CollectedArticles(source_config, articles, fetch_metrics, collection_failed, collected_articles)
     if not articles:
@@ -431,7 +442,10 @@ def _snapshot(
     cards, closing = _preparation_closing(work.cards, result, collected.articles, config, ".cache")
     summaries = work.summaries if isinstance(work, CategoryAnalysis) else []
     trends = work.trends if isinstance(work, CategoryAnalysis) else None
-    combined = combined_summary(summaries, trends, isinstance(work, ReviewedCandidates), config.radar.language)
+    combined = combined_summary(
+        summaries, trends, isinstance(work, ReviewedCandidates), config.radar.language,
+        **({"synthesis_enabled": True} if getattr(getattr(config, "synthesis", None), "enabled", False) else {}),
+    )
     combined = publication_intro(combined, result, config)
     return PreparationSnapshot(
         top_articles=cards,
@@ -601,6 +615,9 @@ async def prepare_edition(
                 execution=run.execution,
                 verbose=verbose,
                 publication_date=publication_date,
+                **({"allow_new_synthesis": True} if work.fresh_review and getattr(
+                    getattr(run.config, "synthesis", None), "enabled", False
+                ) else {}),
             )
         stats = preparation_stats(presented, run.feedback_collected)
     stats.feeds_fetched = len(collected.fetch_metrics)

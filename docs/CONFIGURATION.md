@@ -147,6 +147,27 @@ editorial value. Categories are operator-defined. Banking/payments, AI engineeri
 distributed systems, enterprise architecture and regional affairs are examples from
 the project's original use, not mandatory personal-profile presets.
 
+### Active-trial admission
+
+`adaptive.trial_slots` is a nonnegative integer (default 2). In fresh review-led
+preparation it reserves up to `min(trial_slots, review.max_evidence_articles)`
+active-trial identities within the existing count and character budgets, after
+counting all trials already admitted by ordinary, oldest, retry and closing turns.
+This applies with either value of `adaptive.enabled`; that flag still controls
+existing automated scoring and lifecycle decisions. No configuration change is
+needed to apply a nonzero existing target when automated management is disabled.
+
+Zero disables only extra trial promotion, not ordinary admission of trials. Values
+larger than the packet add no capacity and may replace every otherwise unprotected
+ordinary backfill identity. Oldest/retry obligations and the retained closer win.
+The reservation uses current exact enabled trial source bindings, excluding graduated
+or demoted sources; it does not classify professional relevance or guarantee progress.
+It is part of the fixed packet, not an additional trial budget. Both fresh ordinary
+and experimental source preparation share it; recovery of saved accepted/ready/report
+work keeps its existing precedence. See the
+[admission decision](decisions/0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13)
+for age-first rounds, single-donor fit and limits.
+
 ### Delivery settings
 
 `telegram.enabled` and `obsidian.enabled` accept YAML booleans (`true` or `false`
@@ -295,3 +316,26 @@ Prepared-edition flags use the [publication barriers](OPERATIONS.md#persist-clai
 Managed `--discovery-phase prepare|send` and its pending/delivery hashes also require
 [separate proposal persistence](OPERATIONS.md#source-discovery).
 Neither operation is made safe by a local hash alone.
+
+## Optional selected-source comparison
+
+`synthesis.enabled: true` opts ordinary prepared compact RSS review publication
+into one optional two-item comparison. The default is `false`; only a YAML boolean
+is accepted. No provider, token, timeout or field-count knobs are added. Canonical
+language must be EN, experimental reading disabled, and the configured secondary
+must be Groq `openai/gpt-oss-120b`. Selected EN uses canonical prose; selected RU
+receives a paired presentation in the same call. Existing main translation remains
+separate and keeps its own success/fallback behavior.
+
+Enabling the flag unconditionally disables report-only resume generation, even
+when synthesis abstains, has no time, is unsupported or fails layout. Investigation
+keeps its three stages. A valid managed preparation deadline is required; no manual
+unlimited allowance is invented. Missing or unsafe optional work is omitted.
+Default-off and retained ready payloads keep their existing behavior. Fresh enabled
+snapshots intentionally use a shorter truthful deferred-status sentence in the
+normal main translation request; no synthesis text enters that request.
+
+Read [allocation and limits](decisions/0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
+and [presentation/recovery](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55)
+before a separately reviewed runtime opt-in. A configured route does not establish
+provider entitlement, free operation, faithful translation or useful analysis.

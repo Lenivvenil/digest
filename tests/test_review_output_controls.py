@@ -86,3 +86,71 @@ async def test_other_groq_model_retains_ordinary_review_wire() -> None:
         await run_primary_review(fixture_articles(), config, execution=execution)
     assert "reasoning_effort" not in call.call_args.kwargs
     assert "response_format" not in call.call_args.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["override", "provider", "model", "reasoning", "schema", "schema_name",
+                                     "schema_body", "temperature", "output", "role"])
+async def test_synthesis_role_requires_its_exact_explicit_controlled_route(defect: str) -> None:
+    from digest.adapters.models.synthesis import groq_synthesis_response_format
+    from digest.config import ProviderConfig
+    from digest.llm import LLMRole, complete
+
+    cfg = fixture_config()
+    execution = ModelExecution()
+    kwargs = {
+        "provider_override": ProviderConfig("groq", "openai/gpt-oss-120b"),
+        "reasoning_effort": "low",
+        "response_format": groq_synthesis_response_format(),
+        "temperature": 0,
+        "max_output_tokens": 4096,
+    }
+    role = LLMRole.SYNTHESIZE_EVIDENCE
+    if defect == "override":
+        kwargs["provider_override"] = None
+    elif defect in {"provider", "model"}:
+        setattr(kwargs["provider_override"], "name" if defect == "provider" else "model", "other")
+    elif defect == "reasoning":
+        kwargs["reasoning_effort"] = None
+    elif defect == "schema":
+        kwargs["response_format"] = None
+    elif defect == "schema_name":
+        kwargs["response_format"]["json_schema"]["name"] = "other"
+    elif defect == "schema_body":
+        kwargs["response_format"]["json_schema"]["schema"] = {"type": "object"}
+    elif defect == "temperature":
+        kwargs["temperature"] = 0.1
+    elif defect == "output":
+        kwargs["max_output_tokens"] = None
+    else:
+        role = LLMRole.SUMMARIZE
+    with patch("digest.llm._call_provider", AsyncMock()) as call:
+        with pytest.raises(ValueError):
+            await complete(role, [], cfg, execution=execution, **kwargs)
+    call.assert_not_awaited()
+    assert execution._state is None
+
+
+@pytest.mark.asyncio
+async def test_synthesis_controlled_wire_shares_existing_state_without_generic_resolution() -> None:
+    from digest.adapters.models.synthesis import groq_synthesis_response_format
+    from digest.config import ProviderConfig
+    from digest.llm import LLMRole, _providers_for_role, complete
+
+    cfg = fixture_config()
+    cfg.llm.max_retries = 0
+    execution = ModelExecution()
+    state = execution.request_state(cfg.llm)
+    state.requests_attempted = 2
+    state.request_limit = 3
+    provider = ProviderConfig("groq", "openai/gpt-oss-120b")
+    response_format = groq_synthesis_response_format()
+    with pytest.raises(ValueError, match="no generic role route"):
+        _providers_for_role(LLMRole.SYNTHESIZE_EVIDENCE, cfg)
+    with patch("digest.llm._call_provider", AsyncMock(return_value=("{}", {"finish_reason": "stop"}))) as call:
+        await complete(LLMRole.SYNTHESIZE_EVIDENCE, [], cfg, execution=execution,
+                       provider_override=provider, temperature=0, max_output_tokens=4096,
+                       reasoning_effort="low", response_format=response_format)
+    assert state.requests_attempted == state.request_limit == 3
+    assert call.call_args.args[1:] == (provider, [], 0, 4096)
+    assert call.call_args.kwargs == {"reasoning_effort": "low", "response_format": response_format}

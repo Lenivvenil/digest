@@ -379,3 +379,42 @@ async def test_resume_marker_write_failure_forbids_requests_and_output(tmp_path:
     complete.assert_not_called()
     assert _marker(path).read_bytes() == marker_before
     assert not path.with_name("day.review-resumed.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker_state", ["missing", "ready", "started", "malformed"])
+async def test_enabled_synthesis_surrenders_both_resume_entrypoints_without_marker_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, marker_state: str,
+) -> None:
+    from digest.config import ReviewModelConfig, SynthesisConfig
+
+    checkpoint = tmp_path / "digests/day.review.json"
+    await _checkpoint(checkpoint)
+    if marker_state != "missing":
+        assert prepare_resume(Path("config.yaml"), checkpoint.parent, NOW) == checkpoint
+        if marker_state == "started":
+            record = json.loads(_marker(checkpoint).read_text())
+            record["execution_started_at"] = NOW.isoformat()
+            _marker(checkpoint).write_text(json.dumps(record))
+        elif marker_state == "malformed":
+            _marker(checkpoint).write_text("not JSON")
+    cfg = fixture_config()
+    cfg.synthesis = SynthesisConfig(True)
+    # Surrender applies even to an unsupported comparison scope/route.
+    cfg.review.enabled = False
+    cfg.review.primary = ReviewModelConfig("other", "other")
+    original = asdict(cfg)
+    before = {p: p.read_bytes() for p in checkpoint.parent.iterdir()}
+    github_output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    execution = ModelExecution()
+    with patch("digest.review_resume.load_config", return_value=cfg), patch(
+        "digest.review_resume.run_evidence_review", AsyncMock(side_effect=AssertionError("Surrendered slot"))
+    ) as review, caplog.at_level("INFO"):
+        assert prepare_resume(Path("config.yaml"), checkpoint.parent, NOW) is None
+        assert await execute_resume(Path("config.yaml"), checkpoint, execution=execution) == 0
+    review.assert_not_awaited()
+    assert execution._state is None and asdict(cfg) == original
+    assert {p: p.read_bytes() for p in checkpoint.parent.iterdir()} == before
+    assert github_output.read_text() == "checkpoint=\n"
+    assert caplog.text.count("zero model calls") == 2

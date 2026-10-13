@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -119,6 +119,7 @@ async def present_preparation(
     execution: ModelExecution,
     verbose: bool = False,
     publication_date: date | None = None,
+    allow_new_synthesis: bool = False,
 ) -> FrozenPreparation | NoEdition:
     """Verify the active accepted reference before any presentation or readiness effect."""
     if publication_date is None:
@@ -168,6 +169,42 @@ async def present_preparation(
             pending, placement = None, None
     else:
         pending = None
+    # Optional work starts only after the complete otherwise-publishable baseline.
+    # The immutable ready metadata embeds admitted evidence; sender replay gains
+    # no sidecar parser or required preparation-local file dependency.
+    from digest.application.synthesis import prepare_synthesis, synthesis_enabled
+
+    synthesis = None
+    synthesis_metadata = None
+    if synthesis_enabled(config):
+        from digest.presentation.telegram import SynthesisPlacement, synthesis_text
+
+        baseline = render_compact_publication(publication.cards, config, publication.combined, placement)
+        card_values = [asdict(card) for card in publication.cards]
+        outcome = await prepare_synthesis(
+            restored, config, publication_date=publication_date, execution=execution,
+            allow_new=allow_new_synthesis,
+        )
+        synthesis_metadata = outcome.metadata()
+        if outcome.result is not None:
+            try:
+                candidate_placement = SynthesisPlacement(
+                    synthesis_text(outcome.result, outcome.bindings), len(publication.main_cards),
+                )
+                candidate = render_compact_publication(
+                    publication.cards, config, publication.combined, placement, synthesis=candidate_placement,
+                )
+                if card_values != [asdict(card) for card in publication.cards] or not _same_synthesis_layout(
+                    baseline, candidate,
+                ):
+                    raise ValueError("Optional comparison changes existing publication coverage.")
+                synthesis = candidate_placement
+                synthesis_metadata["status"] = "included"
+                synthesis_metadata["text"] = synthesis.text
+            except (ValueError, TypeError, KeyError):
+                synthesis_metadata["status"] = "omitted"
+                synthesis_metadata["reason"] = "layout_rejected"
+    optional_arguments: dict[str, Any] = {"synthesis": synthesis} if synthesis is not None else {}
     archive = write_digest(
         publication.combined,
         config,
@@ -179,6 +216,7 @@ async def present_preparation(
         articles_count=snapshot.article_count,
         date=datetime.combine(publication_date, datetime.min.time(), timezone.utc),
         supplement=placement,
+        **optional_arguments,
     )
     # An enabled but failed archive is a preparation failure, never sender eligibility.
     if config.obsidian.enabled and archive is None:
@@ -204,6 +242,14 @@ async def present_preparation(
             if path == archive.with_suffix(".review.json"):
                 current_review = relative
     canonical, presentation = publication.metadata()
+    if synthesis_metadata is not None:
+        presentation["synthesis"] = synthesis_metadata
+        if synthesis is not None:
+            canonical["synthesis"] = {
+                "result": synthesis_metadata["result"],
+                "bindings": synthesis_metadata["bindings"],
+                "request_sha256": synthesis_metadata["request_sha256"],
+            }
     if supplement_reason != "no_pending_fragment":
         presentation["supplement"] = {"status": "included" if pending is not None else supplement_reason}
     _, digest = prepare_edition(
@@ -217,6 +263,7 @@ async def present_preparation(
         publication_date=publication_date,
         supplement=pending,
         current_review_checkpoint=current_review,
+        **optional_arguments,
     )
     clear_preparation()
     future_window = publication_date > datetime.now(timezone.utc).date()
@@ -227,6 +274,18 @@ async def present_preparation(
         len(publication.combined),
         archive,
         current_review,
+    )
+
+
+def _same_synthesis_layout(baseline: Any, candidate: Any) -> bool:
+    """Admit visible interpretation only without changing existing chunk obligations."""
+    return bool(
+        len(baseline.chunks) == len(candidate.chunks)
+        and [(item.full_hash, item.source, item.covering_chunks) for item in baseline.articles]
+        == [(item.full_hash, item.source, item.covering_chunks) for item in candidate.articles]
+        and baseline.supplement == candidate.supplement
+        and [chunk.reply_markup for chunk in baseline.chunks] == [chunk.reply_markup for chunk in candidate.chunks]
+        and candidate.synthesis is not None and len(candidate.synthesis) == 1
     )
 
 

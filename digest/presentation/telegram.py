@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from digest.presentation.supplement import signal_text, split_supplement
 
 if TYPE_CHECKING:
     from digest.domain.editorial.summaries import ArticleSummary
+    from digest.domain.editorial.synthesis import EvidenceBinding, SynthesisResult
     from digest.irritator import IrritatorStatus
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
 
@@ -68,10 +70,19 @@ class SupplementPlacement:
 
 
 @dataclass(frozen=True)
+class SynthesisPlacement:
+    """Admitted optional text; no article, vote or supplementary identity."""
+
+    text: str
+    before_article: int
+
+
+@dataclass(frozen=True)
 class CompactPublication:
     chunks: list[_IssueChunk]
     articles: list[_IssueArticleRange]
     supplement: SupplementCoverage | None
+    synthesis: tuple[int, ...] | None = None
 
 
 def _labels(config: Any) -> dict[str, str]:
@@ -234,12 +245,15 @@ def render_compact_publication(
     config: Any,
     notice: str,
     supplement: SupplementPlacement | None = None,
+    *,
+    synthesis: SynthesisPlacement | None = None,
 ) -> CompactPublication:
     """Prepare every chunk and map escaped article ranges before dispatch."""
     username = getattr(config.telegram, "bot_username", "")
     parts: list[str] = []
     ranges: list[_IssueArticleRange] = []
     supplement_span = None
+    synthesis_span = None
     offset = 0
 
     def append_block(text: str) -> tuple[int, int]:
@@ -254,7 +268,11 @@ def render_compact_publication(
 
     if supplement is not None and not 0 <= supplement.before_article <= len(articles):
         raise ValueError("Invalid supplement publication position.")
+    if synthesis is not None and not 0 <= synthesis.before_article <= len(articles):
+        raise ValueError("Invalid synthesis publication position.")
     for index, article in enumerate(articles, 1):
+        if synthesis is not None and synthesis.before_article == index - 1:
+            synthesis_span = append_block(synthesis.text)
         if supplement is not None and supplement.before_article == index - 1:
             supplement_span = append_block(supplement.text)
         full_hash = article_hash(article.title, article.link)
@@ -264,6 +282,8 @@ def render_compact_publication(
         start, end = append_block(block)
         ranges.append(_IssueArticleRange(start, end, full_hash, article.source))
 
+    if synthesis is not None and synthesis.before_article == len(articles):
+        synthesis_span = append_block(synthesis.text)
     if supplement is not None and supplement.before_article == len(articles):
         supplement_span = append_block(supplement.text)
 
@@ -311,7 +331,46 @@ def render_compact_publication(
                 if start < supplement_span[1] and supplement_span[0] < end
             ),
         )
-    return CompactPublication(chunks, ranges, supplement_coverage)
+    synthesis_coverage = None
+    if synthesis is not None:
+        assert synthesis_span is not None
+        synthesis_coverage = tuple(
+            index
+            for index, (start, end) in enumerate(chunk_ranges)
+            if start < synthesis_span[1] and synthesis_span[0] < end
+        )
+    return CompactPublication(chunks, ranges, supplement_coverage, synthesis_coverage)
+
+
+def synthesis_text(result: SynthesisResult, bindings: Sequence[EvidenceBinding]) -> str:
+    """Render validated selected-item prose and immutable source quotes as one bounded block."""
+    comparison = result.comparison
+    if comparison is None:
+        raise ValueError("Synthesis presentation requires a comparison.")
+    russian = result.publication_language == "ru"
+    prose = comparison.presentation if russian else comparison.canonical
+    if prose is None:
+        raise ValueError("Synthesis presentation is missing its selected language.")
+    lines = [
+        "Сопоставление выбранных материалов" if russian else "Comparison of selected items",
+        prose.relationship,
+        prose.qualification,
+    ]
+    for support in comparison.supports:
+        matches = [binding for binding in bindings if binding.evidence.evidence_id == support.evidence_id]
+        if len(matches) != 1:
+            raise ValueError("Synthesis source binding is missing or ambiguous.")
+        binding = matches[0]
+        label = "Источник" if russian else "Source"
+        lines.extend([f"{label}: {binding.source}", support.quote, binding.evidence.url])
+    lines.append(
+        "Вывод по ограниченным RSS-отрывкам; смысловое соответствие перевода независимо не проверено."
+        if russian else "Interpretation of limited RSS excerpts."
+    )
+    text = "\n".join(lines)
+    if len(escape_markdownv2(text).encode("utf-16-le")) // 2 > 1000:
+        raise ValueError("Synthesis block exceeds the 1000-unit Telegram presentation budget.")
+    return text
 
 
 def render_counter_signals(

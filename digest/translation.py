@@ -89,6 +89,11 @@ def _invariants(text: str) -> tuple[Counter[str], Counter[str], Counter[str]]:
     return Counter(_URL.findall(text)), Counter(_NUMBER.findall(text)), Counter(_QUOTE.findall(text))
 
 
+def protected_content_equal(original: str, translated: str) -> bool:
+    """Reuse the exact existing URL, numeric-literal and quotation multisets."""
+    return _invariants(original) == _invariants(translated)
+
+
 _ValidationReason = Literal[
     "extraction", "envelope", "field_shape", "identity_or_text", "protected_content", "coverage",
 ]
@@ -252,9 +257,9 @@ def _closing_batch(
 
 def _parse_batch(
     text: str, required: dict[str, str], requested: dict[str, str],
-) -> tuple[dict[str, str], TranslationResult | None]:
+) -> tuple[dict[str, str], TranslationResult | None, _TranslationValidationError | None]:
     if required == requested:
-        return _parse(text, required), None
+        return _parse(text, required), None, None
     raw = _translation_json(text)
     if not isinstance(raw, dict) or set(raw) != {"translations"} or not isinstance(raw["translations"], list):
         raise _TranslationValidationError("envelope", "Invalid translation envelope.")
@@ -268,9 +273,10 @@ def _parse_batch(
     original = {"closing.summary": requested["closing.summary"]}
     try:
         closing = _parse(json.dumps({"translations": optional}), original)
-    except (ValueError, TypeError):
-        return translated, TranslationResult(original, "fallback", reasons=["closing_contract_invalid"])
-    return translated, TranslationResult(closing, "translated")
+    except (ValueError, TypeError) as exc:
+        validation = exc if isinstance(exc, _TranslationValidationError) else None
+        return translated, TranslationResult(original, "fallback", reasons=["closing_contract_invalid"]), validation
+    return translated, TranslationResult(closing, "translated"), None
 
 
 def _cached_optional(raw: object, original: str) -> TranslationResult:
@@ -350,9 +356,13 @@ def _with_failure_diagnostics(
 
 def _persist_batch_translation(
     path: Path, record: dict[str, object], optional: TranslationResult | None, original: str,
+    validation: _TranslationValidationError | None,
 ) -> TranslationResult | None:
     try:
         optional = _bound_combined_record(record, optional, original)
+        if (optional is not None and optional.status == "fallback"
+                and optional.reasons == ["closing_contract_invalid"] and validation is not None):
+            record = _with_failure_diagnostics(record, [], validation.reason, validation)
         atomic_json_write(path, record)
     except (OSError, ValueError, TypeError) as exc:
         if optional is None:
@@ -531,7 +541,7 @@ async def translate_fields(
                 if usage.get("finish_reason") not in {"stop", "STOP"}:
                     raise ValueError("Translation completion is incomplete or unknown.")
                 phase = "contract_invalid"
-                translated, optional = _parse_batch(response, batch, requested)
+                translated, optional, closing_validation = _parse_batch(response, batch, requested)
                 if optional is not None:
                     record.update(optional=asdict(optional), optional_sha256=_digest(asdict(optional)),
                                   response_sha256=hashlib.sha256(response.encode()).hexdigest(),
@@ -540,7 +550,7 @@ async def translate_fields(
                               usage={k: v for k, v in usage.items()
                                      if k in {"prompt_tokens", "completion_tokens", "total_tokens"}
                                      and type(v) is int and v >= 0})
-                optional = _persist_batch_translation(path, record, optional, closing_summary or "")
+                optional = _persist_batch_translation(path, record, optional, closing_summary or "", closing_validation)
                 result.fields.update(translated)
                 result.optional = optional or result.optional
             except (Exception, asyncio.CancelledError) as exc:

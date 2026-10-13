@@ -24,14 +24,18 @@ The review instruction evaluates substantive supplied information before reader
 relevance: a concrete development, finding, explanation or usable resource. A
 relevant question or promised discussion alone is insufficient. Concrete future
 announcements remain eligible, with attributed claims and plans distinguished from
-achieved outcomes. `deferred` is reserved for otherwise useful items exceeding the
-detail budget; insufficient substance or relevance is an editorial `not_selected`
-judgment about the supplied metadata, not the unread full article.
+achieved outcomes. Every reason must preserve attribution, uncertainty, negation,
+scope and material caveats, including the ordinary reason of an enabled closer.
+Do not upgrade a reported allegation to an established event or introduce unsupported
+specificity; omit a claim if its meaning-changing qualifiers cannot fit. `deferred`
+is reserved for otherwise useful items exceeding the detail budget; insufficient
+substance or relevance is an editorial `not_selected` judgment about the supplied
+metadata, not the unread full article.
 
 These are model instructions, not semantic guarantees enforced by quote validation.
-The [#55 correction](https://github.com/Lenivvenil/digest/issues/55) changes prompt
-identity for future review; it neither reopens prior decisions nor proves improved
-selection before a new ordinary output is inspected.
+The [#55 clarification](https://github.com/Lenivvenil/digest/issues/55) is prospective;
+generated quality remains unverified until a new ordinary output is inspected.
+It neither reopens prior decisions nor proves improved selection or faithful prose.
 
 Candidate progress is saved before a review call. Admission works within the configured
 count, character, retry-opportunity and storage bounds; it does not promise to drain
@@ -74,9 +78,18 @@ original report remains intact.
 python -m digest.review_trial --config config.yaml --resume previous/review.json --output fresh-output
 ```
 
-Reuse requires matching slot/provider/model,
-bundle and current prompt identity plus valid retained selections. Accepted canonical
-preparation and frozen editions are not reinterpreted under this new-request policy.
+Reuse requires matching slot/provider/model, bundle and current prompt identity
+plus valid retained selections. The shared reason-qualifier instruction changes future
+prompt hashes and input request size even for unchanged evidence, across planning,
+primary/fallback execution, independent comparison and resume. Existing
+[exact-identity rules](STATE_AND_EFFECTS.md#request-identity-and-reuse) refuse
+old-prompt slot reuse; subsequent work still follows current admission, allowance,
+reservation and disabled-path rules.
+
+Accepted canonical preparation, frozen editions, old reports and retained decisions
+remain readable. They are not rewritten, relabelled, reopened or silently regenerated
+under this new-request policy. Preserve old-prompt evidence without purging caches
+or introducing a migration.
 
 `digest.review_resume` keeps separate prepare/execute phases and its persisted
 one-time execution marker, validated and atomically marked started before requests.
@@ -96,6 +109,13 @@ no new primary edition or deduplication effect. The paired
 [prepared-main recovery](decisions/0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55)
 transfers no unused allowance to resume. Primary fallback and investigation
 generation remain unchanged.
+
+When `synthesis.enabled` is true, both report-only resume entrypoints instead
+return an explicit zero-call skip before creating or mutating a marker. An old
+marker cannot spend the surrendered allocation. Investigation still has all three
+stages; unused synthesis time or calls are never transferred. This fixed allocation
+also applies when synthesis is unsupported or omitted. Preserve old reports for
+inspection and follow the [current-edition rollback boundary](OPERATIONS.md#retaining-optional-synthesis-across-recovery).
 
 ## Supplementary investigation
 

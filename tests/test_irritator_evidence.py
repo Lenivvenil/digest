@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -35,6 +36,207 @@ from digest.review_checkpoint import FullSourceEvidence
 from scripts.review_fixture import fixture_articles, fixture_config
 from tests.factories import make_article, make_signal
 from tests.test_review_checkpoint import _full_source_evidence
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheduled_day", ["2026-10-07", "2026-10-08", "2026-10-09"])
+async def test_frozen_publication_day_reaches_every_request_without_rewriting_dates(scheduled_day: str) -> None:
+    from datetime import datetime, timezone
+
+    from digest.domain.catalog.occurrences import occurrence_sha256
+
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    quote = f"The operator says the migration will begin on {scheduled_day}."
+    published = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+    articles = fixture_articles()
+    for group in articles.values():
+        for article in group:
+            article.description, article.pub_date = quote, published
+    bundle = build_evidence_bundle(articles, config.review)
+    origin = delivered_input(bundle)
+    card = origin.cards[0]
+    occurrence = replace(card.occurrence, description=quote, published=bundle.items[0].published)
+    card = replace(
+        card,
+        canonical=replace(card.canonical, summary=quote),
+        occurrence=occurrence,
+        occurrence_sha256=occurrence_sha256(occurrence),
+    )
+    origin = replace(origin, cards=(card,))
+    response = _narrative(bundle)
+    response["narratives"][0].update(
+        implicit_assumptions=[],
+        quotes={card.card_id: quote},
+        target_card_id=card.card_id,
+        delivered_quote={"field": "summary", "text": quote},
+    )
+    original = asdict(bundle), asdict(origin)
+    requests = []
+    hashes = []
+    for day in ("2026-10-08", "2026-10-10"):
+        model = AsyncMock(
+            side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+        )
+        search = AsyncMock(
+            return_value=[make_signal(url="https://external.example/caveat", title="Deployment limitations")]
+        )
+        with (
+            patch("digest.irritator.evidence_stage.complete", model),
+            patch("digest.irritator.evidence_stage.search_hackernews", search),
+        ):
+            async with _offline_client() as client:
+                result = await run_evidence_irritator(
+                    bundle, config, client, execution=ModelExecution(), delivered=replace(origin, publication_day=day)
+                )
+        assert result.status == "complete" and model.await_count == 3 and search.await_count == 1
+        messages = [call.args[1] for call in model.await_args_list]
+        requests.append(messages)
+        hashes.append([item.prompt_sha256 for item in result.diagnostics if item.prompt_sha256])
+        for message, digest in zip(messages, hashes[-1], strict=True):
+            instruction = message[0]["content"]
+            payload = json.loads(message[1]["content"])
+            assert payload["publication_day"] == day
+            assert "originating edition's UTC publication reference, not the execution date" in instruction
+            assert "source publication time, scheduled event dates" in instruction
+            assert "before publication_day is not still upcoming" in instruction
+            assert "do not infer completion" in instruction
+            assert (
+                "date alone supplies no execution instant and establishes neither upcoming nor completed" in instruction
+            )
+            assert "source-attributed announced/scheduled-date wording" in instruction
+            assert "future-relative wording explicitly to publication_day" in instruction
+            assert "future-tense quotations byte-for-byte" in instruction
+            assert payload["evidence"]["items"] == [asdict(bundle.items[0])]
+            assert payload["evidence"]["items"][0]["published"] == published.isoformat()
+            assert hashlib.sha256(json.dumps(message, sort_keys=True).encode()).hexdigest() == digest
+        assert result.narratives[0].quotes == {card.card_id: quote}
+        assert asdict(result.narratives[0])["delivered_quote"] == {"field": "summary", "text": quote}
+    for first, second, first_hash, second_hash in zip(*requests, *hashes, strict=True):
+        assert first_hash != second_hash
+        assert first[0] == second[0]
+        first_payload, second_payload = (json.loads(message[1]["content"]) for message in (first, second))
+        assert first_payload.pop("publication_day") == "2026-10-08"
+        assert second_payload.pop("publication_day") == "2026-10-10"
+        assert first_payload == second_payload
+    assert (asdict(bundle), asdict(origin)) == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_source", [False, True], ids=["rss", "full-source"])
+async def test_unbound_requests_retain_pre_publication_context_prompt_bytes(tmp_path: Path, full_source: bool) -> None:
+    # These hashes bind complete serialized messages captured before the context repair.
+    expected = (
+        [
+            "89e5bde87e1661aea53d1389a7bf8aeb2c4711a87975a8525201ab0ae3f1818c",
+            "c1452784f65754cf2c4405ec89bdd37a65851b3edbad097703b0b622395ff5c3",
+            "7ab14ab5d0e4bdca1dd28c0370ee8a0254523acf1832b7c9ae545246dbdf700c",
+        ]
+        if full_source
+        else [
+            "11459123e81ba3bdc77b7f01fdfb4644e3b6a54825ba572e34b82dd128ceaa50",
+            "081512b09bd6237f64d2cbb3016b517e997e4e30b7e97a7e89d603fca54742dc",
+            "ff004ad44f764b3046b0de87f637daec0dbfcd8fe6accf6f83c2b9f5256c953c",
+        ]
+    )
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    source = _full_source_evidence(tmp_path, bundle) if full_source else None
+    response = _narrative(source or bundle)
+    if source is not None:
+        response["narratives"][0]["quotes"] = {source.items[0].evidence_id: source.items[0].excerpt}
+    model = AsyncMock(
+        side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+    )
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.source_admission.count_gpt_input", return_value=1000),
+        patch(
+            "digest.irritator.evidence_stage.search_hackernews",
+            AsyncMock(
+                return_value=[make_signal(url="https://external.example/caveat", title="Deployment limitations")]
+            ),
+        ),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(
+                bundle, config, client, execution=ModelExecution(), source_evidence=source
+            )
+    assert result.status == "complete" and model.await_count == 3
+    assert [item.prompt_sha256 for item in result.diagnostics if item.prompt_sha256] == expected
+    for call, digest in zip(model.await_args_list, expected, strict=True):
+        serialized = json.dumps(call.args[1], sort_keys=True)
+        assert "publication_day" not in serialized
+        assert hashlib.sha256(serialized.encode()).hexdigest() == digest
+
+
+@pytest.mark.asyncio
+async def test_delivered_full_source_admits_exact_date_bound_messages(tmp_path: Path) -> None:
+    from digest.review_checkpoint import _identity_hash
+    from digest.source_admission import admit_request, request_sha256, route_profile
+
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    origin = delivered_input(bundle)
+    card = origin.cards[0]
+    source = _full_source_evidence(tmp_path, bundle)
+    items = tuple(
+        replace(
+            item,
+            article_id=card.card_id,
+            title=card.canonical.title,
+            url=card.canonical.link,
+            source=card.canonical.source,
+            category=card.canonical.category,
+        )
+        for item in source.items
+    )
+    source = replace(
+        source, items=tuple(replace(item, evidence_id=_identity_hash(item, "evidence_id")) for item in items)
+    )
+    source = replace(source, bundle_id=_identity_hash(source, "bundle_id"))
+    response = _narrative(source)
+    response["narratives"][0].update(
+        implicit_assumptions=[],
+        quotes={source.items[0].evidence_id: source.items[0].excerpt},
+        target_card_id=card.card_id,
+        delivered_quote={"field": "summary", "text": card.canonical.summary},
+    )
+    model = AsyncMock(
+        side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+    )
+    admission = AsyncMock(wraps=admit_request)
+    search = AsyncMock(
+        return_value=[make_signal(url="https://external.example/caveat", title="Deployment limitations")]
+    )
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.admit_request", admission),
+        patch("digest.source_admission.count_gpt_input", return_value=1000),
+        patch("digest.irritator.evidence_stage.search_hackernews", search),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(
+                bundle, config, client, execution=ModelExecution(), delivered=origin, source_evidence=source
+            )
+    assert result.status == "complete" and model.await_count == admission.await_count == 3 and search.await_count == 1
+    diagnostics = [item for item in result.diagnostics if item.admission is not None]
+    for admitted, generated, diagnostic in zip(
+        admission.await_args_list, model.await_args_list, diagnostics, strict=True
+    ):
+        assert admitted.args[0] == generated.args[1]
+        assert json.loads(generated.args[1][1]["content"])["publication_day"] == origin.publication_day
+        for key in ("provider_override", "temperature", "max_output_tokens", "execution"):
+            assert admitted.kwargs[key] == generated.kwargs[key]
+        provider = generated.kwargs["provider_override"]
+        route = route_profile(provider.name, provider.model, generated.kwargs["max_output_tokens"])
+        assert route is not None and diagnostic.admission is not None and diagnostic.admission.admitted
+        assert diagnostic.admission.request_sha256 == request_sha256(route, generated.args[1], 0.2)
+        assert diagnostic.admission.output_reserve == generated.kwargs["max_output_tokens"] == MAX_OUTPUT_TOKENS
+        assert (diagnostic.admission.provider, diagnostic.admission.model) == (provider.name, provider.model)
+    assert len({call.kwargs["deadline"] for call in admission.await_args_list}) == 1
 
 
 def delivered_input(bundle: EvidenceBundle) -> DeliveredInvestigationInput:

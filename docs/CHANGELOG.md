@@ -9,6 +9,11 @@
   revalidates and may generate for remaining slots. Schema and send barriers are
   unchanged. Refs #132. See the
   [ADR0013 amendment](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
+- Supply the frozen origin publication day to all three delivered-bound Irritator
+  requests, distinguishing edition reference, scheduled dates and observed occurrence
+  while retaining literal quotes and exact unbound requests. This repairs missing
+  context without guaranteeing temporal fidelity or counter-evidence quality;
+  retained state and one-attempt rules are unchanged. Refs #77.
 - Make `/bubble` count recorded source inclusions on the seven UTC calendar dates
   ending on its observed report date. Share those counts across the score and lists,
   omit unusably dated history, and label source-inclusion evenness without claiming
@@ -55,6 +60,36 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+
+- Retain existing controlled validation reasons and bounded protected-content
+  categories for newly rejected optional closer translations, after business-record
+  sizing. Valid main prose, optional fallback, request/cache identities and terminal
+  replay stay unchanged; historical causes and semantic fidelity remain unknown.
+  Refs #55.
+- Clarify attribution, uncertainty, negation, scope and material caveats in every
+  shared RSS review reason, including an enabled closer. Future request identities
+  change; accepted and frozen work remains unchanged. This is a prospective prompt
+  clarification, not proof of faithful generated prose. Refs #55.
+- Add a default-off selected-source comparison for ordinary prepared RSS editions,
+  with one paired EN/RU response, accepted-reference local no-repeat state and a
+  full-publication layout gate. Enabling it surrenders report-only resume generation
+  at both entrypoints; investigation and main translation retain their own rules.
+  No new sender dependency, article/vote credit or live-quality acceptance is added.
+  Refs #55; see the [bounded decision](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55).
+- Add [support](../.github/SUPPORT.md) and [security reporting guidance](../.github/SECURITY.md)
+  with safe reproduction details and explicit reporting limits. Security-policy links
+  use repository-qualified destinations for GitHub’s dedicated policy page. Refs #148.
+
+- Reserve unmet active-trial opportunities inside the existing fresh candidate
+  packet, counting all already-admitted trials and preserving oldest/retry/closing
+  obligations. Use age-first trial turns with whole-item fit and at most one final
+  unprotected ordinary donor per promotion. `adaptive.trial_slots` now applies even
+  when automated management is disabled; zero disables only extra promotion.
+  Ordinary and experimental source preparation share the rule; saved recovery,
+  immutable evidence and request/detail budgets remain unchanged. This is not a
+  professional quota or drainage guarantee. Refs #121, #132. See the
+  [admission amendment](decisions/0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13).
+
 - Allow one bounded same-route explicit-429 recovery per ordinary prepared-main
   translation invocation, paired with one physical attempt in report-only resume.
   Other translation callers retain no-retry defaults; historical cache/frozen state,

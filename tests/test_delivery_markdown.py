@@ -241,3 +241,44 @@ def test_reading_appendix_preserves_original_qualifications_and_safe_fences(tmp_
     assert legacy is not None
     assert "Original source evidence" not in legacy.read_text() and card.summary in legacy.read_text()
     assert path.read_bytes() == saved and legacy != path
+
+
+def test_synthesis_archive_keeps_same_literal_block_before_supplement_and_closer(tmp_path: Path) -> None:
+    from digest.presentation.telegram import SupplementPlacement, SynthesisPlacement, synthesis_text
+    from digest.radar.summarizer import ArticleSummary
+    from tests.test_delivery_telegram import _synthesis_fixture
+
+    result, bindings = _synthesis_fixture()
+    text = synthesis_text(result, bindings)
+    cards = [ArticleSummary("Main", "https://example.com/main", "A", "Tech", "Main prose."),
+             ArticleSummary("Closing", "https://example.com/closer", "B", "World", "Closing prose.")]
+    config = _make_config(output_dir=str(tmp_path))
+    path = write_digest("Notice", config, top_articles=cards, synthesis=SynthesisPlacement(text, 1),
+                        supplement=SupplementPlacement("fragment", "Supplement prose.", 1))
+    assert path is not None
+    archived = path.read_text()
+    assert archived.count(text) == 1
+    assert archived.index("Main prose.") < archived.index(text) < archived.index("Supplement prose.")
+    assert archived.index("Supplement prose.") < archived.index("Closing prose.")
+    assert "## Closing story" in archived
+    without = write_digest("Notice", config, top_articles=cards, synthesis=SynthesisPlacement(text, 1))
+    assert without is not None
+    assert without.read_text().index(text) < without.read_text().index("Closing prose.")
+    end = write_digest("Notice", config, top_articles=cards[:1], synthesis=SynthesisPlacement(text, 1))
+    assert end is not None and text in end.read_text() and "## Closing story" not in end.read_text()
+
+
+def test_synthesis_absent_preserves_archive_bytes_and_invalid_position_rejects(tmp_path: Path) -> None:
+    import pytest
+
+    from digest.presentation.telegram import SynthesisPlacement
+    from digest.radar.summarizer import ArticleSummary
+
+    config = _make_config(output_dir=str(tmp_path))
+    cards = [ArticleSummary("Main", "https://example.com/main", "A", "Tech", "Main prose.")]
+    date = datetime(2026, 10, 13, tzinfo=timezone.utc)
+    baseline = write_digest("Notice", config, top_articles=cards, date=date)
+    absent = write_digest("Notice", config, top_articles=cards, date=date, synthesis=None)
+    assert baseline is not None and absent is not None and baseline.read_bytes() == absent.read_bytes()
+    with pytest.raises(ValueError, match="synthesis publication position"):
+        write_digest("Notice", config, top_articles=cards, synthesis=SynthesisPlacement("Comparison", 2))

@@ -7,6 +7,7 @@ configuration, model execution and candidate storage coordination.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from functools import cache
@@ -139,6 +140,8 @@ def _source_turns(
     candidates: list[Candidate],
     instant: datetime,
     retry_times: dict[str, datetime] | None = None,
+    *,
+    age_only: bool = False,
 ) -> list[Candidate]:
     groups: dict[tuple[str, str], list[Candidate]] = {}
     for candidate in candidates:
@@ -149,7 +152,7 @@ def _source_turns(
         heads = {}
         for key, group in groups.items():
             pool = group
-            if retry_times is None and round_number % 2 == 0:
+            if retry_times is None and not age_only and round_number % 2 == 0:
                 dated = [(stamp, item) for item in group if (stamp := _freshness(item, instant)) is not None]
                 if dated:
                     newest = max(stamp for stamp, _ in dated)
@@ -197,6 +200,8 @@ def plan_articles(
     max_excerpt_chars: int,
     max_technical_retry_articles: int,
     closing_sources: frozenset[tuple[str, str, str]] = frozenset(),
+    trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
+    trial_slots: int = 0,
 ) -> AdmittedCandidates | None:
     """Bound fresh/age source turns and technical continuation in one request.
 
@@ -208,6 +213,9 @@ def plan_articles(
     by a turn, a byte skip or a saved plan.
     An absent approved closing source gets one bounded final opportunity, using
     spare capacity or deferring only the last ordinary backfill admission.
+    An unmet active-trial reservation then preserves that baseline protection,
+    using age-first source rounds and at most one final unprotected donor per
+    promotion. Trials already admitted anywhere count toward the reservation.
     """
 
     @cache
@@ -260,6 +268,14 @@ def plan_articles(
         for item in [*unseen, *retries]
         if (item.article.source, item.article.source_url, item.article.category) in closing_sources
     ]
+    trial_unseen = [
+        item for item in unseen
+        if (item.article.source, item.article.source_url, item.article.category) in trial_sources
+    ]
+    trial_retries = [
+        item for item in retries
+        if (item.article.source, item.article.source_url, item.article.category) in trial_sources
+    ]
     limit = max_evidence_articles
     reserved = min(max_technical_retry_articles, max(0, limit - bool(unseen)))
     # Identity age survives occurrence changes. Preserve the existing backfill
@@ -302,6 +318,17 @@ def plan_articles(
         return selected
 
     selected = closing_opportunity()
+
+    _trial_opportunity(
+        selected, trial_unseen, trial_retries, instant,
+        protected_count=protected_count,
+        closing_sources=closing_sources,
+        trial_sources=trial_sources,
+        trial_slots=trial_slots,
+        max_evidence_articles=max_evidence_articles,
+        admit=admit,
+        fits=fits,
+    )
     if not selected:
         return None
     articles: dict[str, list[Article]] = {}
@@ -313,6 +340,59 @@ def plan_articles(
         items[value[0].evidence_id] = value[0]
     ordered = tuple(items[identity] for identity in evidence.ordered_unique_articles(articles))
     return AdmittedCandidates(tuple(selected), evidence.evidence_bundle_from_items(ordered, omitted_articles=0))
+
+
+def _trial_opportunity(
+    selected: list[CandidateArticle],
+    trial_unseen: list[Candidate],
+    trial_retries: list[Candidate],
+    instant: datetime,
+    *,
+    protected_count: int,
+    closing_sources: frozenset[tuple[str, str, str]],
+    trial_sources: frozenset[tuple[str, str, str]],
+    trial_slots: int,
+    max_evidence_articles: int,
+    admit: Callable[[Candidate], bool],
+    fits: Callable[[list[CandidateArticle]], bool],
+) -> None:
+    """Fill only unmet trial places without evicting any baseline obligation."""
+    def is_trial(saved: CandidateArticle) -> bool:
+        return (saved.source, saved.source_url, saved.category) in trial_sources
+
+    target = min(trial_slots, max_evidence_articles)
+    trial_count = sum(is_trial(saved) for saved in selected)
+    if trial_count >= target or not (trial_unseen or trial_retries):
+        return
+    protected = set(selected[:protected_count])
+    closer = next(
+        (saved for saved in selected if (saved.source, saved.source_url, saved.category) in closing_sources),
+        None,
+    )
+    if closer is not None:
+        protected.add(closer)
+    # Keep the baseline queues intact. Only extra unseen trial opportunities
+    # use age-only source rounds; technical work keeps exact attempt order.
+    remaining = _source_turns(
+        [item for item in trial_unseen if item.article not in selected], instant, age_only=True
+    )
+    for candidate in [*remaining, *trial_retries]:
+        if trial_count >= target:
+            break
+        if candidate.article in selected:
+            continue
+        if admit(candidate):
+            trial_count += 1
+            continue
+        donor = next(
+            (saved for saved in reversed(selected) if saved not in protected and not is_trial(saved)), None
+        )
+        if donor is None:
+            continue
+        retained = [saved for saved in selected if saved != donor]
+        if fits([*retained, candidate.article]):
+            selected[:] = [*retained, candidate.article]
+            trial_count += 1
 
 
 def _current_occurrences(candidate: Candidate) -> None:

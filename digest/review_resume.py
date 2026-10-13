@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,7 @@ from digest.presentation.review import render_review
 
 _MAX_AGE = timedelta(hours=24)
 _SUFFIX = ".review.json"
+logger = logging.getLogger(__name__)
 
 
 def _safe_path(path: Path) -> Path:
@@ -59,6 +61,8 @@ def _siblings(checkpoint: Path) -> tuple[Path, Path, Path]:
 
 def _config(path: Path) -> Config:
     config = load_config(path)
+    if getattr(getattr(config, "synthesis", None), "enabled", False):
+        return config
     if not config.review.enabled:
         raise ValueError("Resume requires review.enabled: true.")
     models = [config.review.primary, config.review.secondary, config.review.tie_breaker]
@@ -127,6 +131,10 @@ def _github_output(checkpoint: Path | None) -> None:
 def prepare_resume(config_path: Path, reports_dir: Path, now: datetime | None = None) -> Path | None:
     """Select the newest eligible archive and claim its one scheduled attempt."""
     config = _config(config_path)
+    if getattr(getattr(config, "synthesis", None), "enabled", False):
+        logger.info("Report-only resume skipped: synthesis allocation enabled; zero model calls.")
+        _github_output(None)
+        return None
     reports = _safe_path(reports_dir)
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
@@ -175,6 +183,10 @@ async def execute_resume(
     config_path: Path, checkpoint_path: Path, *, execution: ModelExecution,
 ) -> int:
     """Use at most one missing-slot attempt; never overwrite source evidence."""
+    config = _config(config_path)
+    if getattr(getattr(config, "synthesis", None), "enabled", False):
+        logger.info("Report-only resume skipped: synthesis allocation enabled; zero model calls.")
+        return 0
     checkpoint = _safe_path(checkpoint_path)
     marker, output, markdown = _siblings(checkpoint)
     if not marker.is_file() or marker.is_symlink():
@@ -185,7 +197,6 @@ async def execute_resume(
     if (record.get("schema_version") != 1 or record.get("execution_started_at")
             or record.get("checkpoint") != checkpoint.relative_to(Path.cwd().resolve()).as_posix()):
         raise ValueError("Invalid or already executed resume marker.")
-    config = _config(config_path)
     content, bundle, cached = _read_checkpoint(checkpoint, config)
     if (record.get("checkpoint_sha256") != hashlib.sha256(content).hexdigest()
             or record.get("bundle_id") != bundle.bundle_id):

@@ -57,6 +57,23 @@ is superseded for new target-bound attempts by the #208 policy below. No indepen
 optional Telegram dispatch is added. An incomplete external stage remains incomplete;
 format choice does not prove its factual utility.
 
+### 2026-10-13 frozen investigation reference day (#77)
+
+The existing delivered origin's validated `publication_day` is projected into all
+three investigation requests. It is the originating edition's UTC reference, not
+the investigation clock or proof that a scheduled event occurred. Instructions
+keep source publication, scheduled dates and that reference distinct: a preceding
+date is not still upcoming; same-day ordering remains unknown; neither establishes
+completion. Unknown occurrence uses source-attributed scheduled-date wording, and
+historical quotations remain literal. This restores context without guaranteeing
+model fidelity or useful counter-evidence.
+
+Unbound requests retain their exact messages. New delivered-bound diagnostic and
+full-source admission hashes bind the updated requests; old prompt hashes remain
+historical evidence. No saved schema, ready payload, attempt, result, fragment,
+translation-cache identity or one-attempt/eligibility rule changes; no migration,
+cache clearing or replay is required. Refs #77.
+
 ## 2026-10-09 later-edition supplementary evidence (#208)
 
 An accepted target-bound investigation can retain one immutable fragment projection

@@ -131,9 +131,8 @@ it and failed reservations remain terminal; this diagnostic addition changes nei
 retry policy nor prompt binding.
 
 Only the closed code is retained, never response excerpts or exception text.
-The optional closer's existing `closing_contract_invalid` fallback is separate
-and is not further diagnosed by this failed-batch field. These reasons identify
-structural rejection, not semantic fidelity or the cause of earlier failures.
+These reasons identify structural rejection, not semantic fidelity or the cause
+of earlier failures.
 
 
 ### Optional protected-content attribution (#55)
@@ -147,6 +146,30 @@ Invalid/oversized detail is omitted without removing other accepted diagnostics.
 Old readers ignore it; saved failure records stay terminal and are never rewritten.
 This attributes a later structural failure only. Missing details remain unknown;
 neither semantic fidelity nor a historical failure's exact cause is established.
+
+### Optional closer rejection diagnostics (#55)
+
+New combined records with valid main translation and a rejected optional closer
+may retain the same top-level `validation_reason` and, for protected content,
+`validation_detail`. The optional parser's existing controlled error supplies the
+reason and canonical `closing.summary` identity with the same fixed categories;
+generic errors add no invented detail. The nested optional result keeps its exact
+six-field shape and `closing_contract_invalid` fallback. No rejected text, malformed
+identity or exception text is retained.
+
+Business-record sizing runs first. Diagnostics are projected only while the final
+optional outcome is still `closing_contract_invalid`; a final
+`closing_output_allowance` outcome carries no stale validation reason. Projection
+is best-effort within the existing ceiling and cannot itself omit the closer,
+discard valid main prose, change fallback or add a write. Persistence failure keeps
+the existing terminal reservation and in-memory main result. Required-failure
+diagnostics retain their existing ordering and meaning.
+
+Readers, schema and prompt identities, request/selection bindings, nested hashes,
+reservation and replay rules are unchanged. Historical records are never enriched,
+rewritten or retried. A missing reason or detail remains unknown, including earlier
+rejected closers. This improves visibility of future structural rejection; it does
+not establish numeric equivalence, semantic corruption or closer quality.
 
 ## Attached numeric literals and saved-cache compatibility (#55)
 
@@ -231,3 +254,67 @@ The paired [one-attempt report-only resume](../ADVANCED_OPERATIONS.md#independen
 receives no unused translation allowance. Primary fallback and investigation
 generation remain unchanged. This does not identify the limiting provider quota
 or establish semantic fidelity or broader #55 runtime acceptance.
+
+## Optional selected-source comparison (#55)
+
+A single `synthesis.enabled` boolean, off by default, allocates one optional
+comparison after ordinary main presentation and pending-supplement preflight.
+It unconditionally surrenders report-only resume generation at both resume
+entrypoints, including old markers. Investigation retains its three stages.
+Unsupported modes and omitted/failed synthesis do not refund that allocation.
+This is selected-main-subset analysis, not a category summary, independent model
+review, historical trend or comprehensive source survey. #55 remains open for
+ordinary editorial and runtime acceptance.
+
+Only a review executed in the current ordinary preparation can dispatch new
+synthesis after acceptance. Capture that fact before candidate reconciliation
+populates the packet report. Restored reports, accepted v1/v2 checkpoints and
+direct callers cannot create a new attempt. Current ready/claimed/held work wins
+first. A matching retained valid synthesis may be reused during accepted recovery;
+disabling synthesis produces baseline presentation even if that capture exists.
+
+Resolve all selected main RSS EvidenceItems, in accepted order, from the immutable
+report/occurrence graph. No closer, generated card reason, translated card,
+unselected item, full source or newly fetched page enters the request. Missing or
+ambiguous bindings omit the stage. Two distinct retained source identities are
+required, but do not prove independent ownership or reporting.
+
+One controlled Groq `openai/gpt-oss-120b` secondary-route completion returns
+canonical English and, for RU publication, paired Russian prose. It has no
+independent translation or repair stage. Strict JSON binds exactly two support IDs,
+occurrence hashes and exact 1–160-character excerpt quotations; relationship and
+qualification are mandatory bounded fields. Both language fields must preserve
+the existing URL, numeric-literal and literal-quotation multisets. Missing/unknown
+completion, malformed output, unsupported support or invalid presentation omits
+the whole comparison. A successful RU comparison cannot repair failed main
+translation or upgrade its existing fallback/verification metadata.
+
+The complete escaped localized block, including qualifications, both original
+quotes, source labels/links and interpretation/coverage notices, must fit 1,000
+UTF-16 units. It appears after main cards, before any existing supplement and the
+closer. The full-publication gate preserves chunk count, every article's values,
+identity and covering chunks, supplement identity/coverage, vote keyboards and
+required source-credit completeness. The comparison must occupy one chunk.
+Otherwise use baseline presentation without trimming primary content or producing
+an additional message. Markdown and frozen delivery receive identical selected
+comparison text. Synthesis has no article identity, votes or source/delivery credit.
+
+This is structural/layout isolation with bounded transport exposure: visible text
+changes bytes of a shared Telegram chunk and can affect that request's acceptance
+or latency. Same chunk count is not literal payload isolation. Field/quote checks
+also cannot prove entailment, semantic equivalence, relevance or useful analysis.
+A positive ordinary capture requires independent excerpt → canonical comparison →
+presentation review; abstention is safe degradation, not positive acceptance.
+No live call or runtime activation follows from offline test success.
+
+Fresh opted-in accepted snapshots use the existing deterministic deferred-status
+owner to say only that counter-signal investigation follows primary delivery.
+The normal main translator handles that sentence. Its category-digest request/cache
+binding changes intentionally; card/closer fields, routes, retries and validation
+remain unchanged. All newly created snapshots get the truthful status even when
+the report was restored, while new synthesis dispatch remains fresh-review-only.
+Historical accepted/frozen text is never rewritten or patched in Russian. The
+archive's status-only projection follows the retained accepted sentence.
+
+See [execution/deadline ownership](0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
+and [retained attempt authority](../STATE_AND_EFFECTS.md#optional-synthesis-attempt).
