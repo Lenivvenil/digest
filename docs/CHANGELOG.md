@@ -53,6 +53,16 @@
   with safe reproduction details and explicit reporting limits. Security-policy links
   use repository-qualified destinations for GitHub’s dedicated policy page. Refs #148.
 
+- Reserve unmet active-trial opportunities inside the existing fresh candidate
+  packet, counting all already-admitted trials and preserving oldest/retry/closing
+  obligations. Use age-first trial turns with whole-item fit and at most one final
+  unprotected ordinary donor per promotion. `adaptive.trial_slots` now applies even
+  when automated management is disabled; zero disables only extra promotion.
+  Ordinary and experimental source preparation share the rule; saved recovery,
+  immutable evidence and request/detail budgets remain unchanged. This is not a
+  professional quota or drainage guarantee. Refs #121, #132. See the
+  [admission amendment](decisions/0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13).
+
 - Allow one bounded same-route explicit-429 recovery per ordinary prepared-main
   translation invocation, paired with one physical attempt in report-only resume.
   Other translation callers retain no-retry defaults; historical cache/frozen state,

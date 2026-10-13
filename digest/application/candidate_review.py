@@ -134,7 +134,13 @@ def merge_candidates(
     return progress
 
 
-def plan_packet(progress: CandidateProgress, config: Config, now: datetime | None = None) -> CandidatePacket | None:
+def plan_packet(
+    progress: CandidateProgress,
+    config: Config,
+    now: datetime | None = None,
+    *,
+    trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
+) -> CandidatePacket | None:
     """Bound fresh/age source turns and technical continuation in one request.
 
     A fitting unseen item gets the first opportunity. Retry reservations consume
@@ -149,6 +155,8 @@ def plan_packet(progress: CandidateProgress, config: Config, now: datetime | Non
         max_evidence_articles=config.review.max_evidence_articles,
         max_excerpt_chars=config.review.max_excerpt_chars,
         max_technical_retry_articles=config.review.max_technical_retry_articles,
+        trial_sources=trial_sources,
+        trial_slots=config.adaptive.trial_slots,
         closing_sources=(
             closing_source_bindings(config.closing, config.sources) if config.closing.enabled else frozenset()
         ),

@@ -147,6 +147,27 @@ editorial value. Categories are operator-defined. Banking/payments, AI engineeri
 distributed systems, enterprise architecture and regional affairs are examples from
 the project's original use, not mandatory personal-profile presets.
 
+### Active-trial admission
+
+`adaptive.trial_slots` is a nonnegative integer (default 2). In fresh review-led
+preparation it reserves up to `min(trial_slots, review.max_evidence_articles)`
+active-trial identities within the existing count and character budgets, after
+counting all trials already admitted by ordinary, oldest, retry and closing turns.
+This applies with either value of `adaptive.enabled`; that flag still controls
+existing automated scoring and lifecycle decisions. No configuration change is
+needed to apply a nonzero existing target when automated management is disabled.
+
+Zero disables only extra trial promotion, not ordinary admission of trials. Values
+larger than the packet add no capacity and may replace every otherwise unprotected
+ordinary backfill identity. Oldest/retry obligations and the retained closer win.
+The reservation uses current exact enabled trial source bindings, excluding graduated
+or demoted sources; it does not classify professional relevance or guarantee progress.
+It is part of the fixed packet, not an additional trial budget. Both fresh ordinary
+and experimental source preparation share it; recovery of saved accepted/ready/report
+work keeps its existing precedence. See the
+[admission decision](decisions/0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13)
+for age-first rounds, single-donor fit and limits.
+
 ### Delivery settings
 
 `telegram.enabled` and `obsidian.enabled` accept YAML booleans (`true` or `false`

@@ -301,7 +301,9 @@ buttons mean this is not a guaranteed short transition. Raw votes never enter mo
 Even with automatic adaptation disabled, feedback can adjust priorities within existing
 bounds; unrated sources retain configured priority. With adaptation enabled, reliability,
 productivity, description length and recency also affect source scoring, and trials may
-graduate or be demoted. Disabling adaptation also disables automatic trial decisions.
+graduate or be demoted. Disabling adaptation also disables automatic trial decisions,
+but the configured [active-trial reservation](CONFIGURATION.md#active-trial-admission)
+continues to apply to fresh candidate planning.
 See the [feedback contract](ARCHITECTURE.md#feedback-loop) and
 [retained scoring rules](history/architecture-2026-10-08.md#source-quality-scoring).
 
@@ -362,11 +364,24 @@ and [ADR-0013](decisions/0013-discovery-exploration-state.md) for persistence an
 
 Approval adds a priority-3 trial source; configuration and lifecycle state are separate
 under [ADR-0003](decisions/0003-source-state-split.md). Discovery does not change engine
-source files or install a weekly schedule. The proposal-generation slice of
-[#132](https://github.com/Lenivvenil/digest/issues/132) leaves active-feed selection and
-daily candidate scheduling unchanged; `adaptive.trial_slots` alone does not protect
-important professional work after admission. Delivered recommendations still need
-editorial evaluation.
+source files or install a weekly schedule. After approval, fresh review-led ordinary
+and experimental source preparation use the
+[bounded active-trial reservation](decisions/0008-candidate-selection-progress.md#bounded-active-trial-reservation-121--132-2026-10-13).
+It fills only the configured unmet `adaptive.trial_slots` target within the fixed
+packet, using spare fit or one final unprotected ordinary donor per promotion.
+Oldest/retry/closing obligations and all already-admitted trials remain protected.
+This is not an additional budget, a trial ceiling or a guaranteed professional share.
+Graduated trials retain ordinary eligibility but no extra reservation. Recovery of
+saved work bypasses fresh planning.
+
+Observe actual trial admissions, displaced ordinary identities, meaningful bound
+dispositions and later continuation/delivery in the existing schedule. A professional
+trial is not evidence of cross-field novelty; a nontrial is not automatically
+professional. Fresh trials or protected trial retries can satisfy the target while
+an aging trial remains unseen. [#121](https://github.com/Lenivvenil/digest/issues/121)
+and [#132](https://github.com/Lenivvenil/digest/issues/132) retain ordinary quality,
+professional/trial and sustainability acceptance. No activation, extra live request
+or changed schedule follows from this allocation rule.
 
 ## Upgrades and retained state
 
