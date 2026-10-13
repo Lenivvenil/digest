@@ -752,6 +752,8 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
             selection_binding="accepted-response",
             execution=execution,
         )
+        path = next(tmp_path.glob("*.json"))
+        saved = path.read_bytes()
         replay = await translate_publication_with_closing(
             "Overview.",
             [main],
@@ -762,6 +764,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
             selection_binding="accepted-response",
             execution=execution,
         )
+        assert path.read_bytes() == saved
     assert first[:3] == replay[:3] and first[3].card == replay[3].card
     notice = TranslationResult({}, "translated").notice
     assert first[0].count(notice) == 1 and notice not in first[1][0].summary
@@ -785,6 +788,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
     assert record["schema_version"] == 2 and record["status"] == "translated"
     assert "http_rejection" not in record
     assert "validation_reason" not in record
+    assert "validation_detail" not in record
     assert record["target_language"] == "de"
     assert len(record["response_sha256"]) == 64 and "response" not in record
     assert "closing.summary" not in record["required_fields"]
@@ -796,13 +800,23 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("defect", ["missing", "number", "attached_number", "duplicate", "wrong_id", "invalid_id"])
+@pytest.mark.parametrize(("defect", "reason", "changed"), [
+    ("missing", "coverage", []),
+    ("field_shape", "field_shape", []),
+    ("number", "protected_content", ["numeric_literal"]),
+    ("attached_number", "protected_content", ["numeric_literal"]),
+    ("protected_all", "protected_content", ["url", "numeric_literal", "quotation"]),
+    ("duplicate", "identity_or_text", []),
+    ("wrong_id", "identity_or_text", []),
+    ("invalid_id", "identity_or_text", []),
+    ("generic_value", None, []),
+    ("generic_type", None, []),
+])
 async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
-    tmp_path: Path,
-    defect: str,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, defect: str, reason: str | None, changed: list[str],
 ) -> None:
     execution = ModelExecution()
-    from digest.translation import translate_publication_with_closing
+    from digest.translation import _messages, atomic_json_write, translate_publication_with_closing
 
     cfg = config()
     cfg.telegram.delivery_mode = "compact"
@@ -810,43 +824,85 @@ async def test_invalid_closing_preserves_valid_main_and_terminal_cache_omission(
     closing = replace(main, title="Closing", link="https://example.com/good", summary="Helped 10 people.")
     if defect == "attached_number":
         closing = replace(closing, summary="Help arrived in 20ms.")
+    elif defect == "protected_all":
+        closing = replace(closing, summary='Helped 10 people; "preview". https://example.com/original')
+
+    def parse_with_generic_failure(text, originals):
+        if originals == {"closing.summary": closing.summary}:
+            if defect == "generic_value":
+                raise ValueError("SENTINEL_REJECTED_EXCEPTION")
+            if defect == "generic_type":
+                raise TypeError("SENTINEL_REJECTED_EXCEPTION")
+        return _parse(text, originals)
 
     async def answer(_role, messages, _config, **_kwargs):
         fields = json.loads(messages[1]["content"])["fields"]
+        assert messages == _messages({item["id"]: item["text"] for item in fields}, cfg.translation.target_language)
         entries = [
             {"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields if item["id"] != "closing.summary"
         ]
-        optional = {"id": "closing.summary", "text": "Помогли 10 людям."}
+        optional = {"id": "closing.summary", "text": "SENTINEL_REJECTED_CONTENT Помогли 10 людям."}
         if defect == "number":
-            optional["text"] = "Помогли 99 людям."
+            optional["text"] = "SENTINEL_REJECTED_CONTENT Помогли 99 людям."
         elif defect == "attached_number":
-            optional["text"] = "Помощь за 30ms."
+            optional["text"] = "SENTINEL_REJECTED_CONTENT Помощь за 30ms."
+        elif defect == "protected_all":
+            optional["text"] = 'SENTINEL_REJECTED_CONTENT 99 "SENTINEL_QUOTE" https://example.com/SENTINEL_URL'
+        elif defect == "field_shape":
+            optional["SENTINEL_REJECTED_KEY"] = "SENTINEL_REJECTED_VALUE"
         elif defect == "wrong_id":
-            optional["id"] = "unexpected.optional"
+            optional["id"] = "SENTINEL_REJECTED_ID"
         elif defect == "invalid_id":
-            optional["id"] = ["closing.summary"]
+            optional["id"] = ["SENTINEL_REJECTED_ID"]
         if defect != "missing":
             entries.append(optional)
         if defect == "duplicate":
             entries.append(optional)
         return json.dumps({"translations": entries}), {"finish_reason": "stop"}
 
-    with patch("digest.translation.complete", side_effect=answer) as complete:
+    with (
+        patch("digest.translation.complete", side_effect=answer) as complete,
+        patch("digest.translation._parse", side_effect=parse_with_generic_failure),
+        patch("digest.translation.atomic_json_write", wraps=atomic_json_write) as write,
+    ):
         first = await translate_publication_with_closing(
             "Overview.", [main], [], closing, cfg, tmp_path, execution=execution
         )
+        path = next(tmp_path.glob("*.json"))
+        saved = path.read_bytes()
+        record = json.loads(saved)
         replay = await translate_publication_with_closing(
             "Overview.", [main], [], closing, cfg, tmp_path, execution=execution
         )
-    assert first[:3] == replay[:3]
+        assert path.read_bytes() == saved
+        historical = {key: value for key, value in record.items()
+                      if key not in {"validation_reason", "validation_detail"}}
+        historical_bytes = json.dumps(historical, indent=2).encode()
+        path.write_bytes(historical_bytes)
+        legacy = await translate_publication_with_closing(
+            "Overview.", [main], [], closing, cfg, tmp_path, execution=execution
+        )
+        assert path.read_bytes() == historical_bytes
+    assert first[:3] == replay[:3] == legacy[:3]
     assert first[1][0].summary == "Перевод: Only 20 clients."
     assert first[0].startswith("Перевод: Overview.")
-    assert first[3].card is replay[3].card is None
-    assert first[3].translation.reasons == replay[3].translation.reasons == ["closing_contract_invalid"]
+    assert first[3].card is replay[3].card is legacy[3].card is None
+    assert (first[3].translation.reasons == replay[3].translation.reasons == legacy[3].translation.reasons
+            == ["closing_contract_invalid"])
     complete.assert_awaited_once()
-    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    write.assert_called_once()
     assert record["status"] == "translated" and record["optional"]["status"] == "fallback"
-    assert "validation_detail" not in record
+    assert set(record["optional"]) == {"fields", "status", "calls", "cache_hits", "reasons", "optional"}
+    if reason is None:
+        assert "validation_reason" not in record
+    else:
+        assert record["validation_reason"] == reason
+    if changed:
+        assert record["validation_detail"] == {"field_id": "closing.summary", "changed": changed}
+    else:
+        assert "validation_detail" not in record
+    assert "http_rejection" not in record
+    assert "SENTINEL_" not in saved.decode() + caplog.text
 
 
 @pytest.mark.asyncio
@@ -1008,6 +1064,7 @@ async def test_oversized_optional_output_keeps_main_with_bounded_terminal_record
     malformed: bool,
 ) -> None:
     execution = ModelExecution()
+    from digest import translation
     from digest.translation import translate_publication_with_closing
 
     cfg = config()
@@ -1015,6 +1072,14 @@ async def test_oversized_optional_output_keeps_main_with_bounded_terminal_record
     main = ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main claim.")
     closing = replace(main, title="Closing", link="https://example.com/good")
     monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", 4096)
+    persist = translation._persist_batch_translation
+
+    def with_stale_validation(path, record, optional, original, validation):
+        if not malformed:
+            assert validation is None
+            # Synthetic stale transient data: real sizing must gate on its final outcome.
+            validation = translation._TranslationValidationError("coverage", "SENTINEL_REJECTED_EXCEPTION")
+        return persist(path, record, optional, original, validation)
 
     async def answer(_role, messages, _config, **_kwargs):
         fields = json.loads(messages[1]["content"])["fields"]
@@ -1027,16 +1092,97 @@ async def test_oversized_optional_output_keeps_main_with_bounded_terminal_record
         entries.append(optional)
         return json.dumps({"translations": entries}), {"finish_reason": "stop"}
 
-    with patch("digest.translation.complete", side_effect=answer) as complete:
+    with (
+        patch("digest.translation.complete", side_effect=answer) as complete,
+        patch("digest.translation._persist_batch_translation", side_effect=with_stale_validation),
+        patch("digest.translation.atomic_json_write", wraps=translation.atomic_json_write) as write,
+    ):
         first = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path, execution=execution)
+        path = next(tmp_path.glob("*.json"))
+        saved = path.read_bytes()
         replay = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path, execution=execution)
+        assert path.read_bytes() == saved
     assert first[:3] == replay[:3] and first[1][0].summary == "Перевод: Main claim."
     assert first[3].card is replay[3].card is None
     reason = "closing_contract_invalid" if malformed else "closing_output_allowance"
     assert first[3].translation.reasons == replay[3].translation.reasons == [reason]
-    path = next(tmp_path.glob("*.json"))
-    assert path.stat().st_size <= 4096 and "response" not in json.loads(path.read_text())
+    record = json.loads(saved)
+    assert len(saved) <= 4096 and "response" not in record
+    if malformed:
+        assert record["validation_reason"] == "field_shape"
+    else:
+        assert "validation_reason" not in record
+    assert "validation_detail" not in record
     complete.assert_awaited_once()
+    write.assert_called_once()
+
+
+@pytest.mark.parametrize("projection", ["byte_limit", "serialization_failure", "business_overflow"])
+async def test_optional_diagnostics_preserve_exact_business_bytes_and_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, projection: str,
+) -> None:
+    from datetime import UTC, datetime
+
+    from digest import translation
+
+    cfg = config()
+    fields = {"main": "Only 20 clients."}
+    response = json.dumps({"translations": [
+        {"id": "main", "text": "Только 20 клиентов."},
+        {"id": "closing.summary", "text": "SENTINEL_REJECTED_CONTENT 99."},
+    ]})
+    dumps = json.dumps
+
+    def reject_diagnostic_encoding(value, *args, **kwargs):
+        if isinstance(value, dict) and "validation_reason" in value:
+            raise TypeError("SENTINEL_REJECTED_EXCEPTION")
+        return dumps(value, *args, **kwargs)
+
+    with (
+        patch("digest.translation.complete", AsyncMock(return_value=(response, {"finish_reason": "stop"}))) as call,
+        patch("digest.translation.datetime") as clock,
+        patch("digest.translation.atomic_json_write", wraps=translation.atomic_json_write) as write,
+    ):
+        clock.now.return_value = datetime(2026, 1, 1, tzinfo=UTC)
+        first = await translate_fields(fields, cfg, tmp_path / "first", closing_summary="Helped 10 people.",
+                                       execution=ModelExecution())
+        record = json.loads(next((tmp_path / "first").glob("*.json")).read_text())
+        assert record.pop("validation_reason") == "protected_content"
+        assert record.pop("validation_detail") == {"field_id": "closing.summary", "changed": ["numeric_literal"]}
+        business_bytes = dumps(record, indent=2).encode()
+        if projection in {"byte_limit", "business_overflow"}:
+            limit = len(business_bytes) - (projection == "business_overflow")
+            monkeypatch.setattr(translation, "MAX_CACHE_BYTES", limit)
+        else:
+            monkeypatch.setattr(translation.json, "dumps", reject_diagnostic_encoding)
+        bounded = await translate_fields(fields, cfg, tmp_path / "bounded", closing_summary="Helped 10 people.",
+                                         execution=ModelExecution())
+        path = next((tmp_path / "bounded").glob("*.json"))
+        saved = path.read_bytes()
+        if projection == "business_overflow":
+            assert json.loads(saved)["status"] == "reserved"
+            assert "translated" not in json.loads(saved)
+            assert "validation_reason" not in json.loads(saved) and "validation_detail" not in json.loads(saved)
+        else:
+            assert saved == business_bytes
+        replay = await translate_fields(fields, cfg, tmp_path / "bounded", closing_summary="Helped 10 people.",
+                                        execution=ModelExecution())
+        assert path.read_bytes() == saved
+    assert first.status == bounded.status == "translated"
+    assert first.fields == bounded.fields == {"main": "Только 20 клиентов."}
+    assert first.calls == bounded.calls == 1 and replay.calls == 0
+    if projection == "business_overflow":
+        assert bounded.optional.reasons == ["closing_cache_unavailable"]
+        assert replay.status == "fallback" and replay.fields == fields
+        assert replay.reasons == ["previous_attempt_incomplete"] and replay.cache_hits == 0
+        write.assert_called_once()  # The oversized second business result never reaches atomic replacement.
+    else:
+        assert first == bounded and replay.status == "translated" and replay.fields == first.fields
+        assert first.optional.reasons == replay.optional.reasons == ["closing_contract_invalid"]
+        assert replay.cache_hits == 1 and write.call_count == 2
+    assert call.await_count == 2
+    assert call.await_args_list[0].args[1] == call.await_args_list[1].args[1]
+    assert "SENTINEL_" not in business_bytes.decode()
 
 
 @pytest.mark.asyncio
@@ -1082,8 +1228,9 @@ async def test_optional_reservation_overflow_keeps_legacy_main_request_cache_and
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [False, True])
 async def test_combined_cache_write_failure_preserves_main_without_fabricating_legacy_cache(
-    tmp_path: Path,
+    tmp_path: Path, malformed: bool,
 ) -> None:
     execution = ModelExecution()
     from digest import translation
@@ -1094,31 +1241,42 @@ async def test_combined_cache_write_failure_preserves_main_without_fabricating_l
 
     async def answer(_role, messages, _config, **_kwargs):
         supplied = json.loads(messages[1]["content"])["fields"]
+        if malformed:
+            supplied = [item for item in supplied if item["id"] != "closing.summary"]
         return json.dumps({"translations": [{"id": item["id"], "text": "Translated."} for item in supplied]}), {
             "finish_reason": "stop"
         }
 
     def fail_combined_write(path, record):
         if record["schema_version"] == 2:
+            if malformed:
+                assert record["validation_reason"] == "coverage"
+            else:
+                assert "validation_reason" not in record
             raise OSError("Optional combined metadata cannot be persisted")
         real_write(path, record)
 
     with (
         patch("digest.translation.complete", side_effect=answer) as complete,
-        patch("digest.translation.atomic_json_write", side_effect=fail_combined_write),
+        patch("digest.translation.atomic_json_write", side_effect=fail_combined_write) as write,
     ):
         first = await translate_fields(fields, cfg, tmp_path / "combined", closing_summary="Kind.", execution=execution)
+        path = next((tmp_path / "combined").glob("*.json"))
+        saved = path.read_bytes()
         replay = await translate_fields(
             fields, cfg, tmp_path / "combined", closing_summary="Kind.", execution=execution
         )
+        assert path.read_bytes() == saved
     assert first.status == "translated" and first.fields == {"main": "Translated."}
     assert first.optional.status == "fallback" and first.optional.reasons == ["closing_cache_unavailable"]
     assert replay.status == "fallback" and replay.fields == fields and replay.calls == 0
     assert "previous_attempt_incomplete" in replay.reasons
     complete.assert_awaited_once()
+    write.assert_called_once()
     records = [json.loads(path.read_text()) for path in (tmp_path / "combined").glob("*.json")]
     assert len(records) == 1 and records[0]["schema_version"] == 2 and records[0]["status"] == "reserved"
     assert "translated" not in records[0]
+    assert "validation_reason" not in records[0] and "validation_detail" not in records[0]
     with (
         patch("digest.translation.complete", side_effect=answer),
         patch("digest.translation.atomic_json_write", side_effect=OSError("Required main cache failed")),
