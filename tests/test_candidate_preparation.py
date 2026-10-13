@@ -114,11 +114,12 @@ async def test_prepared_collection_uses_real_portfolio_after_recovery_and_budget
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("synthesis_enabled", [False, True])
 @pytest.mark.parametrize("checkpoint,experimental", [
     ("accepted", False), ("ready", False), ("accepted", True), ("ready", True),
 ])
 async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str, experimental: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkpoint: str, experimental: bool, synthesis_enabled: bool,
 ) -> None:
     from digest.adapters.models.execution import ModelExecution
     from digest.application.preparation import prepare_edition, prepare_sources
@@ -128,6 +129,9 @@ async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
 
     monkeypatch.chdir(tmp_path)
     config = fixture_config()
+    from digest.config import SynthesisConfig
+
+    config.synthesis = SynthesisConfig(synthesis_enabled)
     config.review.review_led_only = True
     recovered = (AcceptedPreparation(Path(".cache/pending_preparation.json"), "accepted", _snapshot())
                  if checkpoint == "accepted" else ExistingEdition("ready", "ready"))
@@ -157,6 +161,7 @@ async def test_preparation_recovery_skips_fresh_portfolio_and_budget(
     collector.assert_not_awaited()
     if checkpoint == "accepted":
         present.assert_awaited_once()
+        assert "allow_new_synthesis" not in present.call_args.kwargs
         assert present.call_args.args[0] is recovered
         assert present.call_args.kwargs["execution"] is approve.call_args.kwargs["execution"]
     else:
@@ -403,10 +408,11 @@ async def test_preparation_reports_technical_empty_without_failing_editorial_abs
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("synthesis_enabled", [False, True])
 @pytest.mark.parametrize("adaptive,mode", [(False, "ordinary"), (True, "fallback"), (False, "sources"),
                                           (False, "saved_report")])
 async def test_fresh_trial_reservation_uses_loaded_lifecycle_and_shared_preparation_owner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adaptive: bool, mode: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adaptive: bool, mode: str, synthesis_enabled: bool,
 ) -> None:
     from digest.adapters.models.execution import ModelExecution
     from digest.application import candidate_review, preparation
@@ -418,6 +424,9 @@ async def test_fresh_trial_reservation_uses_loaded_lifecycle_and_shared_preparat
 
     monkeypatch.chdir(tmp_path)
     config, progress, bindings = _population()
+    from digest.config import SynthesisConfig
+
+    config.synthesis = SynthesisConfig(synthesis_enabled)
     config.review.review_led_only = True
     config.adaptive.enabled = adaptive
     state = SourceStateStore()
@@ -517,3 +526,13 @@ async def test_fresh_trial_reservation_uses_loaded_lifecycle_and_shared_preparat
         source_work.assert_not_awaited()
         batch.assert_not_awaited()
         presented.assert_awaited_once()
+        from digest.application.presentation import deferred_review_status
+
+        expected = synthesis_enabled and mode != "saved_report"
+        assert presented.call_args.kwargs.get("allow_new_synthesis", False) is expected
+        if not expected:
+            assert "allow_new_synthesis" not in presented.call_args.kwargs
+        accepted = presented.call_args.args[0]
+        assert accepted.snapshot.combined.endswith(
+            deferred_review_status(config.radar.language, synthesis_enabled=synthesis_enabled)
+        )

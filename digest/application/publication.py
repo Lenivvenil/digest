@@ -92,7 +92,16 @@ async def assemble_publication(
     ranked: list[RankedSignal] = []
     ordinary_review = config.review.enabled and config.review.review_led_only
     if ordinary_review:
-        status = IrritatorStatus(deferred_review_status(config.radar.language), "deferred")
+        # The accepted notice owns this allocation fact, including recovery after
+        # a flag change. Never rewrite historical accepted/frozen status wording.
+        opted_in_notice = deferred_review_status(config.radar.language, synthesis_enabled=True)
+        status = IrritatorStatus(
+            deferred_review_status(
+                config.radar.language,
+                **({"synthesis_enabled": True} if snapshot.combined.endswith(opted_in_notice) else {}),
+            ),
+            "deferred",
+        )
     else:
         _, ranked, status = await run_irritator(snapshot.summaries, config, verbose, execution=execution)
     closing = getattr(snapshot, "closing", None)

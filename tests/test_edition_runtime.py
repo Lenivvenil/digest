@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1070,3 +1070,658 @@ async def test_prepared_publication_owns_retry_opt_in_for_both_ordinary_branches
     )
     assert received == [ordinary]
     assert assembled.main_cards and (assembled.closing is not None) == closing
+
+
+# Optional synthesis witnesses are synthetic contract fixtures, not news or model-quality evidence.
+_SYNTHESIS_EXCERPTS = (
+    "Queue A accepts payment requests during settlement outages and completes settlement only after recovery.",
+    "Gateway B accepts invoice requests during ledger outages and replays them only after recovery.",
+)
+
+
+def _synthesis_accepted(
+    monkeypatch: pytest.MonkeyPatch, *, language: str = "en", publication_date: date | None = None,
+) -> tuple[Any, AcceptedPreparation]:
+    import time
+
+    from digest.config import ObsidianConfig, SynthesisConfig, TelegramConfig, TranslationConfig
+
+    config = fixture_config()
+    config.review.review_led_only = True
+    config.review.tie_breaker = None
+    config.synthesis = SynthesisConfig(True)
+    config.telegram = TelegramConfig(enabled=True, delivery_mode="compact", bot_username="test_digest_bot")
+    config.obsidian = ObsidianConfig(enabled=True, output_dir="digests")
+    if language == "ru":
+        config.translation = TranslationConfig(True, "ru", "gemini", "gemini-3.8-flash")
+    config.sources = [
+        SourceConfig("Synthetic source A", "https://example.com/rss", "Synthetic systems", True),
+        SourceConfig("Synthetic source B", "https://example.org/rss", "Synthetic systems", True),
+    ]
+    cards = [
+        ArticleSummary("Synthetic Queue A", "https://example.com/a", "Synthetic source A", "Synthetic systems",
+                       "A toy queue accepts requests during an outage."),
+        ArticleSummary("Synthetic Gateway B", "https://example.org/b", "Synthetic source B", "Synthetic systems",
+                       "A toy gateway accepts requests during an outage."),
+    ]
+    instant = datetime.now(timezone.utc)
+    articles = {"Synthetic systems": [
+        Article(card.title, card.link, excerpt, card.source, card.category, instant)
+        for card, excerpt in zip(cards, _SYNTHESIS_EXCERPTS, strict=True)
+    ]}
+    packet = plan_packet(merge_candidates(CandidateProgress(), articles, config, {}, now=instant), config, instant)
+    assert packet is not None
+    selections = [EvidenceSelection(item.evidence_id, "Synthetic reason", item.excerpt, "high")
+                  for item in packet.evidence.items]
+    review = ModelReview("primary", "test", "test", packet.evidence.bundle_id, packet.prompt_hash,
+                         "ok", selections=selections)
+    packet.report = BlindReviewReport(1, packet.evidence, [review], "incomplete", None, [], "Synthetic review")
+    freeze_packet(packet, {}, ".cache")
+    snapshot = PreparationSnapshot(cards, [], "Canonical notice", packet.report, 2, 2,
+                                   ["Synthetic source A", "Synthetic source B"])
+    accepted = persist_accepted_preparation(snapshot, cache_dir=".cache", publication_date=publication_date)
+    monkeypatch.setenv("PREPARATION_DEADLINE", str(int(time.time()) + 440))
+    return config, accepted
+
+
+def _synthesis_response(messages: list[dict[str, str]], *, abstained: bool = False) -> str:
+    task = json.loads(messages[1]["content"])
+    language = task["publication_language"]
+    comparison = {
+        "relationship_type": "shared_mechanism",
+        "supports": [
+            {"evidence_id": item["evidence"]["evidence_id"], "occurrence_sha256": item["occurrence_sha256"],
+             "field": "excerpt", "quote": item["evidence"]["excerpt"]}
+            for item in task["selected_items"][:2]
+        ],
+        "canonical": {
+            "relationship": "Both examples separate request acceptance from downstream work: requests are accepted "
+                            "during an outage, while the dependent operation waits for recovery.",
+            "qualification": "The excerpts describe behavior; neither supplies production-scale recovery "
+                             "measurements or confirms end-to-end completion.",
+        },
+        "presentation": {
+            "relationship": "Оба примера разделяют приём запросов и последующую обработку: запросы принимаются "
+                            "во время сбоя, а зависимая операция откладывается до восстановления.",
+            "qualification": "В отрывках описано поведение; ни один не содержит измерений восстановления "
+                             "в промышленном масштабе или подтверждения сквозного завершения.",
+        } if language == "ru" else None,
+    }
+    return json.dumps({"schema_version": 1, "publication_language": language,
+                       "status": "abstained" if abstained else "comparison",
+                       "abstention_reason": "no_supported_relationship" if abstained else None,
+                       "comparison": None if abstained else comparison}, ensure_ascii=False)
+
+
+async def _synthesis_completion(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> Any:
+    from digest.llm import LLMRole
+
+    assert role is LLMRole.SYNTHESIZE_EVIDENCE
+    assert (kwargs["provider_override"].name, kwargs["provider_override"].model) == ("groq", "openai/gpt-oss-120b")
+    assert config.llm.max_retries == 0
+    assert kwargs["temperature"] == 0 and kwargs["max_output_tokens"] == 4096
+    assert 0 < kwargs["request_timeout_seconds"] <= 60
+    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["response_format"]["json_schema"]["strict"] is True
+    return _synthesis_response(messages), {"finish_reason": "stop", "resolved_model": "openai/gpt-oss-120b",
+                                           "prompt_tokens": 800, "completion_tokens": 400}
+
+
+@pytest.mark.asyncio
+async def test_synthesis_is_bound_archived_and_frozen_without_sender_dependency(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.presentation.telegram import render_compact_publication
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    baseline = render_compact_publication(accepted.snapshot.top_articles, config, accepted.snapshot.combined)
+    frozen = await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    complete.assert_awaited_once()
+    record = json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())
+    assert record["status"] == "valid"
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    shown = ready["presentation_metadata"]["synthesis"]
+    assert shown["status"] == "included"
+    assert shown["text"] in frozen.archive.read_text()
+    assert len(ready["payloads"]) == len(baseline.chunks) == 1
+    assert ready["payloads"][0]["reply_markup"] == baseline.chunks[0].reply_markup
+    assert [item["card"] for item in ready["articles"]] == [asdict(card) for card in accepted.snapshot.top_articles]
+    assert all(item["covering_chunks"] == [0] for item in ready["articles"])
+    assert not any("synthesis" in reference for reference in ready["checkpoint_refs"])
+    task = json.loads(complete.call_args.args[1][1]["content"])
+    assert task["ordered_selected_ids"] == [article_hash(card.title, card.link)
+                                            for card in accepted.snapshot.top_articles]
+    assert [item["evidence"]["excerpt"] for item in task["selected_items"]] == list(_SYNTHESIS_EXCERPTS)
+    assert all("Synthetic reason" not in json.dumps(item) for item in task["selected_items"])
+    # Sender owns frozen bytes; losing this preparation-only sidecar cannot reopen or block it.
+    Path(".cache/synthesis", accepted.sha256 + ".json").unlink()
+    assert await delivery_phase("claim", "config.yaml", frozen.ready_sha256, None) == 0
+    claim_sha = hashlib.sha256(Path(".cache", CLAIM_FILE).read_bytes()).hexdigest()
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post("https://api.telegram.org/bottest-token/sendMessage").mock(
+            return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 70, "chat": {"id": 12345}}}),
+        )
+        assert await delivery_phase("send", "config.yaml", frozen.ready_sha256, claim_sha) == 0
+        assert json.loads(route.calls[0].request.content) == ready["payloads"][0]
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "ru"])
+async def test_synthesis_archive_failure_reuses_exact_terminal_and_preserves_main_translation(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, language: str,
+) -> None:
+    from digest.delivery.markdown import write_digest
+
+    config, accepted = _synthesis_accepted(monkeypatch, language=language)
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    presentation = AsyncMock(return_value=("Existing main fallback notice", accepted.snapshot.top_articles, []))
+    monkeypatch.setattr("digest.application.presentation.publication_presentation", presentation)
+    monkeypatch.setattr("digest.delivery.write_digest", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="archive persistence"):
+        await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    assert load_accepted_preparation() == accepted
+    monkeypatch.setattr("digest.delivery.write_digest", write_digest)
+    await present_preparation(accepted, config, execution=ModelExecution())
+    complete.assert_awaited_once()
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    assert ready["presentation_metadata"]["combined"] == "Existing main fallback notice"
+    assert ready["presentation_metadata"]["synthesis"]["reason"] == "reused"
+    assert all(call.args[0] == accepted.snapshot.combined for call in presentation.await_args_list)
+    assert all(call.args[1] == accepted.snapshot.top_articles for call in presentation.await_args_list)
+    assert ready["presentation_metadata"]["synthesis"]["result"]["publication_language"] == language
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["recovery", "disabled", "missing_deadline", "bad_deadline", "expired_deadline",
+                                   "wrong_route", "reading", "category", "russian_canonical", "no_packet",
+                                   "budget", "held", "pace"])
+async def test_synthesis_omission_never_calls_or_reopens(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    import time
+
+    from digest.application.synthesis import prepare_synthesis
+    from digest.config import ReadingBriefConfig, ReviewModelConfig, SynthesisConfig
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    execution = ModelExecution()
+    allow_new = True
+    if case == "recovery":
+        allow_new = False
+    elif case == "disabled":
+        config.synthesis = SynthesisConfig(False)
+    elif case == "missing_deadline":
+        monkeypatch.delenv("PREPARATION_DEADLINE")
+    elif case == "bad_deadline":
+        monkeypatch.setenv("PREPARATION_DEADLINE", "1e20")
+    elif case == "expired_deadline":
+        monkeypatch.setenv("PREPARATION_DEADLINE", str(int(time.time()) + 40))
+    elif case == "wrong_route":
+        config.review.secondary = ReviewModelConfig("gemini", "gemini-3.8-flash")
+    elif case == "reading":
+        config.reading_brief = ReadingBriefConfig(True)
+    elif case == "category":
+        config.review.review_led_only = False
+    elif case == "russian_canonical":
+        config.radar.language = "ru"
+    elif case == "no_packet":
+        next(Path(".cache/candidate_reports").glob("*.json")).unlink()
+    elif case == "budget":
+        execution.request_state(config.llm).request_limit = 0
+    elif case == "held":
+        execution.request_state(config.llm).unavailable_until[("groq", "openai/gpt-oss-120b")] = time.monotonic() + 1
+    elif case == "pace":
+        execution.request_state(config.llm).next_request_at = time.monotonic() + 61
+    complete = AsyncMock(side_effect=AssertionError("No synthesis dispatch"))
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    outcome = await prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                     execution=execution, allow_new=allow_new)
+    assert outcome.result is None
+    complete.assert_not_awaited()
+    if case == "disabled":
+        assert not Path(".cache/synthesis").exists()
+    else:
+        sidecar = Path(".cache/synthesis", accepted.sha256 + ".json")
+        assert json.loads(sidecar.read_text())["status"] == "skipped"
+        before = sidecar.read_bytes()
+        # Retaining a terminal disposition never creates a second attempt.
+        await prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                execution=execution, allow_new=True)
+        assert sidecar.read_bytes() == before
+        complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["abstained", "invalid", "unknown_finish", "provider_failed", "timeout", "cancelled",
+                                   "reserve_failed", "terminal_failed", "reserved", "malformed", "oversized"])
+async def test_synthesis_failure_boundaries_retain_terminal_attempt(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    import asyncio
+
+    from digest.adapters.storage import synthesis as storage
+    from digest.application.synthesis import _request, prepare_synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    day = datetime.now(timezone.utc).date()
+    if case in {"reserved", "malformed"}:
+        record, _ = _request(accepted, day, config, ".cache")
+        storage.reserve_attempt(record, ".cache")
+        if case == "malformed":
+            Path(".cache/synthesis", accepted.sha256 + ".json").write_text('{"schema_version":false}')
+    if case == "reserve_failed":
+        monkeypatch.setattr(storage, "reserve_attempt", MagicMock(side_effect=OSError("fixture")))
+    if case == "terminal_failed":
+        monkeypatch.setattr(storage, "finish_attempt", MagicMock(side_effect=OSError("fixture")))
+
+    async def response(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> Any:
+        if case == "provider_failed":
+            raise RuntimeError("Do not retain arbitrary provider exception text")
+        if case == "timeout":
+            raise TimeoutError
+        if case == "cancelled":
+            raise asyncio.CancelledError
+        text = "{" if case == "invalid" else _synthesis_response(messages, abstained=case == "abstained")
+        if case == "oversized":
+            text = "x" * 16001
+        return text, {"finish_reason": None if case == "unknown_finish" else "stop"}
+
+    complete = AsyncMock(side_effect=response)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    if case == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await prepare_synthesis(accepted, config, publication_date=day, execution=ModelExecution(), allow_new=True)
+    else:
+        outcome = await prepare_synthesis(accepted, config, publication_date=day,
+                                         execution=ModelExecution(), allow_new=True)
+        assert outcome.result is None
+    assert complete.await_count == (0 if case in {"reserve_failed", "reserved", "malformed"} else 1)
+    sidecar = Path(".cache/synthesis", accepted.sha256 + ".json")
+    if sidecar.exists():
+        before = sidecar.read_bytes()
+        assert b"Do not retain arbitrary" not in before
+        complete.reset_mock()
+        await prepare_synthesis(accepted, config, publication_date=day, execution=ModelExecution(), allow_new=True)
+        assert sidecar.read_bytes() == before
+        complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disabled_synthesis_ignores_valid_capture_and_preserves_exact_baseline(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.application.synthesis import prepare_synthesis
+    from digest.config import SynthesisConfig
+    from digest.presentation.telegram import render_compact_publication
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    await prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                            execution=ModelExecution(), allow_new=True)
+    config.synthesis = SynthesisConfig(False)
+    baseline = render_compact_publication(accepted.snapshot.top_articles, config, accepted.snapshot.combined)
+    before = Path(".cache/synthesis", accepted.sha256 + ".json").read_bytes()
+    monkeypatch.setattr("digest.application.synthesis.storage.load_attempt", MagicMock(side_effect=AssertionError))
+    await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    assert "synthesis" not in ready["presentation_metadata"]
+    assert [payload["text"] for payload in ready["payloads"]] == [chunk.text for chunk in baseline.chunks]
+    assert Path(".cache/synthesis", accepted.sha256 + ".json").read_bytes() == before
+    complete.assert_awaited_once()
+
+
+@pytest.mark.parametrize("raw, expected", [(None, None), ("", None), ("-1", None), ("1e3", None),
+                                           ("1" * 21, None), ("1045", None), ("1050", 105.0),
+                                           ("1105", 160.0), ("99999999999999999999", 160.0)])
+def test_synthesis_fixed_deadline_has_independent_45_second_tail(
+    monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: float | None,
+) -> None:
+    from digest.application import synthesis
+
+    monkeypatch.setattr(synthesis.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(synthesis.time, "time", lambda: 1000.0)
+    if raw is None:
+        monkeypatch.delenv("PREPARATION_DEADLINE", raising=False)
+    else:
+        monkeypatch.setenv("PREPARATION_DEADLINE", raw)
+    assert synthesis.optional_deadline() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extend_cooldown", [False, True])
+async def test_synthesis_real_complete_shares_spent_cap_pacing_and_cooldown(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, extend_cooldown: bool,
+) -> None:
+    from digest import llm
+    from digest.application import synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    config.llm.max_retries = 5
+    config.llm.min_request_interval_seconds = 5
+    execution = ModelExecution()
+    state = execution.request_state(config.llm)
+    state.requests_attempted = 4  # Primary fallback 2 + main explicit-429 recovery 2 already spent.
+    state.request_limit = 9
+    state.next_request_at = 125.0
+    state.last_request_at = 120.0
+    now = [100.0]
+    waits = []
+    monkeypatch.setattr(synthesis.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(synthesis.time, "time", lambda: 1000.0 + now[0] - 100.0)
+    monkeypatch.setenv("PREPARATION_DEADLINE", "1100")
+    monkeypatch.setattr(llm, "set_request_limit", MagicMock(side_effect=AssertionError("No cap reset")))
+    monkeypatch.setattr(llm, "count_gemini_tokens", AsyncMock(side_effect=AssertionError("No token count")))
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
+        if extend_cooldown:
+            state.unavailable_until[("groq", "openai/gpt-oss-120b")] = now[0] + 1
+
+    async def provider(client: Any, selected: Any, messages: Any, temperature: Any,
+                       max_output_tokens: Any, **kwargs: Any) -> Any:
+        assert now[0] == 125 and state.requests_attempted == 5
+        assert kwargs["request_timeout_seconds"] <= 30
+        now[0] += 1
+        return _synthesis_response(messages), {"finish_reason": "stop", "resolved_model": selected.model}
+
+    monkeypatch.setattr(synthesis.asyncio, "sleep", sleep)
+    physical = AsyncMock(side_effect=provider)
+    monkeypatch.setattr(llm, "_call_provider", physical)
+    outcome = await synthesis.prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                                execution=execution, allow_new=True)
+    assert waits == [25.0]
+    assert state is execution.request_state(config.llm)
+    assert state.request_limit == 9 and config.llm.max_retries == 5
+    assert state.requests_attempted == (4 if extend_cooldown else 5)
+    assert physical.await_count == (0 if extend_cooldown else 1)
+    assert (outcome.result is not None) is not extend_cooldown
+
+
+@pytest.mark.asyncio
+async def test_synthesis_async_window_covers_provider_wait(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import time
+
+    from digest.application import synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    monkeypatch.setattr(synthesis, "optional_deadline", lambda: time.monotonic() + 0.05)
+    completed = []
+
+    async def slow(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0.2)
+        completed.append(True)
+        raise AssertionError("Optional provider wait escaped its timeout")
+
+    monkeypatch.setattr(synthesis, "complete", slow)
+    outcome = await synthesis.prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                                execution=ModelExecution(), allow_new=True)
+    assert outcome.reason == "timed_out" and not completed
+    assert json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())["status"] == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["request", "reservation", "response", "terminal"])
+async def test_synthesis_sync_boundary_overrun_omits_without_renewing_window(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, boundary: str,
+) -> None:
+    from digest.application import synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(synthesis.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(synthesis.time, "time", lambda: 1000.0 + now[0] - 100.0)
+    monkeypatch.setenv("PREPARATION_DEADLINE", "1105")
+    target, name = {
+        "request": (synthesis, "_request"),
+        "reservation": (synthesis.storage, "reserve_attempt"),
+        "terminal": (synthesis.storage, "finish_attempt"),
+    }.get(boundary, (None, None))
+    if target is not None:
+        original = getattr(target, name)
+
+        def slow_local(*args: Any, **kwargs: Any) -> Any:
+            value = original(*args, **kwargs)
+            now[0] = 160.0
+            return value
+
+        monkeypatch.setattr(target, name, slow_local)
+
+    async def provider(*args: Any, **kwargs: Any) -> Any:
+        result = await _synthesis_completion(*args, **kwargs)
+        if boundary == "response":
+            now[0] = 160.0
+        return result
+
+    complete = AsyncMock(side_effect=provider)
+    monkeypatch.setattr(synthesis, "complete", complete)
+    outcome = await synthesis.prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                                execution=ModelExecution(), allow_new=True)
+    assert outcome.result is None and outcome.reason == "deadline_exhausted"
+    assert complete.await_count == (0 if boundary in {"request", "reservation"} else 1)
+    assert Path(".cache/synthesis", accepted.sha256 + ".json").exists()
+
+
+@pytest.mark.parametrize("change", ["extra_chunk", "article_identity", "article_source", "article_coverage",
+                                    "supplement", "keyboard", "split_synthesis", "missing_synthesis"])
+def test_synthesis_full_gate_rejects_each_changed_delivery_obligation(change: str) -> None:
+    from copy import deepcopy
+
+    from digest.config import TelegramConfig
+    from digest.edition_runtime import _same_synthesis_layout
+    from digest.presentation.telegram import SynthesisPlacement, render_compact_publication
+
+    config = fixture_config()
+    config.telegram = TelegramConfig(bot_username="test_bot", delivery_mode="compact")
+    cards = [ArticleSummary("A", "https://example.com/a", "A", "Tech", "Plain description")]
+    baseline = render_compact_publication(cards, config, "Notice")
+    candidate = render_compact_publication(cards, config, "Notice", synthesis=SynthesisPlacement("Comparison", 1))
+    assert _same_synthesis_layout(baseline, candidate)
+    if change == "extra_chunk":
+        candidate.chunks.append(deepcopy(candidate.chunks[0]))
+    elif change == "article_identity":
+        candidate.articles[0].full_hash = "0" * 32
+    elif change == "article_source":
+        candidate.articles[0].source = "Changed"
+    elif change == "article_coverage":
+        candidate.articles[0].covering_chunks = (1,)
+    elif change == "supplement":
+        from digest.domain.delivery.supplement import SupplementCoverage
+
+        candidate = replace(candidate, supplement=SupplementCoverage("changed", (0,)))
+    elif change == "keyboard":
+        candidate.chunks[0].reply_markup = None
+    else:
+        candidate = replace(candidate, synthesis=(0, 1) if change == "split_synthesis" else None)
+    assert not _same_synthesis_layout(baseline, candidate)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["language", "model", "prompt"])
+async def test_synthesis_changed_request_never_reopens_retained_attempt(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    from digest.application import synthesis
+    from digest.config import ReviewModelConfig, TranslationConfig
+    from digest.domain.editorial import synthesis as contract
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr(synthesis, "complete", complete)
+    day = datetime.now(timezone.utc).date()
+    first = await synthesis.prepare_synthesis(accepted, config, publication_date=day,
+                                              execution=ModelExecution(), allow_new=True)
+    assert first.result is not None
+    path = Path(".cache/synthesis", accepted.sha256 + ".json")
+    before = path.read_bytes()
+    if change == "language":
+        config.translation = TranslationConfig(True, "ru", "gemini", "gemini-3.8-flash")
+    elif change == "model":
+        config.review.secondary = ReviewModelConfig("groq", "other")
+    else:
+        monkeypatch.setattr(contract, "SYSTEM", contract.SYSTEM + " Changed prompt.")
+    second = await synthesis.prepare_synthesis(accepted, config, publication_date=day,
+                                               execution=ModelExecution(), allow_new=True)
+    assert second.result is None and path.read_bytes() == before
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_synthesis_real_chunk_overflow_uses_exact_baseline_payloads(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.presentation.telegram import render_compact_publication
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    cards = [replace(accepted.snapshot.top_articles[0], summary="x" * 3000), accepted.snapshot.top_articles[1]]
+    accepted = persist_accepted_preparation(replace(accepted.snapshot, top_articles=cards), cache_dir=".cache")
+    baseline = render_compact_publication(cards, config, accepted.snapshot.combined)
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    assert ready["presentation_metadata"]["synthesis"]["reason"] == "layout_rejected"
+    assert [payload["text"] for payload in ready["payloads"]] == [chunk.text for chunk in baseline.chunks]
+    assert [payload.get("reply_markup") for payload in ready["payloads"]] == [
+        chunk.reply_markup for chunk in baseline.chunks
+    ]
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_baseline_required_failure_precedes_any_optional_attempt(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, accepted = _synthesis_accepted(monkeypatch)
+    cards = [replace(accepted.snapshot.top_articles[0], summary="https://example.com/" + "x" * 4000),
+             accepted.snapshot.top_articles[1]]
+    accepted = persist_accepted_preparation(replace(accepted.snapshot, top_articles=cards), cache_dir=".cache")
+    complete = AsyncMock(side_effect=AssertionError("Required baseline must finish first"))
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    with pytest.raises(ValueError):
+        await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    complete.assert_not_awaited()
+    assert load_accepted_preparation() == accepted
+    assert not Path(".cache/synthesis").exists() and not Path("digests").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_closer", [False, True])
+async def test_synthesis_full_pending_supplement_preflight_and_freeze_agree(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, with_closer: bool,
+) -> None:
+    from digest.application.publication import PublicationAssembly
+    from digest.irritator import IrritatorStatus
+    from digest.presentation.telegram import SupplementPlacement, render_compact_publication
+    from digest.translation import ClosingPresentation
+    from tests.test_post_delivery import pending_supplement
+
+    # The supplement is a real immutable bound projection. Its prior confirmed
+    # edition is retained, and the next day's accepted work remains separate.
+    pending = await pending_supplement(monkeypatch)
+    day = datetime.fromisoformat(pending.fragment.origin.publication_day).date() + timedelta(days=1)
+    config, accepted = _synthesis_accepted(monkeypatch, publication_date=day)
+    closer = ArticleSummary("Synthetic closer", "https://example.com/closer", "Closer source", "Kindness",
+                            "Synthetic optional closing card.") if with_closer else None
+    # Assembly is the already-tested required attribution/translation boundary;
+    # this test isolates the new coordinator's complete baseline composition.
+    publication_snapshot = replace(
+        accepted.snapshot, closing=ClosingDecision("selected", "selected", closer),
+    ) if closer is not None else accepted.snapshot
+    publication = PublicationAssembly(
+        publication_snapshot, accepted.snapshot.combined, tuple(accepted.snapshot.top_articles), (),
+        IrritatorStatus("Deferred", "deferred"),
+        ClosingPresentation("selected", "selected", closer) if closer is not None else None,
+    )
+    monkeypatch.setattr("digest.application.publication.assemble_publication", AsyncMock(return_value=publication))
+    complete = AsyncMock(side_effect=_synthesis_completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    placement = SupplementPlacement(pending.fragment.fragment_id, pending.fragment.text, 2)
+    baseline = render_compact_publication(publication.cards, config, publication.combined, placement)
+    preflights = []
+    original = render_compact_publication
+
+    def capture(*args: Any, **kwargs: Any) -> Any:
+        rendered = original(*args, **kwargs)
+        if kwargs.get("synthesis") is not None:
+            preflights.append(rendered)
+        return rendered
+
+    monkeypatch.setattr("digest.presentation.telegram.render_compact_publication", capture)
+    monkeypatch.setattr("digest.application.prepared_delivery.render_compact_publication", capture)
+    outcome = await present_preparation(accepted, config, execution=ModelExecution(),
+                                        publication_date=day, allow_new_synthesis=True)
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    shown = ready["presentation_metadata"]["synthesis"]
+    assert shown["status"] == "included"
+    assert len(preflights) == 2
+    assert preflights[0] == preflights[1]
+    assert len(ready["payloads"]) == len(baseline.chunks)
+    assert [item["covering_chunks"] for item in ready["articles"]] == [list(item.covering_chunks)
+                                                                        for item in baseline.articles]
+    assert ready["supplement"]["coverage"] == asdict(baseline.supplement) | {"covering_chunks": [0]}
+    archive = outcome.archive.read_text()
+    assert archive.index(shown["text"]) < archive.index(pending.fragment.text)
+    if closer is not None:
+        assert archive.index(pending.fragment.text) < archive.index(closer.title)
+        assert ready["articles"][-1]["card"]["title"] == closer.title
+    complete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("envelope", [
+    [], "wrong", {"choices": {"wrong": []}}, {"choices": [None]}, {"choices": [{"message": None}]},
+    {"choices": [{"message": {"content": ["not prose"]}, "finish_reason": "stop"}], "usage": {}},
+    {"choices": [{"message": {"content": 123}, "finish_reason": "stop"}], "usage": {}},
+])
+async def test_synthesis_malformed_http_success_is_one_failed_attempt_and_baseline_freezes(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, envelope: Any,
+) -> None:
+    from digest.application.synthesis import prepare_synthesis
+    from digest.presentation.telegram import render_compact_publication
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    config.llm.max_retries = 5  # The optional settings copy still permits only one physical attempt.
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-test-key")
+    baseline = render_compact_publication(accepted.snapshot.top_articles, config, accepted.snapshot.combined)
+    execution = ModelExecution()
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post("https://api.groq.com/openai/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=envelope),
+        )
+        await present_preparation(accepted, config, execution=execution, allow_new_synthesis=True)
+        assert route.call_count == 1 and execution.request_state(config.llm).requests_attempted == 1
+        # The same retained attempt cannot acquire another physical request.
+        outcome = await prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                         execution=execution, allow_new=True)
+        assert outcome.result is None and route.call_count == 1
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    assert ready["presentation_metadata"]["synthesis"]["status"] == "failed"
+    assert [payload["text"] for payload in ready["payloads"]] == [chunk.text for chunk in baseline.chunks]
+    record = json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())
+    assert record["status"] == "failed" and record["response_text"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completion", [(123, {}), ("text", []), (None, None)])
+async def test_synthesis_rejects_wrong_completion_tuple_shapes_before_capture(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, completion: Any,
+) -> None:
+    from digest.application.synthesis import prepare_synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    complete = AsyncMock(return_value=completion)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    result = await prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
+                                     execution=ModelExecution(), allow_new=True)
+    assert result.status == "failed" and result.reason == "response_invalid"
+    complete.assert_awaited_once()
+    assert json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())["status"] == "failed"

@@ -38,7 +38,7 @@ from digest.domain.delivery.edition import (
 from digest.domain.delivery.outcomes import IssueDeliveryResult
 from digest.domain.delivery.supplement import PendingSupplement, PreparedSupplement
 from digest.domain.editorial.summaries import ArticleSummary
-from digest.presentation.telegram import SupplementPlacement, render_compact_publication
+from digest.presentation.telegram import SupplementPlacement, SynthesisPlacement, render_compact_publication
 
 if TYPE_CHECKING:
     from digest.config import Config
@@ -84,6 +84,7 @@ def prepare_edition(
     publication_date: date | None = None,
     supplement: PendingSupplement | None = None,
     current_review_checkpoint: str = "",
+    synthesis: SynthesisPlacement | None = None,
 ) -> tuple[Path, str]:
     """Freeze an edition once; return the file and hash the runtime must persist."""
     instant = _instant(now)
@@ -123,7 +124,9 @@ def prepare_edition(
         if supplement is not None
         else None
     )
-    rendered = render_compact_publication(articles, config, notice, placement)
+    rendered = render_compact_publication(
+        articles, config, notice, placement, **({"synthesis": synthesis} if synthesis is not None else {}),
+    )
     chunks, ranges = rendered.chunks, rendered.articles
     end = start + timedelta(days=1)
     payloads = []

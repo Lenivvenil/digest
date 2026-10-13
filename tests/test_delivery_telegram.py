@@ -824,3 +824,165 @@ async def test_legacy_markdown_fallback_retains_payload_and_http_only_acceptance
         "disable_notification": True,
         "reply_markup": keyboard,
     }
+
+
+def _synthesis_fixture(language: str = "ru") -> Any:
+    from digest.domain.editorial.reviews import EvidenceItem
+    from digest.domain.editorial.synthesis import (
+        EvidenceBinding,
+        SynthesisComparison,
+        SynthesisProse,
+        SynthesisResult,
+        SynthesisSupport,
+    )
+
+    quotes = (
+        "Queue A accepts payment requests during settlement outages and completes settlement only after recovery.",
+        "Gateway B accepts invoice requests during ledger outages and replays them only after recovery.",
+    )
+    bindings = tuple(
+        EvidenceBinding(
+            EvidenceItem(str(i) * 32, title, url, source, "Synthetic systems", None, quote, False),
+            str(i) * 64, source, feed,
+        )
+        for i, title, url, source, quote, feed in (
+            (1, "Synthetic Queue A", "https://example.com/a", "Synthetic source A", quotes[0],
+             "https://example.com/rss"),
+            (2, "Synthetic Gateway B", "https://example.org/b", "Synthetic source B", quotes[1],
+             "https://example.org/rss"),
+        )
+    )
+    canonical = SynthesisProse(
+        "Both examples separate request acceptance from downstream work: requests are accepted during an outage, "
+        "while the dependent operation waits for recovery.",
+        "The excerpts describe behavior; neither provides production-scale recovery measurements or verified "
+        "end-to-end completion.",
+    )
+    presentation = SynthesisProse(
+        "Оба примера разделяют приём запросов и последующую обработку: запросы принимаются во время сбоя, "
+        "а зависимая операция откладывается до восстановления.",
+        "В отрывках описано поведение; ни один не содержит измерений восстановления в промышленном масштабе "
+        "или подтверждения сквозного завершения.",
+    ) if language == "ru" else None
+    supports = tuple(SynthesisSupport(b.evidence.evidence_id, b.occurrence_sha256, "excerpt", b.evidence.excerpt)
+                     for b in bindings)
+    return SynthesisResult(1, language, "comparison", None,
+                           SynthesisComparison("shared_mechanism", supports, canonical, presentation)), bindings
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_synthesis_text_preserves_original_quotes_links_and_complete_localized_labels(language: str) -> None:
+    from digest.presentation.telegram import synthesis_text
+
+    result, bindings = _synthesis_fixture(language)
+    text = synthesis_text(result, bindings)
+    prose = result.comparison.presentation if language == "ru" else result.comparison.canonical
+    expected = ["Сопоставление выбранных материалов" if language == "ru" else "Comparison of selected items",
+                prose.relationship, prose.qualification]
+    for binding in bindings:
+        expected.extend([("Источник: " if language == "ru" else "Source: ") + binding.source,
+                         binding.evidence.excerpt, binding.evidence.url])
+    expected.append(
+        "Вывод по ограниченным RSS-отрывкам; смысловое соответствие перевода независимо не проверено."
+        if language == "ru" else "Interpretation of limited RSS excerpts."
+    )
+    assert text == "\n".join(expected)
+    units = len(escape_markdownv2(text).encode("utf-16-le")) // 2
+    assert units == 727 if language == "ru" else units <= 1000
+    assert "https://example.com/rss" not in text  # Visible credit is the retained article URL.
+
+
+def test_synthesis_text_budget_counts_escaping_and_emoji_without_shortening() -> None:
+    from dataclasses import replace
+
+    from digest.presentation.telegram import synthesis_text
+
+    result, bindings = _synthesis_fixture("en")
+    baseline = synthesis_text(result, bindings)
+    units = len(escape_markdownv2(baseline).encode("utf-16-le")) // 2
+    remaining = 1000 - units
+    source = bindings[0].source + "🚀" * (remaining // 2) + "." * (remaining % 2)
+    # A dot and a non-BMP character each cost two escaped UTF-16 units.
+    if remaining % 2:
+        source = source[:-1] + "a"
+    exact = (replace(bindings[0], source=source), bindings[1])
+    text = synthesis_text(result, exact)
+    assert len(escape_markdownv2(text).encode("utf-16-le")) // 2 == 1000
+    with pytest.raises(ValueError, match="1000-unit"):
+        synthesis_text(result, (replace(exact[0], source=source + "."), exact[1]))
+    with pytest.raises(ValueError, match="1000-unit"):
+        synthesis_text(result, (replace(bindings[0], evidence=replace(bindings[0].evidence,
+                       url="https://example.com/" + "x" * 1000)), bindings[1]))
+
+
+@pytest.mark.parametrize("defect", ["abstention", "language", "missing_binding", "ambiguous_binding"])
+def test_synthesis_text_rejects_unrenderable_values(defect: str) -> None:
+    from dataclasses import replace
+
+    from digest.presentation.telegram import synthesis_text
+
+    result, bindings = _synthesis_fixture()
+    if defect == "abstention":
+        result = replace(result, status="abstained", comparison=None)
+    elif defect == "language":
+        result = replace(result, comparison=replace(result.comparison, presentation=None))
+    elif defect == "missing_binding":
+        bindings = bindings[1:]
+    else:
+        bindings += (bindings[0],)
+    with pytest.raises(ValueError):
+        synthesis_text(result, bindings)
+
+
+@pytest.mark.parametrize("closer,with_supplement,username", [(True, True, True), (True, False, True),
+                                                          (False, True, False), (False, False, True)])
+def test_synthesis_placement_is_separate_from_article_and_supplement_coverage(
+    closer: bool, with_supplement: bool, username: bool,
+) -> None:
+    from digest.presentation.telegram import SupplementPlacement, SynthesisPlacement, render_compact_publication
+
+    config = _make_config()
+    config.telegram.bot_username = "example_digest_bot" if username else ""
+    cards = [_make_top(title="Main", link="https://example.com/main", summary="Main prose.")]
+    if closer:
+        cards.append(_make_top(title="Closing", link="https://example.com/closer", summary="Closing prose."))
+    supplement = SupplementPlacement("fragment", "Supplementary finding.", 1) if with_supplement else None
+    synthesis = SynthesisPlacement(r"Comparison 🚀 [source] \ original.", 1)
+    baseline = render_compact_publication(cards, config, "Footer.", supplement)
+    assert baseline == render_compact_publication(cards, config, "Footer.", supplement, synthesis=None)
+    rendered = render_compact_publication(cards, config, "Footer.", supplement, synthesis=synthesis)
+    assert rendered.synthesis == (0,) and baseline.synthesis is None
+    assert len(rendered.chunks) == len(baseline.chunks) == 1
+    assert [(item.full_hash, item.source, item.covering_chunks) for item in rendered.articles] == [
+        (item.full_hash, item.source, item.covering_chunks) for item in baseline.articles
+    ]
+    assert rendered.supplement == baseline.supplement
+    assert rendered.chunks[0].reply_markup == baseline.chunks[0].reply_markup
+    plain = re.sub(r"\\(.)", r"\1", rendered.chunks[0].text)
+    assert plain.index("Main prose.") < plain.index(synthesis.text) < plain.index("Footer.")
+    if supplement:
+        assert plain.index(synthesis.text) < plain.index(supplement.text)
+        if closer:
+            assert plain.index(supplement.text) < plain.index("Closing prose.")
+    elif closer:
+        assert plain.index(synthesis.text) < plain.index("Closing prose.")
+
+
+@pytest.mark.parametrize("position", [-1, 2])
+def test_synthesis_placement_rejects_outside_article_sequence(position: int) -> None:
+    from digest.presentation.telegram import SynthesisPlacement, render_compact_publication
+
+    with pytest.raises(ValueError, match="synthesis publication position"):
+        render_compact_publication([_make_top()], _make_config(), "", synthesis=SynthesisPlacement("Text", position))
+
+
+def test_synthesis_span_reports_split_credit_instead_of_claiming_single_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    from digest.presentation.telegram import SynthesisPlacement, render_compact_publication
+
+    monkeypatch.setattr("digest.presentation.telegram._SPLIT_LIMIT", 120)
+    text = "Quote 🚀 " * 20 + "\nSource A\nhttps://example.com/a"
+    rendered = render_compact_publication([], _make_config(), "", synthesis=SynthesisPlacement(text, 0))
+    assert rendered.articles == [] and rendered.supplement is None
+    assert rendered.synthesis == tuple(range(len(rendered.chunks)))
+    assert len(rendered.synthesis) > 1
+    assert "".join(chunk.text for chunk in rendered.chunks) == escape_markdownv2(text)

@@ -54,6 +54,7 @@ class LLMRole(str, enum.Enum):
     RANK_SIGNALS = "rank_signals"
     FALLBACK = "fallback"
     REVIEW_EVIDENCE = "review_evidence"
+    SYNTHESIZE_EVIDENCE = "synthesize_evidence"
 
 
 @dataclass(frozen=True)
@@ -320,6 +321,8 @@ async def _anthropic_call(
 
 def _providers_for_role(role: LLMRole, config: Any) -> list[Any]:
     """Return providers for *role* in priority order, with fallback providers appended."""
+    if role == LLMRole.SYNTHESIZE_EVIDENCE:
+        raise ValueError("Synthesis requires an explicit provider_override; no generic role route exists")
     role_str = role.value
     matching: list[Any] = []
     fallback: list[Any] = []
@@ -646,8 +649,19 @@ async def complete(
 ) -> tuple[str, dict[str, Any]]:
     """Bounded LLM calls. Explicit model slots never silently fall back."""
     control_kwargs: dict[str, Any] = {}
+    if role == LLMRole.SYNTHESIZE_EVIDENCE:
+        from digest.adapters.models.synthesis import groq_synthesis_response_format
+
+        if provider_override is None or reasoning_effort != "low" or response_format is None:
+            raise ValueError("Synthesis requires an explicit provider_override, low reasoning and strict JSON schema")
+        _validate_review_output_controls(
+            provider_override.name, provider_override.model, reasoning_effort, response_format,
+        )
+        if (temperature != 0 or max_output_tokens != 4096
+                or response_format != groq_synthesis_response_format()):
+            raise ValueError("Synthesis requires its exact response schema, temperature 0 and output ceiling 4096")
     if reasoning_effort is not None or response_format is not None:
-        if role != LLMRole.REVIEW_EVIDENCE or provider_override is None:
+        if role not in {LLMRole.REVIEW_EVIDENCE, LLMRole.SYNTHESIZE_EVIDENCE} or provider_override is None:
             raise ValueError("Review output controls require REVIEW_EVIDENCE and an explicit provider_override")
         _validate_review_output_controls(
             provider_override.name, provider_override.model, reasoning_effort, response_format,

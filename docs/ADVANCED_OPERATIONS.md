@@ -97,6 +97,13 @@ no new primary edition or deduplication effect. The paired
 transfers no unused allowance to resume. Primary fallback and investigation
 generation remain unchanged.
 
+When `synthesis.enabled` is true, both report-only resume entrypoints instead
+return an explicit zero-call skip before creating or mutating a marker. An old
+marker cannot spend the surrendered allocation. Investigation still has all three
+stages; unused synthesis time or calls are never transferred. This fixed allocation
+also applies when synthesis is unsupported or omitted. Preserve old reports for
+inspection and follow the [current-edition rollback boundary](OPERATIONS.md#retaining-optional-synthesis-across-recovery).
+
 ## Supplementary investigation
 
 <a id="primary-first-runtime-with-preserved-irritator"></a>

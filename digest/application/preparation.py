@@ -87,6 +87,7 @@ class ReviewedCandidates:
     work: CandidateWork
     result: ResolvedReview
     cards: list[ArticleSummary]
+    fresh_review: bool = False
 
     @property
     def report(self) -> BlindReviewReport:
@@ -203,6 +204,7 @@ async def _review_candidates(
     from digest.presentation.review import primary_cards
 
     progress, packet = work.progress, work.packet
+    fresh_review = packet.report is None
     if packet.report is not None:
         result = restore_review(packet.report, packet.disposition_attempts)
     else:
@@ -223,7 +225,7 @@ async def _review_candidates(
         max_cards=config.review.max_selections,
         include_attribution=config.telegram.delivery_mode != "compact",
     )
-    return ReviewedCandidates(work, result, cards)
+    return ReviewedCandidates(work, result, cards, fresh_review)
 
 
 def _save_prepared_fetch_stats(
@@ -440,7 +442,10 @@ def _snapshot(
     cards, closing = _preparation_closing(work.cards, result, collected.articles, config, ".cache")
     summaries = work.summaries if isinstance(work, CategoryAnalysis) else []
     trends = work.trends if isinstance(work, CategoryAnalysis) else None
-    combined = combined_summary(summaries, trends, isinstance(work, ReviewedCandidates), config.radar.language)
+    combined = combined_summary(
+        summaries, trends, isinstance(work, ReviewedCandidates), config.radar.language,
+        **({"synthesis_enabled": True} if getattr(getattr(config, "synthesis", None), "enabled", False) else {}),
+    )
     combined = publication_intro(combined, result, config)
     return PreparationSnapshot(
         top_articles=cards,
@@ -610,6 +615,9 @@ async def prepare_edition(
                 execution=run.execution,
                 verbose=verbose,
                 publication_date=publication_date,
+                **({"allow_new_synthesis": True} if work.fresh_review and getattr(
+                    getattr(run.config, "synthesis", None), "enabled", False
+                ) else {}),
             )
         stats = preparation_stats(presented, run.feedback_collected)
     stats.feeds_fetched = len(collected.fetch_metrics)
