@@ -15,7 +15,7 @@ from digest.presentation.supplement import signal_text
 if TYPE_CHECKING:
     from digest.domain.editorial.reviews import BlindReviewReport
     from digest.irritator import IrritatorStatus
-    from digest.presentation.telegram import SupplementPlacement
+    from digest.presentation.telegram import SupplementPlacement, SynthesisPlacement
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,7 @@ def write_digest(
     articles_count: int = 0,
     source_quotations: dict[str, str] | None = None,
     supplement: SupplementPlacement | None = None,
+    synthesis: SynthesisPlacement | None = None,
 ) -> Path | None:
     """Write digest markdown file to the configured output directory.
 
@@ -116,7 +117,23 @@ def write_digest(
     frontmatter = _build_frontmatter(date_str, sources_count, articles_count)
     content = f"{frontmatter}\n{summary}\n"
 
-    if top_articles:
+    if top_articles and synthesis is not None:
+        if not 0 <= synthesis.before_article <= len(top_articles):
+            raise ValueError("Invalid synthesis publication position.")
+        placements = [(synthesis.before_article, "\n\n" + synthesis.text + "\n")]
+        if supplement is not None:
+            placements.append((supplement.before_article, "\n\n## Supplementary evidence\n\n" + supplement.text + "\n"))
+        cursor = 0
+        for position, text in sorted(placements, key=lambda item: item[0]):
+            content += _build_top_articles_section(
+                top_articles[cursor:position],
+                literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
+                heading="Top Articles" if cursor == 0 else "Closing story",
+            )
+            content += text
+            cursor = position
+        content += _build_top_articles_section(top_articles[cursor:], heading="Closing story")
+    elif top_articles:
         main = top_articles if supplement is None else top_articles[: supplement.before_article]
         content += _build_top_articles_section(
             main,

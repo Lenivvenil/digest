@@ -43,7 +43,13 @@ def clean_summary(text: str) -> str:
     return text.strip()
 
 
-def deferred_review_status(language: str) -> str:
+def deferred_review_status(language: str, *, synthesis_enabled: bool = False) -> str:
+    if synthesis_enabled:
+        return (
+            "Этап контрсигналов отложен до завершения основной доставки."
+            if language == "ru"
+            else "Counter-signal stage postponed until after primary delivery."
+        )
     if language == "ru":
         return "Независимое сравнение и этап контрсигналов отложены до завершения основной доставки."
     return "Independent comparison and counter-signal stage postponed until after primary delivery."
@@ -54,9 +60,11 @@ def combined_summary(
     trends: str | None,
     review_led_only: bool,
     language: str,
+    *,
+    synthesis_enabled: bool = False,
 ) -> str:
     if review_led_only:
-        return deferred_review_status(language)
+        return deferred_review_status(language, **({"synthesis_enabled": True} if synthesis_enabled else {}))
     return clean_summary(
         "\n\n".join(summary.summary_text for summary in summaries) + (f"\n\n{trends}" if trends else "")
     )

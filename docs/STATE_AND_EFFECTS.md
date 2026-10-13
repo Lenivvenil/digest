@@ -442,3 +442,32 @@ Keep real keys/tokens in runtime environment variables or Actions secrets. The e
 does not automatically load `.env`. Never commit credentials or source-account details
 in public examples. Runtime artifacts can contain source bodies and model outputs;
 choose access and retention deliberately rather than copying them into the public repo.
+
+### Optional synthesis attempt
+
+When enabled, `.cache/synthesis/<accepted_sha256>.json` is a preparation-local,
+versioned attempt authority, retained after accepted preparation is cleared. The
+filename does not change with language, model or prompt. Records reject symlinks,
+duplicate keys, unsupported shapes/hashes and sizes over 128 KiB. They retain
+accepted/date/report/bundle bindings, ordered original evidence and occurrences,
+exact messages/full controlled request and hashes, fixed dispositions/timestamps,
+bounded response facts, allowlisted usage and validated paired-result identity.
+No arbitrary exception text or credentials are recorded.
+
+Exclusive creation, flush/fsync and exact readback precede dispatch. A retained
+reserved, failed, invalid, abstained or skipped attempt never generates again.
+Malformed/mismatched state is preserved and omitted. Terminal atomic replacement
+and readback must succeed before optional prose is eligible; failure preserves
+local attempt authority and uses baseline publication. A valid record is reparsed
+against current exact bindings before recovery reuse. This is local retained-state
+durability, not an account-wide journal or cross-run guarantee: runner loss before
+the runtime's existing persistence barrier can lose local evidence.
+
+The complete baseline, including an eligible pending supplement, is preflighted
+before optional work. Admitted result, source bindings and disposition are additive
+hash-bound ready metadata; the sender acquires no synthesis parser or mandatory
+sidecar dependency and sends frozen bytes unchanged. Accepted preparation v1/v2,
+ready schemas, claims, receipts, article/vote/source accounting remain unchanged.
+Per-record limits do not bound total retained storage or Git-history growth; these
+sidecars are outside candidate accounting's 32 MB limit. There is no new cleanup.
+See [the decision and recovery limits](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55).

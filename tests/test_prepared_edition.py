@@ -1159,3 +1159,40 @@ async def test_cancelled_dispatch_keeps_attempted_receipt_without_implicit_appli
     with pytest.raises(ValueError, match="held"):
         await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
     send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_admitted_synthesis_freezes_exact_preflight_and_sender_uses_no_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.presentation.telegram import SynthesisPlacement, render_compact_publication, synthesis_text
+    from tests.test_delivery_telegram import _synthesis_fixture
+
+    cfg = SimpleNamespace(telegram=SimpleNamespace(bot_username="mybot"), radar=SimpleNamespace(language="en"))
+    cards = [ArticleSummary("Main", "https://example.com/main", "Source", "Tech", "Main prose."),
+             ArticleSummary("Closing", "https://example.com/closer", "Other", "World", "Closing prose.")]
+    result, bindings = _synthesis_fixture()
+    synthesis = SynthesisPlacement(synthesis_text(result, bindings), 1)
+    preflight = render_compact_publication(cards, cfg, "Notice", synthesis=synthesis)
+    path, ready = edition.prepare_edition(
+        cards, cfg, cache_dir=tmp_path, now=NOW, notice="Notice", synthesis=synthesis,
+        canonical_metadata={"cards": [{"title": "Main"}], "synthesis": {"status": "comparison"},
+                            "contributing_sources": ["Source", "Other"]},
+        presentation_metadata={"synthesis": {"text": synthesis.text}},
+    )
+    manifest = json.loads(path.read_text())
+    assert manifest["schema"] == 2 and "supplement" not in manifest and manifest["checkpoint_refs"] == {}
+    assert manifest["payloads"] == [
+        {"chat_id": "123", "text": chunk.text, "parse_mode": "MarkdownV2", "disable_notification": False,
+         "reply_markup": chunk.reply_markup} for chunk in preflight.chunks
+    ]
+    assert len(manifest["articles"]) == len(cards)
+    monkeypatch.setattr(prepared_delivery, "render_compact_publication",
+                        Mock(side_effect=AssertionError("No rerender")))
+    monkeypatch.setattr("digest.presentation.telegram.synthesis_text", Mock(side_effect=AssertionError("No reparse")))
+    _, claim = edition.claim_edition(ready, cache_dir=tmp_path, now=NOW)
+    route = respx.post(API).mock(return_value=success())
+    sent = await edition.send_prepared_edition(ready, claim, config=sender_config(), cache_dir=tmp_path, now=NOW)
+    assert sent.complete and sent.sent == 2
+    assert [json.loads(call.request.content) for call in route.calls] == manifest["payloads"]

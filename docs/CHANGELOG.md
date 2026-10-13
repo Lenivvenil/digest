@@ -49,6 +49,13 @@
   and accounting rules are unchanged. Refs #220.
 
 ### Changed
+
+- Add a default-off selected-source comparison for ordinary prepared RSS editions,
+  with one paired EN/RU response, accepted-reference local no-repeat state and a
+  full-publication layout gate. Enabling it surrenders report-only resume generation
+  at both entrypoints; investigation and main translation retain their own rules.
+  No new sender dependency, article/vote credit or live-quality acceptance is added.
+  Refs #55; see the [bounded decision](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55).
 - Add [support](../.github/SUPPORT.md) and [security reporting guidance](../.github/SECURITY.md)
   with safe reproduction details and explicit reporting limits. Security-policy links
   use repository-qualified destinations for GitHub’s dedicated policy page. Refs #148.

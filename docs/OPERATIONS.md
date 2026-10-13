@@ -395,3 +395,26 @@ state. Preserve receipts, deduplication/feedback records, translation records an
 reservations. Hold publication if compatibility or an earlier delivery is uncertain.
 Do not reset state or resend an edition merely because the engine was rolled back.
 Optional supplementary failures must remain visible without erasing primary receipts.
+
+### Retaining optional synthesis across recovery
+
+For the [optional comparison](CONFIGURATION.md#optional-selected-source-comparison),
+keep `.cache/synthesis/` with all other retained runtime state. A fresh review may
+make one locally reserved attempt. Accepted recovery without a matching valid
+capture omits it and never acquires a new call. Existing terminal or malformed
+records are not deleted, repaired or moved to unlock generation. Archive/freeze
+failure may reuse an exact valid capture; disabled mode always uses baseline.
+Frozen editions remain authoritative and need no preparation-sidecar parser.
+
+Rollback retains sidecars, translation caches, accepted work, archives, ready bytes,
+claims, receipts, votes and source credit. Old engines can ignore unfrozen sidecars
+and render baseline; compatible old senders reuse frozen bytes. Do not restore an
+old-engine resume allocation during an edition that already attempted synthesis.
+Wait for a new clean coordinated edition or inspect and explicitly approve the
+transition. Turning the flag off mid-invocation is not an allowance reset.
+
+Runtime activation is a separately reviewed exact engine pin plus the single
+opt-in, after successful CI on that exact merged engine. It authorizes no extra
+manual evaluation, scheduler change or provider/account action. Observe later
+ordinary output separately: safe omission and structural checks do not satisfy
+#55's analytical usefulness or language-fidelity acceptance.

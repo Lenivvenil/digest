@@ -42,6 +42,11 @@ There is also an optional [humane closing story](docs/decisions/0014-optional-hu
 a small moment of kindness, connection or everyday wonder when suitable evidence
 exists. It is off by default and needs approved sources; it is not a daily promise.
 
+Ordinary prepared cards can include one default-off [selected-source comparison](docs/CONFIGURATION.md#optional-selected-source-comparison)
+when two retained excerpts support a relationship and the complete block fits safely.
+It has bounded, explicitly unverified interpretation and paired RU presentation;
+unsupported or failed work is omitted.
+
 Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATION.md#legacy-format-and-optional-features)
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
 separately from ordinary review-led cards.

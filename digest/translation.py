@@ -89,6 +89,11 @@ def _invariants(text: str) -> tuple[Counter[str], Counter[str], Counter[str]]:
     return Counter(_URL.findall(text)), Counter(_NUMBER.findall(text)), Counter(_QUOTE.findall(text))
 
 
+def protected_content_equal(original: str, translated: str) -> bool:
+    """Reuse the exact existing URL, numeric-literal and quotation multisets."""
+    return _invariants(original) == _invariants(translated)
+
+
 _ValidationReason = Literal[
     "extraction", "envelope", "field_shape", "identity_or_text", "protected_content", "coverage",
 ]

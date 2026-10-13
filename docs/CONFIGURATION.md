@@ -316,3 +316,26 @@ Prepared-edition flags use the [publication barriers](OPERATIONS.md#persist-clai
 Managed `--discovery-phase prepare|send` and its pending/delivery hashes also require
 [separate proposal persistence](OPERATIONS.md#source-discovery).
 Neither operation is made safe by a local hash alone.
+
+## Optional selected-source comparison
+
+`synthesis.enabled: true` opts ordinary prepared compact RSS review publication
+into one optional two-item comparison. The default is `false`; only a YAML boolean
+is accepted. No provider, token, timeout or field-count knobs are added. Canonical
+language must be EN, experimental reading disabled, and the configured secondary
+must be Groq `openai/gpt-oss-120b`. Selected EN uses canonical prose; selected RU
+receives a paired presentation in the same call. Existing main translation remains
+separate and keeps its own success/fallback behavior.
+
+Enabling the flag unconditionally disables report-only resume generation, even
+when synthesis abstains, has no time, is unsupported or fails layout. Investigation
+keeps its three stages. A valid managed preparation deadline is required; no manual
+unlimited allowance is invented. Missing or unsafe optional work is omitted.
+Default-off and retained ready payloads keep their existing behavior. Fresh enabled
+snapshots intentionally use a shorter truthful deferred-status sentence in the
+normal main translation request; no synthesis text enters that request.
+
+Read [allocation and limits](decisions/0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
+and [presentation/recovery](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55)
+before a separately reviewed runtime opt-in. A configured route does not establish
+provider entitlement, free operation, faithful translation or useful analysis.

@@ -1613,3 +1613,88 @@ async def test_opted_in_closing_keeps_configured_and_earlier_deadline_minimum(
     await translate_fields({"a": "Original."}, cfg, tmp_path / "earlier", execution=ModelExecution(),
                            deadline=130, retry_explicit_429=True)
     assert deadlines == [280, 130]  # Outer closing deadline survives entry delay; no source-level 150 clamp.
+
+
+@pytest.mark.asyncio
+async def test_fresh_synthesis_status_changes_only_normal_notice_request_and_hash_with_closer(tmp_path: Path) -> None:
+    from digest.application.presentation import combined_summary, deferred_review_status
+    from digest.translation import translate_publication_with_closing
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    cfg.translation = replace(cfg.translation, max_calls=1)
+    main = ArticleSummary("Main", "https://example.com/main", "Main source", "Tech", "Only 20 pilot clients.")
+    closer = ArticleSummary("Closing", "https://example.com/closer", "Other source", "World", "Volunteers helped.")
+    calls = []
+
+    async def answer(role: Any, messages: list[dict[str, str]], routed: Any, **kwargs: Any) -> tuple[str, dict]:
+        calls.append((role, messages, asdict(routed.llm), {key: value for key, value in kwargs.items()
+                                                       if key != "execution"}))
+        fields = json.loads(messages[1]["content"])["fields"]
+        return json.dumps({"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]}
+                                            for item in fields]}), {"finish_reason": "stop"}
+
+    statuses = [combined_summary([], None, True, "en"),
+                combined_summary([], None, True, "en", synthesis_enabled=True)]
+    assert statuses == [deferred_review_status("en"),
+                        "Counter-signal stage postponed until after primary delivery."]
+    with patch("digest.translation.complete", side_effect=answer) as complete:
+        for index, status in enumerate(statuses):
+            await translate_publication_with_closing(status, [main], [], closer, cfg, tmp_path / str(index),
+                                                     selection_binding="same-selection", execution=ModelExecution())
+    assert complete.await_count == 2
+    first, second = calls
+    assert first[0] == second[0] and first[2:] == second[2:]
+    assert first[1][0] == second[1][0]
+    requests = [json.loads(call[1][1]["content"]) for call in calls]
+    fields = [{item["id"]: item["text"] for item in request["fields"]} for request in requests]
+    assert set(fields[0]) == set(fields[1]) == {"category_digest", f"article:{article_hash(main.title, main.link)}",
+                                             "closing.summary"}
+    assert [item.pop("category_digest") for item in fields] == statuses
+    assert fields[0] == fields[1] == {f"article:{article_hash(main.title, main.link)}": main.summary,
+                                     "closing.summary": closer.summary}
+    requests[0].pop("fields")
+    requests[1].pop("fields")
+    assert requests[0] == requests[1]
+    records = [json.loads(next((tmp_path / str(index)).glob("*.json")).read_text()) for index in range(2)]
+    assert records[0]["request_sha256"] != records[1]["request_sha256"]
+    assert records[0]["required_fields"] == records[1]["required_fields"]
+    assert records[0]["optional"] == records[1]["optional"]
+    assert records[0]["max_output_tokens"] == records[1]["max_output_tokens"] == cfg.translation.max_output_tokens
+    assert all(record["temperature"] == 0 and record["status"] == "translated" for record in records)
+    assert "Independent comparison" not in records[1]["canonical"]["category_digest"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_opt_in,current_enabled", [(False, False), (False, True), (True, False), (True, True)])
+async def test_archive_status_follows_retained_snapshot_notice_not_current_flag(
+    stored_opt_in: bool, current_enabled: bool,
+) -> None:
+    from datetime import date
+
+    from digest.application.presentation import deferred_review_status
+    from digest.application.publication import assemble_publication
+    from digest.config import SynthesisConfig
+    from tests.test_preparation import _snapshot
+
+    cfg = fixture_config()
+    cfg.review.review_led_only = True
+    cfg.synthesis = SynthesisConfig(current_enabled)
+    snapshot = _snapshot()
+    status = deferred_review_status(cfg.radar.language, synthesis_enabled=stored_opt_in)
+    snapshot = replace(snapshot, combined="ModelView remains incomplete.\n\n" + status)
+    with patch("digest.application.source_attribution.main_attribution_occurrences", return_value={}):
+        assembly = await assemble_publication(snapshot, cfg, publication_date=date(2026, 10, 13),
+                                              execution=ModelExecution())
+    assert assembly.irritator_status.text == status
+    assert assembly.combined == snapshot.combined
+    assert assembly.snapshot == snapshot
+
+
+def test_opted_in_status_localization_and_category_summary_stay_deterministic() -> None:
+    from digest.application.presentation import combined_summary, deferred_review_status
+
+    assert deferred_review_status("ru", synthesis_enabled=True) == (
+        "Этап контрсигналов отложен до завершения основной доставки."
+    )
+    assert combined_summary([], "Category trends", False, "en", synthesis_enabled=True) == "Category trends"

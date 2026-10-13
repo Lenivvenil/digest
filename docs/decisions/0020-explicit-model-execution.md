@@ -165,3 +165,39 @@ keeps existing admission; explicit values must be nonnegative integers, not bool
 [Report-only resume](../ADVANCED_OPERATIONS.md#independent-comparison-and-resume)
 combines bounded slot admission with the existing physical request cap, retaining
 stricter limits and spent attempts. No allowance transfers between executions.
+
+## Optional synthesis allocation and deadline (#55)
+
+The explicit `SYNTHESIZE_EVIDENCE` operation requires the configured secondary
+route to be Groq `openai/gpt-oss-120b`, an explicit override, temperature zero,
+4,096 output tokens, low reasoning and the named strict synthesis schema. No
+generic role routing, provider fallback, retries or token-count request exists.
+A zero-retry settings copy uses `execution.share_initialized(config.llm)`, retaining
+caller pacing, semaphore, cooldown, local/durable allowance and spent attempts.
+It never resets a shared cap. An unavailable route omits the stage.
+
+The canonical messages are capped at 12,000 characters / 48,000 UTF-8 bytes.
+The full wire body, including schema and controls, is capped at 16,000 characters /
+64,000 bytes. Its conservative local estimate is ceil(ASCII characters / 3) plus
+non-ASCII characters plus 128; input estimate + 4,096 output + 512 margin must
+not exceed 8,000. These are omission guards, not tokenizer, entitlement or quota
+measurements. No selected item is truncated or dropped to fit.
+
+A valid decimal, at-most-20-digit `PREPARATION_DEADLINE` is required. Convert the
+wall clock once to a monotonic deadline. Stop optional work at the earlier of
+60 seconds from entry and managed deadline minus 45 seconds. Waiting and provider
+work share that fixed window; request timeout cannot exceed the remaining time.
+The internal 45-second archive/freeze tail is separate from any runtime persistence
+reserve and uses no post-send time. Check synchronous boundaries before/after;
+async timeout cannot preempt filesystem stalls or guarantee complete preparation.
+External cancellation is propagated after best-effort failure capture.
+
+With main translation configured for one base batch and its existing one-429
+extra, the coordinated configured generation maximum is primary/fallback 2 +
+main translation 2 + synthesis 1 + investigation 3 + supplement translation 1 +
+report-only resume 0 = 9. The summed output ceilings remain at most 24,576 when
+replacing the former 4,096 resume slot. This is neither actual usage nor TPM/free
+account proof. Synthesis can add an actual call when resume otherwise would skip;
+provider demand can shift from Gemini to Groq. Unused allocations expire.
+The [presentation contract](0005-optional-presentation-translation.md#optional-selected-source-comparison-55)
+owns paired validation and final admission.
