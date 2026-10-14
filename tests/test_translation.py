@@ -1353,6 +1353,111 @@ async def test_rejection_overflow_preserves_exact_combined_failure_bytes(
     assert next((tmp_path / "bounded").glob("*.json")).read_bytes() == business_bytes
 
 
+@respx.mock
+@pytest.mark.parametrize("succeeds", [False, True])
+async def test_quota_detail_never_controls_retry_or_leaks_private_body(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]], monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, succeeds: bool,
+) -> None:
+    from tests.test_provider_rejection import quota_message
+
+    cfg, execution = config(), ModelExecution()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    cfg.llm.min_request_interval_seconds = 20
+    monkeypatch.setenv("GROQ_API_KEY", "PRIVATE_API_KEY")
+    clock, waits = retry_clock
+    starts: list[float] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        starts.append(clock[0])
+        if succeeds and len(starts) == 2:
+            return translated_response(request)
+        message = quota_message(
+            "tokens per day (TPD)" if len(starts) == 2 else "tokens per minute (TPM)",
+            retry="86400s", requested="40" if len(starts) == 2 else "30",
+        )
+        return httpx.Response(429, json={"error": {
+            "message": message, "type": "tokens", "code": "rate_limit_exceeded",
+            "api_key": "PRIVATE_API_KEY", "prompt": "PRIVATE_PROMPT", "request_id": "PRIVATE_REQUEST_ID",
+            "url": "https://example.invalid/PRIVATE_URL",
+        }}, headers={"retry-after": "0", "x-request-id": "PRIVATE_REQUEST_ID"})
+
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=respond)
+    fields = {"a": "Only 20 participating clients."}
+    result = await translate_fields(fields, cfg, tmp_path, execution=execution, retry_explicit_429=True,
+                                    closing_summary="Help arrived.")
+    assert starts == [100, 120] and waits == [20]
+    assert result.calls == execution.request_state(cfg.llm).requests_attempted == route.call_count == 2
+    assert route.calls[0].request.content == route.calls[1].request.content
+    path, = tmp_path.glob("*.json")
+    saved, record = path.read_bytes(), json.loads(path.read_text())
+    assert "PRIVATE" not in saved.decode() and "PRIVATE" not in caplog.text
+    if succeeds:
+        assert result.status == "translated" and "http_rejection" not in record
+    else:
+        assert result.status == "fallback" and result.fields == fields
+        assert record["http_rejection"]["retry_after_seconds"] == 0
+        assert record["http_rejection"]["quota"] == {
+            "dimension": "TPD", "limit": 100, "used": 80, "requested": 40, "retry_hint_seconds": 86400.0,
+        }
+    replay = await translate_fields(fields, cfg, tmp_path, execution=ModelExecution(), retry_explicit_429=True,
+                                    closing_summary="Help arrived.")
+    assert replay.calls == 0 and route.call_count == 2 and path.read_bytes() == saved
+
+
+@respx.mock
+async def test_quota_parser_failure_preserves_explicit_429_recovery(
+    tmp_path: Path, retry_clock: tuple[list[float], list[float]],
+) -> None:
+    from tests.test_provider_rejection import quota_body, quota_message
+
+    cfg = config()
+    cfg.translation = replace(cfg.translation, timeout_seconds=150)
+    route = respx.post("https://api.groq.com/openai/v1/chat/completions").respond(
+        429, content=quota_body(quota_message()), headers={"retry-after": "0"},
+    )
+    with patch("digest.llm.groq_quota_rejection", side_effect=ValueError("PRIVATE_RESPONSE")):
+        result = await translate_fields({"a": "Original."}, cfg, tmp_path, execution=ModelExecution(),
+                                        retry_explicit_429=True)
+    assert result.calls == route.call_count == 2 and result.status == "fallback"
+    record = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert record["http_rejection"]["http_status"] == 429 and "quota" not in record["http_rejection"]
+    assert "PRIVATE" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("budget", ["record", "diagnostics"])
+def test_quota_detail_overflow_retains_exact_preexisting_header_facts(
+    monkeypatch: pytest.MonkeyPatch, budget: str,
+) -> None:
+    from digest.adapters.models.rejection import QuotaRejection
+    from digest.llm import HTTPRejection
+    from digest.translation import _with_failure_diagnostics
+
+    record = {"schema_version": 1, "status": "incomplete"}
+    rejection = HTTPRejection(http_status=429, provider_code="rate_limit_exceeded", retry_after_seconds=60)
+    if budget == "diagnostics":
+        rejection = replace(rejection, provider_code="a" * 675)  # Exercise the independent metadata cap.
+    base = _with_failure_diagnostics(record, [rejection])
+    assert "http_rejection" in base
+    if budget == "record":
+        monkeypatch.setattr("digest.translation.MAX_CACHE_BYTES", len(json.dumps(base, indent=2).encode()))
+    detailed = replace(rejection, quota=QuotaRejection("TPM", 100, 90, 50, 2.5))
+    assert _with_failure_diagnostics(record, [detailed]) == base
+
+
+def test_quota_projection_error_preserves_header_facts() -> None:
+    from digest.adapters.models.rejection import QuotaRejection
+    from digest.llm import HTTPRejection
+    from digest.translation import _with_failure_diagnostics
+
+    record = {"schema_version": 1, "status": "incomplete"}
+    rejection = HTTPRejection(http_status=429, provider_code="rate_limit_exceeded")
+    expected = _with_failure_diagnostics(record, [rejection])
+    detailed = replace(rejection, quota=QuotaRejection("TPM", 100, 80, 30))
+    with patch("digest.translation.asdict", side_effect=[asdict(rejection), ValueError("PRIVATE_DETAIL")]):
+        assert _with_failure_diagnostics(record, [detailed]) == expected
+
+
 def test_unavailable_failure_projection_is_omitted_without_mutating_record(monkeypatch: pytest.MonkeyPatch) -> None:
     from digest.llm import HTTPRejection
     from digest.translation import _with_failure_diagnostics

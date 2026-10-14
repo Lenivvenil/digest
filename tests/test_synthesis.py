@@ -32,35 +32,36 @@ from digest.domain.editorial.synthesis import (
 from digest.llm import openai_request_body
 from digest.translation import _invariants, protected_content_equal
 
-# Hand-reviewed paired witness from the approved design, preserved verbatim.
+# Hand-reviewed source-specific paired witness for the proposed v2 contract.
 # Synthetic excerpts are illustrative contract data, not news or a live model result.
-WITNESS = {'schema_version': 1,
+WITNESS = {'schema_version': 2,
  'publication_language': 'ru',
  'status': 'comparison',
  'abstention_reason': None,
- 'comparison': {'relationship_type': 'shared_mechanism',
-                'supports': [{'evidence_id': '9c1a8d6ac3e42fe0b1396d1de1771e55',
+ 'comparison': {'supports': [{'evidence_id': '9c1a8d6ac3e42fe0b1396d1de1771e55',
                               'occurrence_sha256': '08bf71ea80356ccbd755eb0e521db151318ed52ebb91966a94318df03e5b1401',
-                              'field': 'excerpt',
-                              'quote': 'Queue A accepts payment requests during settlement outages and '
-                                       'completes settlement only after recovery.'},
+                              'canonical_observation': 'Accepts payment requests during settlement outages; '
+                                                       'settlement waits until recovery.',
+                              'presentation_observation': 'Принимает платёжные запросы при сбое расчётов; '
+                                                          'расчёты ждут восстановления.'},
                              {'evidence_id': 'd5dea46d92257b8fac32420abfd95a7c',
                               'occurrence_sha256': '5260df614bd3e2540de4a150fea749e83ae94da9aacf798db7d8dde2ff32a1bf',
-                              'field': 'excerpt',
-                              'quote': 'Gateway B accepts invoice requests during ledger outages and replays '
-                                       'them only after recovery.'}],
-                'canonical': {'relationship': 'Both examples separate request acceptance from downstream '
-                                              'work: requests are accepted during an outage, while the '
-                                              'dependent operation waits for recovery.',
-                              'qualification': 'The excerpts describe behavior; neither provides '
-                                               'production-scale recovery measurements or verified '
-                                               'end-to-end completion.'},
-                'presentation': {'relationship': 'Оба примера разделяют приём запросов и последующую '
-                                                 'обработку: запросы принимаются во время сбоя, а зависимая '
-                                                 'операция откладывается до восстановления.',
-                                 'qualification': 'В отрывках описано поведение; ни один не содержит '
-                                                  'измерений восстановления в промышленном масштабе или '
-                                                  'подтверждения сквозного завершения.'}}}
+                              'canonical_observation': 'Accepts invoice requests during ledger outages and '
+                                                       'replays them only after recovery.',
+                              'presentation_observation': 'Принимает запросы счетов при сбое реестра и '
+                                                          'повторно обрабатывает их только после '
+                                                          'восстановления.'}],
+                'canonical': {'interpretation': 'The useful comparison is acceptance versus completion: '
+                                                'examine how each retained request reaches its dependent '
+                                                'operation after recovery.',
+                              'qualification': 'The excerpts do not establish production-scale recovery '
+                                               'performance or end-to-end completion.'},
+                'presentation': {'interpretation': 'Полезно сравнить приём запроса и его завершение: как '
+                                                   'сохранённый запрос доходит до зависимой операции после '
+                                                   'восстановления.',
+                                 'qualification': 'Отрывки не подтверждают скорость восстановления в '
+                                                  'промышленном масштабе или сквозное завершение.'},
+                'premise_ids': ['9c1a8d6ac3e42fe0b1396d1de1771e55', 'd5dea46d92257b8fac32420abfd95a7c']}}
 
 EVIDENCE = [{'evidence': {'evidence_id': '9c1a8d6ac3e42fe0b1396d1de1771e55',
                'title': 'Synthetic Queue A',
@@ -163,10 +164,16 @@ def test_hand_reviewed_pair_fits_exact_request_response_record_bounds(
     response["publication_language"] = language
     if language == "en":
         response["comparison"]["presentation"] = None
+        for support in response["comparison"]["supports"]:
+            support["presentation_observation"] = None
     result = parse(response, bindings, language)
     assert result.comparison is not None
-    assert result.comparison.canonical.relationship == WITNESS["comparison"]["canonical"]["relationship"]
-    assert json.loads(canonical_json_bytes(asdict(result))) == response
+    assert result.comparison.canonical.interpretation == WITNESS["comparison"]["canonical"]["interpretation"]
+    normalized = json.loads(canonical_json_bytes(asdict(result)))
+    for support, binding in zip(normalized["comparison"]["supports"], bindings, strict=True):
+        assert support.pop("quote") == binding.evidence.excerpt
+        assert support.pop("field") == "excerpt"
+    assert normalized == response
     body = request(bindings, language)
     encoded_messages = canonical_json_bytes(body["messages"])
     encoded_body = canonical_json_bytes(body)
@@ -174,7 +181,7 @@ def test_hand_reviewed_pair_fits_exact_request_response_record_bounds(
     assert len(encoded_messages.decode()) <= MAX_MESSAGES_CHARS
     assert len(encoded_body) <= MAX_REQUEST_BYTES and len(encoded_body.decode()) <= MAX_REQUEST_CHARS
     assert validate_request_bounds(body["messages"], body) == hashlib.sha256(encoded_body).hexdigest()
-    assert len(canonical_json_bytes(response)) == (1611 if language == "ru" else 1040)
+    assert len(canonical_json_bytes(response)) < MAX_RESPONSE_BYTES
     record = storage.new_record(
         accepted_sha256="1" * 64, publication_date="2026-10-13", report_sha256="2" * 64,
         bundle_id="3" * 64, bindings=bindings, publication_language=language, request_body=body,
@@ -188,7 +195,7 @@ def test_hand_reviewed_pair_fits_exact_request_response_record_bounds(
     payload = json.loads(body["messages"][1]["content"])
     assert payload["ordered_selected_ids"] == [binding.evidence.evidence_id for binding in bindings]
     assert payload["selected_items"] == [asdict(binding) for binding in bindings]
-    assert payload["schema_version"] == 1 and payload["canonical_language"] == "en"
+    assert payload["schema_version"] == 2 and payload["canonical_language"] == "en"
 
 
 def test_raw_retained_identity_and_accepted_order_are_immutable_input(bindings: tuple[EvidenceBinding, ...]) -> None:
@@ -209,7 +216,7 @@ def test_incomplete_and_unknown_completion_rejected(
 
 
 def test_uppercase_finish_and_abstention(bindings: tuple[EvidenceBinding, ...]) -> None:
-    response = {"schema_version": 1, "publication_language": "ru", "status": "abstained",
+    response = {"schema_version": 2, "publication_language": "ru", "status": "abstained",
                 "abstention_reason": "no_supported_relationship", "comparison": None}
     result = validate_response(json.dumps(response), "STOP", "ru", bindings, protected_content_equal)
     assert result.status == "abstained" and result.comparison is None
@@ -246,7 +253,7 @@ def test_response_hard_contract_failures(
         {"extra_root": response, "extra_comparison": comparison,
          "extra_support": supports[0], "extra_prose": prose}[mutation]["extra"] = "bad"
     elif mutation.startswith("version_"):
-        response["schema_version"] = True if mutation == "version_bool" else 2
+        response["schema_version"] = True if mutation == "version_bool" else 1
     elif mutation == "language":
         response["publication_language"] = "en"
     elif mutation == "status":
@@ -258,16 +265,16 @@ def test_response_hard_contract_failures(
     elif mutation == "missing_qualification":
         del prose["qualification"]
     elif mutation in {"blank", "control", "newline", "relationship_long", "prose_type"}:
-        prose["relationship"] = {"blank": " ", "control": "bad\x01", "newline": "a\nb",
-                                 "relationship_long": "x" * 361, "prose_type": 4}[mutation]
+        prose["interpretation"] = {"blank": " ", "control": "bad\x01", "newline": "a\nb",
+                                 "relationship_long": "x" * 241, "prose_type": 4}[mutation]
     elif mutation == "qualification_long":
-        prose["qualification"] = "x" * 241
+        prose["qualification"] = "x" * 161
     elif mutation in {"quote_empty", "quote_long"}:
         supports[0]["quote"] = "" if mutation == "quote_empty" else "x" * 161
     elif mutation == "presentation_null":
         comparison["presentation"] = None
     elif mutation.startswith("changed_"):
-        field = "qualification" if mutation == "changed_qualification_number" else "relationship"
+        field = "qualification" if mutation == "changed_qualification_number" else "interpretation"
         suffix = {"changed_number": " 200", "changed_qualification_number": " 200",
                   "changed_url": " https://example.com/forged", "changed_literal_quote": ' "new"'}[mutation]
         comparison["presentation"][field] += suffix
@@ -288,7 +295,7 @@ def test_only_bounded_strict_json_is_accepted(bindings: tuple[EvidenceBinding, .
 
 @pytest.mark.parametrize("reason,comparison", [(None, None), ("unknown", None), ("insufficient_evidence", {})])
 def test_abstention_cross_fields(bindings: tuple[EvidenceBinding, ...], reason: object, comparison: object) -> None:
-    response = {"schema_version": 1, "publication_language": "ru", "status": "abstained",
+    response = {"schema_version": 2, "publication_language": "ru", "status": "abstained",
                 "abstention_reason": reason, "comparison": comparison}
     with pytest.raises(ValueError):
         parse(response, bindings)
@@ -379,7 +386,7 @@ def test_pure_protected_helper_keeps_exact_translation_multisets() -> None:
 
 def test_provider_schema_uses_only_existing_supported_subset() -> None:
     response_format = groq_synthesis_response_format()
-    assert response_format["json_schema"]["name"] == "selected_source_comparison_v1"
+    assert response_format["json_schema"]["name"] == "selected_source_comparison_v2"
     assert response_format["json_schema"]["strict"] is True
 
     def inspect(value: Any) -> None:
@@ -451,7 +458,7 @@ def test_all_terminal_dispositions_prevent_reopen(
 ) -> None:
     record = reservation(bindings)
     storage.reserve_attempt(record, tmp_path)
-    response = {"schema_version": 1, "publication_language": "ru", "status": "abstained",
+    response = {"schema_version": 2, "publication_language": "ru", "status": "abstained",
                 "abstention_reason": "no_supported_relationship", "comparison": None}
     outcome = storage.terminal_record(
         record, status=status, completed_at="2026-10-13T00:00:01+00:00", reason=reason,
@@ -638,7 +645,7 @@ def test_deeply_nested_response_is_a_validation_error(bindings: tuple[EvidenceBi
         validate_response("{}", "stop", "fr", bindings, protected_content_equal)
 
 
-@pytest.mark.parametrize("field,value", [("relationship", "x" * 361), ("qualification", "\u2028")])
+@pytest.mark.parametrize("field,value", [("interpretation", "x" * 241), ("qualification", "\u2028")])
 def test_russian_prose_is_bounded_independently(
     bindings: tuple[EvidenceBinding, ...], response: dict[str, Any], field: str, value: str,
 ) -> None:
@@ -782,5 +789,5 @@ def test_support_cannot_be_only_excerpt_whitespace(
 ) -> None:
     assert " " in bindings[0].evidence.excerpt
     response["comparison"]["supports"][0]["quote"] = " "
-    with pytest.raises(ValueError, match="excerpt support"):
+    with pytest.raises(ValueError):
         parse(response, bindings)

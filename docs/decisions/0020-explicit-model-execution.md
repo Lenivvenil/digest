@@ -152,6 +152,62 @@ unknown, never zero attempts. This is no complete physical-attempt or quota-caus
 claim. Review/investigation persistence, countTokens, success usage and broader
 G5/free-operation, semantic and runtime acceptance remain open under #55.
 
+### Optional named Groq quota facts (#55)
+
+New failed translation records can add `http_rejection.quota`: `dimension`,
+`limit`, `used`, `requested` and nullable `retry_hint_seconds`. These are bounded
+provider-reported claims from one recognized error clause, not measured usage,
+account entitlement or a complete explanation of earlier failures. No new
+request is made to obtain them. The original seven HTTP facts retain their shape
+when this optional detail is unavailable.
+
+The pure [quota projector](../../digest/adapters/models/rejection.py) requires
+the configured provider to be Groq, HTTP 429, exact `error.code` of
+`rate_limit_exceeded`, a matching configured model and a matching `error.type`.
+It parses at most 16384 response bytes, rejects duplicate JSON keys at any depth
+and nonfinite JSON constants, and accepts at most 2048 message characters.
+Only one complete anchored message template is recognized:
+
+`Rate limit reached for model ` followed by the backtick-delimited configured
+model, ` in organization ` and an ASCII identifier, an optional service-tier
+identifier, then one recognized dimension and one `Limit`, `Used`, `Requested`
+trio. Organization/tier strings are bounded and discarded, as is the model.
+The exact phrase/unit pairs are tokens per minute (TPM), tokens per day (TPD),
+requests per minute (RPM), requests per day (RPD), input tokens per minute (ITPM)
+and output tokens per minute (OTPM). Only their fixed abbreviations survive;
+the first, second, fifth and sixth require type `tokens`, the others `requests`.
+All three counts must be canonical ASCII unsigned integers at most `2**63 - 1`.
+Signs, fractional/approximate counts, mismatched labels and partial trios reject
+the entire detail. Zero is valid and has no inferred meaning.
+
+An optional `Please try again in` duration accepts ordered unique h/m/s components
+with fractional seconds, or milliseconds, with a finite total of 0–86400 seconds.
+The only optional trailing text is the exact service sentence linking to the
+rate-limit documentation or the exact token-upgrade sentence linking to billing;
+neither is retained or followed. Both sentences together, altered URLs, arbitrary
+suffixes/prefixes, additional clauses and unknown grammar conservatively omit
+the detail. The parser never searches arbitrary prose for plausible numbers.
+This compatibility grammar is intentionally narrower than possible future
+provider messages; absent detail remains unknown. Groq's official
+[rate-limit documentation](https://console.groq.com/docs/rate-limits) defines the
+dimensions and [error documentation](https://console.groq.com/docs/errors) the
+JSON envelope, not a stable guarantee of this message wording.
+
+No raw body, message, prompt, credential, request/account identifier, tier, model
+string or URL enters this added projection or logs. Parser exceptions leave
+the original status/header facts intact, including explicit-429 admission.
+The header-derived `retry_after_seconds` stays separate from the body-derived
+`retry_hint_seconds`; neither this new hint nor the new dimension/counts change
+cooldown, pacing, retries, timeouts, routing, reservation or admission. The
+existing raw header cooldown remains authoritative even when the hint disagrees.
+
+The existing 1024-byte diagnostic and whole-record caps are unchanged. Header
+facts get first priority; oversized or unserializable new detail is omitted
+without losing already accepted facts. Final-attempt-only retention, no metadata
+on successful retries, old cache replay, schemas and request/cache hashes remain
+unchanged. Synthetic privacy/failure tests establish these narrow properties;
+they do not fix Russian output or identify a historical limiting quota. Refs #55.
+
 ### Bounded rejection admission (#55)
 
 [ADR0005](0005-optional-presentation-translation.md#bounded-prepared-main-429-recovery-55)
@@ -175,6 +231,10 @@ generic role routing, provider fallback, retries or token-count request exists.
 A zero-retry settings copy uses `execution.share_initialized(config.llm)`, retaining
 caller pacing, semaphore, cooldown, local/durable allowance and spent attempts.
 It never resets a shared cap. An unavailable route omits the stage.
+
+The draft source-specific v2 schema changes the captured request body, not this
+allocation: the route, one-call ceiling, token allowance, deadline and no-retry
+policy remain unchanged. Existing attempts cannot be reopened by that change.
 
 The canonical messages are capped at 12,000 characters / 48,000 UTF-8 bytes.
 The full wire body, including schema and controls, is capped at 16,000 characters /

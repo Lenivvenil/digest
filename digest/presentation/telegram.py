@@ -344,7 +344,16 @@ def render_compact_publication(
 
 
 def synthesis_text(result: SynthesisResult, bindings: Sequence[EvidenceBinding]) -> str:
-    """Render validated selected-item prose and immutable source quotes as one bounded block."""
+    """Show source-attributed observations; retain complete source evidence in reports.
+
+    Revalidate result IDs/hashes, excerpts and order against caller-supplied bindings.
+    The caller still owns provenance of source names/URLs in those retained bindings;
+    this does not establish factual entailment or faithful Russian prose.
+    """
+    from digest.domain.editorial.synthesis import validate_result
+    from digest.translation import protected_content_equal
+
+    validate_result(result, result.publication_language, tuple(bindings), protected_content_equal)
     comparison = result.comparison
     if comparison is None:
         raise ValueError("Synthesis presentation requires a comparison.")
@@ -352,22 +361,18 @@ def synthesis_text(result: SynthesisResult, bindings: Sequence[EvidenceBinding])
     prose = comparison.presentation if russian else comparison.canonical
     if prose is None:
         raise ValueError("Synthesis presentation is missing its selected language.")
-    lines = [
-        "Сопоставление выбранных материалов" if russian else "Comparison of selected items",
-        prose.relationship,
-        prose.qualification,
-    ]
+    by_id = {binding.evidence.evidence_id: binding for binding in bindings}
+    lines = ["Сопоставление выбранных материалов" if russian else "Comparison of selected items"]
     for support in comparison.supports:
-        matches = [binding for binding in bindings if binding.evidence.evidence_id == support.evidence_id]
-        if len(matches) != 1:
-            raise ValueError("Synthesis source binding is missing or ambiguous.")
-        binding = matches[0]
-        label = "Источник" if russian else "Source"
-        lines.extend([f"{label}: {binding.source}", support.quote, binding.evidence.url])
-    lines.append(
-        "Вывод по ограниченным RSS-отрывкам; смысловое соответствие перевода независимо не проверено."
-        if russian else "Interpretation of limited RSS excerpts."
-    )
+        binding = by_id[support.evidence_id]
+        observation = support.presentation_observation if russian else support.canonical_observation
+        if observation is None:
+            raise ValueError("Synthesis observation is missing its selected language.")
+        lines.extend([f"{binding.source}: {observation}", binding.evidence.url])
+    label = "Сопоставление" if russian else "Interpretation"
+    lines.append(f"{label}: {prose.interpretation}")
+    if prose.qualification is not None:
+        lines.append(prose.qualification)
     text = "\n".join(lines)
     if len(escape_markdownv2(text).encode("utf-16-le")) // 2 > 1000:
         raise ValueError("Synthesis block exceeds the 1000-unit Telegram presentation budget.")
