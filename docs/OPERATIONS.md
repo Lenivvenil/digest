@@ -405,6 +405,25 @@ reservations. Hold publication if compatibility or an earlier delivery is uncert
 Do not reset state or resend an edition merely because the engine was rolled back.
 Optional supplementary failures must remain visible without erasing primary receipts.
 
+### Reader presentation and detailed reports
+
+New daily Markdown files link to their sibling `.review.json` for the full
+blind-review report. The reader edition retains source evidence, material
+qualifications and a concise source/translation notice. Static labels follow the
+configured presentation language even when generated prose falls back to
+canonical English. A closed vocabulary combines repeated process caveats;
+unknown caveats stay verbatim. Search-failure counts, readiness/scope caveats and
+the distinction between contextual risk and contradiction remain visible. Full
+`.irritator.json` and `.irritator.md` reports retain operator detail.
+
+This changes only newly rendered presentation. Original quotations, canonical
+records and translation request/cache identities are unchanged. License credits
+keep their complete reviewed text and URL. Paragraph/sentence-aware splitting
+remains lossless and can still split an oversized sentence at word boundaries.
+Existing immutable fragments, ready payloads and receipts are not rewritten.
+Inspect already-pending fragments before promising the next edition uses the new
+format; never clear them to bypass ordinary publication/recovery rules.
+
 ### Retaining optional synthesis across recovery
 
 For the [optional comparison](CONFIGURATION.md#optional-selected-source-comparison),
@@ -427,3 +446,19 @@ opt-in, after successful CI on that exact merged engine. It authorizes no extra
 manual evaluation, scheduler change or provider/account action. Observe later
 ordinary output separately: safe omission and structural checks do not satisfy
 #55's analytical usefulness or language-fidelity acceptance.
+
+### Temporarily withholding comparison prose
+
+If generated comparison prose has not met source-fidelity acceptance, retain
+`synthesis.enabled: true` and explicitly set `synthesis.publish: false` after the
+runtime change is approved. New preparation records the normally attempted or
+reused result as `withheld` with reason `publication_disabled`, retaining its
+private result, evidence bindings and request hash without adding it to the
+reader archive or payload. The bounded call allocation and report-only resume
+surrender are unchanged; this does not save a provider call.
+
+Inspect the current ready/claim/receipt state first. An already frozen edition
+still sends its exact saved payload, irrespective of current publication config.
+Do not delete or rewrite ready files, accepted work, sidecars or fragments to
+force the new behavior. Restoring comparison publication needs independent
+source-specific semantic review, not just valid quotation IDs or green tests.

@@ -335,6 +335,15 @@ Default-off and retained ready payloads keep their existing behavior. Fresh enab
 snapshots intentionally use a shorter truthful deferred-status sentence in the
 normal main translation request; no synthesis text enters that request.
 
+`synthesis.publish` is a separate strict YAML boolean, defaulting to `true` for
+compatibility. With `enabled: true, publish: false`, preparation still runs or
+reuses the same bounded synthesis attempt and preserves its result, source
+bindings and request hash in private evidence, but omits comparison prose from
+new reader output. Report-only resume remains surrendered; no provider call is
+refunded or added. This is temporary publication containment, not semantic
+validation. Existing saved ready payloads remain authoritative and unchanged.
+Changing the publication setting is a separately reviewed runtime decision.
+
 Read [allocation and limits](decisions/0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
 and [presentation/recovery](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55)
 before a separately reviewed runtime opt-in. A configured route does not establish

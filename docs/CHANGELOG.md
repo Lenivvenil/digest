@@ -3,6 +3,21 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Add explicit default-true `synthesis.publish` containment for newly prepared
+  comparison prose, retaining normal bounded generation, private evidence and
+  report-only resume surrender. Frozen payloads remain unchanged. Refs #55.
+- Separate reader-facing copy from operator diagnostics in newly rendered editions.
+  Keep a concise source/translation notice, localize static labels to the configured
+  presentation language even on canonical fallback, and move the daily archive's
+  full blind-review dump behind its existing sibling `.review.json` link.
+  A closed caveat vocabulary compacts repeated scope warnings while preserving
+  material qualifications, exact search-failure counts and unknown wording. Full
+  canonical investigation reports remain unchanged. Source-feed dates become
+  readable dates; source credits retain their exact wording and URL on a separate
+  paragraph. Telegram splitting prefers paragraph and sentence boundaries while
+  preserving text, UTF-16 bounds, URLs and coverage. Saved fragments and frozen
+  payloads are not rewritten; no model call, cache identity, receipt or replay rule
+  changes, and no semantic or live-runtime acceptance is implied. Refs #55.
 - Retain each validated, deduplicated discovery proposal before a later validation
   can be cancelled. Save pending before metadata, preserving valid work without
   inventing provenance if the second write fails; ordinary preparation still

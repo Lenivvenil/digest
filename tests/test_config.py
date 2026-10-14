@@ -774,7 +774,7 @@ def test_reading_brief_is_opt_in_and_uses_only_explicit_configured_routes(tmp_pa
 
 @pytest.mark.parametrize("setting,enabled", [("", False), ("{}", False), ("{enabled: false}", False),
                                             ("{enabled: true}", True)])
-def test_synthesis_has_one_default_off_boolean(tmp_path: Path, setting: str, enabled: bool) -> None:
+def test_synthesis_is_default_off_and_publication_defaults_on(tmp_path: Path, setting: str, enabled: bool) -> None:
     from digest.config import VALID_ROLES, SynthesisConfig
 
     suffix = "\nsynthesis: " + setting + "\n" if setting else ""
@@ -784,8 +784,19 @@ def test_synthesis_has_one_default_off_boolean(tmp_path: Path, setting: str, ena
 
 
 @pytest.mark.parametrize("setting", ["null", "[]", "true", '{enabled: "true"}', "{enabled: 1}",
-                                     "{enabled: null}", "{enabled: true, provider: groq}"])
+                                     "{enabled: null}", "{enabled: true, provider: groq}",
+                                     '{publish: "false"}', "{publish: 0}", "{publish: null}"])
 def test_synthesis_rejects_non_boolean_or_extra_settings(tmp_path: Path, setting: str) -> None:
     path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + "\nsynthesis: " + setting + "\n")
     with pytest.raises(ValueError, match="synthesis"):
         load_config(path)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("publish", [False, True])
+def test_synthesis_publication_is_a_separate_strict_boolean(tmp_path: Path, enabled: bool, publish: bool) -> None:
+    from digest.config import SynthesisConfig
+
+    setting = f"\nsynthesis: {{enabled: {str(enabled).lower()}, publish: {str(publish).lower()}}}\n"
+    path = _write_config(tmp_path, textwrap.dedent(MINIMAL_CONFIG) + setting)
+    assert load_config(path).synthesis == SynthesisConfig(enabled, publish)

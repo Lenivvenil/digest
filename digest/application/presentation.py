@@ -78,6 +78,42 @@ def publication_intro(combined: str, result: ResolvedReview | None, config: Conf
     return combined
 
 
+def reader_publication_notice(
+    canonical: str, presented: str, result: ResolvedReview | None, config: Config,
+) -> str:
+    """Localize only recognized deterministic status, after unchanged translation work."""
+    from digest.presentation import publication_language
+    from digest.presentation.review import primary_notice
+    from digest.translation import TranslationResult
+
+    if (result is None or getattr(config.telegram, "delivery_mode", "cards") != "compact"
+            or getattr(getattr(config, "reading_brief", None), "enabled", False)):
+        return presented
+    for synthesis_enabled in (False, True):
+        expected = primary_notice(result, config.radar.language) + "\n\n" + deferred_review_status(
+            config.radar.language, synthesis_enabled=synthesis_enabled,
+        )
+        if canonical != expected:
+            continue
+        language = publication_language(config)
+        notice = (
+            "По ограниченным RSS-выдержкам; выводы модели не проверены независимо."
+            if language == "ru" else "Limited RSS excerpts; model interpretations are not independently verified."
+        )
+        if getattr(getattr(config, "translation", None), "enabled", False) and language != "en":
+            for status in ("translated", "fallback"):
+                suffix = TranslationResult({}, status).notice_for(language)
+                if presented.endswith(suffix):
+                    basis = (
+                        "Автоматический обзор RSS-выдержек. "
+                        if language == "ru" else "Automated overview of RSS excerpts. "
+                    )
+                    return basis + suffix
+            return presented  # Unrecognized text is never guessed at or silently trimmed.
+        return notice
+    return presented
+
+
 async def primary_presentation(
     combined: str,
     cards: list[ArticleSummary],

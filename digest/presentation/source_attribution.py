@@ -47,4 +47,4 @@ def attribute_source_card(
     credit = SOURCE_CREDITS.get(occurrence.source_url)
     if credit is None:
         return card, False  # Other ordinary source presentation is unchanged.
-    return replace(card, summary=f"{card.summary} {credit}"), True
+    return replace(card, summary=f"{card.summary}\n\n{credit}"), True

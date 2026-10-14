@@ -153,6 +153,7 @@ class SynthesisConfig:
     """One default-off comparison, funded by surrendering report-only resume."""
 
     enabled: bool = False
+    publish: bool = True
 
 
 @dataclass(frozen=True)
@@ -890,12 +891,15 @@ def _load_closing(
 
 def _load_synthesis(data: dict[str, Any]) -> SynthesisConfig:
     section = data.get("synthesis", {})
-    if not isinstance(section, dict) or set(section) - {"enabled"}:
-        raise ValueError("synthesis must contain only enabled.")
+    if not isinstance(section, dict) or set(section) - {"enabled", "publish"}:
+        raise ValueError("synthesis must contain only enabled and publish.")
     enabled = section.get("enabled", False)
     if type(enabled) is not bool:
         raise ValueError("synthesis.enabled must be a boolean.")
-    return SynthesisConfig(enabled)
+    publish = section.get("publish", True)
+    if type(publish) is not bool:
+        raise ValueError("synthesis.publish must be a boolean.")
+    return SynthesisConfig(enabled, publish)
 
 
 def load_config(config_path: str | Path = "config.yaml") -> Config:

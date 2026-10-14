@@ -292,7 +292,9 @@ async def execute_post_delivery(
             )
         except Exception as exc:
             translation = TranslationResult({}, "fallback", reasons=[type(exc).__name__])
-        notice = translation.notice
+        from digest.presentation import publication_language
+
+        notice = translation.notice_for(publication_language(config))
         record["translation_status"] = translation.status
         record["translation_reasons"] = translation.reasons
         if translation.status == "translated":
@@ -311,7 +313,7 @@ async def execute_post_delivery(
             result,
             presented,
             delivered,
-            language=presentation_config.radar.language,
+            language=(config.translation.target_language if config.translation.enabled else config.radar.language),
             notice=notice,
             bundle=bundle,
             source=source_evidence,

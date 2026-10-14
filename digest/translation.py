@@ -25,6 +25,7 @@ from digest._util import atomic_json_write
 from digest.adapters.models.execution import ModelExecution
 from digest.config import Config, ProviderConfig, TranslationConfig
 from digest.llm import HTTPRejection, LLMRole, complete, request_wait_seconds
+from digest.presentation import publication_language
 
 if TYPE_CHECKING:
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
@@ -64,6 +65,16 @@ class TranslationResult:
 
     @property
     def notice(self) -> str:
+        return self.notice_for("en")
+
+    def notice_for(self, language: str) -> str:
+        """Localize fixed status copy without translating or changing retained fields."""
+        if language == "ru" and self.status != "disabled":
+            return (
+                "Машинный перевод; точность смысла независимо не проверена."
+                if self.status == "translated"
+                else "Перевод недоступен или неполон; сохранён исходный английский текст."
+            )
         if self.status == "disabled":
             return ""
         if self.status == "translated":
@@ -579,9 +590,9 @@ def _ranked_fields(ranked: list["RankedSignal"]) -> dict[str, str]:
             for index, item in enumerate(ranked) for name in ("narrative_claim", "reasoning")}
 
 
-def _ranked_view(ranked: list["RankedSignal"], result: TranslationResult) -> list["RankedSignal"]:
+def _ranked_view(ranked: list["RankedSignal"], result: TranslationResult, language: str) -> list["RankedSignal"]:
     return [replace(item, narrative_claim=result.fields[f"signal:{index}:narrative_claim"],
-                    reasoning=result.fields[f"signal:{index}:reasoning"] + "\n\n" + result.notice)
+                    reasoning=result.fields[f"signal:{index}:reasoning"] + "\n\n" + result.notice_for(language))
             for index, item in enumerate(ranked)]
 
 
@@ -613,7 +624,7 @@ async def _translate_publication_presentation(
         identity = f"article:{article_hash(card.title, card.link)}"
         if identity in fields and fields[identity] != card.summary:
             result = TranslationResult({}, "fallback", reasons=["conflicting_article_identity"])
-            notice = result.notice
+            notice = result.notice_for(publication_language(config))
             return (summary + "\n\n" + notice,
                     [replace(item, summary=item.summary if compact else item.summary + "\n\n" + notice)
                      for item in cards],
@@ -624,11 +635,12 @@ async def _translate_publication_presentation(
                                     retry_explicit_429=retry_explicit_429)
     if result.status == "disabled":
         return summary, cards, ranked, result
+    notice = result.notice_for(publication_language(config))
     presented = result.fields.get("category_digest", summary)
-    presented = presented + "\n\n" + result.notice if presented else result.notice
+    presented = presented + "\n\n" + notice if presented else notice
     output = [replace(card, summary=result.fields[f"article:{article_hash(card.title, card.link)}"]
-                      + ("" if compact else "\n\n" + result.notice)) for card in cards]
-    return presented, output, _ranked_view(ranked, result), result
+                      + ("" if compact else "\n\n" + notice)) for card in cards]
+    return presented, output, _ranked_view(ranked, result, publication_language(config)), result
 
 
 async def translate_publication_with_closing(

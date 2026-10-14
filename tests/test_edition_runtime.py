@@ -300,7 +300,7 @@ async def test_accepted_analysis_survives_presentation_failure_and_sender_uses_f
     assert stats.edition_status == "ready"
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     notice = (
-        f"Source feed timestamp (UTC): {published.isoformat()}; later than this edition’s date ({today.isoformat()})."
+        f"Source feed date (UTC): {published:%d %b %Y}; later than this edition’s date ({today:%d %b %Y})."
     )
     assert frozen["articles"][0]["card"]["summary"] == f"{notice} {snapshot.top_articles[0].summary}"
     assert frozen["canonical_metadata"]["cards"] == [asdict(card) for card in snapshot.top_articles]
@@ -652,8 +652,8 @@ async def test_implicit_day_crossing_midnight_retains_translation_archive_and_ac
     archive = Path("digests/2026-10-11.md")
     assert archive.exists() and "date: 2026-10-11" in archive.read_text()
     assert (
-        "Дата и время в ленте источника (UTC): 2026-10-12T23:59:59+00:00; "
-        "позже даты этого выпуска (2026-10-11). Перевод: Canonical claim"
+        "Дата в ленте источника (UTC): 12.10.2026; "
+        "позже даты выпуска (11.10.2026). Перевод: Canonical claim"
     ) in archive.read_text()
     assert json.loads(archive.with_suffix(".review.json").read_text()) == json.loads(
         _canonical(asdict(snapshot.review_report))
@@ -694,8 +694,8 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
         )
         assert NHS_CREDIT not in json.dumps(fields)
         assert EA_CREDIT not in json.dumps(fields)
-        assert "Source feed timestamp" not in json.dumps(fields)
-        assert "Дата и время в ленте источника" not in json.dumps(fields, ensure_ascii=False)
+        assert "Source feed date" not in json.dumps(fields)
+        assert "Дата в ленте источника" not in json.dumps(fields, ensure_ascii=False)
         return json.dumps(
             {"translations": [{"id": item["id"], "text": "Перевод: " + item["text"]} for item in fields]}
         ), {"finish_reason": "stop"}
@@ -712,13 +712,13 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     prefix = "Перевод: " if translation == "translated" else ""
     notice = (
-        f"Дата и время в ленте источника (UTC): {published_at.isoformat()}; "
-        f"позже даты этого выпуска ({today.isoformat()})."
+        f"Дата в ленте источника (UTC): {published_at:%d.%m.%Y}; "
+        f"позже даты выпуска ({today:%d.%m.%Y})."
     )
-    presented = replace(card, summary=f"{prefix}{card.summary} {NHS_CREDIT}")
+    presented = replace(card, summary=f"{prefix}{card.summary}\n\n{NHS_CREDIT}")
     published = [
         asdict(replace(
-            original.top_articles[0], summary=f"{notice} {prefix}{original.top_articles[0].summary} {EA_CREDIT}"
+            original.top_articles[0], summary=f"{notice} {prefix}{original.top_articles[0].summary}\n\n{EA_CREDIT}"
         )),
         asdict(presented),
     ]
@@ -732,13 +732,13 @@ async def test_selected_closing_is_final_identical_card_in_archive_and_frozen_ed
     assert _canonical(asdict(snapshot)) == canonical
     assert completion.await_count == (0 if translation == "canonical" else 1)
     if translation == "main_canonical_fallback":
-        assert "Translation incomplete or unavailable; canonical English text retained." in (
+        assert "Перевод недоступен или неполон; сохранён исходный английский текст." in (
             frozen["presentation_metadata"]["combined"]
         )
     markdown = Path(stats.markdown_path).read_text()
     assert markdown.index(original.top_articles[0].title) < markdown.index(card.title)
-    assert presented.summary in markdown and card.link in markdown
-    assert published[0]["summary"] in markdown
+    assert presented.summary.replace("\n", "\n> ") in markdown and card.link in markdown
+    assert published[0]["summary"].replace("\n", "\n> ") in markdown
     assert markdown.count(NHS_CREDIT) == 1
     assert markdown.count(EA_CREDIT) == 1
     assert _canonical(json.loads(Path(stats.review_checkpoint).read_text())) == _canonical(
@@ -925,13 +925,13 @@ async def test_main_credit_uses_immutable_packet_even_after_source_settings_chan
     stats = preparation_stats(await present_preparation(accepted, config, execution=execution))
     frozen = json.loads(Path(".cache", READY_FILE).read_text())
     card = original.top_articles[0]
-    expected = asdict(replace(card, summary=f"{card.summary} {credit}"))
+    expected = asdict(replace(card, summary=f"{card.summary}\n\n{credit}"))
     assert frozen["presentation_metadata"]["cards"] == [expected]
     assert frozen["articles"][0]["card"] == expected
     assert frozen["articles"][0]["full_hash"] == article_hash(card.title, card.link)
     assert frozen["canonical_metadata"]["cards"] == [asdict(card)]
     assert "closing" not in frozen["canonical_metadata"]
-    assert expected["summary"] in Path(stats.markdown_path).read_text()
+    assert expected["summary"].replace("\n", "\n> ") in Path(stats.markdown_path).read_text()
     assert evidence == {path: path.read_bytes() for path in evidence}
 
 
@@ -1020,7 +1020,7 @@ async def test_main_credit_crossing_chunk_boundary_holds_accepted_work_without_d
     snapshot = bound_snapshot(replace(original, top_articles=[card]), main_feed=NHS_FEED)
     _, uncredited = _render_compact_issue([card], config, original.combined)
     _, credited = _render_compact_issue(
-        [replace(card, summary=f"{card.summary} {NHS_CREDIT}")], config, original.combined
+        [replace(card, summary=f"{card.summary}\n\n{NHS_CREDIT}")], config, original.combined
     )
     assert len(uncredited[0].covering_chunks) == 1 and len(credited[0].covering_chunks) > 1
     path = save_preparation(snapshot)
@@ -1168,9 +1168,11 @@ async def _synthesis_completion(role: Any, messages: list[dict[str, str]], confi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("withhold_after_freeze", [False, True])
 async def test_synthesis_is_bound_archived_and_frozen_without_sender_dependency(
-    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, withhold_after_freeze: bool,
 ) -> None:
+    from digest.config import SynthesisConfig
     from digest.presentation.telegram import render_compact_publication
 
     config, accepted = _synthesis_accepted(monkeypatch)
@@ -1197,6 +1199,9 @@ async def test_synthesis_is_bound_archived_and_frozen_without_sender_dependency(
     assert all("Synthetic reason" not in json.dumps(item) for item in task["selected_items"])
     # Sender owns frozen bytes; losing this preparation-only sidecar cannot reopen or block it.
     Path(".cache/synthesis", accepted.sha256 + ".json").unlink()
+    if withhold_after_freeze:
+        config.synthesis = SynthesisConfig(True, False)
+        monkeypatch.setattr("digest.config.load_config", lambda _: config)
     assert await delivery_phase("claim", "config.yaml", frozen.ready_sha256, None) == 0
     claim_sha = hashlib.sha256(Path(".cache", CLAIM_FILE).read_bytes()).hexdigest()
     with respx.mock(assert_all_called=True) as router:
@@ -1725,3 +1730,68 @@ async def test_synthesis_rejects_wrong_completion_tuple_shapes_before_capture(
     assert result.status == "failed" and result.reason == "response_invalid"
     complete.assert_awaited_once()
     assert json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())["status"] == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_capture", [False, True])
+@pytest.mark.parametrize("unsupported_relationship", [False, True])
+async def test_synthesis_publication_containment_retains_result_and_exact_baseline(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch,
+    reuse_capture: bool, unsupported_relationship: bool,
+) -> None:
+    from digest.application.synthesis import _request, prepare_synthesis
+    from digest.config import SynthesisConfig
+    from digest.presentation.telegram import render_compact_publication
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    day = datetime.now(timezone.utc).date()
+
+    async def response(role: Any, messages: list[dict[str, str]], config: Any, **kwargs: Any) -> Any:
+        text, metadata = await _synthesis_completion(role, messages, config, **kwargs)
+        if unsupported_relationship:
+            raw = json.loads(text)
+            # Valid exact quotes and source identities do not prove this shared claim.
+            raw["comparison"]["canonical"]["relationship"] = "Both examples store every request permanently."
+            text = json.dumps(raw)
+        return text, metadata
+
+    complete = AsyncMock(side_effect=response)
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    expected_request, expected_bindings = _request(accepted, day, config, ".cache")
+    sidecar = Path(".cache/synthesis", accepted.sha256 + ".json")
+    retained = None
+    if reuse_capture:
+        outcome = await prepare_synthesis(accepted, config, publication_date=day,
+                                          execution=ModelExecution(), allow_new=True)
+        assert outcome.result is not None
+        retained = sidecar.read_bytes()
+    config.synthesis = SynthesisConfig(True, False)
+    baseline = render_compact_publication(accepted.snapshot.top_articles, config, accepted.snapshot.combined)
+    frozen = await present_preparation(accepted, config, execution=ModelExecution(), allow_new_synthesis=True)
+    complete.assert_awaited_once()
+    record = json.loads(sidecar.read_text())
+    assert record["status"] == "valid"
+    assert record["request_body"] == expected_request["request_body"]
+    assert record["request_sha256"] == expected_request["request_sha256"]
+    if retained is not None:
+        assert sidecar.read_bytes() == retained
+    ready = json.loads(Path(".cache", READY_FILE).read_text())
+    shown = ready["presentation_metadata"]["synthesis"]
+    assert shown["status"] == "withheld" and shown["reason"] == "publication_disabled"
+    assert shown["result"] == record["result"]
+    assert shown["request_sha256"] == record["request_sha256"]
+    assert shown["bindings"] == json.loads(json.dumps([asdict(binding) for binding in expected_bindings]))
+    assert "text" not in shown
+    assert [payload["text"] for payload in ready["payloads"]] == [chunk.text for chunk in baseline.chunks]
+    assert [payload.get("reply_markup") for payload in ready["payloads"]] == [
+        chunk.reply_markup for chunk in baseline.chunks
+    ]
+    assert [item["card"] for item in ready["articles"]] == [asdict(card) for card in accepted.snapshot.top_articles]
+    assert [item["covering_chunks"] for item in ready["articles"]] == [
+        list(article.covering_chunks) for article in baseline.articles
+    ]
+    comparison = record["result"]["comparison"]["canonical"]["relationship"]
+    assert comparison not in frozen.archive.read_text()
+    assert all(comparison not in payload["text"] for payload in ready["payloads"])
+    if unsupported_relationship:
+        assert comparison == "Both examples store every request permanently."

@@ -383,8 +383,9 @@ async def test_resume_marker_write_failure_forbids_requests_and_output(tmp_path:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marker_state", ["missing", "ready", "started", "malformed"])
+@pytest.mark.parametrize("publish", [False, True])
 async def test_enabled_synthesis_surrenders_both_resume_entrypoints_without_marker_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, marker_state: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, marker_state: str, publish: bool,
 ) -> None:
     from digest.config import ReviewModelConfig, SynthesisConfig
 
@@ -399,7 +400,7 @@ async def test_enabled_synthesis_surrenders_both_resume_entrypoints_without_mark
         elif marker_state == "malformed":
             _marker(checkpoint).write_text("not JSON")
     cfg = fixture_config()
-    cfg.synthesis = SynthesisConfig(True)
+    cfg.synthesis = SynthesisConfig(True, publish)
     # Surrender applies even to an unsupported comparison scope/route.
     cfg.review.enabled = False
     cfg.review.primary = ReviewModelConfig("other", "other")

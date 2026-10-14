@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from digest.domain.catalog.articles import article_hash
 from digest.domain.delivery.outcomes import article_vote_token
 from digest.domain.delivery.supplement import SupplementCoverage
+from digest.presentation import publication_language
 from digest.presentation.supplement import signal_text, split_supplement
 
 if TYPE_CHECKING:
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from digest.irritator import IrritatorStatus
     from digest.irritator.evidence_stage import EvidenceIrritatorResult
 
-# Static presentation labels follow canonical generation language, not translation targets.
+# Static copy follows the configured presentation language, including canonical fallback.
 _LABELS = {
     "en": {
         "feedback": (
@@ -86,7 +87,7 @@ class CompactPublication:
 
 
 def _labels(config: Any) -> dict[str, str]:
-    language = getattr(getattr(config, "radar", None), "language", "en")
+    language = publication_language(config)
     return _LABELS.get(language, _LABELS["en"])
 
 
@@ -386,7 +387,7 @@ def render_counter_signals(
         return (split_supplement(prefix + irritator_status.text, escape_markdownv2), irritator_status.level != "error")
 
     labels = _labels(config)
-    language = getattr(getattr(config, "radar", None), "language", "en")
+    language = publication_language(config)
     text = "\n\n".join(
         [
             f"💢🔥 {labels['irritator'].upper()} 🔥💢",
@@ -420,7 +421,7 @@ def render_post_delivery_supplement(
     notice: str = "",
 ) -> list[str]:
     """Render the bounded post-delivery supplement without transport or state access."""
-    russian = config.radar.language == "ru"
+    russian = publication_language(config) == "ru"
     header = (
         "Ирритатор: отдельная проверка одного нарратива" if russian else "Irritator: separate check of one narrative"
     )
@@ -435,7 +436,7 @@ def render_post_delivery_supplement(
     if result.narratives:
         label = "Проверяем: " if russian else "Narrative checked: "
         lines.extend(label + narrative.claim for narrative in result.narratives)
-    lines.extend(signal_text(ranked, config.radar.language) for ranked in result.ranked_signals)
+    lines.extend(signal_text(ranked, publication_language(config)) for ranked in result.ranked_signals)
     if notice:
         lines.append(notice)
     return split_supplement("\n\n".join(lines), escape_markdownv2)

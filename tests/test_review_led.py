@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -160,7 +161,13 @@ async def test_review_led_pipeline_archives_and_delivers_cards_without_narrative
     evidence = asdict(build_evidence_bundle(fixture_articles(), config.review))
     assert payload["evidence"] == json.loads(json.dumps(evidence))
     assert payload["status"] == "incomplete"
-    markdown = Path(result.markdown_path).read_text()
-    assert "Independent Blind Review" in markdown
+    markdown_path = Path(result.markdown_path)
+    markdown = markdown_path.read_text()
+    report_link = re.search(r"\[Detailed review report\]\(([^)]+)\)", markdown)
+    assert report_link is not None
+    linked_report = markdown_path.parent / report_link.group(1)
+    assert linked_report.resolve() == archive.resolve()
+    assert json.loads(linked_report.read_text()) == payload
+    assert "Independent Blind Review" not in markdown
     assert all(card.title in markdown for card in cards)
     assert "skipping legacy category summaries, trends and counter-signal analysis" in caplog.text

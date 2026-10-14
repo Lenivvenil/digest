@@ -186,7 +186,12 @@ async def present_preparation(
             allow_new=allow_new_synthesis,
         )
         synthesis_metadata = outcome.metadata()
-        if outcome.result is not None:
+        if outcome.result is not None and not config.synthesis.publish:
+            # Retain the attempted result and its evidence, without publishing prose.
+            # Enabled synthesis still surrenders resume and spends its normal bounded slot.
+            synthesis_metadata["status"] = "withheld"
+            synthesis_metadata["reason"] = "publication_disabled"
+        elif outcome.result is not None:
             try:
                 candidate_placement = SynthesisPlacement(
                     synthesis_text(outcome.result, outcome.bindings), len(publication.main_cards),

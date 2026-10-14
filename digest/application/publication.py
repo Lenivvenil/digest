@@ -73,7 +73,11 @@ async def assemble_publication(
     or accepted-preparation removal occurs until this validated result is returned.
     """
     from digest.application.investigation import run_irritator
-    from digest.application.presentation import deferred_review_status, publication_presentation
+    from digest.application.presentation import (
+        deferred_review_status,
+        publication_presentation,
+        reader_publication_notice,
+    )
     from digest.application.source_attribution import main_attribution_occurrences
     from digest.closing import attribute_closing_card
     from digest.domain.catalog.occurrences import occurrence_sha256
@@ -133,6 +137,11 @@ async def assemble_publication(
         )
         if closing is not None:
             closing_presentation = ClosingPresentation(closing.status, closing.reason)
+    from digest.domain.editorial.attempts import restore_review
+
+    text = reader_publication_notice(
+        snapshot.combined, text, restore_review(snapshot.review_report) if snapshot.review_report else None, config,
+    )
     language = config.translation.target_language if config.translation.enabled else config.radar.language
     cards = future_feed_date_cards(cards, snapshot.review_report, publication_date, language)
     # Credits stay outside canonical text and model/cache inputs, but enter both

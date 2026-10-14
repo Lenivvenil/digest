@@ -267,7 +267,7 @@ async def test_projection_binds_checked_canonical_result_and_uses_faithful_local
     assert "Проверяемое утверждение: Проверяемое утверждение" in text
     assert "Каноническое резюме: Raw evidence." in text
     assert "Внешнее свидетельство: Independent qualification" in text
-    assert "Исходный выпуск:" in text and "Охват и ограничения" in text
+    assert "Исходный выпуск:" in text and "Важные оговорки" in text
     original = Path(pending.projection).read_bytes()
     Path(pending.fragment.result).write_text('{"status": "different stored result"}')
     with pytest.raises(ValueError, match="Stored canonical investigation differs"):
@@ -1141,7 +1141,7 @@ async def test_optional_presentation_archives_canonical_before_translation_and_k
 
     async def send(actual, actual_config, *, notice):
         assert actual is presented and actual_config.radar.language == "ru"
-        assert "not independently verified" in notice
+        assert "точность смысла независимо не проверена" in notice
         text = _markdown(checkpoint).read_text()
         assert "Status: empty" in text and notice in text
         expected_diagnostics = asdict(canonical)
@@ -1323,3 +1323,40 @@ async def test_supplement_rejection_never_retries_or_falls_back(
     assert client.post.call_args.kwargs["json"]["parse_mode"] == "MarkdownV2"
     assert client.post.call_args.kwargs["json"]["disable_notification"] is True
     assert client.post.call_args.kwargs["timeout"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_reader_fragment_preserves_material_caveats_and_separates_known_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from digest.presentation.supplement import fragment_text
+    from digest.translation import TranslationResult
+
+    pending = await pending_supplement(monkeypatch)
+    saved = Path(pending.projection).read_bytes()
+    bundle, _ = load_review_checkpoint(Path(pending.fragment.checkpoint), fixture_config())
+    result = accepted_result(bundle, pending.fragment.origin)
+    caveat = "Readiness has not been independently measured; this is only contextual risk."
+    result.limitations = [
+        caveat,
+        "3 of 9 source/query searches failed or were unavailable.",
+        "Ranking omitted non-counter signals: supports=0, context=0, insufficient=2.",
+        "Ranking omitted non-counter signals: unknown new caveat; do not discard.",
+        caveat,
+    ]
+    canonical = deepcopy(asdict(result))
+    text = fragment_text(
+        result, result, pending.fragment.origin, language="ru",
+        notice=TranslationResult({}, "fallback").notice_for("ru"), investigated_at="2026-11-09T04:05:06.123456Z",
+    )
+    assert text.count(caveat) == 1
+    assert "Важные оговорки: " + caveat in text and "\n• " not in text
+    assert "Часть поисков недоступна: 3 из 9." in text
+    assert "supports=0" not in text and "unknown new caveat; do not discard" in text
+    assert "Уточняет, не является прямым опровержением" in text
+    assert "RSS-выдержкам" in text and "отсутствие опровержения не подтверждает" in text
+    assert "Проверка: 09.11.2026; неполная." in text and "04:05:06" not in text
+    assert "сохранён исходный английский текст" in text
+    assert all(signal.reasoning in text and signal.quote in text for signal in result.ranked_signals)
+    assert all(quote in text for quote in result.narratives[0].quotes.values())
+    assert asdict(result) == canonical and Path(pending.projection).read_bytes() == saved
