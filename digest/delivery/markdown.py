@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from digest.adapters.storage.review_checkpoints import save_review_archive
+from digest.presentation import publication_language
 from digest.presentation.review import literal_article_title
 from digest.presentation.supplement import signal_text
 
@@ -49,7 +50,7 @@ def _build_top_articles_section(
 
     lines = [f"\n\n## {heading}\n"]
     for a in top_articles:
-        summary = "\n".join(f"> {line}" for line in a.summary.split("\n")) if literal_passages else f"> {a.summary}"
+        summary = "\n".join(f"> {line}" for line in a.summary.split("\n"))
         lines.append(
             f"> [!note] [{literal_article_title(a.title)}]({a.link})\n{summary}\n> *{a.source} · {a.category}*\n"
         )
@@ -114,6 +115,10 @@ def write_digest(
     date_str = dt.strftime("%Y-%m-%d")
     output_dir = Path(config.obsidian.output_dir)
 
+    russian = publication_language(config) == "ru"
+    main_heading = "Главное" if russian else "Top Articles"
+    closing_heading = "Напоследок" if russian else "Closing story"
+    supplement_heading = "Дополнительные свидетельства" if russian else "Supplementary evidence"
     frontmatter = _build_frontmatter(date_str, sources_count, articles_count)
     content = f"{frontmatter}\n{summary}\n"
 
@@ -122,37 +127,33 @@ def write_digest(
             raise ValueError("Invalid synthesis publication position.")
         placements = [(synthesis.before_article, "\n\n" + synthesis.text + "\n")]
         if supplement is not None:
-            placements.append((supplement.before_article, "\n\n## Supplementary evidence\n\n" + supplement.text + "\n"))
+            placements.append((supplement.before_article, f"\n\n## {supplement_heading}\n\n" + supplement.text + "\n"))
         cursor = 0
         for position, text in sorted(placements, key=lambda item: item[0]):
             content += _build_top_articles_section(
                 top_articles[cursor:position],
                 literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
-                heading="Top Articles" if cursor == 0 else "Closing story",
+                heading=main_heading if cursor == 0 else closing_heading,
             )
             content += text
             cursor = position
-        content += _build_top_articles_section(top_articles[cursor:], heading="Closing story")
+        content += _build_top_articles_section(top_articles[cursor:], heading=closing_heading)
     elif top_articles:
         main = top_articles if supplement is None else top_articles[: supplement.before_article]
         content += _build_top_articles_section(
             main,
             literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
+            heading=main_heading,
         )
         if supplement is not None:
-            content += "\n\n## Supplementary evidence\n\n" + supplement.text + "\n"
-            content += _build_top_articles_section(top_articles[supplement.before_article :], heading="Closing story")
+            content += f"\n\n## {supplement_heading}\n\n" + supplement.text + "\n"
+            content += _build_top_articles_section(top_articles[supplement.before_article :], heading=closing_heading)
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)
 
-    if irritator_status is not None:
+    if irritator_status is not None and irritator_status.level != "deferred":
         content += f"\n\nIrritator status: {irritator_status.level} — {irritator_status.text}\n"
-
-    if review_report is not None:
-        from digest.presentation.review import render_review
-
-        content += render_review(review_report) + "\n"
 
     if source_quotations and getattr(getattr(config, "reading_brief", None), "enabled", False):
         content += _build_source_evidence_appendix(top_articles or [], source_quotations)
@@ -172,6 +173,9 @@ def write_digest(
             try:
                 with handle:
                     handle.write(content)
+                    if review_report is not None:
+                        label = "Подробный отчёт проверки" if russian else "Detailed review report"
+                        handle.write(f"\n[{label}]({file_path.with_suffix('.review.json').name})\n")
             except OSError:
                 file_path.unlink(missing_ok=True)
                 raise

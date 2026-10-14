@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import textwrap
+from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -337,7 +338,7 @@ async def test_primary_view_keeps_identity_and_dry_run_uses_only_temporary_cache
     assert cards[0].title == card.title and cards[0].link == card.link
     assert article_hash(cards[0].title, cards[0].link) == article_hash(card.title, card.link)
     assert cards[0].summary == preview_cards[0].summary and summary == preview
-    assert "not independently verified" in summary
+    assert "точность смысла независимо не проверена" in summary
     assert not (tmp_path / "unused").exists()
 
 
@@ -403,7 +404,7 @@ async def test_pipeline_uses_one_presentation_for_both_outputs_and_keeps_raw_rev
     cards = delivery.call_args.kwargs["top_articles"]
     assert all(card.summary.startswith("Перевод: ") for card in cards)
     markdown = Path(result.markdown_path).read_text()
-    assert all(card.summary in markdown for card in cards)
+    assert all("\n".join("> " + line for line in card.summary.split("\n")) in markdown for card in cards)
     raw = Path(result.markdown_path).with_suffix(".review.json").read_text()
     assert "Перевод: " not in raw
     assert result.telegram_sent and not result.required_delivery_failed
@@ -517,7 +518,7 @@ async def test_conflicting_article_identity_keeps_each_original_before_any_model
         )
     assert presented[0].summary.startswith(first.summary)
     assert presented[1].summary.startswith(second.summary)
-    assert all("canonical English text retained" in item.summary for item in presented)
+    assert all("сохранён исходный английский текст" in item.summary for item in presented)
     assert not list(tmp_path.glob("*.json"))
     call.assert_not_called()
     cfg.translation = replace(cfg.translation, enabled=False)
@@ -700,7 +701,7 @@ async def test_generated_card_conditions_and_conflict_share_translation_field(tm
         patch("digest.translation.translate_fields", wraps=translate_fields) as translate,
     ):
         summary, cards = await translate_primary_presentation("", [card], cfg, tmp_path, execution=execution)
-    notice = TranslationResult({}, "translated").notice
+    notice = TranslationResult({}, "translated").notice_for(cfg.translation.target_language)
     assert summary.count(notice) == 1 and notice not in cards[0].summary
     assert (cards[0].title, cards[0].link, cards[0].source) == (card.title, card.link, card.source)
     translate.assert_awaited_once()
@@ -766,7 +767,7 @@ async def test_closing_uses_one_existing_request_and_replays_exact_combined_cach
         )
         assert path.read_bytes() == saved
     assert first[:3] == replay[:3] and first[3].card == replay[3].card
-    notice = TranslationResult({}, "translated").notice
+    notice = TranslationResult({}, "translated").notice_for(cfg.translation.target_language)
     assert first[0].count(notice) == 1 and notice not in first[1][0].summary
     assert (first[1][0].title, first[1][0].link, first[1][0].source) == (main.title, main.link, main.source)
     assert first[1][0].summary == "Перевод: Only 20 pilot clients."
@@ -933,7 +934,7 @@ async def test_invalid_main_keeps_existing_canonical_fallback_without_closing_re
         first = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path, execution=execution)
         replay = await translate_publication_with_closing("", [main], [], closing, cfg, tmp_path, execution=execution)
     assert first[1] == replay[1] == [main]
-    assert "canonical English text retained" in first[0]
+    assert "сохранён исходный английский текст" in first[0]
     assert first[3].card == replay[3].card == closing
     assert first[3].reason == replay[3].reason == "main_canonical_fallback"
     complete.assert_awaited_once()
@@ -1856,3 +1857,31 @@ def test_opted_in_status_localization_and_category_summary_stay_deterministic() 
         "Этап контрсигналов отложен до завершения основной доставки."
     )
     assert combined_summary([], "Category trends", False, "en", synthesis_enabled=True) == "Category trends"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("translated", [False, True])
+@pytest.mark.parametrize("synthesis_enabled", [False, True])
+async def test_static_reader_notice_localizes_and_deduplicates_without_changing_canonical_inputs(
+    translated: bool, synthesis_enabled: bool,
+) -> None:
+    from digest.application.presentation import deferred_review_status, reader_publication_notice
+    from digest.presentation.review import primary_notice
+
+    cfg = config()
+    cfg.telegram.delivery_mode = "compact"
+    with patch("digest.application.review.complete", side_effect=fixture_response):
+        result = await run_primary_review(fixture_articles(), cfg, execution=ModelExecution())
+    canonical = primary_notice(result, "en") + "\n\n" + deferred_review_status(
+        "en", synthesis_enabled=synthesis_enabled,
+    )
+    status = TranslationResult({}, "translated" if translated else "fallback").notice_for("ru")
+    presented = ("Статический перевод." if translated else canonical) + "\n\n" + status
+    before = deepcopy(asdict(result.report))
+    with patch("digest.translation.complete", side_effect=AssertionError("No presentation calls")):
+        shown = reader_publication_notice(canonical, presented, result, cfg)
+        assert reader_publication_notice("Unknown historical notice", presented, result, cfg) == presented
+    assert shown == "Автоматический обзор RSS-выдержек. " + status
+    assert result.chosen.review.model not in shown and "Model view" not in shown
+    assert "независимое сравнение" not in shown.lower() and "контрсигналов" not in shown
+    assert asdict(result.report) == before and canonical.startswith("Model view")

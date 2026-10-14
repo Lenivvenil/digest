@@ -5,6 +5,11 @@
 Turn your RSS sources into selected reading with a reason to open the original.
 Read in Telegram; keep a Markdown archive for Obsidian.
 
+New reader editions keep source links and material caveats concise. Static labels
+follow the presentation language even if translation fails and main prose stays
+in English. Detailed model/operator diagnostics remain in companion reports;
+an archive or successful delivery does not establish factual quality.
+
 [Try it safely](#try-it-safely) · [Run your runtime](docs/CONFIGURATION.md#runtime-configuration) · [Recover an edition](docs/OPERATIONS.md#inspect-an-interrupted-edition)
 
 ## A glance at an edition
@@ -45,7 +50,9 @@ exists. It is off by default and needs approved sources; it is not a daily promi
 Ordinary prepared cards can include one default-off [selected-source comparison](docs/CONFIGURATION.md#optional-selected-source-comparison)
 when two retained excerpts support a relationship and the complete block fits safely.
 It has bounded, explicitly unverified interpretation and paired RU presentation;
-unsupported or failed work is omitted.
+structurally invalid or failed work is omitted. Exact quotes do not establish a
+supported relationship: operators can withhold comparison prose with
+`synthesis.publish: false` while retaining the bounded attempt and its evidence.
 
 Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATION.md#legacy-format-and-optional-features)
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,

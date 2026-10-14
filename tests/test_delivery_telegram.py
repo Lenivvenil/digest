@@ -986,3 +986,19 @@ def test_synthesis_span_reports_split_credit_instead_of_claiming_single_chunk(mo
     assert rendered.synthesis == tuple(range(len(rendered.chunks)))
     assert len(rendered.synthesis) > 1
     assert "".join(chunk.text for chunk in rendered.chunks) == escape_markdownv2(text)
+
+
+@pytest.mark.parametrize("enabled,expected", [(True, "Оценки обрабатываются"), (False, "Votes are processed")])
+def test_compact_static_feedback_follows_presentation_target_even_with_canonical_prose(
+    enabled: bool, expected: str,
+) -> None:
+    from digest.presentation.telegram import render_compact_publication
+
+    config = _make_config()
+    config.radar = SimpleNamespace(language="en")
+    config.translation = SimpleNamespace(enabled=enabled, target_language="ru")
+    card = _make_top(summary="Canonical English explanation with its material condition.")
+    publication = render_compact_publication([card], config, "")
+    rendered = "".join(chunk.text for chunk in publication.chunks)
+    assert expected in rendered and escape_markdownv2(card.summary) in rendered
+    assert publication.articles[0].covering_chunks == (0,)

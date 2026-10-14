@@ -11,6 +11,7 @@ from digest.domain.editorial.attempts import ResolvedReview
 from digest.domain.editorial.evidence import ordered_unique_articles
 from digest.domain.editorial.reviews import BlindReviewReport
 from digest.domain.editorial.summaries import ArticleSummary
+from digest.presentation.supplement import reader_date
 
 
 def literal_article_title(title: str) -> str:
@@ -71,11 +72,11 @@ def future_feed_date_cards(
         if published.date() <= publication_date:
             continue
         notice = (
-            f"Дата и время в ленте источника (UTC): {published.isoformat()}; "
-            f"позже даты этого выпуска ({publication_date.isoformat()})."
+            f"Дата в ленте источника (UTC): {reader_date(published.isoformat(), language)}; "
+            f"позже даты выпуска ({reader_date(publication_date.isoformat(), language)})."
             if language == "ru"
-            else f"Source feed timestamp (UTC): {published.isoformat()}; "
-            f"later than this edition’s date ({publication_date.isoformat()})."
+            else f"Source feed date (UTC): {reader_date(published.isoformat(), language)}; "
+            f"later than this edition’s date ({reader_date(publication_date.isoformat(), language)})."
         )
         card.summary = f"{notice} {card.summary}"
     return presented

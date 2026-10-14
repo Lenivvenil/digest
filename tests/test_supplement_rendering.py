@@ -102,3 +102,91 @@ async def test_legacy_supplement_dispatch_has_total_deadline(monkeypatch: pytest
         with pytest.raises(TimeoutError):
             await send_counter_signals([make_ranked_signal(reasoning="long " * 3000)], fixture_config())
     sender.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "sentence", ["A bounded condition remains important.", "Оговорка остаётся важной: лишь пилот 😀."],
+)
+def test_split_prefers_complete_sentences_without_losing_whitespace(sentence: str) -> None:
+    text = f"{sentence} {sentence} {sentence}"
+    budget = len(escape_markdownv2(sentence + " ").encode("utf-16-le")) // 2 + 15
+    chunks = split_supplement(text, escape_markdownv2, max_units=budget)
+    assert _decode(chunks) == text
+    assert [re.sub(r"\\(.)", r"\1", chunk).strip() for chunk in chunks] == [sentence] * 3
+
+
+def test_split_prefers_paragraphs_and_never_loses_a_late_qualification() -> None:
+    first = "One complete paragraph."
+    second = "The next claim has a material condition. Only pilot users qualify."
+    text = first + "\n\n" + second
+    chunks = split_supplement(text, escape_markdownv2, max_units=80)
+    assert chunks[0] == escape_markdownv2(first + "\n\n")
+    assert _decode(chunks) == text
+    assert chunks[-1].endswith(escape_markdownv2("Only pilot users qualify."))
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_coverage_preserves_full_source_qualification_and_unknown_caveats(language: str) -> None:
+    from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE
+    from digest.presentation.supplement import _reader_coverage
+
+    result = EvidenceIrritatorResult(1, "synthetic", coverage=FULL_SOURCE_COVERAGE)
+    text = _reader_coverage(result, language)
+    assert ("выбранным моделью" if language == "ru" else "model-selected") in text
+    assert ("не независимое подтверждение" if language == "ru" else "nor independent corroboration") in text
+    result.coverage = "Unknown scope: measurement applies only to a limited trial."
+    assert _reader_coverage(result, language) == result.coverage
+
+
+@pytest.mark.parametrize(
+    "value,language,expected",
+    [
+        ("2026-11-10T01:30:59.123+02:00", "en", "09 Nov 2026"),
+        ("2026-11-10T01:30:59.123+02:00", "ru", "09.11.2026"),
+        ("2026-11-09", "ru", "09.11.2026"),
+        ("unknown", "ru", "unknown"),
+    ],
+)
+def test_reader_dates_keep_calendar_context_without_raw_timestamps(value: str, language: str, expected: str) -> None:
+    from digest.presentation.supplement import reader_date
+
+    assert reader_date(value, language) == expected
+
+
+def test_closed_reader_caveat_mapping_keeps_substantive_and_unfamiliar_conditions() -> None:
+    from digest.presentation.supplement import _reader_limitations
+
+    unknown = "Only institutions with audited recovery plans are covered; no claim about other participants."
+    result = EvidenceIrritatorResult(1, "synthetic", limitations=[
+        "No independent verification of deployment readiness.",
+        "Scope limited to network infrastructure, not direct banking impact.",
+        "All external signals are from developer-focused blogs, not primary regulatory sources.",
+        "Potential for schedule changes not captured in excerpt.",
+        "Information may be outdated before the rollout.",
+        "3 of 9 source/query searches failed or were unavailable.",
+        "Evidence is a sanitized RSS excerpt, not the full article.",
+        "Excerpt may omit additional qualifiers or context.",
+        "Vendor-specific blogs may be biased.",
+        unknown,
+        "No independent verification of an unfamiliar measured outcome.",
+        "Scope limited to an unfamiliar trial, not direct banking impact.",
+    ])
+    original = list(result.limitations)
+    notes = _reader_limitations(result, "ru")
+    assert "Готовность к внедрению независимо не проверена." in notes
+    assert "Охват ограничен сетевой инфраструктурой; прямое влияние на банки не оценивалось." in notes
+    assert any("первичных источников регуляторов" in item for item in notes)
+    assert "Изменения расписания могли не попасть в отрывок." in notes
+    assert "Сведения могут устареть до запуска." in notes
+    assert notes.count("Часть поисков недоступна: 3 из 9.") == 1
+    assert unknown in notes and original[-1] in notes and original[-2] in notes
+    assert result.limitations == original
+    assert "Vendor-specific blogs may be biased." not in notes
+
+
+def test_unfamiliar_coverage_cannot_authorize_dropping_a_known_excerpt_caveat() -> None:
+    from digest.presentation.supplement import _reader_limitations
+
+    limitation = "Evidence consists of short excerpts; full articles were not reviewed."
+    result = EvidenceIrritatorResult(1, "synthetic", coverage="Unfamiliar scope.", limitations=[limitation])
+    assert _reader_limitations(result, "ru") == [limitation]

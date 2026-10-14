@@ -144,8 +144,8 @@ async def test_credit_uses_exact_frozen_feed_and_preserves_canonical_evidence_an
         if credit is None:
             assert attributed is None
         else:
-            assert attributed == replace(presented, summary=f"{summary} {credit}")
-            assert attributed is not presented and "\n" not in attributed.summary
+            assert attributed == replace(presented, summary=f"{summary}\n\n{credit}")
+            assert attributed is not presented and "\n\n" + credit in attributed.summary
             for field in ("title", "link", "source", "category"):
                 assert attribute_closing_card(decision, replace(presented, **{field: "changed"})) is None
             tampered = replace(decision.provenance, occurrence_sha256="0" * 64)

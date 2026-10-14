@@ -132,9 +132,9 @@ def _valid_output() -> tuple:
 @pytest.mark.parametrize(
     "published,language,normalized",
     [
-        ("2026-11-25T15:00:00+00:00", "en", "2026-11-25T15:00:00+00:00"),
-        ("2026-10-11T23:30:00-02:00", "ru", "2026-10-12T01:30:00+00:00"),
-        ("2026-10-12T00:00:00.123456Z", "de", "2026-10-12T00:00:00.123456+00:00"),
+        ("2026-11-25T15:00:00+00:00", "en", "25 Nov 2026"),
+        ("2026-10-11T23:30:00-02:00", "ru", "12.10.2026"),
+        ("2026-10-12T00:00:00.123456Z", "de", "12 Oct 2026"),
         ("2026-10-11T23:59:59+00:00", "en", None),
         ("2026-10-12T01:00:00+02:00", "en", None),
         ("2026-10-10T23:59:59+00:00", "en", None),
@@ -158,13 +158,13 @@ def test_future_feed_date_cards_use_only_known_aware_utc_days(
         expected = card.summary
     elif language == "ru":
         expected = (
-            f"Дата и время в ленте источника (UTC): {normalized}; "
-            "позже даты этого выпуска (2026-10-11). Canonical reason."
+            f"Дата в ленте источника (UTC): {normalized}; "
+            "позже даты выпуска (11.10.2026). Canonical reason."
         )
     else:
         expected = (
-            f"Source feed timestamp (UTC): {normalized}; "
-            "later than this edition’s date (2026-10-11). Canonical reason."
+            f"Source feed date (UTC): {normalized}; "
+            "later than this edition’s date (11 Oct 2026). Canonical reason."
         )
     assert presented == [replace(card, summary=expected)]
     assert presented[0] is not card and card.summary == "Canonical reason."
@@ -236,7 +236,8 @@ async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp
     assert path is not None
     archive = json.loads(path.with_suffix(".review.json").read_text())
     assert archive == json.loads(json.dumps(asdict(report)))
-    assert "Independent Blind Review" in path.read_text()
+    assert "Independent Blind Review" not in path.read_text()
+    assert f"[Detailed review report]({path.with_suffix('.review.json').name})" in path.read_text()
     evidence = {item.evidence_id: item for item in report.evidence.items}
     preview = render_review(report)
     assert any(review.selections for review in report.reviews)
@@ -245,7 +246,7 @@ async def test_fixture_has_no_live_network_or_delivery_and_archives_contract(tmp
             item = evidence[selected.evidence_id]
             label = r"\!\[badge\]\(https\:\/\/example\.invalid\/pixel\)"
             assert f"[{label}]({item.url}): {selected.reason}" in preview
-    assert preview in path.read_text()
+    assert preview not in path.read_text()
     assert asdict(report) == original
 
 

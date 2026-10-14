@@ -318,3 +318,26 @@ archive's status-only projection follows the retained accepted sentence.
 
 See [execution/deadline ownership](0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
 and [retained attempt authority](../STATE_AND_EFFECTS.md#optional-synthesis-attempt).
+
+### Publication containment for unaccepted comparison prose
+
+The strict `synthesis.publish` boolean defaults to `true`, preserving existing
+configuration behavior. An explicit `false` with synthesis still enabled omits
+only the generated comparison from newly prepared reader output. It does not
+alter request construction, quota allocation, completion persistence or reuse.
+The existing bounded attempt still runs when eligible, and report-only resume
+remains surrendered. This setting is not a way to save or refund that call.
+
+After normal preparation, a valid result receives presentation metadata status
+`withheld` and reason `publication_disabled`; its result, evidence bindings and
+request hash remain present. Canonical review reports and synthesis sidecars are
+not rewritten. Main cards, supplements, closer, attribution and receipt coverage
+keep their existing owners and validation. Existing ready payloads are replayed
+exactly even if the current setting changes; publication containment is not a
+retroactive edit or retraction.
+
+Exact quotations and distinct source IDs validate provenance, not entailment of
+the relationship. Containment is therefore not useful-analysis acceptance under
+#55. Restoring accepted comparison publication requires source-specific support
+for each claimed property and independent review of actual canonical and
+translated output. No new verifier call or acceptance waiver is implied.

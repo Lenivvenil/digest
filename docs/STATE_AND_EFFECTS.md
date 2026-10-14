@@ -132,7 +132,8 @@ not persist a new checkpoint or change translation's request/cache contract.
 For ordinary prepared review-backed main cards, the pure review-presentation owner
 matches exact article identities to the accepted report's evidence. An aware feed
 timestamp later than the intended UTC calendar day receives a static source-feed
-timestamp prefix with normalized ISO time and edition date; this does not verify
+prefix with a readable UTC source-feed date and edition date; the exact timestamp
+remains in evidence. This does not verify
 publication/event timing. Missing, invalid, naive or UTC-unrepresentable timestamps,
 absent evidence and same-day/past timestamps receive no prefix. The configured output
 language selects Russian for `ru` and English otherwise: `translation.target_language`
