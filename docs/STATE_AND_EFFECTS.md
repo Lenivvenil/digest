@@ -480,6 +480,18 @@ against current exact bindings before recovery reuse. This is local retained-sta
 durability, not an account-wide journal or cross-run guarantee: runner loss before
 the runtime's existing persistence barrier can lose local evidence.
 
+The draft source-specific v2 result keeps the schema-1 attempt envelope and the
+same accepted-preparation filename. Its wire observations carry source IDs/hashes;
+the validator attaches complete excerpt context from immutable input bindings to
+the normalized result, and retained-response revalidation recreates that same
+result without another model call. Its prompt/result shape changes, so v1
+success, failure and reserved records are preserved but not reused. Unsupported
+retained state takes the existing omission path; it is never absence and never
+permits a new request. No migration, deletion or prompt-suffixed cache key is
+introduced. Frozen v1 editions keep their exact old payloads and do not call the
+current synthesis parser. See the [draft amendment](decisions/0005-optional-presentation-translation.md#draft-source-specific-v2-amendment-55)
+for the source-specific observation and finite-acceptance contract.
+
 The complete baseline, including an eligible pending supplement, is preflighted
 before optional work. Admitted result, source bindings and disposition are additive
 hash-bound ready metadata; the sender acquires no synthesis parser or mandatory

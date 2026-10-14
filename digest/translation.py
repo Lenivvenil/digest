@@ -337,11 +337,21 @@ def _with_failure_diagnostics(
     try:
         candidate = record
         if len(rejections) == 1:
-            facts = asdict(rejections[0])
+            facts = asdict(replace(rejections[0], quota=None))
+            facts.pop("quota", None)
             enriched = {**candidate, "http_rejection": facts}
             if (len(json.dumps(facts, indent=2).encode("utf-8")) <= 1024
                     and len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
                 candidate = enriched
+                try:
+                    if rejections[0].quota is not None:
+                        detailed = {**facts, "quota": asdict(rejections[0].quota)}
+                        enriched = {**candidate, "http_rejection": detailed}
+                        if (len(json.dumps(detailed, indent=2).encode("utf-8")) <= 1024
+                                and len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES):
+                            candidate = enriched
+                except Exception:
+                    pass  # New detail cannot discard already accepted header/status facts.
         if reason is not None:
             enriched = {**candidate, "validation_reason": reason}
             if len(json.dumps(enriched, indent=2).encode("utf-8")) <= MAX_CACHE_BYTES:

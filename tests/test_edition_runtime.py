@@ -1127,27 +1127,30 @@ def _synthesis_accepted(
 def _synthesis_response(messages: list[dict[str, str]], *, abstained: bool = False) -> str:
     task = json.loads(messages[1]["content"])
     language = task["publication_language"]
+    observations = (
+        ("Accepts payment requests during settlement outages; settlement waits until recovery.",
+         "Принимает платёжные запросы при сбое расчётов; расчёты ждут восстановления."),
+        ("Accepts invoice requests during ledger outages and replays them only after recovery.",
+         "Принимает запросы счетов при сбое реестра и повторно обрабатывает их после восстановления."),
+    )
+    supports = [
+        {"evidence_id": item["evidence"]["evidence_id"], "occurrence_sha256": item["occurrence_sha256"],
+         "canonical_observation": observations[i][0],
+         "presentation_observation": observations[i][1] if language == "ru" else None}
+        for i, item in enumerate(task["selected_items"][:2])
+    ]
     comparison = {
-        "relationship_type": "shared_mechanism",
-        "supports": [
-            {"evidence_id": item["evidence"]["evidence_id"], "occurrence_sha256": item["occurrence_sha256"],
-             "field": "excerpt", "quote": item["evidence"]["excerpt"]}
-            for item in task["selected_items"][:2]
-        ],
+        "supports": supports, "premise_ids": [support["evidence_id"] for support in supports],
         "canonical": {
-            "relationship": "Both examples separate request acceptance from downstream work: requests are accepted "
-                            "during an outage, while the dependent operation waits for recovery.",
-            "qualification": "The excerpts describe behavior; neither supplies production-scale recovery "
-                             "measurements or confirms end-to-end completion.",
+            "interpretation": "Compare accepting a request with completing its dependent operation after recovery.",
+            "qualification": "The excerpts do not establish production-scale recovery performance or completion.",
         },
         "presentation": {
-            "relationship": "Оба примера разделяют приём запросов и последующую обработку: запросы принимаются "
-                            "во время сбоя, а зависимая операция откладывается до восстановления.",
-            "qualification": "В отрывках описано поведение; ни один не содержит измерений восстановления "
-                             "в промышленном масштабе или подтверждения сквозного завершения.",
+            "interpretation": "Сравните приём запроса и завершение зависимой операции после восстановления.",
+            "qualification": "Отрывки не подтверждают промышленную производительность восстановления или завершение.",
         } if language == "ru" else None,
     }
-    return json.dumps({"schema_version": 1, "publication_language": language,
+    return json.dumps({"schema_version": 2, "publication_language": language,
                        "status": "abstained" if abstained else "comparison",
                        "abstention_reason": "no_supported_relationship" if abstained else None,
                        "comparison": None if abstained else comparison}, ensure_ascii=False)
@@ -1586,7 +1589,7 @@ async def test_synthesis_real_chunk_overflow_uses_exact_baseline_payloads(
     from digest.presentation.telegram import render_compact_publication
 
     config, accepted = _synthesis_accepted(monkeypatch)
-    cards = [replace(accepted.snapshot.top_articles[0], summary="x" * 3000), accepted.snapshot.top_articles[1]]
+    cards = [replace(accepted.snapshot.top_articles[0], summary="x" * 3300), accepted.snapshot.top_articles[1]]
     accepted = persist_accepted_preparation(replace(accepted.snapshot, top_articles=cards), cache_dir=".cache")
     baseline = render_compact_publication(cards, config, accepted.snapshot.combined)
     complete = AsyncMock(side_effect=_synthesis_completion)
@@ -1751,7 +1754,7 @@ async def test_synthesis_publication_containment_retains_result_and_exact_baseli
         if unsupported_relationship:
             raw = json.loads(text)
             # Valid exact quotes and source identities do not prove this shared claim.
-            raw["comparison"]["canonical"]["relationship"] = "Both examples store every request permanently."
+            raw["comparison"]["canonical"]["interpretation"] = "Both examples store every request permanently."
             text = json.dumps(raw)
         return text, metadata
 
@@ -1790,7 +1793,7 @@ async def test_synthesis_publication_containment_retains_result_and_exact_baseli
     assert [item["covering_chunks"] for item in ready["articles"]] == [
         list(article.covering_chunks) for article in baseline.articles
     ]
-    comparison = record["result"]["comparison"]["canonical"]["relationship"]
+    comparison = record["result"]["comparison"]["canonical"]["interpretation"]
     assert comparison not in frozen.archive.read_text()
     assert all(comparison not in payload["text"] for payload in ready["payloads"])
     if unsupported_relationship:

@@ -853,43 +853,46 @@ def _synthesis_fixture(language: str = "ru") -> Any:
         )
     )
     canonical = SynthesisProse(
-        "Both examples separate request acceptance from downstream work: requests are accepted during an outage, "
-        "while the dependent operation waits for recovery.",
-        "The excerpts describe behavior; neither provides production-scale recovery measurements or verified "
-        "end-to-end completion.",
+        "Compare accepting a request with completing its dependent operation after recovery.",
+        "The excerpts do not establish production-scale recovery performance or completion.",
     )
     presentation = SynthesisProse(
-        "Оба примера разделяют приём запросов и последующую обработку: запросы принимаются во время сбоя, "
-        "а зависимая операция откладывается до восстановления.",
-        "В отрывках описано поведение; ни один не содержит измерений восстановления в промышленном масштабе "
-        "или подтверждения сквозного завершения.",
+        "Сравните приём запроса и завершение зависимой операции после восстановления.",
+        "Отрывки не подтверждают промышленную производительность восстановления или завершение.",
     ) if language == "ru" else None
-    supports = tuple(SynthesisSupport(b.evidence.evidence_id, b.occurrence_sha256, "excerpt", b.evidence.excerpt)
-                     for b in bindings)
-    return SynthesisResult(1, language, "comparison", None,
-                           SynthesisComparison("shared_mechanism", supports, canonical, presentation)), bindings
+    observations = (
+        ("Accepts payment requests during settlement outages; settlement waits until recovery.",
+         "Принимает платёжные запросы при сбое расчётов; расчёты ждут восстановления."),
+        ("Accepts invoice requests during ledger outages and replays them only after recovery.",
+         "Принимает запросы счетов при сбое реестра и повторно обрабатывает их после восстановления."),
+    )
+    supports = tuple(SynthesisSupport(
+        b.evidence.evidence_id, b.occurrence_sha256, "excerpt", b.evidence.excerpt,
+        observations[i][0], observations[i][1] if language == "ru" else None,
+    ) for i, b in enumerate(bindings))
+    return SynthesisResult(2, language, "comparison", None, SynthesisComparison(
+        supports, tuple(s.evidence_id for s in supports), canonical, presentation,
+    )), bindings
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])
-def test_synthesis_text_preserves_original_quotes_links_and_complete_localized_labels(language: str) -> None:
+def test_synthesis_text_keeps_observations_attributed_without_operator_quote_dump(language: str) -> None:
     from digest.presentation.telegram import synthesis_text
 
     result, bindings = _synthesis_fixture(language)
     text = synthesis_text(result, bindings)
     prose = result.comparison.presentation if language == "ru" else result.comparison.canonical
-    expected = ["Сопоставление выбранных материалов" if language == "ru" else "Comparison of selected items",
-                prose.relationship, prose.qualification]
-    for binding in bindings:
-        expected.extend([("Источник: " if language == "ru" else "Source: ") + binding.source,
-                         binding.evidence.excerpt, binding.evidence.url])
-    expected.append(
-        "Вывод по ограниченным RSS-отрывкам; смысловое соответствие перевода независимо не проверено."
-        if language == "ru" else "Interpretation of limited RSS excerpts."
-    )
+    expected = ["Сопоставление выбранных материалов" if language == "ru" else "Comparison of selected items"]
+    for support, binding in zip(result.comparison.supports, bindings, strict=True):
+        observation = support.presentation_observation if language == "ru" else support.canonical_observation
+        expected.extend([f"{binding.source}: {observation}", binding.evidence.url])
+        assert support.quote == binding.evidence.excerpt and support.quote not in text
+    expected.extend([("Сопоставление: " if language == "ru" else "Interpretation: ") + prose.interpretation,
+                     prose.qualification])
     assert text == "\n".join(expected)
-    units = len(escape_markdownv2(text).encode("utf-16-le")) // 2
-    assert units == 727 if language == "ru" else units <= 1000
-    assert "https://example.com/rss" not in text  # Visible credit is the retained article URL.
+    assert len(escape_markdownv2(text).encode("utf-16-le")) // 2 <= 1000
+    assert "https://example.com/rss" not in text
+
 
 
 def test_synthesis_text_budget_counts_escaping_and_emoji_without_shortening() -> None:

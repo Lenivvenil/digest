@@ -3,6 +3,16 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Fixed
+- Add optional metadata-only Groq 429 quota diagnostics to failed translation
+  sidecars: one recognized dimension and bounded numeric limit/used/requested
+  values plus a separate retry hint. Unknown/ambiguous message forms are omitted;
+  raw messages, prompts, credentials and account identifiers are not retained.
+  Existing header facts, retry/cooldown policy, byte caps and cache replay remain
+  unchanged. This improves future diagnosis, not Russian-output success. Refs #55.
+- Draft source-specific comparison v2 binds canonical and translated observations
+  to their own retained evidence; interpretation remains subject to semantic
+  review. Existing v1 attempts stay non-replayable across upgrade, with no new call
+  or frozen-payload rewrite. Refs #55.
 - Add explicit default-true `synthesis.publish` containment for newly prepared
   comparison prose, retaining normal bounded generation, private evidence and
   report-only resume surrender. Frozen payloads remain unchanged. Refs #55.

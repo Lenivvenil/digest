@@ -159,6 +159,20 @@ A held inspection returns exit code 1; ordinary `missing`, `ready`, `pending_win
 than inventing a valid state. In a shell using automatic exit-on-error, retain the
 inspection output even when the command reports a hold.
 
+### Inspect a failed translation
+
+Preserve the referenced translation sidecar and exact engine/config revision.
+`error_kind: provider_failure` with HTTP 429 records a provider rejection, not a
+translation-validation failure. New Groq failures may include the bounded
+[`http_rejection.quota` detail](decisions/0020-explicit-model-execution.md#optional-named-groq-quota-facts-55):
+one positively parsed quota dimension and numeric limit/used/requested values.
+They are provider-reported claims, not a billing/entitlement audit. The separate
+body `retry_hint_seconds` is diagnostic only; existing header-based waiting stays
+unchanged. Missing detail means unknown, even when remaining-count headers look
+full. Unknown message grammar is intentionally omitted instead of saving raw
+error text. Never clear a terminal cache or rerun a failure merely to collect
+diagnostics. Successful later translation does not explain an earlier rejection.
+
 ## Delivery states and recovery
 
 <a id="prepared-editions-and-delivery-recovery-120"></a>
@@ -433,6 +447,10 @@ capture omits it and never acquires a new call. Existing terminal or malformed
 records are not deleted, repaired or moved to unlock generation. Archive/freeze
 failure may reuse an exact valid capture; disabled mode always uses baseline.
 Frozen editions remain authoritative and need no preparation-sidecar parser.
+The draft source-specific v2 contract retains complete excerpts with each source's
+canonical and translated observations. Existing v1 attempts, including reserved
+or failed records, remain non-replayable across upgrade: incompatible unfrozen
+captures are omitted without a new call, and frozen payload bytes stay unchanged.
 
 Rollback retains sidecars, translation caches, accepted work, archives, ready bytes,
 claims, receipts, votes and source credit. Old engines can ignore unfrozen sidecars

@@ -49,10 +49,11 @@ exists. It is off by default and needs approved sources; it is not a daily promi
 
 Ordinary prepared cards can include one default-off [selected-source comparison](docs/CONFIGURATION.md#optional-selected-source-comparison)
 when two retained excerpts support a relationship and the complete block fits safely.
-It has bounded, explicitly unverified interpretation and paired RU presentation;
-structurally invalid or failed work is omitted. Exact quotes do not establish a
-supported relationship: operators can withhold comparison prose with
-`synthesis.publish: false` while retaining the bounded attempt and its evidence.
+The draft v2 contract keeps canonical and RU observations bound to each source,
+followed by bounded interpretation; structurally invalid or failed work is omitted.
+Exact evidence binding does not establish semantic support: operators can withhold
+comparison prose with `synthesis.publish: false` while retaining the bounded attempt
+and its evidence.
 
 Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATION.md#legacy-format-and-optional-features)
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,

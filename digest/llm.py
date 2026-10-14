@@ -21,6 +21,7 @@ import httpx
 
 from digest._serialization import extract_json
 from digest.adapters.models.execution import ModelExecution, RequestState
+from digest.adapters.models.rejection import QuotaRejection, groq_quota_rejection
 
 # Compatibility export; JSON parsing is owned by the pure serialization module.
 _extract_json = extract_json
@@ -68,6 +69,7 @@ class HTTPRejection:
     rate_limit_remaining_requests: int | None = None
     rate_limit_limit_tokens: int | None = None
     rate_limit_remaining_tokens: int | None = None
+    quota: QuotaRejection | None = None
 
 
 def _request_timeout(default: float, requested: float | None) -> float:
@@ -530,7 +532,15 @@ def _retry_after_header(value: str | None) -> float | None:
     return None
 
 
-def _http_rejection(response: httpx.Response) -> HTTPRejection:
+def _http_rejection(
+    response: httpx.Response, *, provider: str | None = None, model: str | None = None,
+) -> HTTPRejection:
+    quota = None
+    try:
+        quota = groq_quota_rejection(response.content, provider=provider, model=model,
+                                    http_status=response.status_code)
+    except Exception:
+        pass  # Optional body diagnostics must not suppress status-based recovery admission.
     return HTTPRejection(
         http_status=response.status_code if type(response.status_code) is int and 100 <= response.status_code <= 599
         else None,
@@ -540,6 +550,7 @@ def _http_rejection(response: httpx.Response) -> HTTPRejection:
         rate_limit_remaining_requests=_quota_header(response.headers.get("x-ratelimit-remaining-requests")),
         rate_limit_limit_tokens=_quota_header(response.headers.get("x-ratelimit-limit-tokens")),
         rate_limit_remaining_tokens=_quota_header(response.headers.get("x-ratelimit-remaining-tokens")),
+        quota=quota,
     )
 
 
@@ -712,7 +723,9 @@ async def complete(
                 except (httpx.HTTPError, ValueError) as exc:
                     if http_rejections is not None and isinstance(exc, httpx.HTTPStatusError):
                         try:
-                            http_rejections.append(_http_rejection(exc.response))
+                            http_rejections.append(_http_rejection(
+                                exc.response, provider=provider.name, model=provider.model,
+                            ))
                         except Exception:
                             pass  # Optional diagnostics cannot change the original failure policy.
                     last_error = _safe_provider_error(exc)

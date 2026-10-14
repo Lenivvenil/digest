@@ -112,6 +112,9 @@ activates sources nor extends the finite semantic acceptance recorded above.
 
 New failed translation records may include `http_rejection`, the bounded safe
 response facts described in [ADR0020](0020-explicit-model-execution.md#optional-translation-http-rejection-facts--55--g5).
+Its optional [named Groq quota detail](0020-explicit-model-execution.md#optional-named-groq-quota-facts-55)
+retains only a recognized dimension and bounded numeric values; it does not
+change retry policy or establish historical quota cause or translation success.
 The existing route, binding, `error` and `error_kind` keep their meaning. Optional
 facts must fit after existing business sizing; otherwise they are omitted without
 changing cache bytes, fallback or allowance. Absent facts mean unknown. Successful,
@@ -281,7 +284,7 @@ required, but do not prove independent ownership or reporting.
 
 One controlled Groq `openai/gpt-oss-120b` secondary-route completion returns
 canonical English and, for RU publication, paired Russian prose. It has no
-independent translation or repair stage. Strict JSON binds exactly two support IDs,
+independent translation or repair stage. The original v1 JSON bound exactly two support IDs,
 occurrence hashes and exact 1–160-character excerpt quotations; relationship and
 qualification are mandatory bounded fields. Both language fields must preserve
 the existing URL, numeric-literal and literal-quotation multisets. Missing/unknown
@@ -289,8 +292,8 @@ completion, malformed output, unsupported support or invalid presentation omits
 the whole comparison. A successful RU comparison cannot repair failed main
 translation or upgrade its existing fallback/verification metadata.
 
-The complete escaped localized block, including qualifications, both original
-quotes, source labels/links and interpretation/coverage notices, must fit 1,000
+The original v1 complete escaped localized block included qualifications, both original
+quotes, source labels/links and interpretation/coverage notices, within 1,000
 UTF-16 units. It appears after main cards, before any existing supplement and the
 closer. The full-publication gate preserves chunk count, every article's values,
 identity and covering chunks, supplement identity/coverage, vote keyboards and
@@ -341,3 +344,90 @@ the relationship. Containment is therefore not useful-analysis acceptance under
 #55. Restoring accepted comparison publication requires source-specific support
 for each claimed property and independent review of actual canonical and
 translated output. No new verifier call or acceptance waiver is implied.
+
+
+### Draft source-specific v2 amendment (#55)
+
+**Status: local candidate for owner review, not released or editorially accepted.**
+The prior global relationship could assign source A's property and source B's
+property to both systems even when both quotations were exact. The proposed
+change makes source observations explicit before the model relates them. It
+reduces that generation/attribution risk; no deterministic entailment claim is made.
+
+The response and prompt become `selected-source-comparison-v2` / schema 2, within
+the same one completion. A comparison has exactly two supports in accepted source
+order, `premise_ids` repeating those two IDs, canonical prose and optional RU prose.
+There is no shared-mechanism classification or property matrix whose partial
+supports could be mistaken for proof of a shared compound property.
+
+Each wire support contains only its source ID, occurrence hash and paired
+observations. After parsing, code resolves that ID/hash and attaches `field=excerpt`
+and the **complete exact retained excerpt** to the normalized result. The model
+is not asked to copy quotes or choose spans, saving schema/output verbosity.
+The request already contains the full evidence, and the existing sidecar retains
+its immutable bindings. This keeps all supplied actors, negation, conditions and
+qualifications available for review. It
+does not claim the RSS excerpt is the complete article or that source claims are
+true. Each support also contains a 1–180-character canonical observation and,
+when RU is selected, its paired observation. Each observation must be supported
+in full by its own source, including every clause; the prompt forbids borrowing a
+property from the other source through compound wording.
+
+The former global factual `relationship` field becomes an explicit
+`interpretation` (1–240 characters) over those two observation IDs. The model is
+instructed to explain a useful comparison of design questions, trade-offs or
+implications without adding implementation facts about either or both systems.
+A qualification is null or 1–160 characters and included only when material to
+that comparison. Missing implementation evidence remains unknown, not evidence
+of absence or disagreement. A material caveat cannot be dropped merely to fit.
+
+The renderer revalidates result IDs/hashes, complete excerpt context, order, field
+bounds and paired protected content against caller-supplied retained bindings.
+The application still owns provenance of those bindings, including source names
+and URLs; the renderer does not independently reconstruct the occurrence graph.
+It supplies each immutable source name and article link beside the selected-language
+observation, followed by the interpretation
+and any material qualification. It does not place full English source excerpts,
+canonical observations or routine translation diagnostics into RU reader text.
+Complete inputs, quotes, paired observations and response remain in existing
+private sidecar/ready metadata. The same source IDs own both languages; numeric,
+URL and literal-quotation invariants are checked per observation, not only as an
+aggregate that could move a number between sources.
+
+The complete escaped reader block still must fit 1,000 UTF-16 units and all
+existing publication-layout/coverage gates. Overflow omits the optional block;
+there is no shortening of its caveat, trimming of main content or extra message.
+The existing publication containment setting remains the evaluation mechanism:
+use `synthesis.publish: false` while assessing this candidate. No new approval
+record, token, per-edition workflow or persistent permission is introduced.
+
+Storage retains the same schema-1 attempt envelope and filename solely keyed by
+accepted preparation. Prompt/schema changes do **not** create a new attempt key.
+Existing v1 valid, failed and reserved records remain byte-for-byte preserved and
+are non-reusable by v2; load rejection takes the existing omission path and cannot
+dispatch again. Do not delete/migrate a record to obtain another attempt. Existing
+ready payloads, including v1 result metadata, remain opaque frozen bytes for the
+sender and do not acquire a v2 parser or sidecar dependency. A new eligible
+ordinary preparation may use v2 only after separately authorized adoption.
+
+#### Finite acceptance and residual semantic failures
+
+Synthetic tests reject source-ID replacement, model-supplied quote/field overrides, reordered
+premises, lost paired fields and per-source protected-content swaps. They retain
+six counterexamples that can still be structurally accepted in generated prose:
+unrelated support, changed negation, changed actor, invented condition, compound
+property transfer and RU scope widening. An unsupported global factual union in
+`interpretation` also remains an explicit editorial failure. Naming a field
+interpretation is not permission to publish such an error, and exact excerpts
+are not a semantic validator. There is no automatic shared-property certificate.
+
+A hand-reviewed useful target distinguishes two separate design questions, such
+as data transfer and collection/inference separation, assigning each stated
+mechanism only to its own source. A list of quotes, a generic question or mere
+abstention is not positive analytical acceptance. Before owner-authorized
+restoration of publication, review the finite source/canonical/RU/rendered corpus
+and an actual ordinary newly generated candidate from the final request version.
+Review every source observation, the connection, material qualifications and
+language attribution. Preserve that evidence privately. This finite acceptance
+path does not guarantee all future model output, add calls/retries or authorize
+a live request, release, runtime change or #55 closure from offline tests.

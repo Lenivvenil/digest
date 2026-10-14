@@ -344,6 +344,13 @@ refunded or added. This is temporary publication containment, not semantic
 validation. Existing saved ready payloads remain authoritative and unchanged.
 Changing the publication setting is a separately reviewed runtime decision.
 
+The [draft v2 source-specific candidate](decisions/0005-optional-presentation-translation.md#draft-source-specific-v2-amendment-55)
+keeps observations and their paired RU wording under separate source identities.
+Complete excerpts stay in private evidence; reader text uses localized
+observations, links, a concise interpretation and material qualifications. It
+requires finite source/canonical/RU/rendered acceptance while publication stays
+withheld. This draft adds no setting, provider call or per-edition approval flow.
+
 Read [allocation and limits](decisions/0020-explicit-model-execution.md#optional-synthesis-allocation-and-deadline-55)
 and [presentation/recovery](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55)
 before a separately reviewed runtime opt-in. A configured route does not establish
