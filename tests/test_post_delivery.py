@@ -201,11 +201,12 @@ async def pending_supplement(
 async def test_pre_publication_context_origin_result_and_fragment_remain_readable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dataclasses import replace
     from datetime import date, datetime, timedelta, timezone
 
     from digest.adapters.storage import post_delivery as storage
     from digest.application.supplement import pending_fragment
-    from digest.irritator.evidence_stage import StageDiagnostic
+    from digest.irritator.evidence_stage import StageDiagnostic, eligible_delivered_result
     from digest.post_delivery import _delivered_input
 
     old_prompt_hashes = [str(index) * 64 for index in range(1, 4)]
@@ -213,6 +214,9 @@ async def test_pre_publication_context_origin_result_and_fragment_remain_readabl
 
     def historical_result(*args: Any, **kwargs: Any) -> EvidenceIrritatorResult:
         result = build_result(*args, **kwargs, research=False)
+        # Schema-1 eligibility retains its existing category behavior.
+        result.narratives = [replace(result.narratives[0], category="Historical category")]
+        assert eligible_delivered_result(result, args[1], args[0], None)
         result.diagnostics = [
             StageDiagnostic(stage, status="complete", prompt_sha256=digest)
             for stage, digest in zip(("narrative", "queries", "ranking"), old_prompt_hashes, strict=True)

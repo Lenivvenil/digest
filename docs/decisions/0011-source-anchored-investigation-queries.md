@@ -36,6 +36,20 @@ qualifications; a model-written paraphrase or short quotation cannot replace it.
 This remains canonical-language material, not necessarily the translated Telegram
 wording. The same occurrence must supply the original evidence.
 
+Delivered narrative category is derived only after all cited IDs, literal quotations,
+selected-card and source-occurrence bindings pass. The model's `category` field remains
+required nonempty text of at most 200 characters for response compatibility, but its
+value is ignored in this mode. The engine preserves the cited source category verbatim:
+RSS already retains the validated `occurrence.category[:200]` projection; full-source
+passages must all match the selected occurrence's complete category and remain within
+the same 200-character narrative bound. Distinct RSS IDs cannot bind one selected card;
+multiple full-source spans must share that occurrence and category. Citation order never
+chooses among conflicting categories. No cross-source/category fallback is allowed.
+New schema-2 result eligibility rechecks this derived value; schema-1 eligibility,
+frozen historical artifacts and unbound category validation remain unchanged. The
+response schema, prompt, model-call count and request budgets are unchanged. Synthetic
+regressions establish this mechanism, not a replay of an unavailable model response.
+
 The second call states a neutral research question and the evidence needed to
 answer it. Possible implications and counterhypotheses are explicitly labelled
 unverified interpretation, separate from source facts, the immutable target and

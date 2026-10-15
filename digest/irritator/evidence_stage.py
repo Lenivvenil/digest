@@ -425,7 +425,7 @@ def _parse_narrative(
         if not isinstance(assumptions, list) or not (0 if delivered is not None else 1) <= len(assumptions) <= 3:
             raise ValueError("Invalid narrative assumptions count.")
         category = _bounded_text(entry["category"], 200, field="category")
-        if category not in {known[identity].category for identity in identities}:
+        if delivered is None and category not in {known[identity].category for identity in identities}:
             raise ValueError("Narrative category is not in cited evidence.")
         narrative = EvidenceNarrative(
             _bounded_text(entry["claim"], field="claim"),
@@ -441,7 +441,7 @@ def _parse_narrative(
                 **asdict(narrative), target_card_id=entry["target_card_id"], delivered_quote=delivered_quote
             )
             assert delivered is not None
-            _validate_delivered_narrative(narrative, bundle, delivered)
+            narrative = replace(narrative, category=_delivered_source_category(narrative, bundle, delivered))
             if whole_target:
                 card = validate_delivered_quote(delivered, narrative.target_card_id, narrative.delivered_quote)
                 whole = getattr(card.canonical, narrative.delivered_quote.field)
@@ -483,6 +483,21 @@ def _validate_delivered_narrative(
             card.canonical.category,
         ):
             raise ValueError("Full-source passage differs from its delivered occurrence identity.")
+
+
+def _delivered_source_category(
+    narrative: DeliveredNarrative,
+    evidence: EvidenceBundle | FullSourceEvidence,
+    origin: DeliveredInvestigationInput,
+) -> str:
+    """Derive bounded metadata only after every citation binds the selected occurrence."""
+    _validate_delivered_narrative(narrative, evidence, origin)
+    # RSS permits one ID and retains occurrence.category[:200]; full-source spans
+    # must all share the exact occurrence category. Citation order cannot choose
+    # between categories. Validate the existing bound without stripping the value.
+    category = next(item.category for item in evidence.items if item.evidence_id == narrative.evidence_ids[0])
+    _bounded_text(category, 200, field="category")
+    return category
 
 
 def _parse_queries(text: str, maximum: int) -> tuple[list[SearchQuery], list[str]]:
@@ -662,9 +677,13 @@ def eligible_delivered_result(
     decisions: dict[str, RankingDecision] = {}
     checked: RankingDecision
     try:
-        _validate_delivered_narrative(narrative, evidence, origin)
-        cited_urls = _cited_source_urls(evidence, narrative)
         research = result.schema_version == 2
+        if research:
+            if narrative.category != _delivered_source_category(narrative, evidence, origin):
+                return False
+        else:
+            _validate_delivered_narrative(narrative, evidence, origin)
+        cited_urls = _cited_source_urls(evidence, narrative)
         if research:
             card = validate_delivered_quote(origin, narrative.target_card_id, narrative.delivered_quote)
             if (narrative.claim != getattr(card.canonical, narrative.delivered_quote.field)

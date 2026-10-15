@@ -355,6 +355,8 @@ async def test_delivered_target_preserves_labelled_hypotheses_and_whole_canonica
         ),
     )
     model.reset_mock()
+    # A translated category label is model metadata, not the delivered source's identity.
+    response["narratives"][0]["category"] = "Искусственный интеллект"
     model.side_effect = [
         (json.dumps(response), {}), (json.dumps(_research_plan()), {}),
         (json.dumps(_research_ranking(origin.cards[0].canonical.summary)), {}),
@@ -374,6 +376,7 @@ async def test_delivered_target_preserves_labelled_hypotheses_and_whole_canonica
                 execution=ModelExecution(),
                 delivered=translated,
             )
+    assert translated_result.status == "complete" and model.await_count == 3
     assert translated_result.narratives == result.narratives
     assert [json.loads(call.args[1][1]["content"]) for call in model.await_args_list] == payloads
     response["narratives"][0]["delivered_quote"]["text"] = translated.cards[0].presentation.summary
@@ -476,13 +479,20 @@ async def test_query_document_selection_skips_original_source_fragment_without_s
     assert result.documents[0].discovery_signal is external
 
 
-@pytest.mark.parametrize("mutation", ["other_card", "other_source", "paraphrase", "stitched", "empty", "unknown_field"])
-def test_delivered_quotes_reject_cross_card_source_and_nonliteral_targets(mutation: str) -> None:
+@pytest.mark.parametrize("mutation,error", [
+    ("other_card", "delivered"), ("other_source", "source quote"), ("mixed_sources", "source quote"),
+    ("paraphrase", "canonical field"), ("stitched", "canonical field"), ("empty", "canonical field"),
+    ("unknown_field", "Invalid delivered"), ("unknown_id", "narrative evidence IDs"),
+    ("duplicate_id", "narrative evidence IDs"), ("missing_quote", "exactly one quote"),
+    ("fabricated_quote", "original evidence"),
+])
+def test_delivered_quotes_reject_cross_card_source_and_nonliteral_targets(mutation: str, error: str) -> None:
     bundle = _bundle(fixture_config())
     origin = delivered_input(bundle)
     response = _narrative(bundle)
     narrative = response["narratives"][0]
     narrative.update(
+        category="Incorrect copied category",
         target_card_id=origin.cards[0].card_id,
         implicit_assumptions=[],
         delivered_quote={"field": "summary", "text": origin.cards[0].canonical.summary},
@@ -492,16 +502,27 @@ def test_delivered_quotes_reject_cross_card_source_and_nonliteral_targets(mutati
     elif mutation == "other_source":
         narrative["evidence_ids"] = [bundle.items[1].evidence_id]
         narrative["quotes"] = {bundle.items[1].evidence_id: bundle.items[1].title}
-        narrative["category"] = bundle.items[1].category
+    elif mutation == "mixed_sources":
+        assert bundle.items[1].category != bundle.items[0].category
+        narrative["evidence_ids"].append(bundle.items[1].evidence_id)
+        narrative["quotes"][bundle.items[1].evidence_id] = bundle.items[1].title
     elif mutation == "paraphrase":
         narrative["delivered_quote"]["text"] = "A paraphrased assertion"
     elif mutation == "stitched":
         narrative["delivered_quote"]["text"] = origin.cards[0].presentation.title + " Delivered assertion"
     elif mutation == "empty":
         narrative["delivered_quote"]["text"] = " "
-    else:
+    elif mutation == "unknown_field":
         narrative["delivered_quote"]["field"] = "source"
-    with pytest.raises(ValueError, match="delivered|source quote"):
+    elif mutation == "unknown_id":
+        narrative["evidence_ids"] = ["unknown-source"]
+    elif mutation == "duplicate_id":
+        narrative["evidence_ids"] *= 2
+    elif mutation == "missing_quote":
+        narrative["quotes"] = {}
+    else:
+        narrative["quotes"][bundle.items[0].evidence_id] = "A fabricated source statement."
+    with pytest.raises(ValueError, match=error):
         _parse_narrative(json.dumps(response), bundle, delivered=origin)
 
 
@@ -520,33 +541,134 @@ def test_delivered_abstention_does_not_relax_unbound_assumption_contract() -> No
         _parse_narrative(json.dumps(response), bundle)
 
 
-def test_targeted_full_source_quote_requires_the_same_delivered_source_identity(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mutation", ["source", "category", "mixed_category", "other_article"])
+def test_targeted_full_source_quote_requires_the_same_delivered_source_identity(tmp_path: Path, mutation: str) -> None:
+    from digest.review_checkpoint import _identity_hash, validate_full_source_evidence
+
     bundle = _bundle(fixture_config())
     origin = delivered_input(bundle)
     card = origin.cards[0]
     source = _full_source_evidence(tmp_path, bundle)
-    passage = replace(
-        source.items[0],
-        article_id=card.card_id,
-        title=card.canonical.title,
-        url=card.canonical.link,
-        source="Different source",
-        category=card.canonical.category,
+    passages = tuple(
+        replace(
+            item,
+            article_id=card.card_id,
+            title=card.canonical.title,
+            url=card.canonical.link,
+            source=card.canonical.source,
+            category=card.canonical.category,
+            published="2026-10-01T00:00:00+00:00",
+        )
+        for item in source.items
     )
-    source = replace(source, items=(passage,))
+    passages = tuple(replace(item, evidence_id=_identity_hash(item, "evidence_id")) for item in passages)
+    assert len(passages) == 2
+    source = replace(source, items=passages)
+    source = replace(source, bundle_id=_identity_hash(source, "bundle_id"))
+    validate_full_source_evidence(source, bundle)
     response = _narrative(source)
     response["narratives"][0].update(
         implicit_assumptions=[],
         target_card_id=card.card_id,
         delivered_quote={"field": "summary", "text": card.canonical.summary},
+        evidence_ids=[item.evidence_id for item in passages],
+        quotes={item.evidence_id: item.excerpt for item in passages},
+    )
+    expected, _ = _parse_narrative(json.dumps(response), source, delivered=origin)
+    assert expected[0].category == card.canonical.category
+    response["narratives"][0]["category"] = "Incorrect copied category"
+    assert _parse_narrative(json.dumps(response), source, delivered=origin)[0] == expected
+    # Both citation orders choose the same validated occurrence category.
+    response["narratives"][0]["evidence_ids"].reverse()
+    assert _parse_narrative(json.dumps(response), source, delivered=origin)[0][0].category == expected[0].category
+    if mutation == "source":
+        invalid = (replace(passages[0], source="Different source"), passages[1])
+    elif mutation == "category":
+        invalid = tuple(replace(item, category="Other category") for item in passages)
+    elif mutation == "mixed_category":
+        invalid = (passages[0], replace(passages[1], category="Other category"))
+    else:
+        other = bundle.items[1]
+        invalid = (passages[0], replace(
+            passages[1], article_id=other.evidence_id, title=other.title, url=other.url,
+            source=other.source, category=other.category,
+        ))
+    invalid = tuple(replace(item, evidence_id=_identity_hash(item, "evidence_id")) for item in invalid)
+    source = replace(source, items=invalid)
+    source = replace(source, bundle_id=_identity_hash(source, "bundle_id"))
+    validate_full_source_evidence(source, bundle)
+    response["narratives"][0].update(
+        evidence_ids=[item.evidence_id for item in invalid],
+        quotes={item.evidence_id: item.excerpt for item in invalid},
+    )
+    with pytest.raises(ValueError, match="delivered occurrence|source quote"):
+        _parse_narrative(json.dumps(response), source, delivered=origin)
+
+
+def test_delivered_category_retains_bounded_source_projection_and_model_schema(tmp_path: Path) -> None:
+    from digest.domain.catalog.occurrences import occurrence_sha256
+    from digest.domain.editorial.evidence import evidence_bundle_from_items
+    from digest.domain.investigation.delivered import validate_delivered_input
+
+    bundle = _bundle(fixture_config())
+    origin = delivered_input(bundle)
+    # The existing RSS contract retains the first 200 category characters, verbatim.
+    category = " Canonical " + "x" * 188 + " continued in original occurrence"
+    item = replace(bundle.items[0], category=category[:200])
+    bundle = evidence_bundle_from_items((item,), omitted_articles=0)
+    card = origin.cards[0]
+    occurrence = replace(card.occurrence, category=category)
+    card = replace(
+        card, canonical=replace(card.canonical, category=category),
+        presentation=replace(card.presentation, category=category), occurrence=occurrence,
+        occurrence_sha256=occurrence_sha256(occurrence),
+    )
+    origin = replace(origin, bundle_id=bundle.bundle_id, cards=(card,))
+    validate_delivered_input(origin, bundle)
+    response = _narrative(bundle)
+    response["narratives"][0].update(
+        target_card_id=card.card_id, delivered_quote={"field": "summary", "text": card.canonical.summary},
+        category="Incorrect copied category",
+    )
+    parsed, _ = _parse_narrative(json.dumps(response), bundle, delivered=origin)
+    assert parsed[0].category == item.category and len(parsed[0].category) == 200
+    assert parsed[0].category.startswith(" ") and parsed[0].category.endswith(" ")
+    for invalid in (None, "", " ", "x" * 201):
+        response["narratives"][0]["category"] = invalid
+        with pytest.raises(ValueError, match="category:"):
+            _parse_narrative(json.dumps(response), bundle, delivered=origin)
+    del response["narratives"][0]["category"]
+    with pytest.raises(ValueError, match="Invalid narrative fields"):
+        _parse_narrative(json.dumps(response), bundle, delivered=origin)
+    # Full-source categories are not pre-truncated: retain the same narrative bound.
+    source = _full_source_evidence(tmp_path, bundle)
+    passage = replace(
+        source.items[0], article_id=card.card_id, title=card.canonical.title, url=card.canonical.link,
+        source=card.canonical.source, category=category,
+    )
+    source = replace(source, items=(passage,))
+    response["narratives"][0].update(
+        category="Incorrect copied category", evidence_ids=[passage.evidence_id],
         quotes={passage.evidence_id: passage.excerpt},
     )
-    with pytest.raises(ValueError, match="delivered occurrence"):
+    with pytest.raises(ValueError, match="category:too_long"):
         _parse_narrative(json.dumps(response), source, delivered=origin)
-    source = replace(
-        source, items=(replace(passage, source=card.canonical.source, published="2026-10-01T00:00:00+00:00"),)
-    )
-    assert len(_parse_narrative(json.dumps(response), source, delivered=origin)[0]) == 1
+    source = replace(source, items=(replace(passage, category=" "),))
+    origin = replace(origin, cards=(replace(card, canonical=replace(card.canonical, category=" ")),))
+    with pytest.raises(ValueError, match="category:empty"):
+        _parse_narrative(json.dumps(response), source, delivered=origin)
+
+
+def test_unbound_category_membership_and_values_remain_unchanged(tmp_path: Path) -> None:
+    bundle = _bundle(fixture_config())
+    for evidence in (bundle, _full_source_evidence(tmp_path, bundle)):
+        response = _narrative(evidence)
+        response["narratives"][0]["quotes"] = {evidence.items[0].evidence_id: evidence.items[0].excerpt}
+        parsed, _ = _parse_narrative(json.dumps(response), evidence)
+        assert asdict(parsed[0]) == {**response["narratives"][0], "typography_normalized": []}
+        response["narratives"][0]["category"] = "Incorrect copied category"
+        with pytest.raises(ValueError, match="Narrative category is not in cited evidence"):
+            _parse_narrative(json.dumps(response), evidence)
 
 
 def _bundle(config: Config) -> EvidenceBundle:

@@ -337,6 +337,7 @@ async def test_query_document_read_uses_only_selected_query_lineage() -> None:
 
 async def test_direct_document_path_keeps_three_models_two_reads_and_is_eligible() -> None:
     bundle, origin, narrative_response = _target()
+    narrative_response["narratives"][0]["category"] = "Incorrect copied category"
     external = _snapshot(sections=(_section("client", BODY),))
     source = _snapshot(url=bundle.items[0].url, text="Original source context.")
     link_id = "link-" + hashlib.sha256(
@@ -371,7 +372,10 @@ async def test_direct_document_path_keeps_three_models_two_reads_and_is_eligible
         search.assert_not_awaited()
     assert result.narratives[0].claim == TARGET and result.ranked_signals[0].signal.snippet == BODY
     assert result.queries == [] and result.research_plan is not None
+    assert result.narratives[0].category == bundle.items[0].category
     assert eligible_delivered_result(result, origin, bundle, None)
+    changed_category = replace(result.narratives[0], category="Tampered category")
+    assert not eligible_delivered_result(replace(result, narratives=[changed_category]), origin, bundle, None)
     original, acquired = result.documents
     altered_documents = {
         "missing_original": [acquired],
