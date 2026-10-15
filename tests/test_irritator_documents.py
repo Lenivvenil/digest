@@ -188,7 +188,7 @@ async def test_incomplete_text_is_held_but_actual_links_remain_discovery(http: A
     (_html(f"<p>{PROSE}</p>"), {"content-range": "bytes 0-100/9999"}, "partial_or_nonarticle_response"),
     (_html(f"<p>{PROSE}</p>").removesuffix("</body></html>"), {}, "clipped_html"),
     ("x" * (2 * 1024 * 1024 + 1), {}, "oversized_body"),
-])
+], ids=["unsupported-content-type", "partial-response", "clipped-html", "oversized-body"])
 async def test_technical_failures_never_return_partial_evidence(
     http: Any, content: str, headers: dict[str, str], reason: str,
 ) -> None:
@@ -283,7 +283,7 @@ async def test_legacy_rfc_heading_spans_use_literal_html_sections(http: Any) -> 
     (_rfc_html().replace("</section>", "", 1), "section-6.1", "rfc_section_incomplete_html"),
     (_rfc_html().replace('<h3 id="name-conditional">', '<h3 id="name-conditional" id="other">'),
      "section-6.1", "rfc_ambiguous_attributes"),
-])
+], ids=["missing-fragment", "duplicate-heading-id", "unclosed-section", "duplicate-attributes"])
 async def test_rfc_missing_ambiguous_or_incomplete_section_is_held(
     http: Any, html: str, fragment: str, reason: str,
 ) -> None:
