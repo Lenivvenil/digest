@@ -80,21 +80,24 @@ def accepted_result(
     *,
     long: bool = False,
     source_url: str = "https://external.example/qualification",
+    research: bool = True,
 ) -> EvidenceIrritatorResult:
     from digest.domain.investigation.delivered import DeliveredQuote
     from digest.domain.investigation.queries import SearchQuery
+    from digest.irritator.documents import DocumentSnapshot
     from digest.irritator.evidence_stage import (
         DeliveredNarrative,
         _admit_ranking,
         _parse_rankings,
         _ranking_signal_payload,
     )
+    from digest.irritator.research import DocumentAcquisition, QueryRoute, ResearchPlan
     from tests.factories import make_signal
 
     card = origin.cards[0]
     item = next(item for item in bundle.items if item.evidence_id == card.card_id)
     narrative = DeliveredNarrative(
-        "Source states a limited result.",
+        card.canonical.summary if research else "Source states a limited result.",
         item.category,
         [],
         "Check independent conditions.",
@@ -103,30 +106,44 @@ def accepted_result(
         target_card_id=card.card_id,
         delivered_quote=DeliveredQuote("summary", card.canonical.summary),
     )
-    signal = make_signal(title="Independent qualification", url=source_url)
+    signal = make_signal(
+        title="Independent qualification", url=source_url, source_name="arxiv" if research else "hackernews",
+    )
     identity = hashlib.sha256(json.dumps(asdict(signal), ensure_ascii=True, sort_keys=True).encode()).hexdigest()
     admission = _admit_ranking([signal], 5, 3, {identity: {0}})
+    explanation = ("Material condition " * 300 if long else "One material condition.") + " LATE QUALIFIER"
+    decision: dict[str, Any] = {
+        "url": signal.url, "score": 8, "relation": "complicates",
+    }
+    if research:
+        decision.update(
+            finding=explanation,
+            applicability="This is conditional on the documented deployment constraint applying.",
+            material_change="Check the constraint before relying on the reported result.",
+            target_quote=narrative.claim,
+            evidence_quote_ids=[_ranking_signal_payload(signal)["snippet"][0]["id"]],
+        )
+    else:
+        decision.update(reasoning=explanation, quote_id=_ranking_signal_payload(signal)["title"][0]["id"])
     ranking = _parse_rankings(
-        json.dumps(
-            {
-                "rankings": [
-                    {
-                        "url": signal.url,
-                        "score": 8,
-                        "relation": "complicates",
-                        "reasoning": ("Material condition " * 300 if long else "One material condition.")
-                        + " LATE QUALIFIER",
-                        "quote_id": _ranking_signal_payload(signal)["title"][0]["id"],
-                    }
-                ],
-                "limitations": [],
-            }
-        ),
-        admission,
-        narrative,
+        json.dumps({"rankings": [decision], "limitations": []}), admission, narrative, research=research,
     )
+    documents = []
+    plan = None
+    if research:
+        text = "Complete synthetic source article with a material qualification."
+        snapshot = DocumentSnapshot(
+            card.canonical.link, card.canonical.link, "2026-10-08T12:00:00+00:00",
+            hashlib.sha256(text.encode()).hexdigest(), text, "complete",
+            text_sha256=hashlib.sha256(text.encode()).hexdigest(), extraction_status="complete",
+        )
+        documents = [DocumentAcquisition("origin", "origin", None, snapshot)]
+        plan = ResearchPlan(
+            "Which conditions qualify the delivered result?", "Scoped operational findings.",
+            (QueryRoute(0, ("arxiv",)),), (), None,
+        )
     return EvidenceIrritatorResult(
-        1,
+        2 if research else 1,
         bundle.bundle_id,
         "incomplete",
         narratives=[narrative],
@@ -134,6 +151,9 @@ def accepted_result(
         ranked_signals=ranking.ranked_signals,
         ranking_audit=ranking.audit,
         limitations=["One external source was unavailable."],
+        research_plan=plan,
+        documents=documents,
+        source_request_starts=2 if research else 0,
     )
 
 
@@ -181,18 +201,22 @@ async def pending_supplement(
 async def test_pre_publication_context_origin_result_and_fragment_remain_readable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dataclasses import replace
     from datetime import date, datetime, timedelta, timezone
 
     from digest.adapters.storage import post_delivery as storage
     from digest.application.supplement import pending_fragment
-    from digest.irritator.evidence_stage import StageDiagnostic
+    from digest.irritator.evidence_stage import StageDiagnostic, eligible_delivered_result
     from digest.post_delivery import _delivered_input
 
     old_prompt_hashes = [str(index) * 64 for index in range(1, 4)]
     build_result = accepted_result
 
     def historical_result(*args: Any, **kwargs: Any) -> EvidenceIrritatorResult:
-        result = build_result(*args, **kwargs)
+        result = build_result(*args, **kwargs, research=False)
+        # Schema-1 eligibility retains its existing category behavior.
+        result.narratives = [replace(result.narratives[0], category="Historical category")]
+        assert eligible_delivered_result(result, args[1], args[0], None)
         result.diagnostics = [
             StageDiagnostic(stage, status="complete", prompt_sha256=digest)
             for stage, digest in zip(("narrative", "queries", "ranking"), old_prompt_hashes, strict=True)
@@ -201,7 +225,12 @@ async def test_pre_publication_context_origin_result_and_fragment_remain_readabl
 
     with patch("tests.test_post_delivery.accepted_result", side_effect=historical_result):
         pending = await pending_supplement(monkeypatch)
-    paths = [Path(pending.attempt), Path(pending.projection), Path(pending.fragment.result)]
+    # A previously frozen fragment remains readable under the policy that produced it.
+    marker_path = Path(pending.attempt)
+    old_record = json.loads(marker_path.read_text())
+    old_record["search_policy"]["id"] = "bounded-hn-arxiv-devto-v1"
+    marker_path.write_text(json.dumps(old_record))
+    paths = [marker_path, Path(pending.projection), Path(pending.fragment.result)]
     retained = {path: path.read_bytes() for path in paths}
     hashes = {path: hashlib.sha256(raw).hexdigest() for path, raw in retained.items()}
     day = date.fromisoformat(pending.fragment.origin.publication_day)
@@ -266,7 +295,7 @@ async def test_projection_binds_checked_canonical_result_and_uses_faithful_local
     )
     assert "Проверяемое утверждение: Проверяемое утверждение" in text
     assert "Каноническое резюме: Raw evidence." in text
-    assert "Внешнее свидетельство: Independent qualification" in text
+    assert "Внешнее свидетельство: Detailed counter argument" in text
     assert "Исходный выпуск:" in text and "Важные оговорки" in text
     original = Path(pending.projection).read_bytes()
     Path(pending.fragment.result).write_text('{"status": "different stored result"}')
@@ -311,6 +340,7 @@ async def test_compact_execution_retains_accepted_incomplete_fragment_and_occupi
         assert marker is not None
         prepared = json.loads(marker.read_text())
         assert prepared["schema_version"] == 3
+        assert prepared["search_policy"]["id"] == "question-routed-documents-v2"
         assert len(prepared["delivered"]["cards"]) == 1
         assert await execute_post_delivery(Path("config.yaml"), checkpoint, execution=ModelExecution()) == 2
         occupied = checkpoint.with_name("next.review.json")
@@ -326,7 +356,7 @@ async def test_compact_execution_retains_accepted_incomplete_fragment_and_occupi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["non_counter", "not_returned", "wrong_quote", "self_source"])
+@pytest.mark.parametrize("fault", ["non_counter", "not_returned", "wrong_quote", "self_source", "discovery_only"])
 async def test_fragment_admission_does_not_promote_invalid_rankings(
     monkeypatch: pytest.MonkeyPatch,
     fault: str,
@@ -355,6 +385,14 @@ async def test_fragment_admission_does_not_promote_invalid_rankings(
         candidate.disposition = "not_returned"
     elif fault == "wrong_quote":
         candidate.decision = replace(candidate.decision, quote="Unreturned quotation")
+    elif fault == "discovery_only":
+        from digest.irritator.research import QueryRoute, signal_identity
+
+        # Preserve every identity binding: only discovery text's evidence role is invalid.
+        candidate.signal.source_name = "hackernews"
+        candidate.signal_sha256 = signal_identity(candidate.signal)
+        assert result.research_plan is not None
+        result.research_plan = replace(result.research_plan, routes=(QueryRoute(0, ("hackernews",)),))
     else:
         result.ranked_signals[0].signal.url = origin.cards[0].canonical.link
     assert not eligible_delivered_result(result, origin, bundle, None)
@@ -388,6 +426,11 @@ async def test_compact_prepare_freezes_actual_delivered_origin_and_source_occurr
     bundle, _ = load_review_checkpoint(checkpoint, config)
     origin = _delivered_input(record, bundle)
     assert record["schema_version"] == 3 and origin is not None
+    assert record["search_policy"] == {
+        "id": "question-routed-documents-v2",
+        "sources": ["hackernews", "arxiv", "devto"],
+        "max_queries": 3,
+    }
     assert len(origin.cards) == 1 + int(closing)
     assert origin.checkpoint_sha256 == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     assert origin.canonical_sha256 != origin.presentation_sha256
@@ -573,6 +616,46 @@ async def test_schema_one_attempts_and_archives_are_held_unchanged(state: str, t
     assert {path: path.read_bytes() for path in originals} == originals
     assert _result(checkpoint).exists() is (state == "completed")
     assert _markdown(checkpoint).exists() is (state == "completed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["unstarted", "started", "completed"])
+async def test_old_delivered_search_policy_holds_attempts_without_reinterpretation(
+    monkeypatch: pytest.MonkeyPatch, state: str,
+) -> None:
+    checkpoint = await confirmed_checkpoint(monkeypatch)
+    config = fixture_config()
+    config.telegram.delivery_mode = "compact"
+    with patch("digest.post_delivery._config", return_value=config):
+        marker = prepare_post_delivery(Path("config.yaml"), checkpoint)
+        assert marker is not None
+        record = json.loads(marker.read_text())
+        assert record["search_policy"]["id"] == "question-routed-documents-v2"
+        record["search_policy"]["id"] = "bounded-hn-arxiv-devto-v1"
+        if state != "unstarted":
+            record["execute_started"] = "2026-10-08T12:00:00+00:00"
+        if state == "completed":
+            _result(checkpoint).write_text('{"schema_version": 1, "status": "empty"}\n')
+            _markdown(checkpoint).write_text("Historical delivered investigation\n")
+        marker.write_text(json.dumps(record) + "\n")
+        originals = {
+            path: path.read_bytes()
+            for path in (checkpoint, marker, _result(checkpoint), _markdown(checkpoint))
+            if path.exists()
+        }
+        with (
+            patch("digest.irritator.evidence_stage.run_evidence_irritator", AsyncMock()) as stage,
+            patch("digest.post_delivery.storage.save_attempt") as save,
+            patch("digest.post_delivery.datetime") as timestamp,
+            patch("digest.post_delivery._send_supplement", AsyncMock()) as send,
+        ):
+            with pytest.raises(ValueError, match="search policy|result already exists"):
+                await execute_post_delivery(Path("config.yaml"), checkpoint, execution=ModelExecution())
+        stage.assert_not_called()
+        save.assert_not_called()
+        timestamp.now.assert_not_called()
+        send.assert_not_called()
+        assert {path: path.read_bytes() for path in originals} == originals
 
 
 @pytest.mark.asyncio

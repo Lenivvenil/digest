@@ -2,6 +2,19 @@
 
 ## [Unreleased] — Reliability rehabilitation
 
+### Changed
+- Draft delivered-only question-routed Irritator investigation under
+  `question-routed-documents-v2`: preserve the whole selected canonical card field,
+  label the research question and possible implications, choose relevant query
+  sources, and acquire at most one external complete HTML document or actual RFC
+  section from verified discovery. Original-page discovery and searches share nine
+  actual HTTP starts, counting redirects/address fallbacks, within the existing
+  three-model-call/180-second stage limits. Oversized evidence is omitted whole;
+  the 8,000-character ranking cap measures the candidate array, not the total
+  prompt. Old unexecuted compact policies are held unchanged; unbound legacy
+  contracts and existing publication artifacts remain intact. Offline structural
+  checks do not establish live semantic usefulness or runtime deployment. Refs #77.
+
 ### Fixed
 - Add optional metadata-only Groq 429 quota diagnostics to failed translation
   sidecars: one recognized dimension and bounded numeric limit/used/requested

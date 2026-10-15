@@ -86,7 +86,9 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
         "schema_version": 2,
         "checkpoint": relative,
         "bundle_id": bundle.bundle_id,
-        "search_policy": asdict(build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)),
+        "search_policy": asdict(build_search_policy(
+            config.irritator.sources, config.irritator.queries_per_narrative, research=delivered is not None,
+        )),
         "checkpoint_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "prepared_at": datetime.now(UTC).isoformat(),
         "execute_started": None,
@@ -109,7 +111,10 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
 
 def _require_search_policy(record: object, config: Config) -> None:
     """Hold old or changed attempts without assigning them today's search policy."""
-    expected = asdict(build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative))
+    expected = asdict(build_search_policy(
+        config.irritator.sources, config.irritator.queries_per_narrative,
+        research=config.telegram.delivery_mode == "compact",
+    ))
     if isinstance(record, dict):
         policy = record.get("search_policy")
         expected_schema = 3 if config.telegram.delivery_mode == "compact" else 2

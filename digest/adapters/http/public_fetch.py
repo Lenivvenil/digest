@@ -155,6 +155,7 @@ async def _read_body(response: httpx.Response, limit: int) -> bytes:
 async def _fetch_hop(
     url: httpx.URL, addresses: list[str], *, method: Literal["GET", "HEAD"],
     deadline: float, max_bytes: int, headers: dict[str, str] | None,
+    before_request: Callable[[], None] | None = None,
 ) -> PublicResponse:
     loop = asyncio.get_running_loop()
     request_headers = httpx.Headers(headers)
@@ -166,12 +167,18 @@ async def _fetch_hop(
         if remaining <= 0:
             raise TimeoutError
         received_headers = False
+        request_started = False
         try:
             async with httpx.AsyncClient(
                 trust_env=False, follow_redirects=False, headers=request_headers,
                 timeout=httpx.Timeout(remaining, connect=min(_CONNECT_SECONDS, remaining)),
                 limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
             ) as client:
+                # The caller owns admission, but this operation owns actual starts.
+                # Run for every address and redirect, immediately before transport.
+                if before_request is not None:
+                    before_request()
+                request_started = True
                 async with client.stream(
                     method, url.copy_with(host=address),
                     extensions={"sni_hostname": url.raw_host.decode("ascii")},
@@ -188,7 +195,7 @@ async def _fetch_hop(
                 raise TimeoutError
             return result
         except (httpx.ConnectError, httpx.ConnectTimeout):
-            if received_headers or index == len(addresses) - 1:
+            if not request_started or received_headers or index == len(addresses) - 1:
                 raise
     raise UnsafePublicURL()  # Empty resolutions are rejected before this operation.
 
@@ -197,6 +204,7 @@ async def fetch_public(
     url: str, *, timeout: float, max_bytes: int, max_redirects: int = 3,
     method: Literal["GET", "HEAD"] = "GET", headers: dict[str, str] | None = None,
     validate_hop: Callable[[str], str] | None = None,
+    before_request: Callable[[], None] | None = None,
 ) -> PublicResponse:
     """Acquire a public URL under one total deadline, without ambient authority.
 
@@ -205,6 +213,8 @@ async def fetch_public(
     HEAD returns status/headers only; GET redirects never consume response bodies.
     TCP and TLS establishment each have a three-second subdeadline. Address
     fallback occurs only while the shared total budget has time remaining.
+    Optional admission runs before every actual request start, including fallback
+    addresses and redirect hops. Admission exceptions propagate without a request.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -214,6 +224,7 @@ async def fetch_public(
             addresses = await asyncio.to_thread(_public_addresses, current.raw_host.decode("ascii"))
             response = await _fetch_hop(
                 current, addresses, method=method, deadline=deadline, max_bytes=max_bytes, headers=headers,
+                before_request=before_request,
             )
             if method == "HEAD" or response.status_code not in _REDIRECT_STATUSES:
                 return response

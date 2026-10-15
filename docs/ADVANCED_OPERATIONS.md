@@ -122,12 +122,14 @@ inspection and follow the [current-edition rollback boundary](OPERATIONS.md#reta
 <a id="primary-first-runtime-with-preserved-irritator"></a>
 
 After confirmed, durably persisted primary delivery, supplementary work can use the
-saved evidence checkpoint under a separate reservation. Irritator extracts an attributed
-target, plans queries, searches external sources, validates results and ranks their
-relationship to the target. New compact schema-3 attempts bind canonical cards from
-the exact confirmed/applied edition and their original source occurrences. They retain
-exact card/source quotations in query and ranking inputs and exclude speculative
-hypotheses. Unbound standalone contracts remain available separately.
+saved evidence checkpoint under a separate reservation. New compact schema-3
+attempts bind canonical cards from the exact confirmed/applied edition and their
+original source occurrences. The delivered-only `question-routed-documents-v2`
+implementation selects a meaningful reading-derived target, preserves the whole
+selected canonical title/summary, and plans a neutral research question. Possible
+implications remain labelled unverified interpretation, never source facts or
+invented reader beliefs. Unbound standalone contracts remain available separately.
+This policy is under review; this guide is not proof of runtime deployment.
 
 Empty search results, unavailable/unsupported adapters, rejected evidence and failed
 model stages are different outcomes. Optional translation failure retains canonical
@@ -146,13 +148,33 @@ attempt under `digests/` with `.cache/` receipts and provide the private owner I
 post-prepare. See [ADR0007](decisions/0007-compact-issue-reservation.md) for the complete
 rollout and unclaimed-ready release contract.
 
-New post-attempt markers bind the versioned Hacker News/arXiv/DEV search policy,
-effective source list and query ceiling. DEV uses the documented unauthenticated
-Forem V1 first-page search; it does not fetch full articles. Operators enable that
-bounded slot explicitly in `irritator.sources`. Up to nine real source requests
-can now occur within the existing three-by-three ceiling and stage deadline.
-See [ADR0022](decisions/0022-versioned-bounded-search-policy.md) for the exact
-contract, validation and historical-policy boundary.
+New compact markers bind `question-routed-documents-v2`, the effective configured
+Hacker News/arXiv/DEV subset and the query ceiling. Each of at most three queries
+chooses suitable configured sources rather than automatically using all of them.
+A document-only plan is allowed. DEV remains its unauthenticated first-page search
+adapter; operators enable it explicitly in `irritator.sources`.
+
+The target's original page is read for actual discovery links; the plan may select
+one supplied link ID or one query's first eligible returned document. At most one
+external document is read. Discovery snippets/titles remain leads, not verified
+article evidence and cannot enter delivered ranking or pass counter-evidence
+eligibility after a failed read. General HTML supplies complete extracted text; RFC HTML can
+supply actual complete natural sections with qualifications and cross-references.
+Missing, ambiguous or incomplete requested sections are held. No model-generated
+URL or shortened evidence prefix is substituted.
+
+A shared maximum of nine actual source HTTP starts includes the original page,
+searches, the external document and every document redirect/address fallback.
+Document reads therefore use capacity that would otherwise be available to searches.
+Each document is bounded by 20 seconds, 2 MiB raw/decoded bodies and three redirects;
+all work remains under the existing 180-second investigation deadline. There are
+at most three model calls; optional translation retains its separate contract.
+The 8,000-JSON-character cap covers the ranking candidate array, not the complete
+prompt or provider token admission. Oversized complete evidence is omitted whole
+with a limitation. This does not enable primary `reading_brief` processing.
+See the [ADR0011 amendment](decisions/0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents)
+for this delivered-only contract and [ADR0022](decisions/0022-versioned-bounded-search-policy.md)
+for the retained unbound baseline.
 
 An older compact attempt marker or a changed source-policy binding is held before
 execution. Preserve it and inspect its original engine/configuration; do not
@@ -160,7 +182,8 @@ remove markers or archives to rerun an old edition. Completed attempts and saved
 results remain protected. Confirm no pending old-policy attempt crosses a rollout.
 
 Independent comparison and genuine external counter-evidence are separate operations.
-Neither a matching quotation nor successful transport establishes factual usefulness.
+Neither matching quotations, successful transport nor offline synthetic fixtures
+establish useful model judgment, semantic applicability or faithful conclusions.
 The [Irritator model](domain/irritator/overview.md#current-domain-model) describes the
 source/evidence relationship; [transport compatibility](STATE_AND_EFFECTS.md#transport-protocols)
 describes the different sending protocols.

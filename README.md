@@ -37,8 +37,9 @@ an archive or successful delivery does not establish factual quality.
   bounded RSS evidence. Source links let you inspect the original; a card does not
   imply that the whole article was read.
 - **Room to question the story.** Optional [Irritator investigation](docs/ADVANCED_OPERATIONS.md#supplementary-investigation)
-  looks for independent external evidence that challenges or complicates a claim.
-  A second model opinion is a different kind of analysis.
+  looks for external evidence that could materially change an interpretation or
+  practical decision arising from the reading. A second model opinion is a
+  different kind of analysis; useful counter-evidence remains an acceptance gate.
 - **A reading list that can evolve.** [Votes and source proposals](docs/OPERATIONS.md#feedback-and-source-decisions)
   inform future preparation. New sources need operator approval, with room to
   explore science, culture, society and other fields alongside the professional radar.

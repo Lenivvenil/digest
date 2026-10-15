@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
@@ -45,6 +46,7 @@ async def search_arxiv(
     query: str,
     config: Any,
     client: httpx.AsyncClient,
+    *, before_request: Callable[[], None] | None = None,
 ) -> list[Signal]:
     """Search arXiv via the Atom API."""
     # Each lexical atom gets its own documented all: field; phrases stay quoted.
@@ -58,6 +60,8 @@ async def search_arxiv(
         if delay > 0:
             await asyncio.sleep(delay)
         state.next_start = monotonic() + 3.0
+        if before_request is not None:
+            before_request()
         async with client.stream(
             "GET", _BASE_URL,
             params={

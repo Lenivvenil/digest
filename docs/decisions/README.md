@@ -62,7 +62,7 @@ status, rationale and approval context when editing a record.
 | --- | --- |
 | [0009 · Bind resumable source admission to candidate work](0009-selected-source-admission.md) | Proposed; local integration under review; [attempt-owned completion](0009-selected-source-admission.md#attempt-owned-page-completion--2026-10-10) |
 | [0010 · Group source points with material qualifications](0010-group-source-points-with-qualifications.md) | Proposed; unused offline prototype retired under #207 |
-| [0011 · Ground queries with optional literal provenance](0011-source-anchored-investigation-queries.md) | Revised optional-provenance accepted; mandatory-anchor proposal superseded; full-source activation unaccepted |
+| [0011 · Ground queries with optional literal provenance](0011-source-anchored-investigation-queries.md) | Optional-provenance baseline accepted; [delivered-only question-routed amendment](0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents) under review; full-source activation unaccepted |
 | [0012 · Preserve bounded private ranking evidence](0012-private-ranking-evidence.md) | Accepted bounded private audit; semantic acceptance open |
 | [0022 · Bind investigation to a versioned search policy](0022-versioned-bounded-search-policy.md) | Accepted bounded repair |
 | [0025 · Own ordinary Irritator fan-out results](0025-owned-irritator-fanout-results.md) | Approved bounded decision, pre-implementation |

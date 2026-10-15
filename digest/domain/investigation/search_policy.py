@@ -16,14 +16,16 @@ class SearchPolicy:
     max_queries: int
 
 
-def build_search_policy(configured_sources: Sequence[str], configured_max_queries: int) -> SearchPolicy:
+def build_search_policy(
+    configured_sources: Sequence[str], configured_max_queries: int, *, research: bool = False,
+) -> SearchPolicy:
     """Keep dispatch order and deduplication independent of config order/repeats.
 
     Legacy-only sources remain registered elsewhere, but are outside this bounded
     policy. A future prepare binds only the sources that will actually dispatch.
     """
     return SearchPolicy(
-        id="bounded-hn-arxiv-devto-v1",
+        id="question-routed-documents-v2" if research else "bounded-hn-arxiv-devto-v1",
         sources=[source for source in SAFE_SOURCES if source in configured_sources],
         max_queries=min(MAX_QUERIES, configured_max_queries),
     )

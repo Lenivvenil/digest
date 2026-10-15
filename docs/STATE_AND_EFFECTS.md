@@ -188,6 +188,17 @@ Delivered-bound extraction, query and ranking requests share the validated origi
 clock, source publication time and evidence of event occurrence. Historical quotes
 remain literal; unbound requests and retained result/fragment readers are unchanged.
 
+New delivered-bound compact reservations bind `question-routed-documents-v2`.
+The exact whole selected canonical title/summary remains the target; a separately
+labelled research question routes queries and one optional external document read.
+Original-page discovery, searches and external acquisition share nine actual HTTP
+starts, including redirects/address fallbacks, with at most three model calls in
+the existing 180-second stage. The 8,000-JSON-character ranking limit measures only
+the candidate array; complete oversized evidence is omitted whole. Old unexecuted
+compact policies are held unchanged before model/source work. Unbound legacy
+contracts remain separate. See the [ADR0011 amendment](decisions/0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents)
+for the implementation-under-review and semantic-acceptance boundary.
+
 The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
 references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
 expired dispositions; mutable state is not a ready checkpoint reference. This adds no
@@ -420,7 +431,10 @@ These deliberate acquisition restrictions and fresh-connection costs are recorde
 [ADR0026](decisions/0026-public-acquisition-boundary.md). No persistence, editorial,
 CLI or delivery contract changes. This is not a universal outbound-HTTP guarantee:
 fixed-endpoint Hacker News, Reddit, arXiv and other [search clients](../digest/irritator/sources/)
-keep their own HTTP policies. Boundary tests use synthetic DNS/transports and the real
+keep their own HTTP policies. Delivered-only investigation document reads use this
+public-fetch operation, while the admitted HN/arXiv/DEV searches retain their adapter
+transport rules. Both consume the same optional investigation request-start budget
+at their actual request owner; document redirects/address fallbacks each count. Boundary tests use synthetic DNS/transports and the real
 HTTPX/httpcore request path, including original-host TLS verification configuration;
 they are not evidence of live exploit testing or publisher availability.
 
