@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -24,9 +25,12 @@ async def search_hackernews(
     query: str,
     config: Any,
     client: httpx.AsyncClient,
+    *, before_request: Callable[[], None] | None = None,
 ) -> list[Signal]:
     """Search Hacker News via the Algolia API."""
     lexical_atoms(query)
+    if before_request is not None:
+        before_request()
     async with client.stream(
         "GET",
         _BASE_URL,

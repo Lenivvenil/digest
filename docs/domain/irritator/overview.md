@@ -4,16 +4,20 @@ _Discovered: 2026-04-28. Migrated and extended from `irritator-bc.md` (written a
 
 ## Current domain model
 
-Irritator tests the operator's reading against external evidence. It receives
-attributed narratives, plans bounded searches, validates external candidates and
-ranks their relevance to those narratives. A different model opinion, popularity
-score or matching quotation alone does not establish a useful counter-signal.
+Irritator tests consequential conclusions arising from the operator's reading
+against external evidence. New delivered-bound work keeps the complete selected
+canonical card field as its target, asks an explicitly labelled research question,
+and chooses bounded sources/documents suited to that question. It does not infer
+the reader's beliefs from a reading list. A different model opinion, popularity
+score, familiar caveat or matching quotation alone is not a useful counter-signal.
+The question-routed implementation described here is under review; deployment and
+real useful-counter-evidence acceptance remain separate facts.
 
 | Concept | Contract that matters |
 | --- | --- |
-| Narrative and cited target | New delivered-card attempts bind an exact canonical card quotation to original evidence from that occurrence. Translation is provenance, not analysis input. Their queries exclude hypotheses; unbound legacy contracts retain their existing inputs. |
-| Search query | A bounded topic/entity search can be valid without copying a source phrase. Optional phrase matches are provenance diagnostics. |
-| External signal | A search hit retains its URL and source data. Deterministic filtering and optional liveness checks do not verify its truth or relevance. |
+| Narrative and cited target | The engine retains the whole selected canonical title/summary of an actually delivered card, bound to original evidence from that occurrence. Translation is provenance, not analysis input. Unbound legacy contracts retain their inputs. |
+| Research question and routes | A labelled question names the needed evidence and routes at most three neutral queries to suitable configured sources, or selects an actual discovered document link. Hypotheses are unverified questions, never invented reader beliefs. Optional phrase matches are provenance diagnostics. |
+| Discovery and external evidence | Links and search hits retain their provenance as leads. One external read can supply complete HTML text or actual complete RFC sections; arXiv abstracts retain their reported-findings scope. Exact text and safe acquisition do not verify applicability or truth. |
 | Ranked result and status | Report validated ranking outcomes, omissions and incomplete coverage honestly. No result, unavailable search and rejected evidence are different outcomes. |
 | Saved investigation evidence | The review-led path keeps original checkpoints and private result traces. New target-bound attempts may freeze one later-edition fragment; the legacy summary path can still run synchronously. |
 
@@ -29,7 +33,7 @@ for deployed versus local work, then the [historical model](#historical-domain-s
 for the original analysis. The [Digest requirements](../digest/overview.md#current-owner-requirements-and-acceptance-traces)
 define the primary-delivery and operating constraints.
 
-## Current status — 2026-10-09
+## Current status — 2026-10-15
 
 This page preserves the April domain model and observations below. The current
 [Digest decision register](../digest/overview.md#decision-and-evidence-register--2026-10-01)
@@ -50,7 +54,42 @@ or that nothing is persisted describe the April snapshot, not the later
 follow-up checkpoints. Source-contract repairs are deployed, while real counter-evidence
 acceptance remains open in [#77](https://github.com/Lenivvenil/digest/issues/77).
 
+### Delivered-only question-routed investigation under #77
+
+The local `question-routed-documents-v2` implementation is under review. It replaces
+fixed fan-out only for new delivered-bound work. The existing three model stages
+select a meaningful reading-derived target, plan a neutral question with suitable
+sources, and assess evidence plus its applicability and material consequence.
+The whole selected canonical field stays authoritative; the question and possible
+implications remain labelled interpretation. An empty answer is allowed.
+
+The original page is read once for actual discovery links. A plan can select one
+of those IDs or one query's first eligible returned document, with at most one
+external document acquisition. Documents and search calls share nine actual HTTP
+starts, including redirects and address fallbacks, within the existing 180-second
+stage deadline. Each document also has a 20-second/2 MiB/three-redirect bound.
+This does not activate primary full-source reading.
+
+Evidence is a complete extracted document or actual complete natural RFC section,
+never a truncated prefix. Discovery URLs/titles do not certify destination content.
+The 8,000-JSON-character ranking limit measures only the candidate array, not the
+whole prompt or provider tokens; complete oversized units are omitted with reasons.
+Question-guided section selection is mechanical retrieval, not semantic proof.
+HN/DEV descriptions remain discovery leads and cannot substitute after a failed
+document read; only acquired evidence or scoped arXiv abstracts enter ranking.
+Original bodies over 3,000 characters are not added to model context. Qualifications
+outside retained excerpts remain unknown, so whole-article novelty is unverified.
+
+Old unexecuted compact-policy attempts are held unchanged. Completed artifacts and
+the later-edition fragment lifecycle remain protected; unbound legacy behavior is
+unchanged. Offline fixtures prove structural/resource boundaries, not useful live
+model questions, faithful interpretation or product acceptance. The exact scoped
+replacement and migration are in the [ADR0011 amendment](../../decisions/0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents).
+
 ### Delivered-card restoration under #208
+
+The following records the original restoration. The delivered-only #77 amendment
+above replaces its target/query selection; the publication lifecycle remains.
 
 The new compact attempt contract freezes a fully confirmed/applied origin edition,
 its exact claim/receipt and canonical/presentation identities, and the original review
@@ -155,6 +194,9 @@ distinct from automatic search/ranking acceptance.
 
 ### Grounded queries and optional provenance
 
+This accepted baseline still governs unbound work. New delivered-bound work uses
+the separately versioned question-routed contract above.
+
 [ADR0011](../../decisions/0011-source-anchored-investigation-queries.md) records
 useful grounded topic/entity searches without requiring a copied source phrase. Its
 earlier mandatory literal-match guard was an unaccepted draft proposal and is superseded,
@@ -192,6 +234,9 @@ the pending audit unchanged. Neither callers nor a separate audit builder resele
 the packet or independently classify the returned judgments.
 
 ### Versioned bounded search policy
+
+The following records the `bounded-hn-arxiv-devto-v1` baseline, retained for unbound
+work. New compact reservations bind `question-routed-documents-v2` instead.
 
 [ADR0022](../../decisions/0022-versioned-bounded-search-policy.md) repairs the existing
 DEV adapter against the current Forem V1 search contract. New bounded attempts use

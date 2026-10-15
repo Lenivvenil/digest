@@ -10,7 +10,142 @@ Refs [#77](https://github.com/Lenivvenil/digest/issues/77),
 [the Irritator domain](../domain/irritator/overview.md), and
 [ADR0009](0009-selected-source-admission.md).
 
+<a id="2026-10-15-question-routed-documents"></a>
+
+## 2026-10-15 delivered-only question-routed documents (#77)
+
+Status: local implementation under review. This amendment supersedes the
+2026-10-09 target-selection and fixed-fan-out behavior **only for new delivered-bound
+attempts**. It does not claim merge, deployment or semantic product acceptance.
+The accepted optional-anchor decision and unbound standalone/full-source contracts
+below remain in force outside this mode.
+
+### Purpose and immutable target
+
+Investigate a consequential claim, decision or interpretation arising from what was
+actually delivered. The useful outcome is external evidence that could materially
+change that reading-derived interpretation or a practical decision. Contradicting a
+random announcement, repeating a known caveat, or collecting unrelated interesting
+news does not meet that purpose. A reading list does not establish the reader's
+beliefs, needs or a consensus; the model must not invent them.
+
+The existing first model call selects an actually delivered card and a canonical
+`title` or `summary` field with literal card/source provenance. The engine retains
+the **whole selected canonical field** as the authoritative target, including its
+qualifications; a model-written paraphrase or short quotation cannot replace it.
+This remains canonical-language material, not necessarily the translated Telegram
+wording. The same occurrence must supply the original evidence.
+
+The second call states a neutral research question and the evidence needed to
+answer it. Possible implications and counterhypotheses are explicitly labelled
+unverified interpretation, separate from source facts, the immutable target and
+any assertion about the reader. No worthwhile supported target, no usable route,
+or no useful external finding are valid explained empty outcomes.
+
+### Question-specific routes and original documents
+
+New compact reservations use `question-routed-documents-v2`, with the effective
+configured Hacker News/arXiv/DEV subset and at most three queries. Each query names
+only the configured sources suited to the question, rather than automatically
+fanning out to every source. A document-only plan is allowed. Existing lexical
+query checks and optional literal-anchor diagnostics remain; neither establishes
+neutrality or useful recall.
+
+After selecting the target, read its original page once for discovery. Only actual
+HTML links become selectable, bounded ID/URL/title entries. Link titles and URLs
+are discovery leads, not evidence from the linked document. The second model call
+may choose at most one supplied link ID, or nominate one query whose first eligible
+returned document is read. It cannot invent a URL or combine both selection routes.
+A selected direct document is acquired before optional search fan-out. arXiv
+abstracts retain their limited reported-findings scope. Raw HN/DEV descriptions
+remain discovery only and cannot enter delivered ranking or pass counter-evidence
+eligibility, even when a selected document read fails.
+
+At most one external document is acquired in addition to the original discovery
+page. Both use the existing public-only HTTP boundary: one 20-second acquisition
+and extraction deadline, separate 2 MiB raw/decoded body bounds, at most three
+redirects, validated public addresses at every hop, original-host TLS verification,
+no ambient proxy/credentials and no arbitrary model-directed network tool.
+The [public acquisition decision](0026-public-acquisition-boundary.md) owns those
+transport guarantees. This optional investigation read does not activate the
+separate primary `reading_brief` workflow.
+
+A snapshot retains requested/final URLs, fetch time, body/text hashes, complete
+normalized text or an explicit held/error outcome, and original-page discovery
+links. A discovery link is not proof that its destination was read, publicly
+resolved or semantically relevant. Partial evidence units are never returned. Original
+page text enters planning and ranking only as a whole unit at at most 3,000 characters;
+omission retains the saved target excerpts and an explicit limitation. Qualifications
+outside those excerpts are then unknown. The model cannot assert that the original
+author omitted/ignored a caveat or establish its novelty across the whole article;
+recognizing repeated qualifications remains an empirical acceptance risk.
+
+General HTML supplies one complete extracted text unit. Actual RFC headings may
+supply complete natural sections, including nested content and visible
+cross-references. A fragment must resolve to one unambiguous complete actual
+heading section; missing/ambiguous/incomplete sections are held. Without a
+fragment, retain complete whole text when available and actual complete section
+descriptors, never an invented section. Local unread media or missing section content
+holds that section; unrelated independently complete sections may remain available
+with explicit omissions and no whole-document coverage claim. Global clipped HTML,
+ambiguous identities and pagination still hold. Aggregate section text is bounded
+to 2 MiB; normalized section URLs retain the 2,048-character limit.
+A deterministic lexical-fit heuristic can propose complete
+sections for ranking without a fourth model call. It is a retrieval heuristic,
+not proof of applicability or whole-document coverage. Oversized units are omitted
+whole rather than cut into a convenient prefix that could hide qualifications.
+
+### Shared bounds and ranking evidence
+
+The stage retains at most three model calls: target selection, routed research
+planning, and ranking. Optional translation retains its separate existing contract.
+The cumulative investigation deadline remains 180 seconds. A single nine-start
+source-request budget covers the original-page read, all routed searches and the
+optional external-document read. The callback is consumed immediately before each
+actual HTTP start, including every document redirect and address fallback; a tenth
+start is refused. Logical document reads and search-attempt diagnostics are not
+interchangeable with this physical-start count. No new retry or pagination loop
+is introduced.
+
+The existing 8,000-JSON-character limit applies to the serialized ranking
+**candidate array**, including its supplied evidence segments. It does not cap the
+total prompt at 8,000 characters and is not provider token/quota admission.
+Complete document text may exceed it; acquisition preserves that text while the
+ranking owner omits an oversized whole unit with a recorded reason. Known target
+context, the question, instructions and other request fields remain outside that
+candidate-array measurement.
+
+Ranking keeps target and question distinct. It asks what the external evidence
+establishes, the evidenced conditions/mechanism connecting it to the target, and
+what material interpretation or decision changes. The response binds an exact
+target quotation and source-body/abstract segment IDs; a title alone cannot support
+a counter-signal. Conditions not established for the target remain explicitly
+conditional. Topic overlap, a familiar caveat or a high score cannot substitute for
+an applicability bridge. Discovery lineage and acquired-document provenance stay
+separate, including source/final-URL self-source exclusion.
+
+### Compatibility, evidence and remaining acceptance
+
+Before any model/source work, compact execution requires its exact versioned policy
+binding. An unexecuted old compact checkpoint is held unchanged rather than upgraded,
+reinterpreted or rerun. Preserve old markers, completed results, frozen fragments,
+primary receipts and historical hashes; do not delete artifacts to obtain another
+attempt. Unbound legacy/standalone behavior continues to use its existing query,
+source and ranking contracts. Primary delivery and the existing later-edition
+fragment lifecycle are unchanged.
+
+Offline synthetic fixtures can establish request counts, exact text/quote bindings,
+whole-unit admission, safe acquisition, routing and historical-policy holds. They
+cannot establish that a live model asks a worthwhile question, understands a
+standard's scope, finds relevant evidence or produces a faithful useful conclusion.
+Actual model/search quality, ordinary-run acceptance under #77, exact-main checks
+and runtime rollout require their own observed evidence. Do not claim that this
+implementation closes #77 on the strength of valid JSON or passing mocks.
+
 ## 2026-10-09 delivered-card contract (#208)
+
+The 2026-10-15 amendment above replaces the target/query behavior in this historical
+contract for new delivered-bound attempts. Its origin and publication bindings remain.
 
 The compact post-delivery path freezes the exact confirmed and applied origin
 edition before creating its attempt. Attempt schema 3 binds ready, claim, receipts,

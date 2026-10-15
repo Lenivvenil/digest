@@ -18,6 +18,7 @@ from digest.application.review_request import build_evidence_bundle
 from digest.config import Config, ProviderConfig
 from digest.domain.editorial.reviews import EvidenceBundle
 from digest.domain.investigation.delivered import DeliveredCard, DeliveredInvestigationInput
+from digest.irritator.documents import DocumentSnapshot
 from digest.irritator.evidence_stage import (
     MAX_OUTPUT_TOKENS,
     MAX_RANKING_CANDIDATES,
@@ -46,7 +47,7 @@ async def test_frozen_publication_day_reaches_every_request_without_rewriting_da
     from digest.domain.catalog.occurrences import occurrence_sha256
 
     config = fixture_config()
-    config.irritator.sources = ["hackernews"]
+    config.irritator.sources = ["arxiv"]
     quote = f"The operator says the migration will begin on {scheduled_day}."
     published = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
     articles = fixture_articles()
@@ -76,14 +77,22 @@ async def test_frozen_publication_day_reaches_every_request_without_rewriting_da
     hashes = []
     for day in ("2026-10-08", "2026-10-10"):
         model = AsyncMock(
-            side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+            side_effect=[
+                (json.dumps(response), {}), (json.dumps(_research_plan()), {}),
+                (json.dumps(_research_ranking(quote)), {}),
+            ]
         )
         search = AsyncMock(
-            return_value=[make_signal(url="https://external.example/caveat", title="Deployment limitations")]
+            return_value=[make_signal(
+            url="https://external.example/caveat", title="Deployment limitations", source_name="arxiv",
+        )]
         )
         with (
             patch("digest.irritator.evidence_stage.complete", model),
-            patch("digest.irritator.evidence_stage.search_hackernews", search),
+            patch(
+                "digest.irritator.evidence_stage.acquire_document", AsyncMock(return_value=_original_document(origin)),
+            ),
+            patch("digest.irritator.evidence_stage.search_arxiv", search),
         ):
             async with _offline_client() as client:
                 result = await run_evidence_irritator(
@@ -177,7 +186,7 @@ async def test_delivered_full_source_admits_exact_date_bound_messages(tmp_path: 
     from digest.source_admission import admit_request, request_sha256, route_profile
 
     config = fixture_config()
-    config.irritator.sources = ["hackernews"]
+    config.irritator.sources = ["arxiv"]
     bundle = _bundle(config)
     origin = delivered_input(bundle)
     card = origin.cards[0]
@@ -205,17 +214,25 @@ async def test_delivered_full_source_admits_exact_date_bound_messages(tmp_path: 
         delivered_quote={"field": "summary", "text": card.canonical.summary},
     )
     model = AsyncMock(
-        side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+        side_effect=[
+            (json.dumps(response), {}), (json.dumps(_research_plan()), {}),
+            (json.dumps(_research_ranking(card.canonical.summary)), {}),
+        ]
     )
     admission = AsyncMock(wraps=admit_request)
     search = AsyncMock(
-        return_value=[make_signal(url="https://external.example/caveat", title="Deployment limitations")]
+        return_value=[make_signal(
+            url="https://external.example/caveat", title="Deployment limitations", source_name="arxiv",
+        )]
     )
     with (
         patch("digest.irritator.evidence_stage.complete", model),
+        patch(
+            "digest.irritator.evidence_stage.acquire_document", AsyncMock(return_value=_original_document(origin)),
+        ),
         patch("digest.irritator.evidence_stage.admit_request", admission),
         patch("digest.source_admission.count_gpt_input", return_value=1000),
-        patch("digest.irritator.evidence_stage.search_hackernews", search),
+        patch("digest.irritator.evidence_stage.search_arxiv", search),
     ):
         async with _offline_client() as client:
             result = await run_evidence_irritator(
@@ -274,24 +291,31 @@ def delivered_input(bundle: EvidenceBundle) -> DeliveredInvestigationInput:
 
 
 @pytest.mark.asyncio
-async def test_delivered_target_excludes_other_packet_items_and_speculation_with_existing_calls() -> None:
+async def test_delivered_target_preserves_labelled_hypotheses_and_whole_canonical_field() -> None:
     config = fixture_config()
-    config.irritator.sources = ["hackernews"]
+    config.irritator.sources = ["arxiv"]
     bundle = _bundle(config)
     origin = delivered_input(bundle)
     response = _narrative(bundle)
     response["narratives"][0].update(
-        implicit_assumptions=[],
+        claim="A stronger model paraphrase must not become the target.",
+        implicit_assumptions=["Unverified question: do the reported trial conditions transfer to deployment?"],
         target_card_id=origin.cards[0].card_id,
-        delivered_quote={"field": "summary", "text": origin.cards[0].canonical.summary},
+        delivered_quote={"field": "summary", "text": "Delivered canonical assertion"},
     )
     model = AsyncMock(
-        side_effect=[(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+        side_effect=[
+            (json.dumps(response), {}), (json.dumps(_research_plan()), {}),
+            (json.dumps(_research_ranking(origin.cards[0].canonical.summary)), {}),
+        ]
     )
-    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations", source_name="arxiv")
     with (
         patch("digest.irritator.evidence_stage.complete", model),
-        patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[signal])),
+        patch(
+            "digest.irritator.evidence_stage.acquire_document", AsyncMock(return_value=_original_document(origin)),
+        ),
+        patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
     ):
         async with _offline_client() as client:
             result = await run_evidence_irritator(bundle, config, client, execution=ModelExecution(), delivered=origin)
@@ -302,12 +326,23 @@ async def test_delivered_target_excludes_other_packet_items_and_speculation_with
     assert payloads[0]["delivered_cards"][0]["summary"] == origin.cards[0].canonical.summary
     assert all(origin.cards[0].presentation.summary not in json.dumps(payload) for payload in payloads)
     assert all("receipts_sha256" not in json.dumps(payload) for payload in payloads)
-    assert all("exploratory_hypotheses" not in payload for payload in payloads)
+    assert "exploratory_hypotheses" not in payloads[0]
+    expected_hypotheses = {
+        "implicit_assumptions": response["narratives"][0]["implicit_assumptions"],
+        "why_worth_challenging": response["narratives"][0]["why_worth_challenging"],
+        "status": "unverified interpretation, not source facts or reader beliefs",
+    }
     for payload in payloads[1:]:
         assert payload["narrative"]["target_card_id"] == origin.cards[0].card_id
-        assert payload["narrative"]["delivered_quote"] == response["narratives"][0]["delivered_quote"]
+        assert payload["narrative"]["delivered_quote"] == {
+            "field": "summary", "text": origin.cards[0].canonical.summary,
+        }
+        assert payload["narrative"]["claim"] == origin.cards[0].canonical.summary
+        assert payload["exploratory_hypotheses"] == expected_hypotheses
         assert "implicit_assumptions" not in payload["narrative"]
         assert "why_worth_challenging" not in payload["narrative"]
+    assert result.narratives[0].claim == origin.cards[0].canonical.summary
+    assert result.ranked_signals[0].narrative_claim == origin.cards[0].canonical.summary
     assert asdict(result.narratives[0])["delivered_quote"]["text"] == origin.cards[0].canonical.summary
     translated = replace(
         origin,
@@ -320,10 +355,16 @@ async def test_delivered_target_excludes_other_packet_items_and_speculation_with
         ),
     )
     model.reset_mock()
-    model.side_effect = [(json.dumps(response), {}), (json.dumps(_queries()), {}), (json.dumps(_ranking()), {})]
+    model.side_effect = [
+        (json.dumps(response), {}), (json.dumps(_research_plan()), {}),
+        (json.dumps(_research_ranking(origin.cards[0].canonical.summary)), {}),
+    ]
     with (
         patch("digest.irritator.evidence_stage.complete", model),
-        patch("digest.irritator.evidence_stage.search_hackernews", AsyncMock(return_value=[signal])),
+        patch(
+            "digest.irritator.evidence_stage.acquire_document", AsyncMock(return_value=_original_document(origin)),
+        ),
+        patch("digest.irritator.evidence_stage.search_arxiv", AsyncMock(return_value=[signal])),
     ):
         async with _offline_client() as client:
             translated_result = await run_evidence_irritator(
@@ -338,6 +379,101 @@ async def test_delivered_target_excludes_other_packet_items_and_speculation_with
     response["narratives"][0]["delivered_quote"]["text"] = translated.cards[0].presentation.summary
     with pytest.raises(ValueError, match="canonical field"):
         _parse_narrative(json.dumps(response), bundle, delivered=translated)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage,expected_starts", [("original", 1), ("search", 2), ("external", 3)])
+async def test_delivered_timeout_retains_actual_request_starts_during_cancellation(
+    blocked_stage: str, expected_starts: int,
+) -> None:
+    from digest.irritator.documents import SourceRequestBudget
+
+    config = fixture_config()
+    config.irritator.sources = ["hackernews"]
+    bundle = _bundle(config)
+    origin = delivered_input(bundle)
+    response = _narrative(bundle)
+    response["narratives"][0].update(
+        implicit_assumptions=[], target_card_id=origin.cards[0].card_id,
+        delivered_quote={"field": "summary", "text": origin.cards[0].canonical.summary},
+    )
+    plan = _research_plan("hackernews")
+    plan["read_query_index"] = 0
+    model = AsyncMock(side_effect=[(json.dumps(response), {}), (json.dumps(plan), {})])
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    starts: list[str] = []
+    cancelled: list[str] = []
+
+    async def block(stage: str) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(stage)
+            raise
+
+    async def acquire(url: str, *, budget: SourceRequestBudget) -> DocumentSnapshot:
+        budget.consume()
+        stage = "original" if url == origin.cards[0].canonical.link else "external"
+        starts.append(stage)
+        if blocked_stage == stage:
+            await block(stage)
+        return _original_document(origin)
+
+    async def search(*args: Any, **kwargs: Any) -> list[Any]:
+        kwargs["before_request"]()
+        starts.append("search")
+        if blocked_stage == "search":
+            await block("search")
+        return [signal]
+
+    with (
+        patch("digest.irritator.evidence_stage.complete", model),
+        patch("digest.irritator.evidence_stage.acquire_document", side_effect=acquire),
+        patch("digest.irritator.evidence_stage.search_hackernews", side_effect=search),
+    ):
+        async with _offline_client() as client:
+            result = await run_evidence_irritator(
+                bundle, config, client, execution=ModelExecution(), delivered=origin, timeout_seconds=0.05,
+            )
+    assert cancelled == [blocked_stage]
+    assert result.status == "incomplete" and not result.ranked_signals
+    assert result.source_request_starts == len(starts) == expected_starts
+    assert model.await_count == (1 if blocked_stage == "original" else 2)
+    assert any(diagnostic.error == "TimeoutError" for diagnostic in result.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_query_document_selection_skips_original_source_fragment_without_spending_a_read() -> None:
+    from digest.irritator.documents import SourceRequestBudget
+    from digest.irritator.evidence_stage import EvidenceIrritatorResult, _acquire_research_evidence
+    from digest.irritator.research import QueryRoute, ResearchPlan, signal_identity
+
+    bundle = _bundle(fixture_config())
+    origin = delivered_input(bundle)
+    original_url = origin.cards[0].canonical.link
+    repeated = make_signal(url=original_url + "#apparently-external", source_name="devto")
+    external = make_signal(url="https://external.example/independent", source_name="devto")
+    result = EvidenceIrritatorResult(2, bundle.bundle_id, research_plan=ResearchPlan(
+        "Which conditions affect deployment?", "Independent operational findings.",
+        (QueryRoute(0, ("devto",)),), (), 0,
+    ))
+    lineage = {signal_identity(repeated): {0}, signal_identity(external): {0}}
+    snapshot = replace(_original_document(origin), requested_url=external.url, final_url=external.url)
+    budget = SourceRequestBudget()
+
+    async def acquire(url: str, *, budget: SourceRequestBudget) -> DocumentSnapshot:
+        budget.consume()
+        return snapshot
+
+    with patch("digest.irritator.evidence_stage.acquire_document", side_effect=acquire) as read:
+        acquired = await _acquire_research_evidence(
+            result, [repeated, external], (), lineage, budget, {original_url},
+        )
+    read.assert_awaited_once_with(external.url, budget=budget)
+    assert budget.requests_started == result.source_request_starts == 1
+    assert len(acquired) == 1 and acquired[0].url == external.url
+    assert lineage[signal_identity(acquired[0])] == {0}
+    assert result.documents[0].discovery_signal is external
 
 
 @pytest.mark.parametrize("mutation", ["other_card", "other_source", "paraphrase", "stitched", "empty", "unknown_field"])
@@ -459,6 +595,49 @@ def _ranking(url: str = "https://external.example/caveat") -> dict[str, Any]:
                 "quote_id": quote_id,
             }
         ],
+        "limitations": [],
+    }
+
+
+
+def _original_document(origin: DeliveredInvestigationInput) -> DocumentSnapshot:
+    text = "Complete synthetic original article with its material qualification."
+    return DocumentSnapshot(
+        requested_url=origin.cards[0].canonical.link,
+        final_url=origin.cards[0].canonical.link,
+        fetched_at="2026-10-08T12:00:00+00:00",
+        content_sha256=hashlib.sha256(text.encode()).hexdigest(),
+        text=text,
+        status="complete",
+        text_sha256=hashlib.sha256(text.encode()).hexdigest(),
+        extraction_status="complete",
+    )
+
+
+def _research_plan(source: str = "arxiv") -> dict[str, Any]:
+    return {
+        "question": "Which deployment conditions materially qualify the delivered result?",
+        "evidence_needed": "Independent reported operational constraints with their scope.",
+        "queries": [{"query": "Benchmark", "intent": "Find deployment caveats.", "sources": [source]}],
+        "document_ids": [],
+        "read_query_index": None,
+        "limitations": [],
+    }
+
+
+def _research_ranking(target: str) -> dict[str, Any]:
+    signal = make_signal(url="https://external.example/caveat", title="Deployment limitations")
+    return {
+        "rankings": [{
+            "url": signal.url,
+            "score": 8,
+            "relation": "complicates",
+            "finding": "The external report identifies an operational constraint.",
+            "applicability": "If that constraint applies to the deployment, the reported benefit is conditional.",
+            "material_change": "Check the deployment conditions before treating the reported result as transferable.",
+            "target_quote": target,
+            "evidence_quote_ids": [_ranking_signal_payload(signal)["snippet"][0]["id"]],
+        }],
         "limitations": [],
     }
 

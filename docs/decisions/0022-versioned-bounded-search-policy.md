@@ -5,6 +5,17 @@ Status: accepted for the bounded repair tracked in
 [#77](https://github.com/Lenivvenil/digest/issues/77). Deployment and useful
 counter-evidence remain separate acceptance facts.
 
+## Delivered-only policy replacement — 2026-10-15
+
+The [ADR0011 amendment](0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents)
+introduces `question-routed-documents-v2` for new delivered-bound compact attempts.
+It routes queries by evidence need and shares nine actual HTTP starts with original
+page discovery and one optional external document. This amendment is under review;
+it does not rewrite this accepted baseline or claim rollout. Unbound execution
+retains `bounded-hn-arxiv-devto-v1`; old unexecuted compact-policy reservations are
+held rather than silently upgraded. Historical records below retain their original
+meaning and acceptance scope.
+
 ## Context
 
 The bounded stage could issue real queries to Hacker News and arXiv, while its

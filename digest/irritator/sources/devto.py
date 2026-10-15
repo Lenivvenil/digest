@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic
@@ -80,6 +81,7 @@ async def search_devto(
     query: str,
     config: Any,
     client: httpx.AsyncClient,
+    *, before_request: Callable[[], None] | None = None,
 ) -> list[Signal]:
     """Return exact search evidence, with no listing or article-body fallback."""
     lexical_atoms(query)
@@ -91,6 +93,8 @@ async def search_devto(
         if delay > 0:
             await asyncio.sleep(delay)
         state.next_start = monotonic() + 2.0
+        if before_request is not None:
+            before_request()
         async with client.stream(
             "GET",
             _BASE_URL,

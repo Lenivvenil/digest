@@ -70,15 +70,19 @@ Semantic counter-evidence acceptance is still separate from structural validatio
 
 ### Retained bounds
 
-Admitted evidence remains exact under the unchanged 8,000-JSON-character model packet
-bound. For omitted candidates only, reuse the existing `MAX_RESPONSE_CHARS` value
+Admitted evidence remains exact under the unchanged 8,000-JSON-character serialized
+ranking candidate-array bound. This measures the array of supplied candidate
+payloads, not the complete model prompt or provider token/quota admission. For omitted candidates only, reuse the existing `MAX_RESPONSE_CHARS` value
 (16,000) as the archive allocation accepted in the engine-only release.
 Divide it equally across omitted candidates, retain the title prefix first and use
 any remaining allocation for a snippet prefix. Preserve original lengths and hashes;
 mark all shortening explicitly. Very long titles can exhaust a candidate's allocation,
 leaving no snippet. A missing/truncated excerpt is unknown evidence, never a relevance
 judgment. Prefixes can hide late qualifications and cannot establish semantic rejection.
-No publisher body, new fetch, or full provider response is added.
+This original audit decision adds no publisher-body acquisition or full provider
+response. The separate [delivered-only ADR0011 amendment](0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents)
+can supply complete document/section units under the same candidate-array limit;
+it never turns omitted previews into admitted evidence.
 
 The limit covers omitted title/snippet characters, not the entire serialized archive.
 Existing retrieval bounds permit at most 3 queries × 3 sources × 10 records = 90

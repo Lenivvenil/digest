@@ -13,7 +13,7 @@ import math
 import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal, cast
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urlparse
 
 import httpx
 
@@ -36,6 +36,12 @@ from digest.domain.investigation.search_policy import SAFE_SOURCES as SAFE_SOURC
 from digest.domain.investigation.search_policy import build_search_policy
 from digest.domain.investigation.signals import Signal
 from digest.domain.investigation.validation import validate_signals
+from digest.irritator.documents import (
+    DocumentLink,
+    SourceRequestBudget,
+    SourceRequestBudgetExceeded,
+    acquire_document,
+)
 from digest.irritator.narrative_extractor import Narrative
 from digest.irritator.query_contract import (
     GROUNDED_QUERY_CONTRACT,
@@ -50,6 +56,21 @@ from digest.irritator.ranker import (
     RANK_RELATION_CONTRACT,
     RANK_RELATIONS,
     RankedSignal,
+)
+from digest.irritator.research import (
+    PLAN_INSTRUCTION,
+    PURPOSE,
+    RANK_INSTRUCTION,
+    DocumentAcquisition,
+    ResearchPlan,
+    discovery_links,
+    document_coverage,
+    document_is_external,
+    document_signals,
+    document_supports_signal,
+    parse_research_plan,
+    signal_identity,
+    valid_document_lineage,
 )
 from digest.irritator.sources import SourceUnavailableError
 from digest.irritator.sources.arxiv import search_arxiv
@@ -155,6 +176,15 @@ class RankingDecision:
     quote: str
 
 
+@dataclass(frozen=True)
+class GroundedRankingDecision(RankingDecision):
+    finding: str
+    applicability: str
+    material_change: str
+    target_quote: str
+    evidence_quote_ids: tuple[str, ...]
+
+
 @dataclass
 class RankingCandidateAudit:
     """Private evidence snapshot; omitted text is diagnostic, never ranking input."""
@@ -220,6 +250,9 @@ class EvidenceIrritatorResult:
     query_anchor: SourceQueryAnchor | None = None
     excluded_cited_source_urls: list[str] = field(default_factory=list)
     ranking_audit: RankingAudit | None = None
+    research_plan: ResearchPlan | None = None
+    documents: list[DocumentAcquisition] = field(default_factory=list)
+    source_request_starts: int = 0
 
 
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
@@ -242,6 +275,17 @@ _SAFE_ERROR_DETAILS = frozenset(
         "Narrative category is not in cited evidence.",
         "Invalid query fields.",
         "Duplicate query.",
+        "Invalid research plan text.",
+        "Research plan exceeds the response budget.",
+        "Invalid research plan fields.",
+        "Invalid research plan count or document identity.",
+        "Invalid routed query fields.",
+        "Invalid routed query sources.",
+        "Invalid research document selection.",
+        "An empty research plan requires an explanation.",
+        "Research judgment needs exact body evidence, not a title alone.",
+        "Research judgment changed its reading-derived target.",
+        "source_request_budget_exhausted",
         "Invalid ranking fields.",
         "Unknown or duplicate ranking URL.",
         "Ranking score must be an integer from 1 through 10.",
@@ -317,6 +361,7 @@ def _parse_narrative(
     bundle: EvidenceBundle | FullSourceEvidence,
     *,
     delivered: DeliveredInvestigationInput | None = None,
+    whole_target: bool = False,
 ) -> tuple[list[EvidenceNarrative], list[str]]:
     entries, limitations = _response(text, "narratives", 1)
     known = {item.evidence_id: item for item in bundle.items}
@@ -397,6 +442,12 @@ def _parse_narrative(
             )
             assert delivered is not None
             _validate_delivered_narrative(narrative, bundle, delivered)
+            if whole_target:
+                card = validate_delivered_quote(delivered, narrative.target_card_id, narrative.delivered_quote)
+                whole = getattr(card.canonical, narrative.delivered_quote.field)
+                # The model selects a field, never rewrites the authoritative target.
+                narrative = replace(narrative, claim=whole,
+                                    delivered_quote=DeliveredQuote(narrative.delivered_quote.field, whole))
         narratives.append(narrative)
     return narratives, limitations
 
@@ -478,6 +529,7 @@ def _parse_rankings(
     text: str,
     admission: RankingAdmission,
     narrative: EvidenceNarrative,
+    *, research: bool = False,
 ) -> RankingResponse:
     """Validate atomically, then project each judgment once into output and audit."""
     entries, limitations = _response(text, "rankings", admission.audit.max_ranked)
@@ -485,14 +537,39 @@ def _parse_rankings(
     decisions: dict[str, RankingDecision] = {}
     seen: set[str] = set()
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"url", "score", "reasoning", "relation", "quote_id"}:
+        expected = ({"url", "score", "relation", "finding", "applicability", "material_change",
+                     "target_quote", "evidence_quote_ids"} if research
+                    else {"url", "score", "reasoning", "relation", "quote_id"})
+        if not isinstance(entry, dict) or set(entry) != expected:
             raise ValueError("Invalid ranking fields.")
-        url, score, relation, quote_id = (entry[key] for key in ("url", "score", "relation", "quote_id"))
+        url, score, relation = (entry[key] for key in ("url", "score", "relation"))
         if not isinstance(url, str) or url not in known or url in seen:
             raise ValueError("Unknown or duplicate ranking URL.")
         seen.add(url)
-        decisions[url] = _ranking_decision(known[url], score, relation, entry["reasoning"], quote_id)
+        decisions[url] = (
+            _grounded_decision(known[url], entry, narrative) if research
+            else _ranking_decision(known[url], score, relation, entry["reasoning"], entry["quote_id"])
+        )
     return _ranking_response(admission, narrative, decisions, limitations)
+
+
+def _grounded_decision(signal: Signal, entry: dict[str, Any], narrative: EvidenceNarrative) -> GroundedRankingDecision:
+    ids = entry["evidence_quote_ids"]
+    body_ids = {part["id"] for part in _ranking_signal_payload(signal)["snippet"]}
+    if (not isinstance(ids, list) or not 1 <= len(ids) <= 3
+            or any(not isinstance(identity, str) or identity not in body_ids for identity in ids)
+            or len(set(ids)) != len(ids)):
+        raise ValueError("Research judgment needs exact body evidence, not a title alone.")
+    target = _bounded_text(entry["target_quote"], field="target_quote")
+    if target not in narrative.claim:
+        raise ValueError("Research judgment changed its reading-derived target.")
+    finding = _bounded_text(entry["finding"], field="finding")
+    applicability = _bounded_text(entry["applicability"], field="applicability")
+    change = _bounded_text(entry["material_change"], field="material_change")
+    checked = _ranking_decision(signal, entry["score"], entry["relation"],
+                                f"{finding} {applicability} {change}", ids[0])
+    return GroundedRankingDecision(**asdict(checked), finding=finding, applicability=applicability,
+                                  material_change=change, target_quote=target, evidence_quote_ids=tuple(ids))
 
 
 def _ranking_decision(signal: Signal, score: Any, relation: Any, reasoning: Any, quote_id: Any) -> RankingDecision:
@@ -582,16 +659,35 @@ def eligible_delivered_result(
         return False
     narrative = result.narratives[0]
     evidence = source or bundle
-    decisions = {}
+    decisions: dict[str, RankingDecision] = {}
+    checked: RankingDecision
     try:
         _validate_delivered_narrative(narrative, evidence, origin)
         cited_urls = _cited_source_urls(evidence, narrative)
+        research = result.schema_version == 2
+        if research:
+            card = validate_delivered_quote(origin, narrative.target_card_id, narrative.delivered_quote)
+            if (narrative.claim != getattr(card.canonical, narrative.delivered_quote.field)
+                    or narrative.delivered_quote.text != narrative.claim
+                    or result.research_plan is None or not 1 <= len(result.documents) <= 2
+                    or type(result.source_request_starts) is not int or not 0 <= result.source_request_starts <= 9):
+                return False
+            first = result.documents[0]
+            if (first.role != "origin" or first.selection != "origin" or first.query_index is not None
+                    or first.snapshot.requested_url not in cited_urls):
+                return False
+            if first.snapshot.final_url:
+                cited_urls.add(first.snapshot.final_url)
+            for acquisition in result.documents[1:]:
+                if not valid_document_lineage(acquisition, result.research_plan, first, result.queries):
+                    return False
         for candidate in audit.candidates:
             if candidate.admission != "admitted":
                 continue
             if (
-                candidate.signal.url in cited_urls
-                or not candidate.query_indices
+                (urldefrag(candidate.signal.url)[0] in {urldefrag(url)[0] for url in cited_urls}
+                 if research else candidate.signal.url in cited_urls)
+                or (not candidate.query_indices and not (research and candidate.signal.source_name == "document"))
                 or any(
                     type(index) is not int or not 0 <= index < len(result.queries) for index in candidate.query_indices
                 )
@@ -601,11 +697,37 @@ def eligible_delivered_result(
                 ).hexdigest()
             ):
                 return False
+            if research and candidate.signal.source_name == "document":
+                matches = [item for item in result.documents[1:]
+                           if document_supports_signal(candidate.signal, item)
+                           and document_is_external(item.snapshot, cited_urls)]
+                if len(matches) != 1:
+                    return False
+                acquisition = matches[0]
+                if acquisition.selection == "link" and candidate.query_indices:
+                    return False
+                if acquisition.selection == "query" and acquisition.query_index not in candidate.query_indices:
+                    return False
+            elif research:
+                # HN/DEV descriptions are discovery leads, not acquired evidence.
+                if candidate.signal.source_name != "arxiv":
+                    return False
+                assert result.research_plan is not None
+                if any(not any(route.query_index == index and candidate.signal.source_name in route.sources
+                               for route in result.research_plan.routes) for index in candidate.query_indices):
+                    return False
             decision = candidate.decision
             if decision is not None:
-                checked = _ranking_decision(
-                    candidate.signal, decision.score, decision.relation, decision.reasoning, decision.quote_id
-                )
+                if research:
+                    if not isinstance(decision, GroundedRankingDecision):
+                        return False
+                    checked = _grounded_decision(candidate.signal, {
+                        **asdict(decision), "evidence_quote_ids": list(decision.evidence_quote_ids),
+                    }, narrative)
+                else:
+                    checked = _ranking_decision(
+                        candidate.signal, decision.score, decision.relation, decision.reasoning, decision.quote_id
+                    )
                 if checked != decision or candidate.signal.url in decisions:
                     return False
                 decisions[candidate.signal.url] = checked
@@ -792,15 +914,26 @@ async def _search(
     client: httpx.AsyncClient,
     *,
     lineage: dict[str, set[int]] | None = None,
+    budget: SourceRequestBudget | None = None,
 ) -> list[Signal]:
     adapters = {"hackernews": search_hackernews, "arxiv": search_arxiv, "devto": search_devto}
     policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative)
     semaphore = asyncio.Semaphore(3)
 
+    def admit_search() -> None:
+        assert budget is not None
+        # A query-led plan must leave at least one physical start for its declared
+        # document read. Redirects still compete for the same remaining budget.
+        reserve = int(result.research_plan is not None and result.research_plan.read_query_index is not None)
+        if budget.requests_started >= budget.max_requests - reserve:
+            raise SourceRequestBudgetExceeded()
+        budget.consume()
+
     async def attempt(query: SearchQuery, source: str, query_index: int) -> list[Signal]:
         try:
             async with semaphore:
-                raw = await adapters[source](query.query, config, client)
+                raw = (await adapters[source](query.query, config, client, before_request=admit_search)
+                       if budget is not None else await adapters[source](query.query, config, client))
             if not isinstance(raw, list):
                 raise ValueError("Source result must be a list.")
             signals = _bounded_signals(raw, source)
@@ -845,9 +978,14 @@ async def _search(
             )
             return []
 
-    batches = await asyncio.gather(
-        *(attempt(query, source, index) for index, query in enumerate(result.queries) for source in policy.sources)
-    )
+    routes = ({route.query_index: route.sources for route in result.research_plan.routes}
+              if result.research_plan is not None else {})
+    batches = await asyncio.gather(*(
+        attempt(query, source, index) for index, query in enumerate(result.queries)
+        for source in (routes.get(index, ()) if result.research_plan is not None else policy.sources)
+    ))
+    if budget is not None:
+        result.source_request_starts = budget.requests_started
     result.source_attempts.sort(key=lambda attempt: (attempt.query, attempt.source))
     return [signal for batch in batches for signal in batch]
 
@@ -902,6 +1040,99 @@ def _cited_source_urls(evidence: EvidenceBundle | FullSourceEvidence, narrative:
     return urls
 
 
+async def _research_queries(
+    result: EvidenceIrritatorResult, narrative_input: dict[str, Any], cited_evidence: dict[str, Any],
+    config: Config, *, target_url: str, budget: SourceRequestBudget, execution: ModelExecution,
+    publication_context: dict[str, str], publication_instruction: str, admission_deadline: float | None,
+) -> tuple[DocumentLink, ...]:
+    """One original-page discovery read, then the existing second model request."""
+    snapshot = await acquire_document(target_url, budget=budget)
+    result.documents.append(DocumentAcquisition("origin", "origin", None, snapshot))
+    result.source_request_starts = budget.requests_started
+    links = discovery_links(snapshot)
+    original_context = (
+        snapshot.text if snapshot.status == "complete" and snapshot.text and len(snapshot.text) <= 3000 else None
+    )
+    if snapshot.status != "complete":
+        result.limitations.append(f"Original document acquisition {snapshot.status}: {snapshot.error}.")
+    if original_context is None:
+        result.limitations.append("Original document body was not admitted; target context remains the saved excerpts.")
+    if len(links) < len(snapshot.links):
+        result.limitations.append("Discovery link coverage is bounded; only whole admitted locators were supplied.")
+    policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative, research=True)
+    text = await _model_text(
+        _stage(result, "queries", 1), LLMRole.GENERATE_QUERIES,
+        PLAN_INSTRUCTION + QUERY_CONTRACT + GROUNDED_QUERY_CONTRACT + publication_instruction,
+        {"narrative": narrative_input, "evidence": cited_evidence,
+         "exploratory_hypotheses": {
+             "implicit_assumptions": result.narratives[0].implicit_assumptions,
+             "why_worth_challenging": result.narratives[0].why_worth_challenging,
+             "status": "unverified interpretation, not source facts or reader beliefs",
+         },
+         "original_document_context": original_context,
+         "discovered_links": [{"id": link.link_id, "url": link.url, "title": link.title} for link in links],
+         "allowed_sources": policy.sources, "max_queries": policy.max_queries, **publication_context},
+        config, execution=execution, admission_deadline=admission_deadline,
+    )
+    result.queries, result.research_plan, limitations = parse_research_plan(
+        text, policy.sources, policy.max_queries, links,
+    )
+    result.limitations.extend(limitations)
+    return links
+
+
+async def _acquire_research_evidence(
+    result: EvidenceIrritatorResult, raw: list[Signal], links: tuple[DocumentLink, ...],
+    lineage: dict[str, set[int]], budget: SourceRequestBudget, source_urls: set[str],
+) -> list[Signal]:
+    """One external read, from an actual link or a declared query's first eligible hit."""
+    plan = result.research_plan
+    assert plan is not None
+    url, title, discovery = "", "", None
+    if plan.document_ids:
+        link = next(link for link in links if link.link_id == plan.document_ids[0])
+        url, title = link.url, link.title
+    elif plan.read_query_index is not None:
+        discovery = next((signal for signal in raw if signal.source_name != "arxiv"
+                          and plan.read_query_index in lineage.get(signal_identity(signal), set())
+                          and urldefrag(signal.url)[0] not in {urldefrag(url)[0] for url in source_urls}), None)
+        if discovery is not None:
+            url, title = discovery.url, discovery.title
+    if not url:
+        return []
+    snapshot = await acquire_document(url, budget=budget)
+    acquisition = DocumentAcquisition("external", "link" if plan.document_ids else "query",
+                                      plan.read_query_index, snapshot, discovery)
+    result.documents.append(acquisition)
+    result.source_request_starts = budget.requests_started
+    if snapshot.status != "complete":
+        result.limitations.append(f"External document acquisition {snapshot.status}: {snapshot.error}.")
+        return []
+    if not document_is_external(snapshot, source_urls):
+        result.limitations.append("Acquired document repeats the original source, including its redirect identity.")
+        return []
+    coverage = document_coverage(snapshot)
+    result.limitations.extend(coverage["coverage_notes"])
+    if coverage["omitted_coverage_notes"]:
+        result.limitations.append(
+            "Additional document coverage diagnostics remain in the private acquisition snapshot."
+        )
+    selection_text = " ".join([plan.question, plan.evidence_needed, *(query.query for query in result.queries)])
+    signals = document_signals(snapshot, selection_text, title or snapshot.final_url or "External document")
+    if snapshot.sections:
+        result.limitations.append(
+            "Document evidence uses complete sections selected by lexical fit, not whole-source coverage."
+        )
+        if not signals:
+            result.limitations.append(
+                "No complete section matched the question lexically; document evidence is absent."
+            )
+    for signal in signals:
+        if discovery is not None:
+            lineage[signal_identity(signal)] = set(lineage.get(signal_identity(discovery), set()))
+    return signals
+
+
 async def _run_stages(
     bundle: EvidenceBundle,
     config: Config,
@@ -912,6 +1143,7 @@ async def _run_stages(
     execution: ModelExecution,
     admission_deadline: float | None = None,
     delivered: DeliveredInvestigationInput | None = None,
+    research_budget: SourceRequestBudget | None = None,
 ) -> None:
     if source_evidence is not None and admission_deadline is None:
         raise SourceAdmissionHeld("Full-source request deadline is unavailable.")
@@ -967,19 +1199,23 @@ async def _run_stages(
         ]
         target_instruction = (
             "The target must be a concrete assertion in the canonical form of one actually delivered card, "
-            "supported by original evidence "
+            "with its basis in original evidence "
             "from that same occurrence. Add exactly target_card_id and delivered_quote: {field: title or summary, "
             "text: an exact nonempty substring of that canonical field}. Do not join fields, cards or occurrences, "
-            "paraphrase or repair quotations. Preserve the delivered assertion's qualifications. Literal matches "
-            "establish provenance only, not entailment. Omit a target without a source-supported assertion. "
-            "implicit_assumptions may be empty; do not invent assumptions or hypotheses to motivate a search. "
+            "paraphrase or repair quotations. The selected complete canonical field becomes the immutable target; "
+            "claim is not allowed to replace it. Preserve the delivered assertion's qualifications. Literal matches "
+            "establish provenance only, not entailment. Separate a digest interpretation from a publisher claim. "
+            "implicit_assumptions may be empty. Keep any reading-derived hypothesis explicitly conditional, "
+            "separate from source facts and reader beliefs. Do not invent a premise merely to produce opposition. "
         )
     text = await _model_text(
         diagnostic,
         LLMRole.EXTRACT_NARRATIVES,
         (
-            f"Select at most ONE concrete source-attributed assertion or announced decision from the {grounding}. "
-            "The claim must name its source or actor and preserve the stated scope, timing and uncertainty. "
+            (f"Select at most ONE consequential assertion, interpretation or recommendation in a delivered card, "
+             f"grounded in the {grounding}. " if delivered is not None else
+             f"Select at most ONE concrete source-attributed assertion or announced decision from the {grounding}. ")
+            + "The claim must name its source or actor and preserve the stated scope, timing and uncertainty. "
             "Do not turn reported framing into an imminent threat, necessity, consensus or exclusive solution. "
             "Duplicate reports of one event are not independent support; "
             "do not merge unrelated announcements into a claim. "
@@ -1004,6 +1240,7 @@ async def _run_stages(
             "implicit_assumptions, why_worth_challenging and limitations. Copy category and quotes from the "
             "supplied evidence unchanged, in their original language; never translate a literal quote. "
             + source_instruction
+            + (PURPOSE if delivered is not None else "")
             + publication_instruction
         ),
         {
@@ -1017,7 +1254,9 @@ async def _run_stages(
         execution=execution,
         admission_deadline=admission_deadline,
     )
-    result.narratives, limitations = _parse_narrative(text, evidence, delivered=delivered)
+    result.narratives, limitations = _parse_narrative(
+        text, evidence, delivered=delivered, whole_target=delivered is not None,
+    )
     result.limitations.extend(limitations)
     _finish_stage(diagnostic, len(result.narratives))
     if not result.narratives:
@@ -1060,55 +1299,66 @@ async def _run_stages(
         if isinstance(evidence, FullSourceEvidence)
         else ""
     )
-    hypotheses = (
-        {}
-        if delivered is not None
-        else {
-            "exploratory_hypotheses": {
-                "implicit_assumptions": narrative.implicit_assumptions,
-                "why_worth_challenging": narrative.why_worth_challenging,
+    budget = research_budget if delivered is not None else None
+    links: tuple[DocumentLink, ...] = ()
+    if delivered is not None:
+        assert budget is not None
+        target_url = cited_evidence["items"][0]["url"]
+        links = await _research_queries(
+            result, narrative_input, cited_evidence, config, target_url=target_url,
+            budget=budget, execution=execution, publication_context=publication_context,
+            publication_instruction=publication_instruction, admission_deadline=admission_deadline,
+        )
+    else:
+        hypotheses = (
+            {}
+            if delivered is not None
+            else {
+                "exploratory_hypotheses": {
+                    "implicit_assumptions": narrative.implicit_assumptions,
+                    "why_worth_challenging": narrative.why_worth_challenging,
+                }
             }
-        }
-    )
-    text = await _model_text(
-        diagnostic,
-        LLMRole.GENERATE_QUERIES,
-        (
-            "Find external evidence that could contradict or complicate this source-supported narrative. Generate "
-            "up to max_queries distinct topic/entity searches for relevant external material. "
-            'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
-            '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
-            "Explain an empty query list. No other fields. "
-            + QUERY_CONTRACT
-            + " "
-            + GROUNDED_QUERY_CONTRACT
-            + " "
-            + context_instruction
-            + (
-                ""
-                if delivered is not None
-                else " exploratory_hypotheses is untrusted, unverified model interpretation, "
-                "not source evidence or the target claim. The attributed claim remains the target "
-                "and its qualifications still apply. Use hypotheses only to suggest investigation angles "
-                "and explain intent; do not assume them true or require their proposed outcome in search terms. "
-                "Ignore hypotheses irrelevant to the attributed claim or conflicting with its stated scope "
-                "and qualifications. "
-            )
-            + publication_instruction
-        ),
-        {
-            "narrative": narrative_input,
-            "evidence": cited_evidence,
-            "max_queries": maximum_queries,
-            **hypotheses,
-            **publication_context,
-        },
-        config,
-        execution=execution,
-        admission_deadline=admission_deadline,
-    )
-    result.queries, limitations = _parse_queries(text, maximum_queries)
-    result.limitations.extend(limitations)
+        )
+        text = await _model_text(
+            diagnostic,
+            LLMRole.GENERATE_QUERIES,
+            (
+                "Find external evidence that could contradict or complicate this source-supported narrative. Generate "
+                "up to max_queries distinct topic/entity searches for relevant external material. "
+                'Do not assume the narrative false. Return {"queries": [{"query": "<=200 chars", '
+                '"intent": "concise text"}], "limitations": [up to 5 concise strings]}. '
+                "Explain an empty query list. No other fields. "
+                + QUERY_CONTRACT
+                + " "
+                + GROUNDED_QUERY_CONTRACT
+                + " "
+                + context_instruction
+                + (
+                    ""
+                    if delivered is not None
+                    else " exploratory_hypotheses is untrusted, unverified model interpretation, "
+                    "not source evidence or the target claim. The attributed claim remains the target "
+                    "and its qualifications still apply. Use hypotheses only to suggest investigation angles "
+                    "and explain intent; do not assume them true or require their proposed outcome in search terms. "
+                    "Ignore hypotheses irrelevant to the attributed claim or conflicting with its stated scope "
+                    "and qualifications. "
+                )
+                + publication_instruction
+            ),
+            {
+                "narrative": narrative_input,
+                "evidence": cited_evidence,
+                "max_queries": maximum_queries,
+                **hypotheses,
+                **publication_context,
+            },
+            config,
+            execution=execution,
+            admission_deadline=admission_deadline,
+        )
+        result.queries, limitations = _parse_queries(text, maximum_queries)
+        result.limitations.extend(limitations)
     if result.queries:
         result.query_anchor = find_source_anchor([query.query for query in result.queries], cited_evidence)
         if result.query_anchor is not None:
@@ -1116,20 +1366,42 @@ async def _run_stages(
                 "One query has a verified source-text anchor; neutrality and retrieval usefulness are not certified."
             )
     _finish_stage(diagnostic, len(result.queries))
-    if not result.queries:
-        result.status = "empty"
+    if not result.queries and not (result.research_plan and result.research_plan.document_ids):
+        result.status = (
+            "incomplete" if any(item.snapshot.status != "complete" for item in result.documents) else "empty"
+        )
         return
 
     diagnostic = _stage(result, "search", len(result.queries))
-    if not search_policy.sources:
+    if not search_policy.sources and result.research_plan is None:
         diagnostic.status, diagnostic.error = "error", "NoConfiguredSafeSources"
         result.status = "error"
         return
     lineage: dict[str, set[int]] = {}
-    raw = await _search(result, config, client, lineage=lineage)
+    # A selected direct document has priority over optional discovery searches.
+    cited_urls = _cited_source_urls(evidence, narrative)
+    if result.documents and result.documents[0].snapshot.final_url:
+        cited_urls.add(result.documents[0].snapshot.final_url)
+    acquired: list[Signal] = []
+    if budget is not None and result.research_plan and result.research_plan.document_ids:
+        acquired = await _acquire_research_evidence(result, [], links, lineage, budget, cited_urls)
+    raw = await _search(result, config, client, lineage=lineage, budget=budget)
+    if budget is not None and result.research_plan and not result.research_plan.document_ids:
+        acquired = await _acquire_research_evidence(result, raw, links, lineage, budget, cited_urls)
+    discovery_only = 0
+    if result.research_plan is not None:
+        discovery_only = sum(signal.source_name != "arxiv" for signal in raw)
+        raw = [signal for signal in raw if signal.source_name == "arxiv"]
+        if discovery_only:
+            result.limitations.append(
+                f"{discovery_only} discovery descriptions were not admitted as evidence; "
+                "only acquired documents and scoped research abstracts can be ranked."
+            )
+    raw = acquired + raw
     _finish_stage(diagnostic, len(raw))
     diagnostic.omitted_count = sum(attempt.omitted_count for attempt in result.source_attempts)
     failed = sum(attempt.status in {"error", "unavailable"} for attempt in result.source_attempts)
+    document_failed = any(item.snapshot.status != "complete" for item in result.documents)
     if failed:
         diagnostic.status = "incomplete" if failed < len(result.source_attempts) else "error"
         diagnostic.error = "SourceSearchFailure"
@@ -1137,15 +1409,21 @@ async def _run_stages(
             f"{failed} of {len(result.source_attempts)} source/query searches failed or were unavailable."
         )
     if not raw:
-        result.status = "error" if diagnostic.status == "error" else "incomplete" if failed else "empty"
+        result.status = (
+            "error" if diagnostic.status == "error" else
+            "incomplete" if failed or document_failed or discovery_only else "empty"
+        )
         return
 
     diagnostic = _stage(result, "validation", len(raw))
     signals = validate_signals(raw, config.filters.blocklist_keywords)
-    cited_urls = _cited_source_urls(evidence, narrative)
-    result.excluded_cited_source_urls = sorted({signal.url for signal in signals if signal.url in cited_urls})
+    excluded = {signal.url for signal in signals if (
+        urldefrag(signal.url)[0] in {urldefrag(url)[0] for url in cited_urls}
+        if result.research_plan is not None else signal.url in cited_urls
+    )}
+    result.excluded_cited_source_urls = sorted(excluded)
     if result.excluded_cited_source_urls:
-        signals = [signal for signal in signals if signal.url not in cited_urls]
+        signals = [signal for signal in signals if signal.url not in excluded]
         result.limitations.append(
             f"Excluded {len(result.excluded_cited_source_urls)} distinct search URLs that repeat known cited sources."
         )
@@ -1156,7 +1434,7 @@ async def _run_stages(
     if config.irritator.check_liveness:
         result.limitations.append("URL liveness checks were not performed in the bounded evidence stage.")
     if not signals:
-        result.status = "incomplete" if failed else "empty"
+        result.status = "incomplete" if failed or document_failed else "empty"
         return
 
     maximum_ranked = min(MAX_RANKED_SIGNALS, config.irritator.top_signals)
@@ -1174,6 +1452,8 @@ async def _run_stages(
     text = await _model_text(
         diagnostic,
         LLMRole.RANK_SIGNALS,
+        (RANK_INSTRUCTION + RANK_RELATION_CONTRACT + context_instruction + publication_instruction
+         if result.research_plan is not None else
         (
             "Classify up to max_ranked external signals against the narrative, prioritizing supported "
             'counter-evidence. Return {"rankings": [...], "limitations": [...]}. '
@@ -1190,11 +1470,26 @@ async def _run_stages(
             + RANK_RELATION_CONTRACT
             + context_instruction
             + publication_instruction
+        )
         ),
         {
             "narrative": narrative_input,
             "evidence": cited_evidence,
             "signals": [_ranking_signal_payload(s) for s in candidates],
+            **({
+                "research_question": asdict(result.research_plan),
+                "exploratory_hypotheses": {
+                    "implicit_assumptions": narrative.implicit_assumptions,
+                    "why_worth_challenging": narrative.why_worth_challenging,
+                    "status": "unverified interpretation, not source facts or reader beliefs",
+                },
+                "original_document_context": (result.documents[0].snapshot.text
+                    if result.documents and result.documents[0].snapshot.status == "complete"
+                    and result.documents[0].snapshot.text
+                    and len(result.documents[0].snapshot.text) <= 3000 else None),
+                "document_coverage": [document_coverage(item.snapshot)
+                                      for item in result.documents if item.role == "external"],
+            } if result.research_plan is not None else {}),
             "max_ranked": maximum_ranked,
             "language": config.radar.language,
             **publication_context,
@@ -1203,13 +1498,14 @@ async def _run_stages(
         execution=execution,
         admission_deadline=admission_deadline,
     )
-    ranking = _parse_rankings(text, admission, narrative)
+    ranking = _parse_rankings(text, admission, narrative, research=result.research_plan is not None)
     result.ranked_signals = ranking.ranked_signals
     result.ranking_audit = ranking.audit
     result.limitations.extend(ranking.limitations)
     _finish_stage(diagnostic, len(result.ranked_signals))
     result.status = (
-        "incomplete" if failed or diagnostic.omitted_count else "complete" if result.ranked_signals else "empty"
+        "incomplete" if failed or document_failed or diagnostic.omitted_count
+        else "complete" if result.ranked_signals else "empty"
     )
 
 
@@ -1233,7 +1529,7 @@ async def run_evidence_irritator(
     The caller must persist primary delivery before invoking this optional stage.
     """
     result = EvidenceIrritatorResult(
-        1,
+        2 if delivered is not None else 1,
         bundle.bundle_id,
         diagnostics=[
             StageDiagnostic(stage) for stage in ("evidence", "narrative", "queries", "search", "validation", "ranking")
@@ -1271,6 +1567,7 @@ async def run_evidence_irritator(
     else:
         bounded_execution = ModelExecution()
     deadline = time.monotonic() + min(timeout_seconds, MAX_SECONDS)
+    research_budget = SourceRequestBudget() if delivered is not None else None
     try:
         async with asyncio.timeout_at(deadline):
             if delivered is not None:
@@ -1283,6 +1580,7 @@ async def run_evidence_irritator(
                     execution=bounded_execution,
                     admission_deadline=deadline if source_evidence is not None else None,
                     delivered=delivered,
+                    research_budget=research_budget,
                 )
             elif source_evidence is None:
                 await _run_stages(bundle, bounded_config, client, result, execution=bounded_execution)
@@ -1316,4 +1614,7 @@ async def run_evidence_irritator(
             )
         else:
             result.status = "incomplete" if result.narratives else "error"
+    finally:
+        if research_budget is not None:
+            result.source_request_starts = research_budget.requests_started
     return result
