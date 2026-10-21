@@ -506,6 +506,15 @@ introduced. Frozen v1 editions keep their exact old payloads and do not call the
 current synthesis parser. See the [draft amendment](decisions/0005-optional-presentation-translation.md#draft-source-specific-v2-amendment-55)
 for the source-specific observation and finite-acceptance contract.
 
+New v2 requests bind the strict provider schema to the captured EN/RU language.
+Stored controls and the complete physical request use the same specialized
+format. Exact historical generic-v2 captures remain readable, including reserved,
+invalid, abstained and valid records; their bytes and disposition are unchanged.
+They do not match the new complete request and therefore take the existing
+`cache_mismatch` omission path without another call. New records cannot write the
+generic format, and the shared generation owner rejects it. Prompt/result and
+attempt-envelope versions remain unchanged; no record is migrated or removed.
+
 The complete baseline, including an eligible pending supplement, is preflighted
 before optional work. Admitted result, source bindings and disposition are additive
 hash-bound ready metadata; the sender acquires no synthesis parser or mandatory

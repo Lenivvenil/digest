@@ -669,7 +669,9 @@ async def complete(
             provider_override.name, provider_override.model, reasoning_effort, response_format,
         )
         if (temperature != 0 or max_output_tokens != 4096
-                or response_format != groq_synthesis_response_format()):
+                or response_format not in (
+                    groq_synthesis_response_format("en"), groq_synthesis_response_format("ru"),
+                )):
             raise ValueError("Synthesis requires its exact response schema, temperature 0 and output ceiling 4096")
     if reasoning_effort is not None or response_format is not None:
         if role not in {LLMRole.REVIEW_EVIDENCE, LLMRole.SYNTHESIZE_EVIDENCE} or provider_override is None:

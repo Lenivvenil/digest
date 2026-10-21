@@ -1171,6 +1171,86 @@ async def _synthesis_completion(role: Any, messages: list[dict[str, str]], confi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "ru"])
+async def test_synthesis_captured_language_schema_matches_actual_http_json(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, language: str,
+) -> None:
+    from digest.adapters.models.synthesis import groq_synthesis_response_format
+    from digest.application.synthesis import _request, prepare_synthesis
+
+    config, accepted = _synthesis_accepted(monkeypatch, language=language)
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-test-key")
+    day = datetime.now(timezone.utc).date()
+    expected, _ = _request(accepted, day, config, ".cache")
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post("https://api.groq.com/openai/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json={
+                "choices": [{
+                    "message": {"content": _synthesis_response(expected["messages"])}, "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 800, "completion_tokens": 400},
+            }),
+        )
+        outcome = await prepare_synthesis(
+            accepted, config, publication_date=day, execution=ModelExecution(), allow_new=True,
+        )
+    assert outcome.status == "comparison"
+    assert route.call_count == 1
+    captured = json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())
+    assert json.loads(route.calls[0].request.content) == captured["request_body"] == expected["request_body"]
+    assert captured["controls"]["response_format"] == groq_synthesis_response_format(language)
+    assert captured["request_body"]["response_format"] == captured["controls"]["response_format"]
+    assert json.loads(captured["messages"][1]["content"])["publication_language"] == language
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["valid", "invalid", "abstained", "reserved"])
+async def test_legacy_v2_synthesis_capture_is_readable_but_never_replayed(
+    setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, status: str,
+) -> None:
+    from digest._serialization import canonical_json_bytes
+    from digest.adapters.models.synthesis import _legacy_groq_synthesis_response_format
+    from digest.adapters.storage import synthesis as storage
+    from digest.application.synthesis import _request, prepare_synthesis
+    from digest.domain.editorial.synthesis import validate_response
+    from digest.translation import protected_content_equal
+
+    config, accepted = _synthesis_accepted(monkeypatch)
+    day = datetime.now(timezone.utc).date()
+    record, bindings = _request(accepted, day, config, ".cache")
+    if status != "reserved":
+        text = "{}" if status == "invalid" else _synthesis_response(record["messages"], abstained=status == "abstained")
+        result = None if status == "invalid" else validate_response(
+            text, "stop", record["publication_language"], bindings, protected_content_equal,
+        )
+        record = storage.terminal_record(
+            record, status=status, completed_at=record["started_at"], response_text=text,
+            finish_reason="stop", result=result,
+            reason={"valid": "completed", "invalid": "response_invalid", "abstained": "abstained"}[status],
+        )
+    legacy = _legacy_groq_synthesis_response_format()
+    record["request_body"]["response_format"] = legacy
+    record["controls"]["response_format"] = legacy
+    record["request_sha256"] = hashlib.sha256(canonical_json_bytes(record["request_body"])).hexdigest()
+    record["sha256"] = hashlib.sha256(canonical_json_bytes({
+        key: value for key, value in record.items() if key != "sha256"
+    })).hexdigest()
+    sidecar = Path(".cache/synthesis", accepted.sha256 + ".json")
+    sidecar.parent.mkdir()
+    sidecar.write_bytes(canonical_json_bytes(record))
+    before = sidecar.read_bytes()
+    assert storage.load_attempt(accepted.sha256, ".cache") == record
+    complete = AsyncMock(side_effect=AssertionError("Legacy capture cannot dispatch again"))
+    monkeypatch.setattr("digest.application.synthesis.complete", complete)
+    outcome = await prepare_synthesis(
+        accepted, config, publication_date=day, execution=ModelExecution(), allow_new=True,
+    )
+    assert (outcome.status, outcome.reason) == ("skipped", "cache_mismatch")
+    assert sidecar.read_bytes() == before
+    complete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("withhold_after_freeze", [False, True])
 async def test_synthesis_is_bound_archived_and_frozen_without_sender_dependency(
     setup: tuple[SimpleNamespace, PreparationSnapshot], monkeypatch: pytest.MonkeyPatch, withhold_after_freeze: bool,

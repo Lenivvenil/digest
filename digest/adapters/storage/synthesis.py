@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from digest._serialization import canonical_json_bytes, restore_dataclass, unique_object
-from digest.adapters.models.synthesis import groq_synthesis_response_format
+from digest.adapters.models.synthesis import _legacy_groq_synthesis_response_format, groq_synthesis_response_format
 from digest.adapters.storage.checkpoints import safe_checkpoint_path
 from digest.domain.editorial.synthesis import (
     MAX_OUTPUT_TOKENS,
@@ -74,9 +74,9 @@ def _route() -> dict[str, str]:
     return {"provider": "groq", "model": "openai/gpt-oss-120b"}
 
 
-def _controls() -> dict[str, Any]:
+def _controls(publication_language: str) -> dict[str, Any]:
     return {"temperature": 0, "max_output_tokens": MAX_OUTPUT_TOKENS, "max_retries": 0,
-            "reasoning_effort": "low", "response_format": groq_synthesis_response_format()}
+            "reasoning_effort": "low", "response_format": groq_synthesis_response_format(publication_language)}
 
 
 def new_record(
@@ -96,7 +96,7 @@ def new_record(
         "publication_language": publication_language, "request_body": request_body,
         "request_sha256": _digest(request_body) if request_body is not None else None,
         "messages": messages, "configured_route": _route() if request_body is not None else None,
-        "controls": _controls() if request_body is not None else None, "status": status,
+        "controls": _controls(publication_language) if request_body is not None else None, "status": status,
         "started_at": started_at, "completed_at": started_at if status == "skipped" else None,
         "response_sha256": None, "response_text": None, "reported_model": None, "finish_reason": None,
         "usage": {}, "result": None, "result_sha256": None, "reason": reason,
@@ -160,8 +160,12 @@ def _validate_request(record: dict[str, Any], bindings: tuple[EvidenceBinding, .
                 ))):
             raise ValueError("Missing synthesis request binding.")
         return
+    controls = _controls(record["publication_language"])
+    if canonical_json_bytes(record["controls"]) != canonical_json_bytes(controls):
+        # Historical generic-v2 captures remain readable, never a format for new dispatch.
+        controls["response_format"] = _legacy_groq_synthesis_response_format()
     if (not isinstance(body, dict) or record["configured_route"] != _route()
-            or canonical_json_bytes(record["controls"]) != canonical_json_bytes(_controls())):
+            or canonical_json_bytes(record["controls"]) != canonical_json_bytes(controls)):
         raise ValueError("Invalid synthesis configured route or controls.")
     expected_messages = build_messages(
         accepted_sha256=record["accepted_sha256"], publication_date=record["publication_date"],
@@ -171,7 +175,7 @@ def _validate_request(record: dict[str, Any], bindings: tuple[EvidenceBinding, .
     expected_body = {
         "model": _route()["model"], "messages": expected_messages, "temperature": body.get("temperature"),
         "max_completion_tokens": MAX_OUTPUT_TOKENS, "reasoning_effort": "low",
-        "response_format": groq_synthesis_response_format(),
+        "response_format": controls["response_format"],
     }
     if (canonical_json_bytes(body) != canonical_json_bytes(expected_body)
             or type(body["temperature"]) not in {int, float} or body["temperature"] != 0
