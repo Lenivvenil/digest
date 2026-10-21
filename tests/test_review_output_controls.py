@@ -90,9 +90,9 @@ async def test_other_groq_model_retains_ordinary_review_wire() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("defect", ["override", "provider", "model", "reasoning", "schema", "schema_name",
-                                     "schema_body", "temperature", "output", "role"])
+                                     "schema_body", "legacy_schema", "temperature", "output", "role"])
 async def test_synthesis_role_requires_its_exact_explicit_controlled_route(defect: str) -> None:
-    from digest.adapters.models.synthesis import groq_synthesis_response_format
+    from digest.adapters.models.synthesis import _legacy_groq_synthesis_response_format, groq_synthesis_response_format
     from digest.config import ProviderConfig
     from digest.llm import LLMRole, complete
 
@@ -101,7 +101,7 @@ async def test_synthesis_role_requires_its_exact_explicit_controlled_route(defec
     kwargs = {
         "provider_override": ProviderConfig("groq", "openai/gpt-oss-120b"),
         "reasoning_effort": "low",
-        "response_format": groq_synthesis_response_format(),
+        "response_format": groq_synthesis_response_format("ru"),
         "temperature": 0,
         "max_output_tokens": 4096,
     }
@@ -118,6 +118,8 @@ async def test_synthesis_role_requires_its_exact_explicit_controlled_route(defec
         kwargs["response_format"]["json_schema"]["name"] = "other"
     elif defect == "schema_body":
         kwargs["response_format"]["json_schema"]["schema"] = {"type": "object"}
+    elif defect == "legacy_schema":
+        kwargs["response_format"] = _legacy_groq_synthesis_response_format()
     elif defect == "temperature":
         kwargs["temperature"] = 0.1
     elif defect == "output":
@@ -132,7 +134,8 @@ async def test_synthesis_role_requires_its_exact_explicit_controlled_route(defec
 
 
 @pytest.mark.asyncio
-async def test_synthesis_controlled_wire_shares_existing_state_without_generic_resolution() -> None:
+@pytest.mark.parametrize("language", ["en", "ru"])
+async def test_synthesis_controlled_wire_shares_existing_state_without_generic_resolution(language: str) -> None:
     from digest.adapters.models.synthesis import groq_synthesis_response_format
     from digest.config import ProviderConfig
     from digest.llm import LLMRole, _providers_for_role, complete
@@ -144,7 +147,7 @@ async def test_synthesis_controlled_wire_shares_existing_state_without_generic_r
     state.requests_attempted = 2
     state.request_limit = 3
     provider = ProviderConfig("groq", "openai/gpt-oss-120b")
-    response_format = groq_synthesis_response_format()
+    response_format = groq_synthesis_response_format(language)
     with pytest.raises(ValueError, match="no generic role route"):
         _providers_for_role(LLMRole.SYNTHESIZE_EVIDENCE, cfg)
     with patch("digest.llm._call_provider", AsyncMock(return_value=("{}", {"finish_reason": "stop"}))) as call:

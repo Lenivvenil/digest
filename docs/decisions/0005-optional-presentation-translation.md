@@ -410,6 +410,28 @@ ready payloads, including v1 result metadata, remain opaque frozen bytes for the
 sender and do not acquire a v2 parser or sidecar dependency. A new eligible
 ordinary preparation may use v2 only after separately authorized adoption.
 
+#### Language-bound wire schema
+
+New v2 requests specialize the existing strict response schema to the captured
+publication language. Russian comparisons require non-null presentation
+observations and prose; English comparisons require null presentation fields.
+The response language is fixed to that request. Abstention remains available.
+The complete request, stored controls and physical dispatch use the same format;
+the shared model owner rejects the historical generic format for new calls.
+
+The old generic-v2 format remains readable only through exact retained-record
+validation. Its body and controls must agree, and every other binding is still
+checked. These records remain byte-identical but are not reusable for a new
+language-specialized request: the existing full-request mismatch omits them
+without a provider call. No migration, new attempt identity, prompt/result version
+change, parser relaxation or frozen-payload rewrite is introduced.
+
+This removes a wire shape that admitted missing Russian fields despite the
+existing local requirement. It does not enforce semantic support or successful
+translation. Prose length, protected-content and source-binding checks remain
+local acceptance gates; no additional provider schema keywords are assumed.
+Publication containment and independent ordinary-output review remain required.
+
 #### Finite acceptance and residual semantic failures
 
 Synthetic tests reject source-ID replacement, model-supplied quote/field overrides, reordered

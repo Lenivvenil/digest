@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from digest._serialization import canonical_json_bytes
-from digest.adapters.models.synthesis import groq_synthesis_response_format
+from digest.adapters.models.synthesis import _legacy_groq_synthesis_response_format, groq_synthesis_response_format
 from digest.adapters.storage import synthesis as storage
 from digest.domain.editorial.reviews import EvidenceItem
 from digest.domain.editorial.synthesis import (
@@ -124,7 +124,7 @@ def messages(bindings: tuple[EvidenceBinding, ...], language: str = "ru") -> lis
 def request(bindings: tuple[EvidenceBinding, ...], language: str = "ru") -> dict[str, Any]:
     return openai_request_body(
         "openai/gpt-oss-120b", messages(bindings, language), 0, 4096, groq=True,
-        reasoning_effort="low", response_format=groq_synthesis_response_format(),
+        reasoning_effort="low", response_format=groq_synthesis_response_format(language),
     )
 
 
@@ -384,8 +384,9 @@ def test_pure_protected_helper_keeps_exact_translation_multisets() -> None:
         assert protected_content_equal(original, translated) == (_invariants(original) == _invariants(translated))
 
 
-def test_provider_schema_uses_only_existing_supported_subset() -> None:
-    response_format = groq_synthesis_response_format()
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_provider_schema_uses_only_existing_supported_subset(language: str) -> None:
+    response_format = groq_synthesis_response_format(language)
     assert response_format["json_schema"]["name"] == "selected_source_comparison_v2"
     assert response_format["json_schema"]["strict"] is True
 
@@ -405,6 +406,65 @@ def test_provider_schema_uses_only_existing_supported_subset() -> None:
                     if key in value:
                         inspect(value[key])
     inspect(response_format["json_schema"]["schema"])
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_provider_schema_requires_the_configured_language_without_losing_abstention(language: str) -> None:
+    schema = groq_synthesis_response_format(language)["json_schema"]["schema"]
+    assert schema["properties"]["publication_language"]["enum"] == [language]
+    comparison, null_comparison = schema["properties"]["comparison"]["anyOf"]
+    assert null_comparison == {"type": "null"}  # Abstention still carries no comparison.
+    fields = comparison["properties"]
+    observation = fields["supports"]["items"]["properties"]["presentation_observation"]
+    if language == "ru":
+        assert observation == {"type": "string"}
+        assert fields["presentation"] == fields["canonical"]
+        assert fields["presentation"]["type"] == "object"
+    else:
+        assert observation == fields["presentation"] == {"type": "null"}
+
+
+@pytest.mark.parametrize("language", ["", "fr", "RU"])
+def test_provider_schema_rejects_unsupported_language(language: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported synthesis publication language"):
+        groq_synthesis_response_format(language)
+
+
+def test_legacy_reader_schema_preserves_the_pre_specialization_format() -> None:
+    assert hashlib.sha256(canonical_json_bytes(_legacy_groq_synthesis_response_format())).hexdigest() == (
+        "714fb91e64965ebfb970c05b02f2f2be8a83b713068c53adc3437ccacdb503d0"
+    )
+
+
+def test_new_record_cannot_write_a_legacy_generic_request(bindings: tuple[EvidenceBinding, ...]) -> None:
+    body = request(bindings)
+    body["response_format"] = _legacy_groq_synthesis_response_format()
+    with pytest.raises(ValueError, match="complete request binding mismatch"):
+        storage.new_record(
+            accepted_sha256="1" * 64, publication_date="2026-10-13", report_sha256="2" * 64,
+            bundle_id="3" * 64, bindings=bindings, publication_language="ru", request_body=body,
+            status="reserved", started_at="2026-10-13T00:00:00+00:00",
+        )
+
+
+@pytest.mark.parametrize("mutation", ["other_language", "legacy_body", "legacy_controls", "unknown_schema"])
+def test_record_rejects_mixed_or_unrecognized_schema_controls(
+    bindings: tuple[EvidenceBinding, ...], mutation: str,
+) -> None:
+    record = reservation(bindings)
+    if mutation == "other_language":
+        record["request_body"]["response_format"] = groq_synthesis_response_format("en")
+        record["controls"]["response_format"] = groq_synthesis_response_format("en")
+    elif mutation == "legacy_body":
+        record["request_body"]["response_format"] = _legacy_groq_synthesis_response_format()
+    elif mutation == "legacy_controls":
+        record["controls"]["response_format"] = _legacy_groq_synthesis_response_format()
+    else:
+        record["request_body"]["response_format"]["json_schema"]["schema"]["properties"]["status"]["enum"] = ["other"]
+        record["controls"]["response_format"] = deepcopy(record["request_body"]["response_format"])
+    record["request_sha256"] = hashlib.sha256(canonical_json_bytes(record["request_body"])).hexdigest()
+    with pytest.raises(ValueError):
+        storage._validate(reseal(record), "1" * 64)
 
 
 def test_retained_reservation_terminal_and_skip_lifecycle(

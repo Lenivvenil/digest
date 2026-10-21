@@ -154,14 +154,15 @@ def _request(
     accepted: AcceptedPreparation, publication_date: date, config: Any, cache_dir: str | Path,
 ) -> tuple[dict[str, Any], tuple[EvidenceBinding, ...]]:
     report_sha, bundle_id, bindings = resolve_bindings(accepted, cache_dir)
+    language = _language(config)
     try:
         messages = build_messages(
             accepted_sha256=accepted.sha256, publication_date=publication_date.isoformat(),
-            report_sha256=report_sha, bundle_id=bundle_id, publication_language=_language(config), bindings=bindings,
+            report_sha256=report_sha, bundle_id=bundle_id, publication_language=language, bindings=bindings,
         )
         payload = openai_request_body(
             _ROUTE[1], messages, 0, 4096, groq=True, reasoning_effort="low",
-            response_format=groq_synthesis_response_format(),
+            response_format=groq_synthesis_response_format(language),
         )
         validate_request_bounds(messages, payload)
     except ValueError as exc:
@@ -169,7 +170,7 @@ def _request(
     record = storage.new_record(
         accepted_sha256=accepted.sha256, publication_date=publication_date.isoformat(),
         report_sha256=report_sha, bundle_id=bundle_id, bindings=bindings,
-        publication_language=_language(config), request_body=payload, status="reserved", started_at=_instant(),
+        publication_language=language, request_body=payload, status="reserved", started_at=_instant(),
     )
     return record, bindings
 
@@ -240,7 +241,7 @@ async def _dispatch(
                 LLMRole.SYNTHESIZE_EVIDENCE, record["messages"], bounded, execution=shared,
                 temperature=0, provider_override=ProviderConfig(*_ROUTE), max_output_tokens=4096,
                 request_timeout_seconds=deadline - time.monotonic(), reasoning_effort="low",
-                response_format=groq_synthesis_response_format(),
+                response_format=groq_synthesis_response_format(record["publication_language"]),
             )
     except asyncio.CancelledError:
         _failed(record, "cancelled", cache_dir)

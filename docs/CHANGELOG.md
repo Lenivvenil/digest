@@ -16,6 +16,12 @@
   checks do not establish live semantic usefulness or runtime deployment. Refs #77.
 
 ### Fixed
+- Bind new selected-source comparison response schemas to their captured EN/RU
+  language, requiring Russian presentation fields and English null presentation.
+  Preserve exact historical generic-v2 captures as readable, non-reusable
+  evidence without replay or rewrite. Local validation, calls, publication
+  containment and frozen payloads are unchanged; this excludes a known invalid
+  wire shape, not proof of useful or faithful generated analysis. Refs #55.
 - Add optional metadata-only Groq 429 quota diagnostics to failed translation
   sidecars: one recognized dimension and bounded numeric limit/used/requested
   values plus a separate retry hint. Unknown/ambiguous message forms are omitted;
