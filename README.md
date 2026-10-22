@@ -60,6 +60,17 @@ Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATI
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
 separately from ordinary review-led cards.
 
+An explicit, not-yet-deployed [external editorial candidate](docs/OPERATIONS.md#external-editorial-candidate)
+exports source evidence and imports independently accepted publication-language prose
+without calling a model API inside the engine. A draft or per-card pass alone cannot
+be claimed or sent: the exact final composition needs machine-readable editorial
+acceptance. It reuses the prepared delivery protocol rather than adding a sender.
+Versioned native optional content can supply one approved-source closing card and
+one source-bound comparison, subject to existing activation/publication settings
+and acceptance of their exact final placement; historical unvalidated blobs stay withheld.
+This is a reviewable alternative, not a claim of free account entitlement or completed
+[#55](https://github.com/Lenivvenil/digest/issues/55) acceptance.
+
 The owner-only `/bubble` command reports recorded source-inclusion counts and their
 evenness across seven UTC calendar dates. It does not measure viewpoint diversity;
 see the [report's window and limits](docs/OPERATIONS.md#source-inclusion-report).

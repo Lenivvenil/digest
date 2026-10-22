@@ -52,9 +52,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="SHA256 of the externally persisted compact issue reservation")
     parser.add_argument("--prepare-edition", action="store_true",
                         help="Prepare and freeze an edition without claiming or sending it")
-    parser.add_argument("--edition-date", help="Intended UTC publication date YYYY-MM-DD (prepare only)")
+    parser.add_argument("--edition-date", help="Intended UTC publication date YYYY-MM-DD (prepare or native export)")
     parser.add_argument("--edition-phase", choices=("inspect", "claim", "send"),
                         help="Inspect or deliver an already prepared immutable edition")
     parser.add_argument("--ready-sha", help="SHA256 of the remotely persisted ready edition")
     parser.add_argument("--claim-sha", help="SHA256 of the remotely persisted delivery claim")
+    parser.add_argument("--native-phase", choices=("export", "project", "import", "release"),
+                        help="Model-free native editorial handoff; never claims or sends")
+    parser.add_argument("--native-response", help="Exact native writer response JSON path (project only)")
+    parser.add_argument("--native-review", help="Exact independent source review JSON path (project only)")
+    parser.add_argument("--native-packet-sha", help="Retained source packet SHA256 (project or release)")
+    parser.add_argument("--native-acceptance", help="Exact final composition acceptance JSON path (import only)")
+    parser.add_argument("--native-projection-sha", help="Retained composition SHA256 (import only)")
     return parser.parse_args(argv)

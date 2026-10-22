@@ -3,6 +3,19 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Changed
+- Extend the local native-editorial candidate with separately versioned, reviewed
+  closing/comparison values. Preserve exact source approval/credit, per-source
+  observations, accepted-main dependencies, optional publication controls and final
+  composition acceptance without fabricated English/provider records. Reuse exact
+  admitted content for archive and Telegram; older native optional blobs stay withheld.
+  No runtime settings, generation, schedule or deployment changes. Refs #55.
+- Add a local, explicit external-editorial integration candidate: export planned
+  source evidence before provider dispatch, project unchanged source-reviewed
+  cards, and require exact final-composition acceptance before native readiness,
+  claim or send. Reuse archive/rendering and receipt-owned delivery without model
+  calls or fabricated EN/provider provenance. Existing ordinary paths remain;
+  adoption, runtime integration and editorial/free-operation acceptance are open.
+  Refs #55; see the draft ADR0005 amendment.
 - Draft delivered-only question-routed Irritator investigation under
   `question-routed-documents-v2`: preserve the whole selected canonical card field,
   label the research question and possible implications, choose relevant query

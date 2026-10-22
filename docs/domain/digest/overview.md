@@ -56,6 +56,19 @@ sending an already prepared edition.
 The implementation names and persisted records are mapped in
 [Architecture](../../ARCHITECTURE.md#entities-contracts-and-enforcement).
 
+The proposed [external editorial branch](../../decisions/0005-optional-presentation-translation.md#draft-source-authoritative-external-editorial-path-55)
+retains the same source/candidate/article and delivery identities. Its accepted
+publication-language text is canonical directly, rather than a translation of an
+invented English review. A source-review verdict for a card and acceptance of the
+exact final composition are distinct evidence: filtering a failed edition does not
+retroactively pass that edition. The final acceptance can be autonomous and
+machine-readable; no per-edition human gate is introduced. Ordinary provider-review
+records keep their existing meaning and are not fabricated for external work.
+Native optional closing/comparison values bind their own exact source evidence and
+review. A closing is a separately credited article; a comparison contributes no
+article identity and depends only on retained main cards. Omission happens before
+the final composition is accepted, without rewriting the original response verdict.
+
 ### Source-inclusion report read model
 
 `/bubble` describes recorded source-inclusion counts on the seven UTC calendar dates

@@ -18,6 +18,7 @@ from digest.domain.delivery.edition import (
     ChunkReceipt,
     Claim,
     Edition,
+    NativeEdition,
     PreparedArticle,
     Receipts,
     SupplementEdition,
@@ -108,7 +109,7 @@ def load_edition(
     *,
     fresh: bool = False,
 ) -> tuple[Edition, str]:
-    data, digest = read_record(path, expected, allowed_schemas=(1, 2, 3))
+    data, digest = read_record(path, expected, allowed_schemas=(1, 2, 3, 4))
     validate_manifest_record(data, owner, now, fresh=fresh)
     try:
         fields = dict(data)
@@ -121,8 +122,13 @@ def load_edition(
 
             fields["supplement"] = restore_dataclass(data["supplement"], PreparedSupplement)
             return SupplementEdition(**fields), digest
+        if data["schema"] == 4:
+            from digest.adapters.storage.native import validate_native_ready
+
+            validate_native_ready(data)
+            return NativeEdition(**fields), digest
         return Edition(**fields), digest
-    except TypeError as exc:
+    except (TypeError, KeyError, ValueError) as exc:
         raise ValueError("Invalid prepared edition record; publishing blocked.") from exc
 
 

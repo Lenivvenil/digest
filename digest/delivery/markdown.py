@@ -101,6 +101,7 @@ def write_digest(
     source_quotations: dict[str, str] | None = None,
     supplement: SupplementPlacement | None = None,
     synthesis: SynthesisPlacement | None = None,
+    closing_start: int | None = None,
 ) -> Path | None:
     """Write digest markdown file to the configured output directory.
 
@@ -122,6 +123,8 @@ def write_digest(
     frontmatter = _build_frontmatter(date_str, sources_count, articles_count)
     content = f"{frontmatter}\n{summary}\n"
 
+    if closing_start is not None and (not top_articles or not 0 < closing_start < len(top_articles)):
+        raise ValueError("Invalid closing publication position.")
     if top_articles and synthesis is not None:
         if not 0 <= synthesis.before_article <= len(top_articles):
             raise ValueError("Invalid synthesis publication position.")
@@ -139,7 +142,8 @@ def write_digest(
             cursor = position
         content += _build_top_articles_section(top_articles[cursor:], heading=closing_heading)
     elif top_articles:
-        main = top_articles if supplement is None else top_articles[: supplement.before_article]
+        boundary = supplement.before_article if supplement is not None else closing_start
+        main = top_articles if boundary is None else top_articles[:boundary]
         content += _build_top_articles_section(
             main,
             literal_passages=getattr(getattr(config, "reading_brief", None), "enabled", False),
@@ -148,6 +152,8 @@ def write_digest(
         if supplement is not None:
             content += f"\n\n## {supplement_heading}\n\n" + supplement.text + "\n"
             content += _build_top_articles_section(top_articles[supplement.before_article :], heading=closing_heading)
+        elif closing_start is not None:
+            content += _build_top_articles_section(top_articles[closing_start:], heading=closing_heading)
 
     if ranked_signals:
         content += _build_counter_signals_section(ranked_signals)

@@ -69,6 +69,28 @@ abstaining fallback is not automatically accepted no-news. Candidate and categor
 admission keep their distinct rules; the exact [preparation and presentation contract](STATE_AND_EFFECTS.md#preparation-and-presentation)
 owns outcomes, reference checks and write order.
 
+### Explicit external editorial candidate
+
+The proposed [ADR0005 amendment](decisions/0005-optional-presentation-translation.md#draft-source-authoritative-external-editorial-path-55)
+adds a separate export → project → accepted import route. It reuses candidate
+planning before `begin_packet`, without invoking the ordinary provider review or
+changing candidate dispositions. External source-based publication-language prose
+and per-card review produce an immutable proposed composition, not a ready edition.
+An independent machine-readable acceptance must bind that exact final composition
+before native readiness; the prepared sender enforces the binding again.
+
+This path keeps native canonical prose, source evidence and editorial attestations
+distinct from provider-owned `ModelReview`, translation and synthesis records.
+Versioned native optional values retain their own exact source/review bindings:
+a closing is a separate credited article; a comparison is bounded non-article prose
+supported by two retained main cards. Neither invents an English twin or provider
+response. Existing renderers and the final accepted projection own their placement.
+An adopting runtime must own trustworthy handoff, serialized access and remote
+ready/claim durability. No scheduler or vendor adapter is installed by this candidate.
+See the [state contract](STATE_AND_EFFECTS.md#external-editorial-candidate) and
+[operator workflow](OPERATIONS.md#external-editorial-candidate). Adoption and actual
+ordinary-runtime quality/free-operation acceptance remain open.
+
 ## Entities, contracts and enforcement
 
 | Boundary | Rule | Code owner |

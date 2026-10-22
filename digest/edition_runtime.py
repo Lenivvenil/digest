@@ -342,9 +342,24 @@ async def delivery_phase(phase: str, config_path: str, ready_sha: str | None, cl
 
 
 def validate_cli(args: Any) -> None:
+    native = getattr(args, "native_phase", None)
+    native_inputs = ("native_response", "native_review", "native_packet_sha",
+                     "native_acceptance", "native_projection_sha")
+    supplied = {name for name in native_inputs if getattr(args, name, None)}
+    expected = {"export": set(), "project": set(native_inputs[:3]), "import": set(native_inputs[3:]),
+                "release": {"native_packet_sha"}}
+    if native:
+        if supplied != expected[native] or any((args.prepare_edition, args.edition_phase, args.check,
+                args.discover, args.dry_run, args.radar_only, args.reserve_issue, args.issue_reservation_sha,
+                args.ready_sha, args.claim_sha, args.discovery_phase != "all", args.discovery_pending_sha,
+                args.discovery_delivery_sha)):
+            raise ValueError("Native phases require only their exact inputs and cannot enter another workflow.")
+    elif supplied:
+        raise ValueError("Native input paths/hashes require an explicit native phase.")
     if args.edition_date:
-        if not args.prepare_edition or date.fromisoformat(args.edition_date).isoformat() != args.edition_date:
-            raise ValueError("An intended UTC edition date requires --prepare-edition and YYYY-MM-DD.")
+        if (not (args.prepare_edition or native == "export")
+                or date.fromisoformat(args.edition_date).isoformat() != args.edition_date):
+            raise ValueError("An intended UTC edition date requires prepare/native export and YYYY-MM-DD.")
         if date.fromisoformat(args.edition_date) < datetime.now(timezone.utc).date():
             raise ValueError("Cannot prepare an edition for an elapsed UTC publication day.")
     if args.prepare_edition or args.edition_phase:

@@ -27,6 +27,7 @@ from digest.domain.delivery.edition import (
     ChunkReceipt,
     Claim,
     Edition,
+    NativeEdition,
     PreparedArticle,
     Receipts,
     SupplementEdition,
@@ -85,6 +86,7 @@ def prepare_edition(
     supplement: PendingSupplement | None = None,
     current_review_checkpoint: str = "",
     synthesis: SynthesisPlacement | None = None,
+    native_binding: tuple[dict[str, str], dict[str, str]] | None = None,
 ) -> tuple[Path, str]:
     """Freeze an edition once; return the file and hash the runtime must persist."""
     instant = _instant(now)
@@ -183,6 +185,16 @@ def prepare_edition(
                 supplement.fragment.checkpoint: supplement.fragment.origin.checkpoint_sha256,
             },
         )
+    if native_binding is not None:
+        if supplement is not None:
+            raise ValueError("Native and provider supplement contracts cannot be combined.")
+        data = NativeEdition(
+            **{**asdict(data), "schema": 4, "articles": data.articles},
+            native_projection=native_binding[0], native_acceptance=native_binding[1],
+        )
+        from digest.adapters.storage.native import validate_native_ready
+
+        validate_native_ready(asdict(data))
     data = storage.freeze_hashes(data)
     storage.validate_manifest_record(asdict(data), owner, instant, fresh=False)
     digest = storage.write_record(path, asdict(data))

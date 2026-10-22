@@ -317,6 +317,18 @@ Managed `--discovery-phase prepare|send` and its pending/delivery hashes also re
 [separate proposal persistence](OPERATIONS.md#source-discovery).
 Neither operation is made safe by a local hash alone.
 
+The not-yet-deployed [external editorial candidate](OPERATIONS.md#external-editorial-candidate)
+adds explicit `--native-phase export|project|import|release` commands and file/hash arguments.
+There is no new default model route or automatic activation. The existing configured
+publication language supplies reader labels; imported source-authoritative prose is
+canonical directly in that language and never uses the ordinary translation cache.
+Compact mode, current source policy and applicable optional publication switches
+still apply. See the proposed ADR0005 amendment before adopting this separate path.
+Native closing requires `closing.enabled`, an exact approved source binding and
+supported source credit. Native comparison requires both `synthesis.enabled` and
+`synthesis.publish`; a retained proposal or review cannot turn either switch on.
+No configuration or defaults are changed by this candidate.
+
 ## Optional selected-source comparison
 
 `synthesis.enabled: true` opts ordinary prepared compact RSS review publication
