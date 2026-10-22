@@ -51,6 +51,9 @@ async def _run(
 
     if prepare_only and (dry_run or radar_only):
         raise ValueError("Edition preparation cannot be combined with preview modes.")
+    from digest.adapters.storage.native import block_pending
+
+    block_pending()
     started_at = time.monotonic()
     config = load_config(config_path)
     execution = ModelExecution()

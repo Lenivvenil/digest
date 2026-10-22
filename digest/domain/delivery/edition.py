@@ -15,6 +15,7 @@ from digest.domain.editorial.summaries import ArticleSummary
 SCHEMA_VERSION = 1
 READY_SCHEMA_VERSION = 2
 SUPPLEMENT_SCHEMA_VERSION = 3
+NATIVE_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,12 @@ class _Edition:
 class SupplementEdition(_Edition):
     supplement: PreparedSupplement
     current_review_checkpoint: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class NativeEdition(_Edition):
+    native_projection: dict[str, str]
+    native_acceptance: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -108,7 +115,7 @@ def validate_manifest(
     fresh: bool = True,
 ) -> None:
     try:
-        if type(data.get("schema")) is not int or data["schema"] not in (1, 2, 3):
+        if type(data.get("schema")) is not int or data["schema"] not in (1, 2, 3, 4):
             raise ValueError
         if data["content_sha256"] != content_sha256 or data["owner_sha256"] != owner_sha256:
             raise ValueError
@@ -174,6 +181,12 @@ def validate_manifest(
         for prefix, digest in (("canonical", canonical_sha256), ("presentation", presentation_sha256)):
             if data[f"{prefix}_sha256"] != digest:
                 raise ValueError
+        if data["schema"] != NATIVE_SCHEMA_VERSION and any(
+            marker in metadata
+            for metadata in (data["canonical_metadata"], data["presentation_metadata"])
+            for marker in ("native_editorial", "external_editorial")
+        ):
+            raise ValueError("Native editions require an enforced acceptance schema.")
         for reference, digest in data["checkpoint_refs"].items():
             validate_checkpoint_reference(reference, digest)
         if data["schema"] == SUPPLEMENT_SCHEMA_VERSION:
@@ -322,7 +335,7 @@ def validate_dispatch_identity(data: Edition) -> None:
 
 
 def project_result(data: Edition, receipts: Receipts) -> IssueDeliveryResult:
-    if data.schema not in (1, 2, 3):
+    if data.schema not in (1, 2, 3, 4):
         raise ValueError("Unsupported prepared edition schema.")
     return project_issue_coverage(
         (

@@ -453,3 +453,108 @@ Review every source observation, the connection, material qualifications and
 language attribution. Preserve that evidence privately. This finite acceptance
 path does not guarantee all future model output, add calls/retries or authorize
 a live request, release, runtime change or #55 closure from offline tests.
+
+## Draft source-authoritative external editorial path (#55)
+
+**Status: local integration candidate for review; not adopted or deployed.**
+
+### Problem and chosen boundary
+
+Translation cannot repair a factual error already present in the canonical review
+reason. Retained source-based native-editor trials demonstrate a possible alternative,
+not a universally reliable model or a completed ordinary-runtime acceptance. A later
+unattended shadow also retained a rejected card. That failed output is not rewritten
+or retroactively passed by filtering its accepted cards.
+
+This explicit alternative exports a planned source packet, accepts externally
+produced editorial work and freezes an independently accepted final composition.
+It uses the existing collector, source policy, candidate evidence, reader renderers,
+archive and prepared delivery. It adds no provider gateway, model calls, credentials,
+scheduler, retries or automatic regeneration. Ordinary model-review preparation and
+its translation rules remain unchanged when this path is not explicitly selected.
+
+The external editor writes directly in the requested publication language. Its
+accepted prose is canonical in that language: Russian work has no invented English
+twin, translation event, API response, model name or token usage. Source titles,
+links, literal quotations, full occurrences and article/vote identities remain
+original. This is a separate source-authoritative branch, not a reinterpretation of
+`radar.language` or the existing translation cache.
+
+### Local lifecycle and acceptance
+
+1. Export after current source-policy reconciliation and planning, before
+   `begin_packet`. Preserve candidate decisions and unresolved work. A retained
+   provider report is not relabeled as an unattempted external packet.
+2. Retain one exact pending handoff with the owner, publication date, source packet
+   and immutable occurrence bindings. Resume exact work; conflicting or corrupt
+   active state holds rather than replacing evidence or causing another generation.
+   An explicit exact-hash release may end all-rejected or expired work while keeping
+   an immutable release record, all evidence and unresolved candidates. It cannot
+   bypass active delivery or authorize a new generation; scheduling is separate.
+3. Project an external response using complete, exact-text per-card source-review
+   verdicts. Retain accepted prose unchanged and in order; reject or unresolved
+   items do not acquire editorial dispositions or delivery evidence.
+4. Freeze the proposed final composition separately from ready state. Bind the
+   canonical and presented cards, source credits/date notices, optional blocks,
+   rendered payloads/coverage, owner/date and source/response/review anchors.
+5. Require a separate machine-readable `accept` verdict on those exact projection
+   bytes before readiness. This can be produced autonomously by an independent
+   editorial worker; it is not a new per-edition human-approval requirement.
+6. A distinct native-ready schema enforces acceptance and exact projection/evidence
+   bindings at restoration, claim and send. Existing ready/claim persistence barriers,
+   receipt ownership and replay rules remain. Earlier unapproved local native drafts
+   are not promoted merely because their shape resembles a legacy ready edition.
+
+Distinct execution-reference strings and matching hashes do not authenticate the
+writer or reviewer, prove their independence, or establish factual truth. The managed
+runtime must supply trustworthy artifacts and expected hash anchors. The engine
+enforces the explicit acceptance contract; editorial quality still needs source review.
+
+### Optional content and operating constraints
+
+The initial main-only candidate remains an unchanged reviewed checkpoint. Its v1
+source/response and v2 review artifacts do not gain optional publication semantics
+retroactively. New packet v2, response v2 and review v3 explicitly introduce native
+optional content with captured policy and exact optional-object review bindings.
+Existing provider-owned closing and canonical-EN comparison records remain unchanged;
+the native branch does not fabricate them or silently reinterpret their language.
+
+A native closing is at most one separate article in addition to the main-card cap,
+never an alias of a proposed or rejected main card. It requires an exact captured
+source occurrence, current approved feed binding and supported source credit. Its
+own review must accept the exact prose. A closing cannot make an all-main-rejected
+edition ready, and missing eligibility or safe credited layout omits only the closer.
+
+A native comparison contains two source-specific observations, an interpretation
+and an optional material qualification, all canonical in the publication language.
+The engine binds each observation to its exact retained occurrence and complete
+excerpt; it never asks the writer to invent, clip or relabel the supporting evidence.
+The two distinct retained source identities must belong to accepted main cards in
+their displayed order. Distinct identities do not prove independent publishers.
+Review binds the complete proposed object and checks each observation against its
+own source, then the relationship and material qualifications against both.
+
+Comparison publication requires the existing `synthesis.enabled` and
+`synthesis.publish` controls. The engine uses the existing bounded optional text
+placement without article/vote identity, preserves baseline article chunk obligations
+and source credits, and omits comparison if it cannot fit safely. Closing follows
+the main cards; any admitted comparison precedes closing. Rejected or ineligible
+optional content never removes accepted main cards or retroactively passes the
+original response. All omissions occur before the exact final-composition verdict.
+
+The Markdown archive and Telegram rendering use the same admitted cards and
+comparison prose. Enabled archive failure still prevents readiness and retains
+resumable evidence. These contracts enable a native analytical result; structural
+tests and optional omission alone do not establish issue #55's positive B acceptance.
+
+The adapter contract is provider-neutral. D-01 says “Remain a zero-incremental-spend
+experiment; do not depend exclusively on one model vendor.” It does not require
+simultaneously active vendors. An interchangeable interface reduces architectural
+lock-in but does not prove a second usable route, free entitlement, capacity or
+unattended reliability. No unverified-cost generation or paid fallback is introduced.
+
+Owner review/adoption and runtime integration remain separate from this draft.
+Existing schedules, supplementary investigation, discovery, configuration and saved
+production state are unchanged. The native branch is not a silent retirement of
+those product capabilities. Issue #55 still requires its independent A/B/C evidence,
+including an applicable ordinary edition and the actual free operating disposition.

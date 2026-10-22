@@ -77,6 +77,10 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         from digest.edition_runtime import validate_cli
         validate_cli(args)
+        if args.native_phase:
+            from digest.application.native import native_phase
+
+            return await native_phase(args)
         if args.edition_phase:
             from digest.edition_runtime import delivery_phase
             return await delivery_phase(args.edition_phase, args.config, args.ready_sha, args.claim_sha)

@@ -120,7 +120,7 @@ def _candidate_setup(cache_dir: str) -> CandidatePool:
     )
 
 
-def _candidate_inputs(
+def plan_candidate_inputs(
     pool: CandidatePool,
     run_config: Config,
     config: Config,
@@ -129,11 +129,11 @@ def _candidate_inputs(
     collection_failed: bool,
     *,
     trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
-) -> tuple[CandidateWork | EmptyWork, dict[str, list[Article]]]:
+) -> tuple[CandidateWork | EmptyWork, dict[str, list[Article]], set[str]]:
+    """Plan before begin_packet; callers explicitly own dispatch or native export."""
     progress, inventory, delivered = pool.progress, pool.inventory, pool.delivered
     from digest.adapters.storage.candidate_progress import MAX_BYTES, progress_size
-    from digest.application.candidate_lifecycle import checkpoint_candidates, ensure_report_accounting
-    from digest.application.candidate_review import begin_packet, merge_candidates, plan_packet
+    from digest.application.candidate_review import merge_candidates, plan_packet
     from digest.domain.editorial.candidate_policy import packet_articles, pending_completed_report
     from digest.radar import AllFeedsFailedError
     from digest.radar.collector import _prune_cache
@@ -161,12 +161,6 @@ def _candidate_inputs(
         if report is not None
         else plan_packet(progress, config, trial_sources=trial_sources)
     )
-    if packet is not None and report is None:
-        begin_packet(progress, packet, cache_dir, skipped_empty_reports=deferred)
-    else:
-        checkpoint_candidates(progress, cache_dir, skipped_empty_reports=deferred)
-        if report is not None:
-            ensure_report_accounting(progress, report, cache_dir)
     logging.getLogger(__name__).info(
         "Candidate accounting: %d registered, %d eligible, %d never planned, %d technical pending, "
         "%d unselected without editorial reason, %d metadata not-selected, %d duplicates; next packet %d items",
@@ -186,7 +180,29 @@ def _candidate_inputs(
     articles = packet_articles(packet) if packet is not None else {}
     if collection_failed and packet is None:
         raise AllFeedsFailedError("All feeds failed and no eligible saved candidate packet is available.")
-    return (CandidateWork(progress, packet) if packet is not None else EmptyWork.NO_CANDIDATES), articles
+    return (CandidateWork(progress, packet) if packet is not None else EmptyWork.NO_CANDIDATES), articles, deferred
+
+
+def _candidate_inputs(
+    pool: CandidatePool, run_config: Config, config: Config, priorities: dict[str, int],
+    cache_dir: str, collection_failed: bool, *,
+    trial_sources: frozenset[tuple[str, str, str]] = frozenset(),
+) -> tuple[CandidateWork | EmptyWork, dict[str, list[Article]]]:
+    from digest.adapters.storage.native import block_pending
+    from digest.application.candidate_lifecycle import checkpoint_candidates, ensure_report_accounting
+    from digest.application.candidate_review import begin_packet
+
+    block_pending(Path(cache_dir))
+    work, articles, deferred = plan_candidate_inputs(
+        pool, run_config, config, priorities, cache_dir, collection_failed, trial_sources=trial_sources,
+    )
+    if isinstance(work, CandidateWork) and work.packet.report is None:
+        begin_packet(work.progress, work.packet, cache_dir, skipped_empty_reports=deferred)
+    else:
+        checkpoint_candidates(pool.progress, cache_dir, skipped_empty_reports=deferred)
+        if isinstance(work, CandidateWork) and work.packet.report is not None:
+            ensure_report_accounting(work.progress, work.packet.report, cache_dir)
+    return work, articles
 
 
 async def _review_candidates(
@@ -302,9 +318,11 @@ async def _start_preparation(
     feedback_precollected: bool,
 ) -> PreparationRun:
     from digest._util import cleanup_stale_tmp
+    from digest.adapters.storage.native import block_pending
     from digest.adapters.storage.sources import load_source_state, load_stats
 
     cache_dir = ".cache"
+    block_pending(Path(cache_dir))
     source_state = load_source_state(cache_dir)
     cleanup_stale_tmp(Path(cache_dir))
     source_stats = load_stats(cache_dir)

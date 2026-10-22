@@ -362,17 +362,31 @@ def synthesis_text(result: SynthesisResult, bindings: Sequence[EvidenceBinding])
     if prose is None:
         raise ValueError("Synthesis presentation is missing its selected language.")
     by_id = {binding.evidence.evidence_id: binding for binding in bindings}
-    lines = ["Сопоставление выбранных материалов" if russian else "Comparison of selected items"]
+    observations = []
     for support in comparison.supports:
         binding = by_id[support.evidence_id]
         observation = support.presentation_observation if russian else support.canonical_observation
         if observation is None:
             raise ValueError("Synthesis observation is missing its selected language.")
-        lines.extend([f"{binding.source}: {observation}", binding.evidence.url])
+        observations.append((binding.source, binding.evidence.url, observation))
+    return comparison_text(result.publication_language, observations, prose.interpretation, prose.qualification)
+
+
+def comparison_text(
+    language: str,
+    observations: Sequence[tuple[str, str, str]],
+    interpretation: str,
+    qualification: str | None,
+) -> str:
+    """Format already admitted native/provider prose without inventing provenance."""
+    russian = language == "ru"
+    lines = ["Сопоставление выбранных материалов" if russian else "Comparison of selected items"]
+    for source, url, observation in observations:
+        lines.extend([f"{source}: {observation}", url])
     label = "Сопоставление" if russian else "Interpretation"
-    lines.append(f"{label}: {prose.interpretation}")
-    if prose.qualification is not None:
-        lines.append(prose.qualification)
+    lines.append(f"{label}: {interpretation}")
+    if qualification is not None:
+        lines.append(qualification)
     text = "\n".join(lines)
     if len(escape_markdownv2(text).encode("utf-16-le")) // 2 > 1000:
         raise ValueError("Synthesis block exceeds the 1000-unit Telegram presentation budget.")

@@ -98,6 +98,65 @@ A confirmed/applied edition can permit preparation for a later day. An unresolve
 claimed edition blocks replacement, including on a later day. There is one active
 record set, not a queue of independently sendable editions.
 
+## External editorial candidate
+
+**Local candidate only; not adopted in the production runtime.** The explicit
+`--native-phase export|project|import|release` path is an alternative to ordinary provider
+preparation, not an additional step that runs implicitly. It requires the same
+compact prepared-delivery ownership and does not set up a schedule or send messages.
+See the [draft decision](decisions/0005-optional-presentation-translation.md#draft-source-authoritative-external-editorial-path-55)
+and [exact state contract](STATE_AND_EFFECTS.md#external-editorial-candidate).
+
+1. Export the current planned packet before provider dispatch. The source packet
+   and full occurrence bindings are private runtime evidence. Supply those exact
+   bytes to an authorized external editor, not prior answers or evaluation labels.
+2. Project its unchanged response with complete independent per-card source-review
+   evidence. The projection fixes the actual reader composition and deterministic
+   source/date notices. Versioned optional closing/comparison content needs its own
+   exact source-review verdict and current activation/publication eligibility;
+   historical unvalidated optional blobs remain withheld. The projection is not ready.
+3. Obtain independent machine-readable editorial acceptance of that exact projection.
+   This may run autonomously; no human approval of every edition is required by this
+   interface. The runtime must authenticate its handoff and retain the expected hashes.
+4. Import only those accepted bytes. The engine rechecks current eligibility, writes
+   the identical Markdown presentation when enabled, and freezes a gated native-ready
+   edition. Then the existing remote ready → claim → remote claim → send barriers
+   apply unchanged. No native phase sends or calls an external model API.
+
+Use `python -m digest --help` for the explicit file/hash arguments. Do not combine
+native phases with ordinary preparation, legacy dispatch, discovery, preview or
+sender flags. Missing acceptance, changed text, mismatched hashes, changed eligibility
+or corrupt pending state is a hold, not permission to repair evidence or rerun a model.
+
+| Phase | Required inputs | Result |
+| --- | --- | --- |
+| `export` | Configuration; optional `--edition-date` | Retained packet path/hash; may fetch configured sources, but calls no model. |
+| `project` | `--native-response`, `--native-review`, `--native-packet-sha` | Exact composition path/hash, or a retained no-ready result. |
+| `import` | `--native-acceptance`, `--native-projection-sha` | Verified native-ready path/hash after archive/freeze; never a send. |
+| `release` | `--native-packet-sha` | Durable release evidence for eligible terminal/expired work only. |
+
+The external producer/reviewer must follow the [native handoff formats](STATE_AND_EFFECTS.md#native-handoff-formats).
+Preserve original failures and pending artifacts; do not copy earlier local prototype
+ready files into this route or production. A supported `release` phase can end only
+an all-rejected or expired handoff, identified by its exact packet hash. It durably
+records the release and preserves all evidence/candidate work; it cannot release
+active ready/claim/uncertain-delivery state, generate content or send anything.
+Scheduling any next attempt is a separate runtime policy, not an implicit retry.
+
+Optional content cannot rescue an edition with no accepted main cards. An approved
+closing is separate from every proposed main card, requires exact source approval
+and supported credit, and follows the main cards. A comparison uses two retained
+main-card sources, is positioned before any closing, and is omitted if disabled,
+unaccepted, dependent on excluded work, or unable to preserve existing chunk/credit
+obligations. The final acceptance binds the resulting subset, not the original
+writer's proposed composition. Archive and Telegram use that same admitted content.
+
+The engine does not select an external vendor, guarantee scheduled agent availability
+or prove free entitlement. A runtime adoption must explicitly own the editorial
+handoff and its existing account allowance, source acquisition, remote durability and
+the disposition of optional existing stages. This candidate does not silently remove
+Irritator, feedback or discovery from the product or change their production settings.
+
 ## Persist, claim and send
 
 The engine writes local files. The managed runtime must establish remote durability

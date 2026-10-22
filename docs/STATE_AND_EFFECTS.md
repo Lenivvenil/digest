@@ -160,6 +160,125 @@ These are ordinary-path contracts. Category preparation and experimental source 
 retain their own terminal behavior; they must not be inferred from a generic success
 boolean. The [code owner map](ARCHITECTURE.md#modules-and-responsibilities) identifies the implemented owners.
 
+## External editorial candidate
+
+This explicit local candidate is separate from ordinary provider preparation; see
+the [draft ADR0005 amendment](decisions/0005-optional-presentation-translation.md#draft-source-authoritative-external-editorial-path-55).
+It does not change or migrate previously saved provider reviews or ready editions.
+
+- **Export is not an attempt or a decision.** Shared planning stops before
+  `begin_packet`; immutable source occurrences and exact evidence projections are
+  retained without clearing dispositions, marking selected work delivered or
+  invoking a model. Current effective sources include runtime lifecycle exclusions.
+- **One pending handoff owns continuation.** Ordinary fresh provider preparation
+  cannot replace it. Exact hashes resume; incompatible, missing or corrupt active
+  evidence holds. This is a bounded preparation checkpoint, not another work queue.
+  An explicit exact-packet-hash release is limited to all-rejected or expired work;
+  it retains an immutable release record and all evidence without resolving candidates
+  editorially, starting another generation or bypassing active delivery state.
+- **Projection is not publication approval.** Complete per-card source reviews
+  retain only literal acceptance of unchanged text. Rejected work remains unresolved.
+  The original whole-response verdict stays visible, including failure. Supplied
+  optional evidence is accepted only through the versioned native optional contract;
+  historical unvalidated closing/comparison blobs remain withheld. Source credits,
+  date notices, optional eligibility, ordering and rendering are settled before hashing.
+- **Acceptance binds the final composition.** An external machine-readable verdict
+  must accept the exact projected canonical/presented cards, notices, optional text,
+  payloads/coverage and owner/date/source/response/review bindings. A card pass, a
+  differing reviewer-reference string or a boolean provenance flag cannot substitute.
+  No ready file exists merely because projection succeeded.
+- **Import revalidates before freezing.** Current exact source policy, recency,
+  blocklist and delivered-history constraints must still permit the accepted work.
+  A changed composition needs a new explicit acceptance, not silent filtering under
+  an old hash. Enabled archive failure prevents readiness and retains pending work.
+- **Optional content preserves the accepted baseline.** At least one accepted main
+  card is required. Closing needs a separate identity, approved exact feed binding,
+  supported source credit and its own exact review. Comparison needs two distinct
+  retained main sources, source-specific observations and a separately reviewed
+  interpretation/qualification. Current activation and publication settings still
+  apply. Optional layout failure omits that optional content before final acceptance,
+  not accepted main cards; comparison never acquires article/vote/delivery identity.
+- **Native ready is a distinct version.** Schema 4 requires its editorial acceptance
+  and exact composition bindings during restoration, claim and send. Older engines
+  reject this version rather than sending it without the gate. Genuine schemas 1–3
+  remain compatible; unapproved schema-2 native drafts from the local prototype do
+  not become publishable legacy records. Do not downgrade or strip native metadata.
+
+The managed runtime remains responsible for trustworthy handoff, serialized access
+and remote persistence of all required ready/checkpoint/claim bytes. Hashes establish
+integrity, not identity, independence, semantic correctness, provider entitlement or
+zero incremental spend. Sender recovery uses the frozen accepted evidence, not a
+fresh model request, rendering pass or current source-policy reinterpretation.
+
+### Native handoff formats
+
+All documents use exact-byte SHA-256 bindings. JSON object keys are unique; the
+bounded storage reader rejects oversized inputs. Keep these artifacts in the private
+runtime, not public examples or PRs.
+
+- `native-source-packet/v1` retains the full planned packet, its exact occurrence
+  hashes, owner hash, publication date, publication language, excerpt limit and
+  editorial context. The planning prompt hash is historical planning metadata,
+  not a native-model request or dispatch receipt.
+- `native-source-packet/v2` additionally captures the optional policy and exact
+  eligible closing identities. It does not change current source-policy checks or
+  turn historical v1 optional blobs into valid new proposals.
+  `optional_policy` records `closing_enabled`, ordered `closing_ids`,
+  `comparison_enabled` and `comparison_publish`.
+- `native-editorial-response/v1` binds `packet_sha256`, `execution_ref`, `language`
+  and `items`. Every exported evidence ID appears exactly once. An item has
+  `evidence_id`, `status` and `text`; statuses are `card`, `withheld`, or
+  `insufficient_evidence`. Only cards have text, bounded to 600 characters. The
+  captured packet's main-card ceiling still applies. Historical optional
+  closing/comparison blobs are retained but cannot activate optional publication.
+- `native-editorial-response/v2` explicitly supplies the new optional contract:
+  at most one separate source-bound closing and one two-source comparison. Closing
+  prose and each comparison observation bind their own occurrence; the interpretation
+  and material qualification remain distinct from the per-source observations.
+  A closing has `evidence_id`, `occurrence_sha256` and `text`. A comparison has two
+  ordered `supports` (`evidence_id`, `occurrence_sha256`, `observation`),
+  `interpretation` and nullable `qualification`. The engine attaches the exact
+  complete source excerpts rather than accepting writer-supplied evidence quotes.
+- `external-source-review/v2` binds `packet_sha256`, `response_sha256`, the writer
+  and reviewer execution references, original whole-response `verdict`/`notes`,
+  and complete `card_verdicts`. Each generated main card needs its evidence ID,
+  exact UTF-8 `text_sha256`, verdict and notes. Only literal `accept` retains it.
+  The known writer reference cannot stand in for an independent reviewer.
+- `external-source-review/v3` adds explicit optional verdicts bound to the exact
+  proposed optional objects. A verdict on a main card cannot substitute for a
+  closing/comparison verdict. Absence, rejection, ineligibility or unsafe optional
+  layout withholds that content before the final accepted subset is frozen.
+  Each `optional_verdicts` entry has `kind` (`closing` or `comparison`),
+  `value_sha256`, `verdict` and `notes`. Its hash binds the canonical JSON bytes of
+  the complete proposed optional value; only literal `accept` can admit it.
+- `native-composition/v1` is produced by the engine, not edited by the writer. It
+  binds source/response/review references and exact final publication fields,
+  including ordered canonical/presented cards and rendered Telegram payloads.
+- `native-composition/v2` additionally fixes optional dispositions, the main-card
+  boundary and any admitted closing/comparison placement. Legacy v1 projection
+  construction remains unchanged; accepting a v1 packet does not upgrade its
+  optional content. Both versions require exact final-composition acceptance.
+  Native optional evidence lives under `canonical_metadata.native_optional`, not
+  a provider-owned closing record. Canonical cards preserve the complete delivery
+  order; `main_count` identifies the main prefix before a possible closer.
+- `native-final-acceptance/v1` contains `projection_sha256`, `packet_sha256`,
+  `response_sha256`, `review_sha256`, `reviewer_execution_ref`, `verdict` and `notes`
+  alongside its schema. Its verdict must be exactly `accept` on those exact bytes;
+  the known writer cannot approve its own final composition. The same independent
+  source reviewer may perform this final review; a third reviewer is not required.
+- `native-archive-evidence/v1` links the retained source, response, review,
+  composition and final acceptance from the Markdown archive. Archive counts keep
+  their existing planned category-group/article meaning, explicitly labeled; they
+  are not published-card counts or a claim about every live feed.
+- A packet-keyed release record retains the complete pending record, its reason
+  and release time. Release is a continuation-state transition, not an editorial
+  rejection or delivery receipt. Repeated/interrupted release validates the same
+  retained evidence before clearing only that active pending pointer.
+
+Per-card acceptance and final-composition acceptance are supplied editorial evidence,
+not an engine-generated semantic certificate. Missing/contradictory evidence fails
+closed, and preserved failed or incomplete work never acquires a retrospective pass.
+
 ## Publication records
 
 All paths below are relative to the runtime working directory. These records have
