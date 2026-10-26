@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from digest.domain.investigation.delivered import DeliveredInvestigationInput
+    from digest.domain.investigation.delivered import DeliveredOrigin
     from digest.irritator.evidence_stage import DeliveredNarrative, EvidenceIrritatorResult
 
 
@@ -190,7 +190,7 @@ def _reader_limitations(result: EvidenceIrritatorResult, language: str) -> list[
 def fragment_text(
     result: EvidenceIrritatorResult,
     presented: EvidenceIrritatorResult,
-    origin: DeliveredInvestigationInput,
+    origin: DeliveredOrigin,
     *,
     language: str,
     notice: str,

@@ -7,13 +7,13 @@ from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 
 from digest._serialization import canonical_json_bytes
-from digest.domain.investigation.delivered import DeliveredInvestigationInput
+from digest.domain.investigation.delivered import DeliveredOrigin
 
 
 @dataclass(frozen=True)
 class SupplementFragment:
     fragment_id: str
-    origin: DeliveredInvestigationInput
+    origin: DeliveredOrigin
     checkpoint: str
     result: str
     result_sha256: str

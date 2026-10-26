@@ -422,14 +422,18 @@ The lifecycle section and command transport are unchanged. See the
 
 ## Source discovery
 
+For the explicit provider-free generation seam, see [native discovery prefill](NATIVE_DISCOVERY.md).
+It preserves the existing weekly validation/approval/sender loop; it is not activated
+by configuration or by the ordinary native-edition pilot.
+
 Discovery is separate from Irritator. `python -m digest --discover` proposes feeds,
 validates URLs, saves candidates and requests approval through Telegram when configured.
 Configure [exploration areas](CONFIGURATION.md#source-discovery) separately from the
 active professional source portfolio. This operation can call models, probe feeds
 and send Telegram approval cards; it is not an offline preview.
 
-One logical generation permits at most two configured routes, three feed checks/offers
-and a 2,048-token output limit. Invalid pending proposals consume the current check
+The default provider-backed generation permits at most two configured routes and
+a 2,048-token output limit. Both generation modes share three feed checks/offers. Invalid pending proposals consume the current check
 then skip one later eligible preparation before retry; managed retries do not consume
 that skip. Confirmed messages, uncertain possible sends, reservations and explicit
 API rejections remain distinct. Follow the [discovery state contract](ARCHITECTURE.md#trial-source-lifecycle-and-discovery)
@@ -439,8 +443,9 @@ After interrupted discovery preparation, inspect the existing pending and delive
 files: each validated generated proposal is saved pending first, then its provenance.
 A metadata-write failure can leave valid pending work without a new area binding;
 do not delete it or invent the missing attribution. Normal preparation revalidates
-that same identity and deduplicates its saved final URL, while remaining slots may
-still call the model. No new reservation, prepare hashes or send follows the interrupted
+that same identity and deduplicates its saved final URL. Remaining slots may still
+call the model in the provider-backed default; explicit native mode never falls back
+to a provider. No new reservation, prepare hashes or send follows the interrupted
 prepare. Local recovery depends on the runtime actually preserving both files;
 see [validated-prefix recovery and its limits](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
 

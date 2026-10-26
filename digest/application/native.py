@@ -18,12 +18,13 @@ from digest.adapters.storage import edition as editions
 from digest.adapters.storage import native as storage
 from digest.adapters.storage.feedback import load_feedback
 from digest.adapters.storage.sources import load_source_state, load_stats, save_source_category_map
-from digest.application import prepared_delivery
+from digest.application import native_supplement, prepared_delivery
 from digest.application.source_scoring import prepare_collection_portfolio
 from digest.config import Config
 from digest.domain.catalog.articles import article_hash
 from digest.domain.catalog.occurrences import occurrence_sha256
 from digest.domain.delivery.edition import PreparedArticle, parse_instant, validate_checkpoint_reference
+from digest.domain.delivery.supplement import PendingSupplement, PreparedSupplement
 from digest.domain.editorial.candidate_policy import reconcile_eligibility
 from digest.domain.editorial.candidates import Candidate, CandidatePacket, CandidateProgress
 from digest.domain.editorial.native import accepted_cards, comparison_dependency, encode, export_packet, read_packet
@@ -35,6 +36,7 @@ from digest.presentation.source_attribution import attribute_source_card
 from digest.presentation.supplement import reader_date
 from digest.presentation.telegram import (
     CompactPublication,
+    SupplementPlacement,
     SynthesisPlacement,
     comparison_text,
     render_compact_publication,
@@ -298,6 +300,7 @@ def _projection(
     response_raw: bytes,
     review_raw: bytes,
     config: Config,
+    supplement: PendingSupplement | None = None,
 ) -> dict[str, Any]:
     assert pending.response is not None and pending.review is not None
     packet_raw = storage.read_reference(pending.packet)
@@ -359,6 +362,26 @@ def _projection(
         presentation["closing"] = optional["closing"]["status"]
         presentation["comparison"] = optional["comparison"]["status"]
         presentation["comparison_publication"] = optional["comparison"]["status"]
+    frozen_supplement = None
+    if supplement is not None:
+        main_count = optional["main_count"] if optional is not None else len(cards)
+        if not main_count:
+            raise ValueError("A native supplement requires accepted main cards.")
+        placement = SupplementPlacement(supplement.fragment.fragment_id, supplement.fragment.text, main_count)
+        synthesis = SynthesisPlacement(**optional["synthesis"]) if optional and optional["synthesis"] else None
+        try:
+            rendered = render_compact_publication(shown, config, "", placement, synthesis=synthesis)
+        except ValueError as exc:
+            raise native_supplement.SupplementLayoutError("Native supplement cannot fit safely.") from exc
+        _, all_credited = _present(cards, packet, day, language)
+        if any(item.full_hash in all_credited and len(item.covering_chunks) != 1 for item in rendered.articles):
+            raise native_supplement.SupplementLayoutError("Native supplement would split required source credit.")
+        if synthesis is not None and (rendered.synthesis is None or len(rendered.synthesis) != 1):
+            raise native_supplement.SupplementLayoutError("Native supplement would split the admitted comparison.")
+        assert rendered.supplement is not None
+        frozen_supplement = PreparedSupplement(supplement.fragment, supplement.projection,
+            supplement.projection_sha256, supplement.attempt, rendered.supplement)
+        presentation["supplement"] = {"status": "included", "before_article": main_count}
     owner, _ = prepared_delivery._owner()
     payloads = []
     if rendered:
@@ -373,7 +396,9 @@ def _projection(
                 payload["reply_markup"] = chunk.reply_markup
             payloads.append(payload)
     return {
-        "schema": "native-composition/v2" if optional is not None else "native-composition/v1",
+        "schema": "native-composition/v3" if supplement is not None else (
+            "native-composition/v2" if optional is not None else "native-composition/v1"
+        ),
         "inputs": inputs,
         "references": {
             "packet": asdict(pending.packet),
@@ -382,6 +407,7 @@ def _projection(
         },
         "archive_enabled": config.obsidian.enabled,
         "publication": {
+            **({"supplement": json.loads(encode(asdict(frozen_supplement)))} if frozen_supplement is not None else {}),
             "owner_sha256": pending.owner_sha256,
             "bot_username": config.telegram.bot_username,
             "window_start": datetime.combine(day, datetime.min.time(), timezone.utc).isoformat(),
@@ -425,7 +451,8 @@ def project_response(
     response = storage.Reference("input.response.json", editions.content_sha256(response_raw))
     review = storage.Reference("input.review.json", editions.content_sha256(review_raw))
     staged = replace(pending, response=response, review=review)
-    _projection(staged, response_raw, review_raw, effective)
+    baseline = _projection(staged, response_raw, review_raw, effective)
+    supplement = native_supplement.retained(pending)
     if pending.response is not None:
         if (
             pending.response.sha256 != response.sha256
@@ -433,13 +460,26 @@ def project_response(
             or pending.review.sha256 != review.sha256
         ):
             raise ValueError("A native response/review is already retained; replacement blocked.")
+        if supplement is not None:
+            native_supplement.verify_available(supplement, day=date.fromisoformat(pending.publication_date),
+                now=instant, owner_sha256=pending.owner_sha256)
         return pending
+    supplement = (native_supplement.select_existing(effective, day=date.fromisoformat(pending.publication_date),
+        now=instant, owner_sha256=pending.owner_sha256) if _main_count(baseline) else None)
+    if supplement is not None:
+        try:
+            _projection(staged, response_raw, review_raw, effective, supplement)
+        except native_supplement.SupplementLayoutError:
+            from digest.application.supplement import archive_fragment
+
+            archive_fragment(supplement, "supplement_rendering_failed")
+            supplement = None
     staged = replace(
         pending,
         response=storage.put_bytes(response_raw, cache, "response"),
         review=storage.put_bytes(review_raw, cache, "source-review"),
     )
-    projected = _projection(staged, response_raw, review_raw, effective)
+    projected = _projection(staged, response_raw, review_raw, effective, supplement)
     staged = replace(staged, projection=storage.put_bytes(encode(projected), cache, "composition"))
     storage.save_pending(cache, staged)
     return staged
@@ -467,16 +507,23 @@ def import_accepted(
     ready, digest, status = prepared_delivery.inspect_edition(cache_dir=cache, now=instant)
     if ready is not None and status in {"ready", "pending_window", "confirmed"} and pending.acceptance is not None:
         if ready.get("native_acceptance") == asdict(pending.acceptance):
+            native_supplement.finish_reservation(digest, cache=cache, now=instant,
+                owner=prepared_delivery._owner()[0], confirmed=status == "confirmed")
             storage.clear_pending(cache)
             return cache / editions.READY_FILE, digest
     _guard(cache, date.fromisoformat(pending.publication_date), instant)
     _, packet = read_packet(storage.read_reference(pending.packet))
     effective = _eligible(packet, config, cache, instant)
+    supplement = storage.projected_supplement(projected)
+    if supplement is not None:
+        native_supplement.verify_available(supplement, day=date.fromisoformat(pending.publication_date),
+            now=instant, owner_sha256=pending.owner_sha256)
     current = _projection(
         pending,
         storage.read_reference(pending.response),
         storage.read_reference(pending.review),
         effective,
+        supplement,
     )
     if current != projected or not _main_count(projected):
         raise ValueError("Accepted native composition/config changed or contains no main cards.")
@@ -493,7 +540,7 @@ def import_accepted(
             evidence = encode(
                 {
                     "schema": "native-archive-evidence/v1",
-                    "references": [asdict(item) for item in storage.references(pending)],
+                    "references": [asdict(item) for item in storage.composition_references(pending, projected)],
                 }
             )
             pending = replace(pending, archive_evidence=storage.put_bytes(evidence, cache, "archive-evidence"))
@@ -521,6 +568,8 @@ def import_accepted(
             articles_count=canonical["article_count"],
             synthesis=synthesis,
             closing_start=presentation.get("closing_start"),
+            supplement=(SupplementPlacement(supplement.fragment.fragment_id, supplement.fragment.text,
+                presentation["supplement"]["before_article"]) if supplement is not None else None),
         )
         if archive is None:
             raise ValueError("Native archive failed; accepted handoff retained, no ready created.")
@@ -535,10 +584,11 @@ def import_accepted(
         publication_date=date.fromisoformat(pending.publication_date),
         canonical_metadata=projected["publication"]["canonical_metadata"],
         presentation_metadata=projected["publication"]["presentation_metadata"],
-        checkpoint_refs={item.path: item.sha256 for item in storage.references(pending)},
+        checkpoint_refs={item.path: item.sha256 for item in storage.composition_references(pending, projected)},
         producing_engine=_engine_provenance(),
         native_binding=(asdict(pending.projection), asdict(pending.acceptance)),
         synthesis=synthesis,
+        supplement=supplement,
     )
     storage.clear_pending(cache)
     return path, digest

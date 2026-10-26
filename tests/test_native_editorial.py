@@ -205,6 +205,8 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     for target in (native, prepared_delivery, candidate_review):
         monkeypatch.setattr(target, "datetime", Clock)
+    # Candidate planning imports utc_instant from the shared clock owner.
+    monkeypatch.setattr("digest._util.datetime", Clock)
     monkeypatch.setattr("digest.radar.collector.datetime", Clock)
     monkeypatch.setattr("digest.edition_runtime.datetime", Clock)
 

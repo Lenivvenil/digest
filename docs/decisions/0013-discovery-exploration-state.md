@@ -151,3 +151,44 @@ prevent that step; this engine change supplies no workflow-execution guarantee.
 Offline cancellation, ordered-write-failure, restart, success-parity and old-reader
 witnesses establish this bounded recovery behavior only. The wider #132 professional
 protection and ordinary recommendation-quality obligations remain open.
+
+<a id="native-prefill-generation-adapter"></a>
+
+## Native prefill generation adapter — 2026-10-25
+
+Status: isolated implementation candidate; no schedule/runtime activation or live
+semantic acceptance. The provider-backed path and all retained legacy dataclass
+shapes stay unchanged. [Operator contract](../NATIVE_DISCOVERY.md) owns exact setup,
+trust, failure handling and rollback. This amendment replaces only generation when
+explicitly selected, not the weekly discovery feature or human approval authority.
+
+Use a data-only native request and ordered list of up to three proposals. Preview the
+existing pruning/rotation policy on copied state, binding the relevant source registry,
+pending identities/history and exploration state rather than unrelated main commits.
+The existing prepare alone advances area attempts. Retain unchanged raw response
+bytes and runtime-attested actual worker provenance; schema validation is not proof
+of authentic execution or semantic quality. The existing native controller retains
+one durable intent before launch and does not regenerate after ambiguity.
+
+The same weekly job reserves one dated prefill under its real run+attempt, externally
+persists/readbacks that reservation, then supplies its exact SHA to prepare. Before
+admitting candidates, prepare recomputes context and writes an exclusive consumption
+record. Repeated local admission or another run/attempt holds rather than reusing
+uncertain work. This is the existing uninterrupted-attempt persistence trust model,
+not distributed exactly-once execution supplied by local filesystem writes.
+
+The slot is valid through its UTC date's midnight, allowing delayed cron arrival;
+this does not expand the existing ten-minute runner execution ceiling. Missing,
+stale, mismatched or replayed input is visibly unavailable, never an API fallback.
+Eligible old pending checks remain first within the same total three-check budget.
+Only the remaining native-list prefix is admitted; preserve the full list/deferred
+suffix. This deliberate native-only prefix contract leaves provider overflow rejection
+unchanged. Original validation, identities, prefix checkpoints, pair barrier, approval
+and sender semantics remain the owners of their existing responsibilities.
+
+New versioned sidecars live under `.cache/native_discovery/` with immutable referenced
+bytes under `.cache/native/`; no schema migration or field is added to legacy pending,
+preparation or delivery dataclasses. Native arguments are an opt-in input seam rather
+than a global config-fingerprint change. Rollback under ONLYFREE must not silently
+restore provider generation. Native capacity, real useful suggestions and live/runtime
+cost acceptance remain separate from this local adapter's offline verification.

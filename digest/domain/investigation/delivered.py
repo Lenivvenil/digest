@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
+from pathlib import PurePosixPath
 from typing import Literal
 
 from digest._sanitize import sanitize_article
@@ -41,12 +42,67 @@ class DeliveredInvestigationInput:
 
 
 @dataclass(frozen=True)
+class NativeEvidenceReference:
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class NativeInvestigationReferences:
+    schema: Literal["native-investigation-references/v1"]
+    packet: NativeEvidenceReference
+    response: NativeEvidenceReference
+    source_review: NativeEvidenceReference
+    projection: NativeEvidenceReference
+    final_acceptance: NativeEvidenceReference
+    archive_evidence: NativeEvidenceReference
+
+
+@dataclass(frozen=True)
+class NativeDeliveredInvestigationInput:
+    """Native origin, never a synthetic provider review or candidate-report identity."""
+
+    edition_id: str
+    ready_sha256: str
+    claim_sha256: str
+    receipts_sha256: str
+    owner_sha256: str
+    publication_day: str
+    canonical_sha256: str
+    presentation_sha256: str
+    checkpoint_sha256: str
+    bundle_id: str
+    cards: tuple[DeliveredCard, ...]
+    native: NativeInvestigationReferences
+
+
+# Exact field-set restoration discriminates these variants. The retained legacy
+# dataclass remains unchanged: no default field is added to persisted records.
+DeliveredOrigin = DeliveredInvestigationInput | NativeDeliveredInvestigationInput
+
+
+def _provenance_hashes(origin: DeliveredOrigin) -> tuple[str, ...]:
+    if isinstance(origin, DeliveredInvestigationInput):
+        return (origin.report_sha256,)
+    refs = origin.native
+    references = (refs.packet, refs.response, refs.source_review, refs.projection,
+                  refs.final_acceptance, refs.archive_evidence)
+    if refs.schema != "native-investigation-references/v1" or len({ref.path for ref in references}) != len(references):
+        raise ValueError("Invalid native investigation references.")
+    for ref in references:
+        if (not ref.path or PurePosixPath(ref.path).is_absolute() or "\\" in ref.path
+                or any(part in {"", ".", ".."} for part in ref.path.split("/"))):
+            raise ValueError("Invalid native investigation reference path.")
+    return tuple(ref.sha256 for ref in references)
+
+
+@dataclass(frozen=True)
 class DeliveredQuote:
     field: Literal["title", "summary"]
     text: str
 
 
-def validate_delivered_input(origin: DeliveredInvestigationInput, bundle: EvidenceBundle) -> None:
+def validate_delivered_input(origin: DeliveredOrigin, bundle: EvidenceBundle) -> None:
     """Check retained occurrence projection without rebuilding under current config."""
     hashes = (
         origin.ready_sha256,
@@ -56,7 +112,7 @@ def validate_delivered_input(origin: DeliveredInvestigationInput, bundle: Eviden
         origin.canonical_sha256,
         origin.presentation_sha256,
         origin.checkpoint_sha256,
-        origin.report_sha256,
+        *_provenance_hashes(origin),
     )
     if (
         any(not re.fullmatch(r"[a-f0-9]{64}", value) for value in hashes)
@@ -92,7 +148,7 @@ def validate_delivered_input(origin: DeliveredInvestigationInput, bundle: Eviden
             raise ValueError("Delivered card differs from its original source occurrence.")
 
 
-def validate_delivered_quote(origin: DeliveredInvestigationInput, card_id: str, quote: DeliveredQuote) -> DeliveredCard:
+def validate_delivered_quote(origin: DeliveredOrigin, card_id: str, quote: DeliveredQuote) -> DeliveredCard:
     card = next((item for item in origin.cards if item.card_id == card_id), None)
     if (
         card is None

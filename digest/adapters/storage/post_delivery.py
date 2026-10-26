@@ -69,6 +69,20 @@ def create_attempt(marker: Path, record: dict[str, Any]) -> bool:
     return True
 
 
+def create_native_execution_claim(path: Path, record: dict[str, Any]) -> bool:
+    """Exclusively claim native execution and fsync both file and directory."""
+    from digest.adapters.storage.edition import write_record
+    from digest.adapters.storage.issue_paths import safe_issue_path
+
+    safe_issue_path(path)
+    safe_checkpoint_path(path)
+    try:
+        write_record(path, record, exclusive=True)
+    except FileExistsError:
+        return False
+    return True
+
+
 def save_attempt(marker: Path, record: dict[str, Any]) -> None:
     atomic_json_write(marker, record)
 
@@ -93,6 +107,7 @@ def attempt_paths(directory: str) -> list[Path]:
 def read_projection(path: str, expected: str) -> Any:
     from digest._serialization import restore_dataclass, unique_object
     from digest.domain.delivery.supplement import SupplementFragment, fragment_identity
+    from digest.domain.investigation.delivered import NativeDeliveredInvestigationInput
 
     content = safe_checkpoint_path(Path(path)).read_bytes()
     if hashlib.sha256(content).hexdigest() != expected:
@@ -102,12 +117,25 @@ def read_projection(path: str, expected: str) -> Any:
     )
     if fragment.fragment_id != fragment_identity(fragment):
         raise ValueError("Frozen supplement identity mismatch.")
+    result_content = b""
     for reference, digest in (
         (fragment.result, fragment.result_sha256),
         (fragment.checkpoint, fragment.origin.checkpoint_sha256),
     ):
-        if hashlib.sha256(safe_checkpoint_path(Path(reference)).read_bytes()).hexdigest() != digest:
+        referenced_content = safe_checkpoint_path(Path(reference)).read_bytes()
+        if hashlib.sha256(referenced_content).hexdigest() != digest:
             raise ValueError("Frozen supplement evidence reference changed.")
+        if reference == fragment.result:
+            result_content = referenced_content
+    result = (json.loads(result_content, object_pairs_hook=unique_object)
+              if isinstance(fragment.origin, NativeDeliveredInvestigationInput) else None)
+    if isinstance(result, dict) and result.get("schema_version") == 3:
+        from digest.adapters.storage.native import Reference, read_reference
+        from digest.irritator.evidence_stage import NativeResearchProvenance
+
+        provenance = restore_dataclass(result.get("native_provenance"), NativeResearchProvenance)
+        for item in (provenance.session, *provenance.phases):
+            read_reference(Reference(item.path, item.sha256))
     return fragment
 
 

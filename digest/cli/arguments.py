@@ -36,12 +36,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--discover",
         action="store_true",
-        help="Use LLM to suggest RSS sources by rotating configured exploration areas, then exit",
+        help="Suggest RSS sources by rotating configured exploration areas, then exit",
     )
     parser.add_argument("--discovery-phase", choices=("all", "prepare", "send"), default="all",
                         help="Discovery preparation and externally persisted send phases (default: local-only all)")
     parser.add_argument("--discovery-pending-sha", help="SHA256 of remotely persisted pending proposals")
     parser.add_argument("--discovery-delivery-sha", help="SHA256 of remotely persisted discovery delivery metadata")
+    parser.add_argument("--discovery-native-prefill",
+                        help="Select native-only discovery; absent/invalid input never uses APIs")
+    parser.add_argument("--discovery-native-sha", help="Trusted exact native prefill SHA256")
+    parser.add_argument("--discovery-native-owner", help="Trusted native controller identity")
+    parser.add_argument("--discovery-native-reservation-sha",
+                        help="SHA256 of the same-run native slot reservation persisted before prepare")
     parser.add_argument(
         "--feedback-precollected", action="store_true",
         help="Managed runtime owns feedback collection/persistence; do not poll again in this process",

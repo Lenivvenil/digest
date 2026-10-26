@@ -68,6 +68,15 @@ acceptance. It reuses the prepared delivery protocol rather than adding a sender
 Versioned native optional content can supply one approved-source closing card and
 one source-bound comparison, subject to existing activation/publication settings
 and acceptance of their exact final placement; historical unvalidated blobs stay withheld.
+Confirmed native archives have separate [delivered-origin entrypoints](docs/ADVANCED_OPERATIONS.md#native-delivered-origins)
+for optional investigation, without fabricated provider-review records. Preparation
+makes no model/search/send calls; optional execution still needs its admitted route.
+Eligible retained fragments can enter a separately versioned native ready edition
+only when their exact placement is covered by final composition acceptance; no
+scheduler or semantic-stage route is activated by this support.
+An explicit [native research continuation](docs/ADVANCED_OPERATIONS.md#native-research-phases)
+can preserve narrative/research-plan/ranking and configured presentation without model
+API fallback, while retaining bounded source acquisition and the same fragment slot.
 This is a reviewable alternative, not a claim of free account entitlement or completed
 [#55](https://github.com/Lenivvenil/digest/issues/55) acceptance.
 
@@ -216,6 +225,7 @@ These retained section anchors lead here. Open the relevant guide:
 - **Feedback and exploration:** [feedback/source decisions](docs/OPERATIONS.md#feedback-and-source-decisions),
   [external investigation](docs/ADVANCED_OPERATIONS.md#supplementary-investigation),
   [source discovery](docs/OPERATIONS.md#source-discovery)
+  ([opt-in native generation](docs/NATIVE_DISCOVERY.md))
 - **Saved work and delivery:** [persisted state](docs/STATE_AND_EFFECTS.md#publication-records),
   [candidate continuation](docs/ADVANCED_OPERATIONS.md#candidate-continuation),
   [persist, claim and send](docs/OPERATIONS.md#persist-claim-and-send)

@@ -131,6 +131,219 @@ implications remain labelled unverified interpretation, never source facts or
 invented reader beliefs. Unbound standalone contracts remain available separately.
 This policy is under review; this guide is not proof of runtime deployment.
 
+### Native delivered origins
+
+Native primary archives do not contain a provider `.review.json`, `BlindReviewReport`
+or candidate-report hash. Use the separate native entrypoints with the exact delivered
+Markdown archive, not its source-review or final-acceptance file:
+
+```sh
+python -m digest.post_delivery native-prepare --config config.yaml --checkpoint digests/2026-10-25.md
+# Persist and verify the returned marker and its referenced evidence before execute.
+python -m digest.post_delivery native-execute --config config.yaml --checkpoint digests/2026-10-25.md
+```
+
+`native-prepare` is read-only with respect to the primary edition and source/archive
+files. It makes no model, search or transport request. It requires the configured
+compact archive directory, an archive-enabled accepted native schema-4/5 ready edition, its
+exact owner-matching claim, and complete confirmed/applied receipts. It rechecks the
+native packet, response, source review, projection, final acceptance and archive
+index, including original source occurrences, accepted canonical card order and
+presentation/coverage. All anchors are reread before reserving work. Origin day D+4,
+a future origin, missing/changed evidence, partial/unknown delivery or unapplied
+receipts blocks preparation; none is repaired by inventing delivery evidence.
+
+The new attempt is `<archive-stem>.native.post-attempt.json` (attempt schema 4,
+`native-delivered-card-v1`). Its `.native.irritator.json`, `.native.irritator.md` and
+`.native.irritator.fragment.json` use the existing result/fragment contracts with an
+explicit native-origin variant. Legacy `prepare`/`execute`, schema-2/3 attempts,
+`DeliveredInvestigationInput` fields and retained fragment bytes are unchanged.
+Native source evidence remains labelled RSS excerpts; it is not a full-source review.
+The existing delivered-target research/quote/ranking validators remain authoritative.
+
+**`native-execute` can call the configured optional model and source adapters.** Native
+origin compatibility does not establish their free entitlement, replace them with
+native semantic stages, or authorize their execution. For the separate no-API route,
+use [native research phases](#native-research-phases), never this provider entrypoint.
+The runtime must explicitly
+admit that route, serialize writers, and retain its existing optional eligibility,
+timeout and durability barriers. These commands add no scheduler, automatic retry,
+primary send or automatic semantic-stage route. Both the ordinary prepared path
+and the native destination below can carry an eligible retained fragment, without
+repeating the investigation.
+
+Execution refreezes the current origin and compares it to the saved attempt before
+any model/source work. An exclusive `.native.post-attempt.execute.json` claim prevents
+concurrent or interrupted execution from starting twice. Preserve that claim even if
+`execute_started` is still null after a crash; that state is spent/uncertain, not a
+retry invitation. Never delete/rename attempt, claim or output files to force a rerun.
+If validation fails before the claim, restore only independently verified original
+bytes; never recompute hashes to bless changed evidence. If optional execution fails
+after the claim, keep its diagnostics and continue the primary lifecycle unchanged.
+
+For rollback, disable the runtime's optional invocation before reverting code. Keep
+native-origin attempts/fragments and all referenced evidence intact: older readers do
+not understand the new variant. Do not let an older worker silently overlook a pending
+schema-4 attempt and create another investigation; keep optional investigation held
+until a compatible reader is restored or the retained work is explicitly reconciled.
+The primary ready/claim/receipts and all already-sent messages stay unchanged.
+
+### Native research phases
+
+`python -m digest.application.native_irritator` is the explicit native-only compact
+research route. It does not call `ModelExecution`, a model provider API, translation
+API, Telegram, discovery activation or the primary sender. Do not confuse it with
+`digest.post_delivery native-execute`, which retains the provider-backed route above.
+The runtime must adopt and persist this route explicitly; these commands do not
+install or activate a scheduler.
+
+The sequence preserves the existing delivered target, original evidence and exact
+narrative/research-plan/grounded-ranking validators:
+
+1. `begin --config config.yaml --archive digests/EDITION.md` reserves the existing
+   optional slot and emits a session path, or null when the slot is unavailable.
+   Persist the native attempt, execution claim and session before continuing.
+2. `advance --config config.yaml --session SESSION` returns `native_pending` with
+   `phase`, `request` and `request_sha256`. The three semantic phases are `narrative`,
+   `research_plan` and `ranking`; configured presentation adds `presentation`.
+3. `claim --request REQUEST --expected-sha256 HASH --controller-ref CONTROLLER_REF`
+   exclusively reserves one generation. The controller must persist/prove this
+   intent remotely **before** launching its one native worker. Supply the exact
+   `request.input.messages`, with no worker tools or external acquisition. Source
+   text is untrusted data, never instruction. The controller reference is the actual admitted owner/task known before launch;
+   the actual child reference and raw terminal output are retained separately in its
+   runtime receipt afterward. Neither is model-authored proof or an observed provider/
+   token-usage record.
+4. `accept --request REQUEST --expected-sha256 HASH --response RESPONSE` freezes one
+   exact response. Its JSON envelope has exactly `schema` (`native-irritator-response/v1`),
+   `phase`, `request_sha256`, `intent_sha256`, `controller_ref` and `result` (JSON object).
+   Persist it, then advance. Invalid semantics hold this spent result; do not replace
+   it or try a provider. A retained intent without result is unknown, not retryable.
+
+After narrative and research plan, advance instead returns `acquisition_pending`
+for `original_document` or `research_evidence`. Use `claim-acquisition --request
+REQUEST --expected-sha256 HASH`, persist/prove the exact intent remotely, and only
+in that same uninterrupted job run `advance --config config.yaml --session SESSION
+--acquisition-intent-sha256 INTENT_HASH`. An exclusive started record precedes I/O.
+A later process encountering an unfinished intent must hold; the hash flag is not a
+license to reconstruct a lost execution. Engine-local fsync does not prove a remote
+commit; that proof remains the controller's responsibility.
+
+Original-page acquisition occurs only after a validated target. Declared source
+searches and at most one external document occur after a validated research plan.
+The existing public-fetch safety checks, query routing, complete-section evidence,
+source exclusion and quotation/ranking rules remain authoritative. Both acquisitions
+share at most **nine physical request starts** and **180 seconds of measured source
+acquisition**, including redirects and address fallbacks. Native worker waiting is
+separately bounded by its controller, not disguised as source acquisition time.
+Completed snapshots, elapsed time and counts replay exactly with no HTTP; incomplete
+acquisition is held, never refetched or reset to a fresh budget.
+
+Configured non-English presentation uses one bounded native presentation phase after
+canonical analysis. Generated research follows configured English, while delivered
+targets retain their original language. Only narrative claim and ranked narrative-claim/reasoning
+fields can change. Existing URL, numeric, literal quotation, identity and coverage
+checks apply; evidence and ranking membership stay canonical. The native route does
+not silently use the configured translation API. If the existing input allowance
+cannot hold the whole presentation, canonical text is retained with explicit
+localized fallback notice/status, not reported as successful Russian translation.
+Structurally accepted translation still carries the existing fidelity notice; these
+checks alone are not a semantic-equivalence claim.
+
+All artifacts live beside the archived edition: `.native.post-attempt.phases.json`
+and its `.phases/` directory contain session, request, intent, started, response and
+content-addressed acquisition records. Persist the complete subtree, including nested
+acquired bytes, plus the existing attempt/result/Markdown/fragment files. Native
+result schema 3 (`NativeResearchResult`) is a distinct variant whose provenance binds
+the exact session and all phase references. Older result dataclasses and provider
+bytes are unchanged. The existing fragment result hash and projection reader retain
+and revalidate these native provenance bytes; no second fragment journal is added.
+
+Finalization returns `native-irritator-complete/v1` with honest complete/empty/incomplete/
+error status and exact result references. A qualifying result becomes the existing
+pending compact fragment, not a new send. Native abstention can finish empty with no
+acquisition or fragment. Exact completed sessions can be read back without work.
+Interrupted finalization preserves all files and holds without rewriting output or
+restarting generation/acquisition. Preserve the original claim and intent even when
+an attempt marker appears unfinished. Repair requires separately reviewed exact-byte
+proof; never delete records or recompute hashes to force another attempt.
+
+Rollback: stop the runtime's optional continuation, preserve the entire native session,
+result schema 3 and fragment references, and restore only a reader that understands
+these variants. Older workers must not overlook a spent native claim or pending
+fragment. Primary ready/claim/receipts and delivered messages remain unchanged.
+
+### Native fragment destinations
+
+The existing native export → project → accepted import sequence can include one
+already-accepted, eligible pending counterevidence fragment. Projection selects it
+once; `native-composition/v3` binds its exact immutable projection, full text, origin
+and result references, placement and independently computed covering chunks.
+The normal final acceptance must approve those exact bytes before import. There is
+no post-acceptance append, fresh investigation, invented provider review, extra
+article/vote identity or new fragment journal.
+
+The block follows accepted main cards and any admitted comparison, before closing.
+Main/closing/comparison prose stays unchanged, and mandatory source credits remain
+intact. If initial optional selection is absent, expired, conflicting, wrong-owner,
+reserved elsewhere or unverified, only the supplement is omitted. A proved layout
+failure archives that fragment under the existing `supplement_rendering_failed`
+disposition; it does not discard accepted mains. Once a fragment is in a projection,
+changed evidence, disposition, owner or eligibility before import **holds** that
+projection. It is never silently omitted under its old acceptance. Conversely, a
+fragment arriving after a no-fragment projection cannot change that accepted edition.
+
+Native fragment editions use `NativeSupplementEdition` ready schema 5, preserving
+schema-3 provider and schema-4 native field sets and serialized bytes. Their archive
+and Telegram payload use the same complete fragment; ready checkpoint references
+include its projection, result and origin archive. The mutable attempt is not an
+immutable checkpoint. Import reserves the existing attempt for the exact new ready
+hash; claim and send require that reservation. The sender never rerenders or searches.
+
+Consumption uses actual confirmed fragment-chunk coverage, not a new requirement
+that every unrelated later primary chunk succeed. If fragment coverage is incomplete,
+receipts remain unapplied/held and the fragment stays reserved. If all fragment chunks
+are confirmed but a later chunk is unknown, the fragment is consumed exactly once,
+while the edition remains honestly partial/unknown and cannot be resent. Failed
+consumption persistence leaves the edition unapplied. A fully confirmed schema-5
+edition remains a valid next native investigation origin; its carried fragment is
+not treated as a newly selected source article.
+
+**Interrupted import:** retry only the same retained projection and acceptance.
+If the exact ready already exists, no dispatch evidence conflicts and the fragment
+is still the same pending slot, import can finish its reservation and clear the native
+pointer without rewriting ready bytes or recomposing. An already matching reservation
+is idempotent. A claim, unknown/partial receipt, changed pointer or foreign reservation
+is not a retry opportunity. Retain all files and inspect the actual state.
+
+The inherited ready-before-prior-dispatch-cleanup write order can leave old claim or
+receipt bytes mismatched to the new ready after interruption. This remains a closed
+hold, not an automatic cleanup success. Preserve current and old hashes; locate the
+exact predecessor ready/claim/receipts in immutable Git history and verify matching
+owner, complete confirmed coverage and applied accounting. Only a separately reviewed
+exact-state repair may retire those proved predecessor files. Do not send again or
+remove a claim based only on a positive status field. Without predecessor proof, stay
+held.
+
+Only an expired **unclaimed** ready with no claim/receipt evidence can release its
+reservation. Release is bound to that exact old ready hash and retained before a
+later edition replaces it. Native schema-5 release also revalidates final acceptance
+and immutable supplement references. A subsequent eligible D+1..D+3 native edition
+can then project the same fragment anew and obtain its own final acceptance. Claims,
+uncertain delivery and consumed fragments are never released for replay.
+If reservation persistence failed, the same exact-current-ready proof can establish
+release without inventing a reservation. A stale earlier release proof is not proof
+for this ready. A genuinely D+4-expired fragment stays expired throughout recovery;
+it is not resurrected merely to let a later primary edition proceed.
+
+Rollback must preserve schema-5 ready, final projection/acceptance, reservation and
+source/result files. An older schema-4-only engine/controller cannot adopt or downgrade
+them; keep publication held until compatible readers are restored. Runtime checkpoint
+allowlists, remote barriers and schema-5-aware validation must be reviewed together
+with the engine pin. This engine patch alone does not activate those controllers.
+
+### Outcomes and later-edition fragments
+
 Empty search results, unavailable/unsupported adapters, rejected evidence and failed
 model stages are different outcomes. Optional translation failure retains canonical
 fallback according to its existing contract. An accepted compact result can freeze one
