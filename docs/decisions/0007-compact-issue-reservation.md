@@ -233,3 +233,51 @@ Shared projection does not change transport acceptance: prepared receipts requir
 a positive message ID and matching chat; direct compact retains its existing
 HTTP/`ok` check and coarse reservation. Legacy cards retain their retry/fallback
 policy. No schema, identity, receipt history or automatic resend policy changes.
+
+
+## Native counterevidence destinations
+
+The native destination reuses the existing immutable fragment and per-attempt
+reservation/consumption state rather than creating a second queue or journal.
+`NativeSupplementEdition` (ready schema 5) extends native final acceptance with the
+existing `PreparedSupplement`. Schema-3/4 serialized field sets stay unchanged;
+no provider review checkpoint is invented. `PendingNative` also stays unchanged:
+`native-composition/v3` owns the selected fragment, placement and computed coverage.
+
+Selection precedes final acceptance. Import never chooses a replacement or silently
+drops an accepted fragment if its evidence or disposition changes. It retains the
+same archive/payload text and immutable source/result references. Claim and sender
+validate the exact reservation. Fragment consumption depends on its own complete
+confirmed chunks; uncertainty elsewhere remains uncertainty and cannot permit resend.
+A consumed native schema-5 publication can seed another investigation without treating
+the carried fragment as a new main article.
+
+Exact unclaimed import prefixes may finish reservation without changing ready bytes.
+Expired-unclaimed release binds and rechecks the exact schema-5 final acceptance,
+fragment references and absence of dispatch evidence. Mismatched predecessor claim
+or receipt files retain the existing manual-proof hold; this extension does not infer
+safe deletion from a status field or add a predecessor journal. See the
+[native destination recovery runbook](../ADVANCED_OPERATIONS.md#native-fragment-destinations).
+Runtime schema/allowlist integration remains separate adoption work. No controller,
+schedule or transport is activated by this decision.
+
+## Native research continuation
+
+The native-only research route preserves the three existing semantic validators and
+configured presentation rather than fabricating provider execution/review metadata.
+Its versioned session and exclusive per-phase intents bind the delivered origin,
+configuration, native worker result and previous evidence. Separate acquisition
+intent/persist/execute boundaries prevent automatic repetition of unknown source I/O.
+Complete snapshots replay under the same cumulative nine physical starts and
+180 seconds of source acquisition, not fresh per-phase budgets. The runtime supplies
+remote intent proof and bounds native worker waiting.
+
+`NativeResearchResult` schema 3 is a separate subclass/provenance contract; old result
+field sets and provider serialization stay intact. Source quotes, canonical targets,
+ranking membership and fragment eligibility use existing validators. Native
+presentation changes only protected publication fields, or records honest canonical
+fallback when the existing input allowance cannot fit them. No API fallback is
+permitted. The output remains the existing immutable fragment and attempt slot;
+there is no parallel fragment journal, extra transport or new consensus gate.
+Unknown intents and interrupted finalization hold for exact-proof reconciliation.
+See the [native research runbook](../ADVANCED_OPERATIONS.md#native-research-phases).

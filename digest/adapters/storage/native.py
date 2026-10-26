@@ -8,10 +8,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from digest._serialization import restore_dataclass, unique_object
+from digest._serialization import canonical_json_bytes, restore_dataclass, unique_object
 from digest.adapters.storage.edition import content_sha256, write_record
 from digest.adapters.storage.issue_paths import safe_issue_path
 from digest.domain.delivery.edition import validate_checkpoint_reference
+from digest.domain.delivery.supplement import PendingSupplement, PreparedSupplement
 
 PENDING_FILE = "pending_native.json"
 MAX_BYTES = 4 * 1024 * 1024
@@ -123,6 +124,9 @@ def validate_pending(pending: PendingNative) -> None:
         raise ValueError("Native archive lacks final acceptance.")
     for reference in references(pending):
         read_reference(reference)
+    if pending.projection is not None:
+        for reference in supplement_references(decode(read_reference(pending.projection))):
+            read_reference(reference)
     packet = decode(read_reference(pending.packet))
     if packet.get("owner_sha256") != pending.owner_sha256 or packet.get("publication_date") != pending.publication_date:
         raise ValueError("Native pending owner/date differs from its immutable source packet.")
@@ -162,7 +166,7 @@ def block_pending(cache: Path = Path(".cache")) -> None:
 
 def publication_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Non-circular exact publication identity; generated UUID/times/hashes are excluded."""
-    return {
+    result = {
         key: data[key]
         for key in (
             "owner_sha256",
@@ -174,6 +178,38 @@ def publication_fields(data: dict[str, Any]) -> dict[str, Any]:
             "articles",
         )
     }
+    if "supplement" in data:
+        result["supplement"] = json.loads(canonical_json_bytes(data["supplement"]))
+    return result
+
+
+def projected_supplement(projected: dict[str, Any]) -> PendingSupplement | None:
+    """Read only the immutable projection's fragment; never select today's slot."""
+    value = projected["publication"].get("supplement")
+    if projected.get("schema") != "native-composition/v3":
+        if value is not None:
+            raise ValueError("Native supplement requires its explicit composition version.")
+        return None
+    frozen: PreparedSupplement = restore_dataclass(value, PreparedSupplement)
+    from digest.adapters.storage.post_delivery import read_projection
+
+    if read_projection(frozen.projection, frozen.projection_sha256) != frozen.fragment:
+        raise ValueError("Native composition differs from the retained supplement projection.")
+    validate_checkpoint_reference(frozen.attempt, frozen.projection_sha256)
+    return PendingSupplement(frozen.fragment, frozen.projection, frozen.projection_sha256, frozen.attempt)
+
+
+def supplement_references(projected: dict[str, Any]) -> list[Reference]:
+    pending = projected_supplement(projected)
+    if pending is None:
+        return []
+    return [Reference(pending.projection, pending.projection_sha256),
+            Reference(pending.fragment.result, pending.fragment.result_sha256),
+            Reference(pending.fragment.checkpoint, pending.fragment.origin.checkpoint_sha256)]
+
+
+def composition_references(pending: PendingNative, projected: dict[str, Any]) -> list[Reference]:
+    return [*references(pending), *supplement_references(projected)]
 
 
 def validate_acceptance(raw: bytes, projection: Reference, projected: dict[str, Any]) -> dict[str, Any]:
@@ -211,7 +247,10 @@ def validate_native_ready(data: dict[str, Any]) -> None:
             raise ValueError("Native ready lacks its mandatory acceptance checkpoint.")
     projected = decode(read_reference(projection))
     validate_acceptance(read_reference(acceptance), projection, projected)
-    if (projected.get("schema") not in {"native-composition/v1", "native-composition/v2"}
+    supported = {"native-composition/v3"} if data["schema"] == 5 else {
+        "native-composition/v1", "native-composition/v2",
+    }
+    if (projected.get("schema") not in supported
             or projected.get("publication") != publication_fields(data)):
         raise ValueError("Ready differs from the exact accepted native composition.")
     for field in ("packet", "response", "review"):
@@ -221,4 +260,8 @@ def validate_native_ready(data: dict[str, Any]) -> None:
             or projected["inputs"][field + "_sha256"] != reference.sha256
         ):
             raise ValueError("Native ready input bindings changed.")
+        read_reference(reference)
+    for reference in supplement_references(projected):
+        if data["checkpoint_refs"].get(reference.path) != reference.sha256:
+            raise ValueError("Native ready lacks an immutable supplement reference.")
         read_reference(reference)

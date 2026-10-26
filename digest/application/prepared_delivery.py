@@ -28,6 +28,7 @@ from digest.domain.delivery.edition import (
     Claim,
     Edition,
     NativeEdition,
+    NativeSupplementEdition,
     PreparedArticle,
     Receipts,
     SupplementEdition,
@@ -113,7 +114,7 @@ def prepare_edition(
                 raise ValueError("Existing claimed edition is held or confirmed today; publishing blocked.")
         elif storage.exists(cache / RECEIPTS_FILE) or instant < parse_instant(previous.expires_at):
             raise ValueError("An eligible ready edition already exists; publishing blocked.")
-        elif isinstance(previous, SupplementEdition):
+        elif isinstance(previous, (SupplementEdition, NativeSupplementEdition)):
             from digest.application.supplement import release_replaced_fragment
 
             release_replaced_fragment(previous, previous_sha, instant, cache)
@@ -121,7 +122,9 @@ def prepare_edition(
         raise ValueError("Orphaned edition claim or receipts; publishing blocked.")
     placement = (
         SupplementPlacement(
-            supplement.fragment.fragment_id, supplement.fragment.text, len((canonical_metadata or {})["cards"])
+            supplement.fragment.fragment_id, supplement.fragment.text,
+            (canonical_metadata or {}).get("main_count", len((canonical_metadata or {})["cards"]))
+            if native_binding is not None else len((canonical_metadata or {})["cards"]),
         )
         if supplement is not None
         else None
@@ -165,33 +168,33 @@ def prepare_edition(
         assert rendered.supplement is not None
         from dataclasses import replace
 
-        data = SupplementEdition(
-            **{**asdict(data), "schema": 3, "articles": data.articles},
-            supplement=PreparedSupplement(
-                supplement.fragment,
-                supplement.projection,
-                supplement.projection_sha256,
-                supplement.attempt,
-                rendered.supplement,
-            ),
-            current_review_checkpoint=current_review_checkpoint,
+        frozen_supplement = PreparedSupplement(
+            supplement.fragment, supplement.projection, supplement.projection_sha256,
+            supplement.attempt, rendered.supplement,
         )
-        data = replace(
-            data,
-            checkpoint_refs={
-                **data.checkpoint_refs,
-                supplement.projection: supplement.projection_sha256,
-                supplement.fragment.result: supplement.fragment.result_sha256,
-                supplement.fragment.checkpoint: supplement.fragment.origin.checkpoint_sha256,
-            },
-        )
-    if native_binding is not None:
-        if supplement is not None:
-            raise ValueError("Native and provider supplement contracts cannot be combined.")
+        if native_binding is None:
+            data = SupplementEdition(
+                **{**asdict(data), "schema": 3, "articles": data.articles},
+                supplement=frozen_supplement, current_review_checkpoint=current_review_checkpoint,
+            )
+        else:
+            data = NativeSupplementEdition(
+                **{**asdict(data), "schema": 5, "articles": data.articles},
+                native_projection=native_binding[0], native_acceptance=native_binding[1],
+                supplement=frozen_supplement,
+            )
+        data = replace(data, checkpoint_refs={
+            **data.checkpoint_refs,
+            supplement.projection: supplement.projection_sha256,
+            supplement.fragment.result: supplement.fragment.result_sha256,
+            supplement.fragment.checkpoint: supplement.fragment.origin.checkpoint_sha256,
+        })
+    elif native_binding is not None:
         data = NativeEdition(
             **{**asdict(data), "schema": 4, "articles": data.articles},
             native_projection=native_binding[0], native_acceptance=native_binding[1],
         )
+    if native_binding is not None:
         from digest.adapters.storage.native import validate_native_ready
 
         validate_native_ready(asdict(data))
@@ -220,7 +223,7 @@ def claim_edition(
     _legacy_guard(cache, instant)
     data, digest = storage.load_edition(cache / READY_FILE, owner, instant, expected_ready_sha256, fresh=True)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
-    if isinstance(data, SupplementEdition):
+    if isinstance(data, (SupplementEdition, NativeSupplementEdition)):
         from digest.application.supplement import verify_fragment_reservation
 
         verify_fragment_reservation(data, digest)
@@ -259,7 +262,7 @@ async def send_prepared_edition(
     storage.validate_manifest_record(asdict(data), owner, instant)
     validate_dispatch_identity(data)
     storage.verify_checkpoints(data.checkpoint_refs, verify_bytes=True)
-    if isinstance(data, SupplementEdition):
+    if isinstance(data, (SupplementEdition, NativeSupplementEdition)):
         from digest.application.supplement import verify_fragment_reservation
 
         verify_fragment_reservation(data, ready_sha)
@@ -311,7 +314,7 @@ async def send_prepared_edition(
     restored = storage.load_receipts(cache, ready_sha, claim_sha, len(data.payloads), owner_sha, expected=terminal_sha)
     if restored is None:
         raise ValueError("Terminal receipt is missing; finalization blocked.")
-    if isinstance(data, SupplementEdition):
+    if isinstance(data, (SupplementEdition, NativeSupplementEdition)):
         from digest.application.supplement import consume_fragment
 
         consume_fragment(data, ready_sha, restored)

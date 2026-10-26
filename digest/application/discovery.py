@@ -22,6 +22,7 @@ from digest.domain.catalog.proposals import PendingSource
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from digest.application.native_discovery import NativeDiscoveryInput
     from digest.config import Config
 
 
@@ -105,7 +106,9 @@ def start_session(config_path: str, phase: str) -> DiscoverySession:
     return DiscoverySession(config, owner, cycle, target, token, chat)
 
 
-async def prepare_and_reserve(session: DiscoverySession) -> PreparedDiscovery:
+async def prepare_and_reserve(
+    session: DiscoverySession, *, native: NativeDiscoveryInput | None = None,
+) -> PreparedDiscovery:
     """Persist strict pending state and reservations before exposing either hash."""
     from digest.adapters.storage.discovery import delivery_sha256, pending_sha256, save_delivery
     from digest.adapters.storage.pending_sources import save_pending
@@ -118,7 +121,7 @@ async def prepare_and_reserve(session: DiscoverySession) -> PreparedDiscovery:
     configured = {source.url for source in config.sources}
     offers, validations = await prepare_pending_offers(pending, data, configured, session.cycle, now, counts)
     if len(offers) < 3 and validations < 3:
-        offers.extend(await _generate_offers(session, pending, data, now, validations, counts))
+        offers.extend(await _generate_offers(session, pending, data, now, validations, counts, native=native))
     save_pending(pending, cache_dir, strict=True)
     if session.token and session.chat and config.telegram.enabled:
         reserve_offers(data, offers, session.owner, now=now)
@@ -137,6 +140,8 @@ async def _generate_offers(
     now: datetime,
     validations: int,
     counts: dict[str, int],
+    *,
+    native: NativeDiscoveryInput | None = None,
 ) -> list[PendingSource]:
     """Generate within the remaining three-validation budget and existing routes."""
     from digest.adapters.storage.discovery import save_delivery
@@ -149,8 +154,10 @@ async def _generate_offers(
     config, cache_dir, cycle = session.config, session.cache_dir, session.cycle
     logger = logging.getLogger(__name__)
     configured = {source.url for source in config.sources}
-    history = [{key: item[key] for key in ("url", "category", "decision")} for item in data["history"]]
     proposed: list[PendingSource] = []
+    from digest.application.native_discovery import context, proposal_context
+
+    snapshot = context(config, pending, data) if native is not None else None
     requested_area = select_exploration_area(data, config.discovery.exploration_areas)
     generation: dict[str, Any] = {
         "requested_area": requested_area,
@@ -162,9 +169,6 @@ async def _generate_offers(
     data["generation"] = generation
     # Persist attempts before generation without claiming any offer or coverage.
     save_delivery(data, cache_dir)
-    categories: dict[str, list[str]] = {}
-    for configured_source in config.enabled_sources:
-        categories.setdefault(configured_source.category, []).append(configured_source.name)
     prompt = (
         "Suggest up to " + str(3 - validations) + " working RSS/Atom feed URLs for new or underrepresented "
         "subjects within the requested exploration area. Match the requested area: it may refresh "
@@ -176,49 +180,55 @@ async def _generate_offers(
         "Do not repeat configured or pending URLs, or recently rejected/expired proposals. "
         "An empty response is valid. Output only FEED|<url>|<category>|<name>, one per line.\n"
         + json.dumps(
-            {
-                "requested_exploration_area": requested_area,
-                "exploration_areas": config.discovery.exploration_areas,
-                "categories": categories,
-                "configured_urls": sorted(configured),
-                "pending_urls": [source.url for source in pending],
-                "history": history,
-            },
+            proposal_context(config, pending, data, requested_area),
             ensure_ascii=False,
         )
     )
-    try:
-        providers = _resolve_routed_providers(LLMRole.SUMMARIZE, None, config)
-        if not providers:
-            raise ValueError("No discovery model route configured.")
-        # One logical generation, at most two already-configured routes.
-        # The normal client retains fallback ordering and shared pacing.
-        single = replace(
-            config,
-            llm=replace(
-                config.llm,
-                providers=providers[:2],
-                max_retries=0,
-            ),
-        )
-        # Discovery replaces nested model settings, so it owns a fresh execution.
-        discovery_execution = ModelExecution()
-        response, _ = await complete(
-            LLMRole.SUMMARIZE,
-            [
-                {"role": "system", "content": "You suggest sources for owner approval; never activate them."},
-                {"role": "user", "content": prompt},
-            ],
-            single,
-            max_output_tokens=2048,
-            execution=discovery_execution,
-        )
-        generation["outcome"] = "no_valid_proposals" if response.strip() else "empty"
-    except Exception as exc:
-        counts["generation_failed"] += 1
-        logger.warning("Discovery generation unavailable (%s)", type(exc).__name__)
-        response = ""
-        generation["outcome"] = "failed"
+    if native is not None:
+        from digest.application.native_discovery import NativeDiscoveryUnavailable, consume_prefill
+
+        assert snapshot is not None
+        try:
+            response = consume_prefill(session, native, snapshot, now, 3 - validations)
+            generation["outcome"] = "no_valid_proposals" if response.strip() else "empty"
+        except NativeDiscoveryUnavailable as exc:
+            counts["generation_failed"] += 1
+            logger.warning("Native discovery generation unavailable: %s", exc)
+            response = ""
+            generation["outcome"] = "failed"
+    else:
+        try:
+            providers = _resolve_routed_providers(LLMRole.SUMMARIZE, None, config)
+            if not providers:
+                raise ValueError("No discovery model route configured.")
+            # One logical generation, at most two already-configured routes.
+            # The normal client retains fallback ordering and shared pacing.
+            single = replace(
+                config,
+                llm=replace(
+                    config.llm,
+                    providers=providers[:2],
+                    max_retries=0,
+                ),
+            )
+            # Discovery replaces nested model settings, so it owns a fresh execution.
+            discovery_execution = ModelExecution()
+            response, _ = await complete(
+                LLMRole.SUMMARIZE,
+                [
+                    {"role": "system", "content": "You suggest sources for owner approval; never activate them."},
+                    {"role": "user", "content": prompt},
+                ],
+                single,
+                max_output_tokens=2048,
+                execution=discovery_execution,
+            )
+            generation["outcome"] = "no_valid_proposals" if response.strip() else "empty"
+        except Exception as exc:
+            counts["generation_failed"] += 1
+            logger.warning("Discovery generation unavailable (%s)", type(exc).__name__)
+            response = ""
+            generation["outcome"] = "failed"
     seen = (
         configured
         | {source.url for source in pending}

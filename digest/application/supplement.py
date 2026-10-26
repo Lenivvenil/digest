@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from digest.adapters.storage import edition as editions
 from digest.adapters.storage import post_delivery as storage
-from digest.domain.delivery.edition import Receipts, SupplementEdition
+from digest.adapters.storage.issue_paths import safe_issue_path
+from digest.domain.delivery.edition import NativeSupplementEdition, Receipts, SupplementDestination
 from digest.domain.delivery.supplement import PendingSupplement, SupplementFragment, fragment_identity, fragment_window
-from digest.domain.investigation.delivered import DeliveredInvestigationInput
+from digest.domain.investigation.delivered import DeliveredOrigin
 from digest.presentation.supplement import fragment_text
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ def prepare_fragment(
     result_path: Path,
     result: EvidenceIrritatorResult,
     presented: EvidenceIrritatorResult,
-    origin: DeliveredInvestigationInput,
+    origin: DeliveredOrigin,
     *,
     language: str,
     notice: str,
@@ -94,6 +95,7 @@ def prepare_fragment(
 
 
 def _pending(marker: Path, record: dict[str, Any]) -> PendingSupplement:
+    safe_issue_path(marker)
     saved = record["fragment"]
     if record["supplement_status"] == "pending" and saved["included_ready"] is not None:
         raise ValueError("Pending supplement retains an unresolved ready reservation.")
@@ -122,13 +124,14 @@ def _release_unclaimed(
     saved = record["fragment"]
     previous = saved["included_ready"]
     path = cache / editions.READY_FILE
-    data, digest = editions.read_record(path, previous, allowed_schemas=(3,))
-    editions.validate_manifest_record(data, data["payloads"][0]["chat_id"], now, fresh=False)
+    data, digest = editions.read_record(path, previous, allowed_schemas=(3, 5))
+    editions.load_edition(path, data["payloads"][0]["chat_id"], now, previous)
     if (
         digest != previous
         or data["supplement"]["fragment"]["fragment_id"] != pending.fragment.fragment_id
         or now < datetime.fromisoformat(data["expires_at"])
-        or any((cache / name).exists() for name in (editions.CLAIM_FILE, editions.RECEIPTS_FILE))
+        or any((cache / name).exists() or (cache / name).is_symlink()
+               for name in (editions.CLAIM_FILE, editions.RECEIPTS_FILE))
     ):
         raise ValueError("Reserved supplement has no proven expired, unclaimed origin ready.")
     saved["released_binding"] = {"ready_sha256": previous, "reason": "expired_unclaimed_ready"}
@@ -149,7 +152,7 @@ def pending_fragment(
     for marker in storage.attempt_paths(directory):
         try:
             record = storage.read_attempt(marker)
-            if record.get("schema_version") != 3 or "fragment" not in record:
+            if record.get("schema_version") not in (3, 4) or "fragment" not in record:
                 continue
             if record["supplement_status"] in {"consumed", "expired", "archive_only"}:
                 continue
@@ -180,21 +183,24 @@ def archive_fragment(pending: PendingSupplement, reason: str) -> None:
     storage.save_attempt(Path(pending.attempt), record)
 
 
-def reserve_fragment(pending: PendingSupplement, ready_sha256: str) -> None:
+def verify_pending_fragment(pending: PendingSupplement) -> dict[str, Any]:
+    """Require the exact still-available slot without mutating its state."""
     record = storage.read_attempt(Path(pending.attempt))
-    if (
-        _pending(Path(pending.attempt), record) != pending
-        or record["supplement_status"] != "pending"
-        or record["fragment"]["included_ready"] is not None
-    ):
+    if (_pending(Path(pending.attempt), record) != pending or record["supplement_status"] != "pending"
+            or record["fragment"]["included_ready"] is not None):
         raise ValueError("Supplement is no longer available for this ready edition.")
+    return record
+
+
+def reserve_fragment(pending: PendingSupplement, ready_sha256: str) -> None:
+    record = verify_pending_fragment(pending)
     record["fragment"]["included_ready"] = ready_sha256
     record["supplement_status"] = "included_ready"
     storage.save_attempt(Path(pending.attempt), record)
 
 
 def verify_fragment_reservation(
-    data: SupplementEdition,
+    data: SupplementDestination,
     ready_sha256: str,
     *,
     allow_consumed: bool = False,
@@ -213,23 +219,78 @@ def verify_fragment_reservation(
     return record
 
 
-def release_replaced_fragment(data: SupplementEdition, ready_sha256: str, now: datetime, cache: Path) -> None:
+def finish_native_reservation(
+    data: NativeSupplementEdition, ready_sha256: str, now: datetime, cache: Path,
+    *, allow_consumed: bool = False,
+) -> None:
+    """Finish only the exact native ready→reservation write prefix; never resend."""
+    frozen = data.supplement
+    pending = PendingSupplement(frozen.fragment, frozen.projection, frozen.projection_sha256, frozen.attempt)
+    record = storage.read_attempt(Path(frozen.attempt))
+    if _pending(Path(frozen.attempt), record) != pending:
+        raise ValueError("Native ready supplement differs from its original pending fragment.")
+    if record["supplement_status"] == "pending":
+        if any((cache / name).exists() or (cache / name).is_symlink()
+               for name in (editions.CLAIM_FILE, editions.RECEIPTS_FILE)):
+            raise ValueError("Cannot repair a native reservation after any dispatch evidence.")
+        current, _ = editions.load_edition(cache / editions.READY_FILE,
+            data.payloads[0]["chat_id"], now, ready_sha256)
+        if current != data:
+            raise ValueError("Native ready changed before reservation recovery.")
+        reserve_fragment(pending, ready_sha256)
+    verify_fragment_reservation(data, ready_sha256, allow_consumed=allow_consumed)
+
+
+def release_replaced_fragment(data: SupplementDestination, ready_sha256: str, now: datetime, cache: Path) -> None:
     frozen = data.supplement
     record = storage.read_attempt(Path(frozen.attempt))
+    release = {"ready_sha256": ready_sha256, "reason": "expired_unclaimed_ready"}
+    if (isinstance(data, NativeSupplementEdition) and record["supplement_status"] in {"pending", "expired"}
+            and record["fragment"]["released_binding"] != release):
+        # A failed reservation can leave an older release proof, or reach D+4
+        # before replacement. Prove this exact unsent ready without resurrecting
+        # an expired fragment or trusting an unrelated predecessor's receipt.
+        pending = PendingSupplement(frozen.fragment, frozen.projection, frozen.projection_sha256, frozen.attempt)
+        if (_pending(Path(frozen.attempt), record) != pending
+                or record["fragment"]["included_ready"] is not None
+                or now < datetime.fromisoformat(data.expires_at)
+                or (record["supplement_status"] == "expired" and (
+                    record.get("supplement_reason") != "origin_day_plus_four_utc"
+                    or fragment_window(pending.fragment, now.date()) != "expired"))
+                or any((cache / name).exists() or (cache / name).is_symlink()
+                       for name in (editions.CLAIM_FILE, editions.RECEIPTS_FILE))):
+            raise ValueError("Missing native reservation has no proven expired, unclaimed ready.")
+        current, _ = editions.load_edition(cache / editions.READY_FILE,
+            data.payloads[0]["chat_id"], now, ready_sha256)
+        if current != data:
+            raise ValueError("Native ready changed before release recovery.")
+        record["fragment"]["released_binding"] = release
+        storage.save_attempt(Path(frozen.attempt), record)
+        record = storage.read_attempt(Path(frozen.attempt))
     pending = _pending(Path(frozen.attempt), record)
     saved = record["fragment"]
     if record["supplement_status"] == "included_ready":
         if saved["included_ready"] != ready_sha256:
             raise ValueError("Expired ready supplement has a different reservation.")
         _release_unclaimed(pending, record, now, cache)
-    elif record["supplement_status"] not in {"pending", "expired", "archive_only"} or saved["released_binding"] != {
-        "ready_sha256": ready_sha256,
-        "reason": "expired_unclaimed_ready",
-    }:
+    elif (record["supplement_status"] not in {"pending", "expired", "archive_only"}
+          or saved["released_binding"] != release):
         raise ValueError("Expired ready supplement release is not proven.")
 
 
-def consume_fragment(data: SupplementEdition, ready_sha256: str, receipts: Receipts) -> None:
+def verify_consumed_fragment(data: SupplementDestination, ready_sha256: str, receipts: Receipts) -> None:
+    """Read-only proof; callers still validate receipt schema, claim and terminal state."""
+    record = verify_fragment_reservation(data, ready_sha256, allow_consumed=True)
+    coverage = data.supplement.coverage.covering_chunks
+    confirmed = {item.chunk: item for item in receipts.confirmed
+                 if type(item.chunk) is int and item.owner_sha256 == data.owner_sha256}
+    if (receipts.ready_sha256 != ready_sha256 or record["supplement_status"] != "consumed"
+            or not all(index in confirmed for index in coverage)
+            or record["fragment"].get("consumed_chunks") != [asdict(confirmed[index]) for index in coverage]):
+        raise ValueError("Native supplement consumption lacks exact confirmed coverage proof.")
+
+
+def consume_fragment(data: SupplementDestination, ready_sha256: str, receipts: Receipts) -> None:
     """Required application write, independent of uncertainty in later unrelated chunks."""
     record = verify_fragment_reservation(data, ready_sha256, allow_consumed=True)
     coverage = data.supplement.coverage.covering_chunks

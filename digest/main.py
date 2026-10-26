@@ -14,6 +14,7 @@ from digest.application.results import RunStats as RunStats
 from digest.cli import arguments, diagnostics, reporting
 
 if TYPE_CHECKING:
+    from digest.application.native_discovery import NativeDiscoveryInput
     from digest.delivery.issue_guard import IssueGuard
 
 
@@ -48,13 +49,14 @@ async def check_config(config_path: str) -> int:
 
 async def discover_sources(
     config_path: str, *, phase: str = "all", pending_sha: str | None = None,
-    delivery_sha: str | None = None,
+    delivery_sha: str | None = None, native: NativeDiscoveryInput | None = None,
 ) -> int:
     """Report durable preparation before dispatching the same discovery session."""
     session = discovery.start_session(config_path, phase)
     counts = None
     if phase in {"prepare", "all"}:
-        prepared = await discovery.prepare_and_reserve(session)
+        prepared = (await discovery.prepare_and_reserve(session) if native is None
+                    else await discovery.prepare_and_reserve(session, native=native))
         # This write is an effect barrier, including local all: failure prevents send.
         reporting.publish_discovery_prepared(prepared)
         pending_sha, delivery_sha, counts = prepared.pending_sha, prepared.delivery_sha, prepared.counts
@@ -77,6 +79,23 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         from digest.edition_runtime import validate_cli
         validate_cli(args)
+        native_discovery = None
+        if args.discovery_native_prefill is not None:
+            if (not args.discover or args.discovery_phase == "send" or args.check or args.dry_run
+                    or args.radar_only or args.native_phase or args.edition_phase or args.prepare_edition):
+                raise ValueError("Native discovery input requires only discovery prepare/all.")
+            from pathlib import Path
+
+            from digest.application.native_discovery import NativeDiscoveryInput
+
+            native_discovery = NativeDiscoveryInput(
+                Path(args.discovery_native_prefill), args.discovery_native_sha or "", args.discovery_native_owner or "",
+                args.discovery_native_reservation_sha or "",
+            )
+        elif any(value is not None for value in (
+            args.discovery_native_sha, args.discovery_native_owner, args.discovery_native_reservation_sha,
+        )):
+            raise ValueError("Native discovery bindings require an explicit prefill path.")
         if args.native_phase:
             from digest.application.native import native_phase
 
@@ -103,9 +122,10 @@ async def main(argv: list[str] | None = None) -> int:
         if args.check:
             return await check_config(args.config)
         if args.discover:
+            discovery_options = {"native": native_discovery} if native_discovery is not None else {}
             return await discover_sources(args.config, phase=args.discovery_phase,
                                           pending_sha=args.discovery_pending_sha,
-                                          delivery_sha=args.discovery_delivery_sha)
+                                          delivery_sha=args.discovery_delivery_sha, **discovery_options)
 
         issue_guard = None
         if args.issue_reservation_sha:

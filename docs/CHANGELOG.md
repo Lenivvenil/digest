@@ -3,6 +3,12 @@
 ## [Unreleased] — Reliability rehabilitation
 
 ### Changed
+- Add explicit native-only delivered research continuation for the existing narrative,
+  research-plan, grounded-ranking and configured presentation contracts. Bind native
+  phase intent/results and acquired snapshots; preserve cumulative source budgets,
+  exact origin/quote validation, legacy result fields and existing fragment ownership.
+  Unknown work holds without model API fallback, refetch or send. Native result schema3
+  retains native provenance; controller adoption remains separate. Refs #55.
 - Extend the local native-editorial candidate with separately versioned, reviewed
   closing/comparison values. Preserve exact source approval/credit, per-source
   observations, accepted-main dependencies, optional publication controls and final
@@ -29,6 +35,18 @@
   checks do not establish live semantic usefulness or runtime deployment. Refs #77.
 
 ### Fixed
+- Carry eligible retained counterevidence fragments through exact accepted native
+  composition, archive, schema-5 readiness, reservation, fragment-specific receipt
+  consumption and proof-bound expired-unclaimed release. Keep legacy schema-3/4
+  bytes and PendingNative fields; recover exact unclaimed import prefixes without
+  recomposition while retaining conflicting predecessor dispatch as a manual-proof
+  hold. Native semantic stages and controller activation remain separate. Refs #55.
+- Preserve delivered-card investigation compatibility for native primary archives
+  with an explicit native-origin contract, strict source/acceptance/receipt rereads,
+  separate sidecars and an exclusive execution claim. Reuse existing downstream
+  validators and fragments without fabricated provider reviews or changed legacy
+  field sets. No runtime activation, provider/cost decision, native fragment insertion,
+  primary-state mutation or transport is included. Refs #55.
 - Bind new selected-source comparison response schemas to their captured EN/RU
   language, requiring Russian presentation fields and English null presentation.
   Preserve exact historical generic-v2 captures as readable, non-reusable

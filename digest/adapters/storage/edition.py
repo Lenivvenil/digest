@@ -19,6 +19,7 @@ from digest.domain.delivery.edition import (
     Claim,
     Edition,
     NativeEdition,
+    NativeSupplementEdition,
     PreparedArticle,
     Receipts,
     SupplementEdition,
@@ -109,7 +110,7 @@ def load_edition(
     *,
     fresh: bool = False,
 ) -> tuple[Edition, str]:
-    data, digest = read_record(path, expected, allowed_schemas=(1, 2, 3, 4))
+    data, digest = read_record(path, expected, allowed_schemas=(1, 2, 3, 4, 5))
     validate_manifest_record(data, owner, now, fresh=fresh)
     try:
         fields = dict(data)
@@ -117,16 +118,17 @@ def load_edition(
             PreparedArticle(item["full_hash"], item["source"], item["covering_chunks"], ArticleSummary(**item["card"]))
             for item in data["articles"]
         ]
-        if data["schema"] == 3:
+        if data["schema"] in (3, 5):
             from digest._serialization import restore_dataclass
 
             fields["supplement"] = restore_dataclass(data["supplement"], PreparedSupplement)
-            return SupplementEdition(**fields), digest
-        if data["schema"] == 4:
+            if data["schema"] == 3:
+                return SupplementEdition(**fields), digest
+        if data["schema"] in (4, 5):
             from digest.adapters.storage.native import validate_native_ready
 
             validate_native_ready(data)
-            return NativeEdition(**fields), digest
+            return (NativeSupplementEdition(**fields) if data["schema"] == 5 else NativeEdition(**fields)), digest
         return Edition(**fields), digest
     except (TypeError, KeyError, ValueError) as exc:
         raise ValueError("Invalid prepared edition record; publishing blocked.") from exc

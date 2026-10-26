@@ -141,6 +141,25 @@ See [transport protocols](STATE_AND_EFFECTS.md#transport-protocols) for distinct
 confirmation, retry and fallback rules, and [experimental source reading](ADVANCED_OPERATIONS.md#experimental-source-reading)
 for reconciliation ownership and technical-handoff limits.
 
+The native delivered-origin adapter connects a confirmed archive-enabled native
+edition to the same optional investigation domain without passing native evidence
+through a provider-review decoder. It verifies the native source/acceptance chain,
+full applied receipts and exact delivered cards, then exposes a distinct typed
+origin. Legacy persisted field sets remain intact. Preparation is model/search/send
+free; optional execution still owns its configured semantic and source stages.
+See [native-origin operations](ADVANCED_OPERATIONS.md#native-delivered-origins).
+The [native supplement admission owner](../digest/application/native_supplement.py)
+can now bind an existing fragment into a versioned final native composition, before
+acceptance, and reuse reservation/coverage/consumption/release owners. A separate
+ready schema 5 preserves older native/provider field sets. This does not wire an
+optional runtime job. The separate [native research owner](../digest/application/native_irritator.py)
+can drive the existing three semantic judgments and configured presentation through
+explicit native intent/result boundaries. Two acquired-evidence checkpoints preserve
+the cumulative nine-start/180-second source budget across resumes, without repeating
+HTTP or introducing a provider fallback. Native result schema 3 binds phase provenance
+while older result dataclasses remain unchanged. Controller adoption is separate; see
+[native research phases](ADVANCED_OPERATIONS.md#native-research-phases).
+
 ## Feedback loop
 
 <a id="stage-5-c-catalog-and-feedback-boundaries"></a>

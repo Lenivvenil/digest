@@ -558,3 +558,25 @@ Existing schedules, supplementary investigation, discovery, configuration and sa
 production state are unchanged. The native branch is not a silent retirement of
 those product capabilities. Issue #55 still requires its independent A/B/C evidence,
 including an applicable ordinary edition and the actual free operating disposition.
+
+### Native delivered-origin compatibility (local candidate, #55)
+
+Native accepted archives retain their own evidence contract after delivery. The
+optional delivered-card investigation therefore receives an explicit native origin
+variant, not a reconstructed `BlindReviewReport` or invented report hash. Its exact
+packet/response/source-review/projection/final-acceptance/archive references supplement
+the common ready, claim, complete applied receipts, owner, UTC day and ordered cards.
+Original occurrence, quote, research, ranking and compact-fragment validators are reused.
+
+Persisted legacy origin fields cannot be extended with defaults: exact-field-set
+restoration would reject retained markers and fragments. A distinct native dataclass
+and strict union decoder preserve legacy serialized bytes. Native attempt schema 4
+and `.native.*` sidecars avoid collisions. Prepare has no model/search/send effects;
+execute revalidates the prepared origin and claims one attempt exclusively.
+
+This compatibility work does not decide the provider/native semantic-stage route,
+prove free entitlement, change optional gates or activate scheduling. It also does
+not itself add native composition consumption of retained fragments. The subsequent
+[native destination extension](0007-compact-issue-reservation.md#native-counterevidence-destinations)
+adds that lifecycle only under a separately bound composition and final acceptance. See
+[operation, interruption recovery and rollback](../ADVANCED_OPERATIONS.md#native-delivered-origins).

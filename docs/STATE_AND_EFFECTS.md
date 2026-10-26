@@ -297,6 +297,58 @@ and an explicit current-review checkpoint. The older origin review remains a ref
 never a filename-order inference for the next optional investigation. Claims and
 receipts keep their existing schema because the exact ready hash binds the extension.
 
+Native-origin investigations use a separate attempt schema 4 (not the primary-ready
+schema discriminator): `native-delivered-card-v1` contains a
+`NativeDeliveredInvestigationInput`. Common edition/claim/receipt/owner/day/card
+fields retain their meaning; `native` carries six typed path/hash references for the
+packet, response, source review, composition, final acceptance and archive index.
+There is no `report_sha256`, fabricated `ModelReview` or legacy candidate-report.
+Exact-field-set union restoration preserves old `DeliveredInvestigationInput` and
+`SupplementFragment` serializations unchanged. Native and legacy variants share
+source-occurrence and delivered-quote validation, research, ranking and fragment
+eligibility. Native RSS evidence is not promoted to full-source evidence.
+
+`<archive-stem>.native.post-attempt.json` and `.native.irritator.*` remain separate
+from legacy `.post-attempt.json`/`.irritator.*`. Native execute additionally creates an
+exclusive `.native.post-attempt.execute.json` claim before external work; a crash
+before updating the main attempt still consumes that claim. Primary state is never
+mutated by this adapter. Prepare and execute reread all exact origin anchors, and
+execute requires equality with the prepared origin. The runtime still serializes
+writers and supplies remote durability; rereads are not a cross-file transaction.
+See [native-origin operation and rollback](ADVANCED_OPERATIONS.md#native-delivered-origins).
+
+Explicit native research additionally owns immutable `.phases.json`/`.phases/`
+artifacts bound to the existing native attempt and execution claim. Requests bind the
+session and all prior artifacts; generation and each acquisition have separate
+exclusive intents. The controller proves remote persistence before external work;
+a started marker precedes source I/O. Missing result after intent is held, not repeated.
+Completed acquired snapshots restore cumulative physical starts and elapsed source
+time, never reset either bound. Native worker pauses do not alter request hashes.
+Native result schema 3 is a distinct `NativeResearchResult` subclass with typed
+`native-irritator-provenance/v1` references; old `EvidenceIrritatorResult` fields are
+unchanged. Existing fragment storage rechecks every native reference hash. Exact
+completion validates mandatory artifacts against the existing attempt's final result
+and Markdown references. Interrupted finalization is held without a second attempt.
+See [native phase operations](ADVANCED_OPERATIONS.md#native-research-phases).
+
+A native destination carrying an existing fragment is `NativeSupplementEdition`,
+ready schema 5. It extends the native exact projection/acceptance fields with the
+existing `PreparedSupplement`, not a fake `current_review_checkpoint`. Schema-3/4
+records and `PendingNative` keep their exact field sets. `native-composition/v3`
+freezes the whole supplemental value and covering chunks inside `publication`;
+final acceptance binds it together with canonical/presentation cards and payloads.
+The native archive index and ready also retain the fragment projection, canonical
+result and original archive hashes. The mutable attempt is still only a reservation,
+never a ready checkpoint reference.
+
+Projection discovers at most one existing eligible fragment; import rehydrates only
+that frozen choice and verifies it is still available. New late fragments do not
+change a no-fragment projection. Import reserves the ready hash before cleanup; a
+retry can finish an exact unclaimed reservation prefix without recomposition. Conflicting
+old dispatch remnants remain a manual-proof hold. Receipt-owned consumption and
+expired-unclaimed release share the existing supplement owners across schema 3 and 5.
+See [native destination and recovery](ADVANCED_OPERATIONS.md#native-fragment-destinations).
+
 The supplement archive frames its exact serialized stage diagnostics in a JSON code
 fence. Its companion JSON and surrounding formatted prose are unchanged; the fence
 only describes the diagnostic block, not a whole-document Markdown safety boundary.
@@ -362,6 +414,7 @@ The runtime must preserve saved work on failure and serialize writers sharing st
 | `.cache/seen_articles.json` | Delivered/consumed identity timestamps under the scenario's deduplication policy. |
 | `.cache/source_stats.json`, `source_state.json`, `source_category_map.json` | Source observations, trial lifecycle and category read model. |
 | `.cache/pending_sources.json`, `discovery_delivery.json` | Saved proposals and separately bound discovery reservation/delivery history. |
+| `.cache/native_discovery/`, referenced `.cache/native/` records | Opt-in immutable discovery request/raw prefill, same-run reservation and exclusive consumption evidence; no changes to legacy identity schemas. |
 | `.cache/compact_issue.json` | Legacy direct-compact reservation; unresolved legacy sending also blocks prepared publication. |
 | `digests/*.review.json`, `*.candidates.json` | Review and candidate-accounting evidence associated with archived output. |
 
@@ -375,6 +428,11 @@ Normal preparation revalidates retained proposals and may generate for remaining
 These are local writes, not proof that the runtime persisted them remotely; cancellation
 or runner loss may prevent its existing persistence step. Schema and budgets are
 unchanged. See the [validated-prefix amendment](decisions/0013-discovery-exploration-state.md#validated-prefix-recovery--132-2026-10-12).
+
+The [native discovery adapter](NATIVE_DISCOVERY.md) requires its slot reservation
+to be externally persisted/read back before new candidate admission. Its locally
+exclusive consumption record is not itself remote durability or a live-run guarantee.
+Missing/invalid native input never selects a provider fallback.
 
 ## Send and apply
 

@@ -25,9 +25,15 @@ from digest.adapters.storage import post_delivery as storage
 from digest.adapters.storage.review_checkpoints import load_review_checkpoint
 from digest.adapters.telegram.delivery import send_post_delivery_supplement
 from digest.application.investigation_origin import freeze_delivered_input
+from digest.application.native_investigation_origin import freeze_native_delivered_input
 from digest.application.review_routes import ALLOWED_REVIEW_MODELS
 from digest.config import Config, load_config
-from digest.domain.investigation.delivered import DeliveredInvestigationInput, validate_delivered_input
+from digest.domain.investigation.delivered import (
+    DeliveredInvestigationInput,
+    DeliveredOrigin,
+    NativeDeliveredInvestigationInput,
+    validate_delivered_input,
+)
 from digest.domain.investigation.search_policy import build_search_policy
 from digest.presentation.supplement import signal_text
 
@@ -52,6 +58,26 @@ def _paths(checkpoint: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def _native_paths(checkpoint: Path, config: Config) -> tuple[Path, Path, Path]:
+    from digest.adapters.storage.issue_paths import safe_issue_path
+
+    safe_issue_path(checkpoint)
+    directory = safe_issue_path(Path(config.obsidian.output_dir)).resolve()
+    if (config.telegram.delivery_mode != "compact" or not config.obsidian.enabled
+            or checkpoint.suffix != ".md" or checkpoint.parent != directory):
+        raise ValueError("Native investigation requires an archive in the configured compact output directory.")
+    stem = checkpoint.stem + ".native"
+    return (
+        checkpoint.with_name(stem + ".post-attempt.json"),
+        checkpoint.with_name(stem + ".irritator.json"),
+        checkpoint.with_name(stem + ".irritator.md"),
+    )
+
+
+def _native_execution_claim(marker: Path) -> Path:
+    return marker.with_suffix(".execute.json")
+
+
 def _config(path: Path) -> Config:
     config = load_config(path)
     model = config.review.secondary
@@ -62,12 +88,38 @@ def _config(path: Path) -> Config:
 
 
 def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | None:
+    """Retained provider-review entrypoint; its serialized contract is unchanged."""
+    return _prepare_post_delivery(config_path, checkpoint_path, native=False)
+
+
+def prepare_native_post_delivery(config_path: Path, archive_path: Path) -> Path | None:
+    """Reserve optional work from an actual delivered native Markdown archive."""
+    return _prepare_post_delivery(config_path, archive_path, native=True)
+
+
+def _prepare_post_delivery(
+    config_path: Path, checkpoint_path: Path, *, native: bool, native_config: Config | None = None,
+) -> Path | None:
+    if native:
+        from digest.adapters.storage.issue_paths import safe_issue_path
+
+        safe_issue_path(checkpoint_path)
     checkpoint = _safe_path(checkpoint_path)
-    config = _config(config_path)
+    if native_config is not None and not native:
+        raise ValueError("Native semantic configuration cannot replace a retained provider route.")
+    config = native_config if native_config is not None else _config(config_path)
     source_bytes = storage.read_checkpoint_bytes(checkpoint)
-    bundle, _reviews = load_review_checkpoint(checkpoint, config)
+    delivered: DeliveredOrigin | None = None
+    if native:
+        marker, report, markdown = _native_paths(checkpoint, config)
+        delivered, bundle = freeze_native_delivered_input(checkpoint, source_bytes)
+        claim = _native_execution_claim(marker)
+        if claim.exists() or claim.is_symlink():
+            return None
+    else:
+        bundle, _reviews = load_review_checkpoint(checkpoint, config)
+        marker, report, markdown = _paths(checkpoint)
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
-    marker, report, markdown = _paths(checkpoint)
     if storage.attempt_artifacts_exist(marker, report, markdown):
         return None
     if config.telegram.delivery_mode == "compact":
@@ -77,9 +129,8 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
         if pending is not None or reason != "no_pending_fragment":
             logging.getLogger(__name__).info("Optional investigation skipped: %s", reason)
             return None
-    delivered = (
-        freeze_delivered_input(checkpoint, source_bytes, bundle) if config.telegram.delivery_mode == "compact" else None
-    )
+    if not native and config.telegram.delivery_mode == "compact":
+        delivered = freeze_delivered_input(checkpoint, source_bytes, bundle)
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     relative = storage.repository_relative_path(checkpoint)
     record = {
@@ -98,8 +149,8 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
         from digest._serialization import canonical_json_bytes
 
         record.update(
-            schema_version=3,
-            input_contract="delivered-card-v1",
+            schema_version=4 if native else 3,
+            input_contract="native-delivered-card-v1" if native else "delivered-card-v1",
             delivered=asdict(delivered),
             delivered_sha256=hashlib.sha256(canonical_json_bytes(asdict(delivered))).hexdigest(),
         )
@@ -109,7 +160,7 @@ def prepare_post_delivery(config_path: Path, checkpoint_path: Path) -> Path | No
     return marker
 
 
-def _require_search_policy(record: object, config: Config) -> None:
+def _require_search_policy(record: object, config: Config, *, native: bool = False) -> None:
     """Hold old or changed attempts without assigning them today's search policy."""
     expected = asdict(build_search_policy(
         config.irritator.sources, config.irritator.queries_per_narrative,
@@ -117,7 +168,7 @@ def _require_search_policy(record: object, config: Config) -> None:
     ))
     if isinstance(record, dict):
         policy = record.get("search_policy")
-        expected_schema = 3 if config.telegram.delivery_mode == "compact" else 2
+        expected_schema = 4 if native else 3 if config.telegram.delivery_mode == "compact" else 2
         if (
             type(record.get("schema_version")) is int
             and record["schema_version"] == expected_schema
@@ -132,16 +183,20 @@ def _require_search_policy(record: object, config: Config) -> None:
     )
 
 
-def _delivered_input(record: dict[str, Any], bundle: EvidenceBundle) -> DeliveredInvestigationInput | None:
+def _delivered_input(record: dict[str, Any], bundle: EvidenceBundle) -> DeliveredOrigin | None:
     if record["schema_version"] == 2:
         return None
     from digest._serialization import canonical_json_bytes, restore_dataclass
 
-    if record.get("input_contract") != "delivered-card-v1" or hashlib.sha256(
+    native = record["schema_version"] == 4
+    contract = "native-delivered-card-v1" if native else "delivered-card-v1"
+    if record.get("input_contract") != contract or hashlib.sha256(
         canonical_json_bytes(record.get("delivered"))
     ).hexdigest() != record.get("delivered_sha256"):
         raise ValueError("Invalid delivered investigation input contract or binding.")
-    origin: DeliveredInvestigationInput = restore_dataclass(record["delivered"], DeliveredInvestigationInput)
+    origin: DeliveredOrigin = restore_dataclass(
+        record["delivered"], NativeDeliveredInvestigationInput if native else DeliveredInvestigationInput,
+    )
     validate_delivered_input(origin, bundle)
     if origin.checkpoint_sha256 != record.get("checkpoint_sha256"):
         raise ValueError("Delivered investigation checkpoint binding changed.")
@@ -215,18 +270,45 @@ async def execute_post_delivery(
     *,
     execution: ModelExecution,
 ) -> int:
+    return await _execute_post_delivery(config_path, checkpoint_path, execution=execution, native=False)
+
+
+async def execute_native_post_delivery(
+    config_path: Path, archive_path: Path, *, execution: ModelExecution,
+) -> int:
+    """Execute the separate native-origin contract; ordinary delivery is never called."""
+    return await _execute_post_delivery(config_path, archive_path, execution=execution, native=True)
+
+
+async def _execute_post_delivery(
+    config_path: Path, checkpoint_path: Path, *, execution: ModelExecution, native: bool,
+) -> int:
     from digest.irritator.evidence_stage import MAX_SECONDS, run_evidence_irritator
 
+    if native:
+        from digest.adapters.storage.issue_paths import safe_issue_path
+
+        safe_issue_path(checkpoint_path)
     checkpoint = _safe_path(checkpoint_path)
-    marker, output, markdown = _paths(checkpoint)
-    record = storage.load_attempt(marker, output, markdown)
     config = _config(config_path)
-    _require_search_policy(record, config)
+    marker, output, markdown = _native_paths(checkpoint, config) if native else _paths(checkpoint)
+    record = storage.load_attempt(marker, output, markdown)
+    _require_search_policy(record, config, native=native)
     source_bytes = storage.read_checkpoint_bytes(checkpoint)
-    bundle, _reviews = load_review_checkpoint(checkpoint, config)
+    current_origin: NativeDeliveredInvestigationInput | None = None
+    if native:
+        current_origin, bundle = freeze_native_delivered_input(checkpoint, source_bytes)
+    else:
+        bundle, _reviews = load_review_checkpoint(checkpoint, config)
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     delivered = _delivered_input(record, bundle)
-    source_evidence, require_full_source, source_error = _source_provenance(checkpoint, bundle, config, source_bytes)
+    if native and delivered != current_origin:
+        raise ValueError("Native delivered investigation origin changed since prepare.")
+    # Native source packets explicitly contain RSS evidence, not a provider-owned
+    # full-source checkpoint. The shared research stage may acquire documents later.
+    source_evidence, require_full_source, source_error = (
+        (None, False, "") if native else _source_provenance(checkpoint, bundle, config, source_bytes)
+    )
     storage.require_unchanged_checkpoint(checkpoint, source_bytes)
     if (
         record.get("execute_started", False) is not None
@@ -235,6 +317,11 @@ async def execute_post_delivery(
         or record.get("checkpoint_sha256") != hashlib.sha256(source_bytes).hexdigest()
     ):
         raise ValueError("Invalid, changed or already executed post-delivery checkpoint.")
+    if native and not storage.create_native_execution_claim(_native_execution_claim(marker), {
+        "schema": "native-investigation-execution/v1", "checkpoint": record["checkpoint"],
+        "delivered_sha256": record["delivered_sha256"],
+    }):
+        raise ValueError("Native investigation execution already claimed; refusing another attempt.")
     record["execute_started"] = datetime.now(UTC).isoformat()
     if require_full_source:
         record["full_source_required"] = True
@@ -343,14 +430,16 @@ async def execute_post_delivery(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "execute"])
+    parser.add_argument("command", choices=["prepare", "execute", "native-prepare", "native-execute"])
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--checkpoint", required=True, type=Path)
     args = parser.parse_args()
-    if args.command == "prepare":
-        prepare_post_delivery(args.config, args.checkpoint)
+    if args.command in {"prepare", "native-prepare"}:
+        prepare = prepare_native_post_delivery if args.command == "native-prepare" else prepare_post_delivery
+        prepare(args.config, args.checkpoint)
         return 0
-    return asyncio.run(execute_post_delivery(args.config, args.checkpoint, execution=ModelExecution()))
+    execute = execute_native_post_delivery if args.command == "native-execute" else execute_post_delivery
+    return asyncio.run(execute(args.config, args.checkpoint, execution=ModelExecution()))
 
 
 if __name__ == "__main__":

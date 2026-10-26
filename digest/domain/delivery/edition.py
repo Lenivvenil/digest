@@ -16,6 +16,7 @@ SCHEMA_VERSION = 1
 READY_SCHEMA_VERSION = 2
 SUPPLEMENT_SCHEMA_VERSION = 3
 NATIVE_SCHEMA_VERSION = 4
+NATIVE_SUPPLEMENT_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,16 @@ class SupplementEdition(_Edition):
 class NativeEdition(_Edition):
     native_projection: dict[str, str]
     native_acceptance: dict[str, str]
+
+
+@dataclass(frozen=True, kw_only=True)
+class NativeSupplementEdition(NativeEdition):
+    """Native final acceptance plus existing separately covered investigation."""
+
+    supplement: PreparedSupplement
+
+
+SupplementDestination = SupplementEdition | NativeSupplementEdition
 
 
 @dataclass(frozen=True)
@@ -115,7 +126,7 @@ def validate_manifest(
     fresh: bool = True,
 ) -> None:
     try:
-        if type(data.get("schema")) is not int or data["schema"] not in (1, 2, 3, 4):
+        if type(data.get("schema")) is not int or data["schema"] not in (1, 2, 3, 4, 5):
             raise ValueError
         if data["content_sha256"] != content_sha256 or data["owner_sha256"] != owner_sha256:
             raise ValueError
@@ -181,7 +192,7 @@ def validate_manifest(
         for prefix, digest in (("canonical", canonical_sha256), ("presentation", presentation_sha256)):
             if data[f"{prefix}_sha256"] != digest:
                 raise ValueError
-        if data["schema"] != NATIVE_SCHEMA_VERSION and any(
+        if data["schema"] not in (NATIVE_SCHEMA_VERSION, NATIVE_SUPPLEMENT_SCHEMA_VERSION) and any(
             marker in metadata
             for metadata in (data["canonical_metadata"], data["presentation_metadata"])
             for marker in ("native_editorial", "external_editorial")
@@ -189,7 +200,7 @@ def validate_manifest(
             raise ValueError("Native editions require an enforced acceptance schema.")
         for reference, digest in data["checkpoint_refs"].items():
             validate_checkpoint_reference(reference, digest)
-        if data["schema"] == SUPPLEMENT_SCHEMA_VERSION:
+        if data["schema"] in (SUPPLEMENT_SCHEMA_VERSION, NATIVE_SUPPLEMENT_SCHEMA_VERSION):
             validate_supplement(data)
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Invalid, stale or wrong-owner prepared edition; publishing blocked.") from exc
@@ -232,7 +243,9 @@ def validate_supplement(data: dict[str, Any]) -> None:
         if data["checkpoint_refs"].get(path) != digest:
             raise ValueError("Frozen supplement lacks an immutable reference.")
     validate_checkpoint_reference(supplement.attempt, supplement.projection_sha256)
-    current_review = data["current_review_checkpoint"]
+    current_review = (
+        data.get("current_review_checkpoint", "") if data["schema"] == 5 else data["current_review_checkpoint"]
+    )
     if (
         not isinstance(current_review, str)
         or current_review
@@ -245,10 +258,14 @@ def validate_supplement(data: dict[str, Any]) -> None:
         raise ValueError("Invalid current publication review checkpoint.")
     identities = [article["full_hash"] for article in data["articles"]]
     canonical = list(data["canonical_metadata"]["cards"])
-    main_count = len(canonical)
+    main_count = data["canonical_metadata"].get("main_count", len(canonical)) if data["schema"] == 5 else len(canonical)
     presentation = data["presentation_metadata"]
     closing = presentation.get("closing")
-    if isinstance(closing, dict) and closing.get("card") is not None:
+    if data["schema"] == 5:
+        if (type(main_count) is not int or "current_review_checkpoint" in data
+                or presentation.get("supplement") != {"status": "included", "before_article": main_count}):
+            raise ValueError("Invalid native supplement placement contract.")
+    elif isinstance(closing, dict) and closing.get("card") is not None:
         canonical.append(data["canonical_metadata"]["closing"]["card"])
         if closing["card"] != data["articles"][-1]["card"]:
             raise ValueError("Presented closing card differs from its ordered publication.")
@@ -335,7 +352,7 @@ def validate_dispatch_identity(data: Edition) -> None:
 
 
 def project_result(data: Edition, receipts: Receipts) -> IssueDeliveryResult:
-    if data.schema not in (1, 2, 3, 4):
+    if data.schema not in (1, 2, 3, 4, 5):
         raise ValueError("Unsupported prepared edition schema.")
     return project_issue_coverage(
         (

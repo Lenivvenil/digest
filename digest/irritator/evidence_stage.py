@@ -12,7 +12,7 @@ import json
 import math
 import time
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import urldefrag, urlparse
 
 import httpx
@@ -25,7 +25,7 @@ from digest.domain.editorial.reviews import MAX_EVIDENCE_JSON_CHARS, EvidenceBun
 from digest.domain.investigation.coverage import COVERAGE as COVERAGE
 from digest.domain.investigation.coverage import FULL_SOURCE_COVERAGE as FULL_SOURCE_COVERAGE
 from digest.domain.investigation.delivered import (
-    DeliveredInvestigationInput,
+    DeliveredOrigin,
     DeliveredQuote,
     validate_delivered_input,
     validate_delivered_quote,
@@ -38,6 +38,7 @@ from digest.domain.investigation.signals import Signal
 from digest.domain.investigation.validation import validate_signals
 from digest.irritator.documents import (
     DocumentLink,
+    DocumentSnapshot,
     SourceRequestBudget,
     SourceRequestBudgetExceeded,
     acquire_document,
@@ -255,6 +256,44 @@ class EvidenceIrritatorResult:
     source_request_starts: int = 0
 
 
+@dataclass(frozen=True)
+class NativeResearchReference:
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class NativeResearchProvenance:
+    schema: Literal["native-irritator-provenance/v1"]
+    session: NativeResearchReference
+    phases: tuple[NativeResearchReference, ...]
+
+
+@dataclass(kw_only=True)
+class NativeResearchResult(EvidenceIrritatorResult):
+    """Distinct result version; retained provider result fields stay unchanged."""
+
+    native_provenance: NativeResearchProvenance
+
+
+class DeliveredSemanticStages(Protocol):
+    """Three explicit native judgments and two bounded acquired-evidence seams."""
+
+    async def narrative(self, diagnostic: StageDiagnostic, instruction: str, payload: dict[str, Any]) -> str: ...
+
+    async def research_plan(self, diagnostic: StageDiagnostic, instruction: str, payload: dict[str, Any]) -> str: ...
+
+    async def ranking(self, diagnostic: StageDiagnostic, instruction: str, payload: dict[str, Any]) -> str: ...
+
+    async def original_document(self, target_url: str, budget: SourceRequestBudget) -> DocumentSnapshot: ...
+
+    async def research_evidence(
+        self, result: EvidenceIrritatorResult, config: Config, client: httpx.AsyncClient,
+        links: tuple[DocumentLink, ...], lineage: dict[str, set[int]], budget: SourceRequestBudget,
+        cited_urls: set[str],
+    ) -> tuple[list[Signal], int]: ...
+
+
 # Only our fixed contract messages are diagnostic text. Never persist arbitrary
 # provider/source exception strings, which can contain credentials or raw bodies.
 _SAFE_ERROR_DETAILS = frozenset(
@@ -360,7 +399,7 @@ def _parse_narrative(
     text: str,
     bundle: EvidenceBundle | FullSourceEvidence,
     *,
-    delivered: DeliveredInvestigationInput | None = None,
+    delivered: DeliveredOrigin | None = None,
     whole_target: bool = False,
 ) -> tuple[list[EvidenceNarrative], list[str]]:
     entries, limitations = _response(text, "narratives", 1)
@@ -455,7 +494,7 @@ def _parse_narrative(
 def _validate_delivered_narrative(
     narrative: DeliveredNarrative,
     evidence: EvidenceBundle | FullSourceEvidence,
-    origin: DeliveredInvestigationInput,
+    origin: DeliveredOrigin,
 ) -> None:
     """One value-level target/source association shared by parsing and publication eligibility."""
     card = validate_delivered_quote(origin, narrative.target_card_id, narrative.delivered_quote)
@@ -488,7 +527,7 @@ def _validate_delivered_narrative(
 def _delivered_source_category(
     narrative: DeliveredNarrative,
     evidence: EvidenceBundle | FullSourceEvidence,
-    origin: DeliveredInvestigationInput,
+    origin: DeliveredOrigin,
 ) -> str:
     """Derive bounded metadata only after every citation binds the selected occurrence."""
     _validate_delivered_narrative(narrative, evidence, origin)
@@ -654,7 +693,7 @@ def _ranking_response(
 
 def eligible_delivered_result(
     result: EvidenceIrritatorResult,
-    origin: DeliveredInvestigationInput,
+    origin: DeliveredOrigin,
     bundle: EvidenceBundle,
     source: FullSourceEvidence | None,
 ) -> bool:
@@ -677,7 +716,9 @@ def eligible_delivered_result(
     decisions: dict[str, RankingDecision] = {}
     checked: RankingDecision
     try:
-        research = result.schema_version == 2
+        research = result.schema_version == 2 or (
+            result.schema_version == 3 and isinstance(result, NativeResearchResult)
+        )
         if research:
             if narrative.category != _delivered_source_category(narrative, evidence, origin):
                 return False
@@ -770,9 +811,11 @@ async def _model_text(
     payload: dict[str, Any],
     config: Config,
     *,
-    execution: ModelExecution,
+    execution: ModelExecution | None,
     admission_deadline: float | None = None,
 ) -> str:
+    if execution is None:
+        raise ValueError("Provider execution is unavailable on the native semantic route.")
     model = config.review.secondary
     diagnostic.provider, diagnostic.model = model.provider, model.model
     messages = [
@@ -1061,11 +1104,13 @@ def _cited_source_urls(evidence: EvidenceBundle | FullSourceEvidence, narrative:
 
 async def _research_queries(
     result: EvidenceIrritatorResult, narrative_input: dict[str, Any], cited_evidence: dict[str, Any],
-    config: Config, *, target_url: str, budget: SourceRequestBudget, execution: ModelExecution,
+    config: Config, *, target_url: str, budget: SourceRequestBudget, execution: ModelExecution | None,
     publication_context: dict[str, str], publication_instruction: str, admission_deadline: float | None,
+    native_stages: DeliveredSemanticStages | None = None,
 ) -> tuple[DocumentLink, ...]:
     """One original-page discovery read, then the existing second model request."""
-    snapshot = await acquire_document(target_url, budget=budget)
+    snapshot = (await native_stages.original_document(target_url, budget) if native_stages is not None
+                else await acquire_document(target_url, budget=budget))
     result.documents.append(DocumentAcquisition("origin", "origin", None, snapshot))
     result.source_request_starts = budget.requests_started
     links = discovery_links(snapshot)
@@ -1079,10 +1124,8 @@ async def _research_queries(
     if len(links) < len(snapshot.links):
         result.limitations.append("Discovery link coverage is bounded; only whole admitted locators were supplied.")
     policy = build_search_policy(config.irritator.sources, config.irritator.queries_per_narrative, research=True)
-    text = await _model_text(
-        _stage(result, "queries", 1), LLMRole.GENERATE_QUERIES,
-        PLAN_INSTRUCTION + QUERY_CONTRACT + GROUNDED_QUERY_CONTRACT + publication_instruction,
-        {"narrative": narrative_input, "evidence": cited_evidence,
+    instruction = PLAN_INSTRUCTION + QUERY_CONTRACT + GROUNDED_QUERY_CONTRACT + publication_instruction
+    payload = {"narrative": narrative_input, "evidence": cited_evidence,
          "exploratory_hypotheses": {
              "implicit_assumptions": result.narratives[0].implicit_assumptions,
              "why_worth_challenging": result.narratives[0].why_worth_challenging,
@@ -1090,9 +1133,14 @@ async def _research_queries(
          },
          "original_document_context": original_context,
          "discovered_links": [{"id": link.link_id, "url": link.url, "title": link.title} for link in links],
-         "allowed_sources": policy.sources, "max_queries": policy.max_queries, **publication_context},
-        config, execution=execution, admission_deadline=admission_deadline,
-    )
+         "allowed_sources": policy.sources, "max_queries": policy.max_queries, **publication_context}
+    if native_stages is not None:
+        text = await native_stages.research_plan(_stage(result, "queries", 1), instruction, payload)
+    else:
+        text = await _model_text(
+            _stage(result, "queries", 1), LLMRole.GENERATE_QUERIES, instruction, payload, config,
+            execution=execution, admission_deadline=admission_deadline,
+        )
     result.queries, result.research_plan, limitations = parse_research_plan(
         text, policy.sources, policy.max_queries, links,
     )
@@ -1152,6 +1200,31 @@ async def _acquire_research_evidence(
     return signals
 
 
+async def _collect_research_evidence(
+    result: EvidenceIrritatorResult, config: Config, client: httpx.AsyncClient,
+    links: tuple[DocumentLink, ...], lineage: dict[str, set[int]],
+    budget: SourceRequestBudget | None, cited_urls: set[str],
+) -> tuple[list[Signal], int]:
+    """Existing declared source acquisition order, with one cumulative budget."""
+    acquired: list[Signal] = []
+    if budget is not None and result.research_plan and result.research_plan.document_ids:
+        acquired = await _acquire_research_evidence(result, [], links, lineage, budget, cited_urls)
+    raw = await _search(result, config, client, lineage=lineage, budget=budget)
+    if budget is not None and result.research_plan and not result.research_plan.document_ids:
+        acquired = await _acquire_research_evidence(result, raw, links, lineage, budget, cited_urls)
+    discovery_only = 0
+    if result.research_plan is not None:
+        discovery_only = sum(signal.source_name != "arxiv" for signal in raw)
+        raw = [signal for signal in raw if signal.source_name == "arxiv"]
+        if discovery_only:
+            result.limitations.append(
+                f"{discovery_only} discovery descriptions were not admitted as evidence; "
+                "only acquired documents and scoped research abstracts can be ranked."
+            )
+    raw = acquired + raw
+    return raw, discovery_only
+
+
 async def _run_stages(
     bundle: EvidenceBundle,
     config: Config,
@@ -1159,10 +1232,11 @@ async def _run_stages(
     result: EvidenceIrritatorResult,
     source_evidence: FullSourceEvidence | None = None,
     *,
-    execution: ModelExecution,
+    execution: ModelExecution | None,
     admission_deadline: float | None = None,
-    delivered: DeliveredInvestigationInput | None = None,
+    delivered: DeliveredOrigin | None = None,
     research_budget: SourceRequestBudget | None = None,
+    native_stages: DeliveredSemanticStages | None = None,
 ) -> None:
     if source_evidence is not None and admission_deadline is None:
         raise SourceAdmissionHeld("Full-source request deadline is unavailable.")
@@ -1227,10 +1301,7 @@ async def _run_stages(
             "implicit_assumptions may be empty. Keep any reading-derived hypothesis explicitly conditional, "
             "separate from source facts and reader beliefs. Do not invent a premise merely to produce opposition. "
         )
-    text = await _model_text(
-        diagnostic,
-        LLMRole.EXTRACT_NARRATIVES,
-        (
+    instruction = (
             (f"Select at most ONE consequential assertion, interpretation or recommendation in a delivered card, "
              f"grounded in the {grounding}. " if delivered is not None else
              f"Select at most ONE concrete source-attributed assertion or announced decision from the {grounding}. ")
@@ -1260,19 +1331,21 @@ async def _run_stages(
             "supplied evidence unchanged, in their original language; never translate a literal quote. "
             + source_instruction
             + (PURPOSE if delivered is not None else "")
-            + publication_instruction
-        ),
-        {
+            + publication_instruction)
+    payload: dict[str, Any] = {
             "evidence": evidence_input,
             **target_input,
             **publication_context,
             "language": config.radar.language,
             "coverage": result.coverage,
-        },
-        config,
-        execution=execution,
-        admission_deadline=admission_deadline,
-    )
+        }
+    if native_stages is not None:
+        text = await native_stages.narrative(diagnostic, instruction, payload)
+    else:
+        text = await _model_text(
+            diagnostic, LLMRole.EXTRACT_NARRATIVES, instruction, payload, config,
+            execution=execution, admission_deadline=admission_deadline,
+        )
     result.narratives, limitations = _parse_narrative(
         text, evidence, delivered=delivered, whole_target=delivered is not None,
     )
@@ -1327,6 +1400,7 @@ async def _run_stages(
             result, narrative_input, cited_evidence, config, target_url=target_url,
             budget=budget, execution=execution, publication_context=publication_context,
             publication_instruction=publication_instruction, admission_deadline=admission_deadline,
+            native_stages=native_stages,
         )
     else:
         hypotheses = (
@@ -1401,22 +1475,16 @@ async def _run_stages(
     cited_urls = _cited_source_urls(evidence, narrative)
     if result.documents and result.documents[0].snapshot.final_url:
         cited_urls.add(result.documents[0].snapshot.final_url)
-    acquired: list[Signal] = []
-    if budget is not None and result.research_plan and result.research_plan.document_ids:
-        acquired = await _acquire_research_evidence(result, [], links, lineage, budget, cited_urls)
-    raw = await _search(result, config, client, lineage=lineage, budget=budget)
-    if budget is not None and result.research_plan and not result.research_plan.document_ids:
-        acquired = await _acquire_research_evidence(result, raw, links, lineage, budget, cited_urls)
-    discovery_only = 0
-    if result.research_plan is not None:
-        discovery_only = sum(signal.source_name != "arxiv" for signal in raw)
-        raw = [signal for signal in raw if signal.source_name == "arxiv"]
-        if discovery_only:
-            result.limitations.append(
-                f"{discovery_only} discovery descriptions were not admitted as evidence; "
-                "only acquired documents and scoped research abstracts can be ranked."
-            )
-    raw = acquired + raw
+    if native_stages is not None:
+        if budget is None:
+            raise ValueError("Native research requires its cumulative source budget.")
+        raw, discovery_only = await native_stages.research_evidence(
+            result, config, client, links, lineage, budget, cited_urls,
+        )
+    else:
+        raw, discovery_only = await _collect_research_evidence(
+            result, config, client, links, lineage, budget, cited_urls,
+        )
     _finish_stage(diagnostic, len(raw))
     diagnostic.omitted_count = sum(attempt.omitted_count for attempt in result.source_attempts)
     failed = sum(attempt.status in {"error", "unavailable"} for attempt in result.source_attempts)
@@ -1468,10 +1536,7 @@ async def _run_stages(
         diagnostic.status = "incomplete"
         result.status = "incomplete"
         return
-    text = await _model_text(
-        diagnostic,
-        LLMRole.RANK_SIGNALS,
-        (RANK_INSTRUCTION + RANK_RELATION_CONTRACT + context_instruction + publication_instruction
+    instruction = (RANK_INSTRUCTION + RANK_RELATION_CONTRACT + context_instruction + publication_instruction
          if result.research_plan is not None else
         (
             "Classify up to max_ranked external signals against the narrative, prioritizing supported "
@@ -1489,9 +1554,8 @@ async def _run_stages(
             + RANK_RELATION_CONTRACT
             + context_instruction
             + publication_instruction
-        )
-        ),
-        {
+        ))
+    payload = {
             "narrative": narrative_input,
             "evidence": cited_evidence,
             "signals": [_ranking_signal_payload(s) for s in candidates],
@@ -1512,11 +1576,14 @@ async def _run_stages(
             "max_ranked": maximum_ranked,
             "language": config.radar.language,
             **publication_context,
-        },
-        config,
-        execution=execution,
-        admission_deadline=admission_deadline,
-    )
+        }
+    if native_stages is not None:
+        text = await native_stages.ranking(diagnostic, instruction, payload)
+    else:
+        text = await _model_text(
+            diagnostic, LLMRole.RANK_SIGNALS, instruction, payload, config,
+            execution=execution, admission_deadline=admission_deadline,
+        )
     ranking = _parse_rankings(text, admission, narrative, research=result.research_plan is not None)
     result.ranked_signals = ranking.ranked_signals
     result.ranking_audit = ranking.audit
@@ -1537,7 +1604,7 @@ async def run_evidence_irritator(
     timeout_seconds: float = MAX_SECONDS,
     source_evidence: FullSourceEvidence | None = None,
     require_full_source: bool = False,
-    delivered: DeliveredInvestigationInput | None = None,
+    delivered: DeliveredOrigin | None = None,
 ) -> EvidenceIrritatorResult:
     """Return diagnostics after at most three generations plus admitted source counts.
 
