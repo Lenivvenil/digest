@@ -1541,19 +1541,35 @@ async def test_synthesis_async_window_covers_provider_wait(
     from digest.application import synthesis
 
     config, accepted = _synthesis_accepted(monkeypatch)
-    monkeypatch.setattr(synthesis, "optional_deadline", lambda: time.monotonic() + 0.05)
-    completed = []
+    now = [time.monotonic()]
+    deadline = now[0] + 60.0
+    # Request construction and reservation/fsync must not consume this test's
+    # provider-wait window; synchronous overruns are covered separately below.
+    monkeypatch.setattr(synthesis.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(synthesis, "optional_deadline", lambda: deadline)
+    entered = []
+    cancelled = []
 
     async def slow(*args: Any, **kwargs: Any) -> Any:
-        await asyncio.sleep(0.2)
-        completed.append(True)
+        entered.append(True)
+        completed = asyncio.Event()
+        # A later virtual completion makes a missing timeout fail, not hang.
+        asyncio.get_running_loop().call_at(deadline + 1.0, completed.set)
+        now[0] = deadline + 1.0
+        try:
+            await completed.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
         raise AssertionError("Optional provider wait escaped its timeout")
 
     monkeypatch.setattr(synthesis, "complete", slow)
     outcome = await synthesis.prepare_synthesis(accepted, config, publication_date=datetime.now(timezone.utc).date(),
                                                 execution=ModelExecution(), allow_new=True)
-    assert outcome.reason == "timed_out" and not completed
-    assert json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())["status"] == "failed"
+    assert entered == cancelled == [True]
+    assert outcome.status == "failed" and outcome.reason == "timed_out" and outcome.result is None
+    retained = json.loads(Path(".cache/synthesis", accepted.sha256 + ".json").read_text())
+    assert retained["status"] == "failed" and retained["reason"] == "timed_out"
 
 
 @pytest.mark.asyncio
