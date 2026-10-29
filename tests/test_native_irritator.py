@@ -846,3 +846,126 @@ def test_native_begin_rechecks_temporary_symlink_after_execution_claim_without_o
         assert marker.read_bytes() == content
         assert marker.with_suffix(marker.suffix + ".tmp").is_symlink()
         assert not marker.with_suffix(".phases.json").exists()
+
+
+async def test_diagnostic_acquisitions_preserve_legacy_replay_and_semantic_messages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from dataclasses import asdict
+
+    from digest.article_source import extract_html
+
+    diagnostics = json.loads(canonical_json_bytes(
+        asdict(extract_html("<article><p>" + BODY + "</p></article>").extraction_diagnostics),
+    ))
+    original_save = native.NativeResearch._save_acquisition
+    messages_by_mode = {}
+    requests_by_mode = {}
+    for mode in ("legacy", "diagnostic"):
+        directory = tmp_path / mode
+        directory.mkdir()
+        monkeypatch.chdir(directory)
+
+        def save(self: Any, phase: str, value: dict[str, Any], budget: SourceRequestBudget,
+                 started_at: float, *, mode: str = mode) -> None:
+            snapshots = ([value["snapshot"]] if phase == "original_document"
+                         else [item["snapshot"] for item in value["documents"]])
+            for snapshot in snapshots:
+                if mode == "legacy":
+                    snapshot.pop("extraction_diagnostics")
+                else:
+                    snapshot["extraction_diagnostics"] = diagnostics
+            original_save(self, phase, value, budget, started_at)
+
+        monkeypatch.setattr(native.NativeResearch, "_save_acquisition", save)
+        _, _, session = _setup(monkeypatch)
+        acquired = _acquisitions(monkeypatch)
+        messages, requests = {}, {}
+        while True:
+            pending = await _advance(session)
+            if pending["status"] != "native_pending":
+                break
+            path = Path(pending["request"])
+            raw = path.read_bytes()
+            request = json.loads(raw)
+            messages[pending["phase"]] = request["input"]["messages"]
+            requests[pending["phase"]] = request
+            counts = [acquired[name].await_count for name in ("original", "search", "external")]
+            retained = {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()}
+            assert await _advance(session) == pending
+            assert path.read_bytes() == raw and native._sha(raw) == pending["request_sha256"]
+            assert {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()} == retained
+            assert [acquired[name].await_count for name in ("original", "search", "external")] == counts
+            _accept(pending)
+        assert pending["status"] == "complete"
+        root = json.loads(session.read_bytes())
+        for phase in native.ACQUISITIONS:
+            ref = json.loads((Path(root["phases"]) / f"{phase}.acquired.json").read_bytes())["result"]
+            raw = Path(ref["path"]).read_bytes()
+            assert native._sha(raw) == ref["sha256"]
+            value = json.loads(raw)
+            snapshots = ([value["snapshot"]] if phase == "original_document"
+                         else [item["snapshot"] for item in value["documents"]])
+            assert snapshots
+            for snapshot in snapshots:
+                if mode == "legacy":
+                    assert "extraction_diagnostics" not in snapshot
+                else:
+                    assert snapshot["extraction_diagnostics"] == diagnostics
+            if mode == "diagnostic":
+                # Alter only safe metadata, not source bytes or evidence text.
+                snapshots[0]["extraction_diagnostics"]["saturated"] = True
+                assert native._sha(canonical_json_bytes(value)) != ref["sha256"]
+            assert any(ref == prior for request in requests.values() for prior in request["prior"])
+        retained = {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()}
+        assert await _advance(session) == pending
+        assert {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()} == retained
+        assert all(acquired[name].await_count == 1 for name in ("original", "search", "external"))
+        messages_by_mode[mode], requests_by_mode[mode] = messages, requests
+    # Model evidence/messages and their hashes are identical; native request
+    # envelopes intentionally bind the different immutable acquisition bytes.
+    assert messages_by_mode["legacy"] == messages_by_mode["diagnostic"]
+    assert native._sha(canonical_json_bytes(messages_by_mode["legacy"])) == native._sha(
+        canonical_json_bytes(messages_by_mode["diagnostic"]),
+    )
+    assert requests_by_mode["legacy"]["ranking"]["prior"] != requests_by_mode["diagnostic"]["ranking"]["prior"]
+
+
+@pytest.mark.parametrize("phase", ["original_document", "research_evidence"])
+@pytest.mark.parametrize("invalid", ["unknown_enum", "extra_field", "bool_count"])
+async def test_native_acquisition_rejects_invalid_diagnostics_without_reacquisition(
+    monkeypatch: pytest.MonkeyPatch, phase: str, invalid: str,
+) -> None:
+    from dataclasses import asdict
+
+    from digest.article_source import extract_html
+
+    _, _, session, plan, acquired = await _to_plan(monkeypatch)
+    if phase == "research_evidence":
+        _accept(plan)
+        assert (await _advance(session))["phase"] == "ranking"
+    root = json.loads(session.read_bytes())
+    path = Path(root["phases"]) / f"{phase}.acquired.json"
+    reference = json.loads(path.read_bytes())
+    result_path = Path(reference["result"]["path"])
+    value = json.loads(result_path.read_bytes())
+    snapshot = value["snapshot"] if phase == "original_document" else value["documents"][0]["snapshot"]
+    diagnostics = json.loads(canonical_json_bytes(
+        asdict(extract_html("<article><p>" + BODY + "</p></article>").extraction_diagnostics),
+    ))
+    if invalid == "unknown_enum":
+        diagnostics["phase"] = "secret untrusted instruction"
+    elif invalid == "extra_field":
+        diagnostics["raw_html"] = "secret content"
+    else:
+        diagnostics["omitted_regions"] = True
+    snapshot["extraction_diagnostics"] = diagnostics
+    result_path.write_bytes(canonical_json_bytes(value))
+    reference["result"]["sha256"] = native._sha(result_path.read_bytes())
+    path.write_bytes(canonical_json_bytes(reference))
+    counts = [acquired[name].await_count for name in ("original", "search", "external")]
+    retained = {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()}
+    with pytest.raises(ValueError, match="checkpoint|diagnostics"):
+        await _advance(session)
+    assert [acquired[name].await_count for name in ("original", "search", "external")] == counts
+    assert {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()} == retained

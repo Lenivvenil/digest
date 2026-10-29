@@ -360,9 +360,17 @@ class TextFieldError(ValueError):
 
 
 def _safe_error_detail(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _safe_http_status_detail(exc)
     if isinstance(exc, TextFieldError):
         return str(exc)
     return str(exc) if isinstance(exc, ValueError) and str(exc) in _SAFE_ERROR_DETAILS else ""
+
+
+def _safe_http_status_detail(exc: httpx.HTTPStatusError) -> str:
+    """Retain only a response's controlled status integer, never exception text."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return f"http_status_{status}" if type(status) is int and 100 <= status <= 599 else ""
 
 
 def _bounded_text(value: Any, limit: int | None = None, *, field: str) -> str:

@@ -33,7 +33,14 @@ from digest.application.native_investigation_origin import freeze_native_deliver
 from digest.config import Config, load_config
 from digest.domain.investigation.signals import Signal
 from digest.irritator import evidence_stage as stages
-from digest.irritator.documents import DocumentLink, DocumentSnapshot, SourceRequestBudget, acquire_document
+from digest.irritator.documents import (
+    DocumentLink,
+    DocumentSnapshot,
+    SourceRequestBudget,
+    acquire_document,
+    document_snapshot_checkpoint,
+    restore_document_snapshot,
+)
 from digest.irritator.research import DocumentAcquisition
 from digest.post_delivery import (
     _delivered_input,
@@ -349,7 +356,7 @@ class NativeResearch:
         if saved is not None:
             if set(saved) != {"snapshot", "physical_starts_after", "acquisition_elapsed_seconds"}:
                 raise ValueError("Native original acquisition fields changed.")
-            return restore_dataclass(saved["snapshot"], DocumentSnapshot)  # type: ignore[no-any-return]
+            return restore_document_snapshot(saved["snapshot"])
         started_at = time.monotonic()
         async with asyncio.timeout(stages.MAX_SECONDS - self.acquisition_seconds):
             snapshot = await acquire_document(target_url, budget=budget)
@@ -383,7 +390,13 @@ class NativeResearch:
                           "lineage", "physical_starts_after", "acquisition_elapsed_seconds"}:
             raise ValueError("Native research acquisition fields changed.")
         result.source_attempts = restore_dataclass(saved["source_attempts"], list[stages.SourceAttempt])
-        result.documents.extend(restore_dataclass(saved["documents"], list[DocumentAcquisition]))
+        saved_documents = saved["documents"]
+        if not isinstance(saved_documents, list) or any(not isinstance(item, dict) for item in saved_documents):
+            raise ValueError("Invalid native document acquisitions.")
+        # Legacy omission is a read-time default, not a mutation of hashed acquisition bytes.
+        restored_documents = [{**item, "snapshot": document_snapshot_checkpoint(item.get("snapshot"))}
+                              for item in saved_documents]
+        result.documents.extend(restore_dataclass(restored_documents, list[DocumentAcquisition]))
         result.limitations.extend(restore_dataclass(saved["limitations"], list[str]))
         lineage.update({key: set(indices) for key, indices in
                         restore_dataclass(saved["lineage"], dict[str, list[int]]).items()})
