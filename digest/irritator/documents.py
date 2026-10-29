@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import ipaddress
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Literal
@@ -19,8 +19,18 @@ from urllib.parse import unquote, urldefrag, urljoin, urlsplit
 
 import httpx
 
+from digest._serialization import restore_dataclass
 from digest.adapters.http.public_fetch import PublicFetchError, UnsafePublicURL, fetch_public
-from digest.article_source import FETCH_SECONDS, MAX_HTML_BYTES, MAX_REDIRECTS, ExtractedArticle, extract_html
+from digest.article_source import (
+    FETCH_SECONDS,
+    MAX_HTML_BYTES,
+    MAX_REDIRECTS,
+    ExtractedArticle,
+    ExtractionDiagnostics,
+    ExtractionError,
+    extract_html,
+    restore_extraction_diagnostics,
+)
 from digest.radar.collector import USER_AGENT
 
 MAX_DOCUMENT_LINKS = 40
@@ -89,6 +99,26 @@ class DocumentSnapshot:
     extraction_status: str | None = None
     coverage_notes: tuple[str, ...] = ()
     omitted_link_count: int = 0
+    extraction_diagnostics: ExtractionDiagnostics | None = None
+
+    def __post_init__(self) -> None:
+        if self.extraction_diagnostics is not None:
+            # The immutable snapshot binds content-free stats to the same response bytes.
+            if not isinstance(self.content_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", self.content_sha256) is None:
+                raise ValueError("Extraction diagnostics require a content hash.")
+            restore_extraction_diagnostics(asdict(self.extraction_diagnostics))
+
+
+def document_snapshot_checkpoint(value: object) -> dict[str, object]:
+    """Add only the absent legacy diagnostic field in memory; never rewrite saved bytes."""
+    if not isinstance(value, dict):
+        raise ValueError("Invalid document checkpoint.")
+    return {"extraction_diagnostics": None, **value}
+
+
+def restore_document_snapshot(value: object) -> DocumentSnapshot:
+    snapshot: DocumentSnapshot = restore_dataclass(document_snapshot_checkpoint(value), DocumentSnapshot)
+    return snapshot
 
 
 @dataclass
@@ -478,6 +508,7 @@ async def acquire_document(url: str, *, budget: SourceRequestBudget) -> Document
     links: tuple[DocumentLink, ...] = ()
     omitted = 0
     notes: tuple[str, ...] = ()
+    rfc = False
     try:
         async with asyncio.timeout(FETCH_SECONDS):
             requested = _safe_document_url(url)
@@ -523,8 +554,11 @@ async def acquire_document(url: str, *, budget: SourceRequestBudget) -> Document
                 text_sha256=hashlib.sha256(text.encode()).hexdigest() if text else None,
                 extraction_status=extraction_status,
                 coverage_notes=extracted.coverage_notes + notes, omitted_link_count=omitted,
+                extraction_diagnostics=extracted.extraction_diagnostics if not rfc else None,
             )
     except (ValueError, httpx.HTTPError, TimeoutError, LookupError) as exc:
         status, error = _failure(exc)
         return DocumentSnapshot(url, final_url, fetched_at, content_sha256, "", status, error,
-                                links=links, coverage_notes=notes, omitted_link_count=omitted)
+                                links=links, coverage_notes=notes, omitted_link_count=omitted,
+                                extraction_diagnostics=(exc.extraction_diagnostics
+                                                        if isinstance(exc, ExtractionError) and not rfc else None))

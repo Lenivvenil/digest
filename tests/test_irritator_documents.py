@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import socket
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
@@ -512,3 +513,76 @@ def test_normalized_document_url_must_fit_existing_length_limit() -> None:
     assert len(url) < 2048
     with pytest.raises(UnsafePublicURL):
         _safe_document_url(url)
+
+
+@pytest.mark.parametrize("content, status, reason", [
+    ("<p>Too short.</p>", "held", "insufficient_article_text"),
+    (f"<p>{PROSE}</p><iframe src='https://example.com/private?token=secret'></iframe>",
+     "held", "coverage_incomplete:unread_critical_media"),
+    (f"<p>{PROSE}</p>", "complete", None),
+])
+async def test_extraction_diagnostics_bind_same_bytes_without_changing_evidence(
+    http: Any, content: str, status: str, reason: str | None,
+) -> None:
+    from dataclasses import asdict, replace
+
+    from digest._serialization import canonical_json_bytes
+    from digest.irritator.research import discovery_links, document_coverage, document_signals
+
+    html = _html(content)
+    requests, _ = http(lambda _: _response(html))
+    budget = SourceRequestBudget()
+    snapshot = await acquire_document("https://example.com/doc", budget=budget)
+    assert snapshot.status == status and snapshot.error == reason
+    assert len(requests) == budget.requests_started == 1
+    assert snapshot.content_sha256 == hashlib.sha256(html.encode()).hexdigest()
+    assert snapshot.extraction_diagnostics is not None
+    raw = canonical_json_bytes(asdict(snapshot.extraction_diagnostics))
+    assert b"secret" not in raw and b"https" not in raw and b"<" not in raw
+    assert len(raw) < 10_000
+    assert documents.restore_document_snapshot(json.loads(canonical_json_bytes(asdict(snapshot)))) == snapshot
+    legacy = replace(snapshot, extraction_diagnostics=None)
+    for project in (discovery_links, document_coverage):
+        assert project(snapshot) == project(legacy)
+    assert document_signals(snapshot, "question", "title") == document_signals(legacy, "question", "title")
+    if status == "held":
+        assert snapshot.text == "" and snapshot.text_sha256 is None
+    else:
+        assert snapshot.text == PROSE and snapshot.text_sha256 == hashlib.sha256(PROSE.encode()).hexdigest()
+
+
+def test_document_diagnostic_legacy_restore_and_strict_bounds() -> None:
+    from dataclasses import asdict
+
+    from digest._serialization import canonical_json_bytes
+    from digest.article_source import extract_html
+
+    stats = extract_html(_html(f"<p>{PROSE}</p>")).extraction_diagnostics
+    assert stats is not None
+    snapshot = documents.DocumentSnapshot("https://example.com/", None, "synthetic", "a" * 64,
+                                          PROSE, "complete", extraction_diagnostics=stats)
+    payload = json.loads(canonical_json_bytes(asdict(snapshot)))
+    legacy = {key: value for key, value in payload.items() if key != "extraction_diagnostics"}
+    frozen = canonical_json_bytes(legacy)
+    assert documents.restore_document_snapshot(legacy).extraction_diagnostics is None
+    assert canonical_json_bytes(legacy) == frozen
+    for mutate in (
+        lambda value: value.update(content_sha256=None),
+        lambda value: value["extraction_diagnostics"].update(version=True),
+        lambda value: value["extraction_diagnostics"].update(secret="token"),
+        lambda value: value["extraction_diagnostics"]["regions"][0].update(characters=2**40),
+        lambda value: value["extraction_diagnostics"]["regions"][0].update(kind="https://secret"),
+        lambda value: value.update(unowned="field"),
+    ):
+        bad = json.loads(canonical_json_bytes(payload))
+        mutate(bad)
+        with pytest.raises(ValueError):
+            documents.restore_document_snapshot(bad)
+
+
+async def test_rfc_transformed_regions_do_not_mislabel_original_response_diagnostics(http: Any) -> None:
+    html = "<html><body><pre>" + PROSE * 10 + "</pre></body></html>"
+    requests, _ = http(lambda _: _response(html))
+    snapshot = await acquire_document(RFC_URL, budget=SourceRequestBudget())
+    assert snapshot.content_sha256 == hashlib.sha256(html.encode()).hexdigest()
+    assert snapshot.extraction_diagnostics is None and len(requests) == 1

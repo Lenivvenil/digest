@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from typing import Any
 from urllib.parse import urldefrag, urlparse
 
 from digest.adapters.http.public_fetch import PublicFetchError, fetch_public
@@ -34,6 +35,165 @@ _SKIP_NAMES = {"navigation", "navbar", "menu", "comments", "comment", "related",
 _REACT_STREAM_BOOTSTRAP_HASHES = frozenset({"7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646"})
 
 
+MAX_DIAGNOSTIC_REGIONS = 16
+MAX_DIAGNOSTIC_COUNT = 2**31 - 1
+_DIAGNOSTIC_KINDS = ("article", "main", "body", "footnotes")
+_DIAGNOSTIC_PREDICATES = ("unclosed", "footnotes", "characters", "paragraphs", "link_density",
+                          "letters", "teaser", "candidate")
+_MEDIA_REASONS = ("tag_svg", "tag_canvas", "tag_video", "tag_audio", "tag_iframe", "tag_object",
+                  "tag_embed", "chart_img", "chart_svg", "decorative_svg_text", "text_reference")
+
+
+@dataclass(frozen=True)
+class ExtractionRegion:
+    index: int
+    kind: str
+    predicate: str
+    characters: int
+    paragraphs: int
+    linked_characters: int
+    letters: int
+
+
+@dataclass(frozen=True)
+class ExtractionCount:
+    kind: str
+    predicate: str
+    count: int
+
+
+@dataclass(frozen=True)
+class CriticalMediaCount:
+    reason: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ExtractionDiagnostics:
+    """Content-free observations, never source evidence; counts may saturate."""
+
+    version: int
+    phase: str
+    regions: tuple[ExtractionRegion, ...]
+    omitted_regions: int
+    counts: tuple[ExtractionCount, ...]
+    media_counts: tuple[CriticalMediaCount, ...]
+    saturated: bool
+
+    def __post_init__(self) -> None:
+        if (type(self.regions) is not tuple or any(type(row) is not ExtractionRegion for row in self.regions)
+                or type(self.counts) is not tuple or any(type(row) is not ExtractionCount for row in self.counts)
+                or type(self.media_counts) is not tuple
+                or any(type(row) is not CriticalMediaCount for row in self.media_counts)):
+            raise ValueError("invalid_extraction_diagnostics")
+        _extraction_diagnostic_fields(asdict(self))
+
+
+def restore_extraction_diagnostics(value: object) -> ExtractionDiagnostics:
+    return ExtractionDiagnostics(**_extraction_diagnostic_fields(value))
+
+
+def _extraction_diagnostic_fields(value: object) -> dict[str, Any]:
+    """Reject unknown keys, enums, bool-as-int, oversized or noncanonical metadata."""
+    def mapping(item: object, keys: set[str]) -> dict[str, Any]:
+        if not isinstance(item, dict) or set(item) != keys:
+            raise ValueError("invalid_extraction_diagnostics")
+        return item
+
+    def integer(item: object) -> int:
+        if type(item) is not int or not 0 <= item <= MAX_DIAGNOSTIC_COUNT:
+            raise ValueError("invalid_extraction_diagnostics")
+        return item
+
+    def sequence(item: object, maximum: int) -> list[Any] | tuple[Any, ...]:
+        if not isinstance(item, (list, tuple)) or len(item) > maximum:
+            raise ValueError("invalid_extraction_diagnostics")
+        return item
+
+    data = mapping(value, {"version", "phase", "regions", "omitted_regions", "counts", "media_counts", "saturated"})
+    if (type(data["version"]) is not int or data["version"] != 1
+            or data["phase"] not in ("preselection", "candidates", "selected")
+            or type(data["saturated"]) is not bool):
+        raise ValueError("invalid_extraction_diagnostics")
+    regions = []
+    for item in sequence(data["regions"], MAX_DIAGNOSTIC_REGIONS):
+        row = mapping(item, {"index", "kind", "predicate", "characters", "paragraphs", "linked_characters", "letters"})
+        if row["kind"] not in _DIAGNOSTIC_KINDS or row["predicate"] not in _DIAGNOSTIC_PREDICATES:
+            raise ValueError("invalid_extraction_diagnostics")
+        regions.append(ExtractionRegion(integer(row["index"]), row["kind"], row["predicate"],
+                                        *(integer(row[key]) for key in
+                                          ("characters", "paragraphs", "linked_characters", "letters"))))
+    if [row.index for row in regions] != list(range(len(regions))):
+        raise ValueError("invalid_extraction_diagnostics")
+    counts = []
+    keys = [(kind, predicate) for kind in _DIAGNOSTIC_KINDS for predicate in _DIAGNOSTIC_PREDICATES]
+    for item in sequence(data["counts"], len(keys)):
+        row = mapping(item, {"kind", "predicate", "count"})
+        if (row["kind"], row["predicate"]) not in keys or integer(row["count"]) == 0:
+            raise ValueError("invalid_extraction_diagnostics")
+        counts.append(ExtractionCount(row["kind"], row["predicate"], row["count"]))
+    actual_keys = [(row.kind, row.predicate) for row in counts]
+    if actual_keys != [key for key in keys if key in actual_keys]:
+        raise ValueError("invalid_extraction_diagnostics")
+    media = []
+    for item in sequence(data["media_counts"], len(_MEDIA_REASONS)):
+        row = mapping(item, {"reason", "count"})
+        if row["reason"] not in _MEDIA_REASONS or integer(row["count"]) == 0:
+            raise ValueError("invalid_extraction_diagnostics")
+        media.append(CriticalMediaCount(row["reason"], row["count"]))
+    reasons = [row.reason for row in media]
+    if reasons != [reason for reason in _MEDIA_REASONS if reason in reasons]:
+        raise ValueError("invalid_extraction_diagnostics")
+    return dict(version=1, phase=data["phase"], regions=tuple(regions),
+                omitted_regions=integer(data["omitted_regions"]), counts=tuple(counts),
+                media_counts=tuple(media), saturated=data["saturated"])
+
+
+class ExtractionError(ValueError):
+    """Original static extraction error plus owned, content-free diagnostics."""
+
+    def __init__(self, message: str, diagnostics: ExtractionDiagnostics) -> None:
+        super().__init__(message)
+        self.extraction_diagnostics = diagnostics
+
+
+@dataclass
+class _ExtractionObservations:
+    phase: str = "preselection"
+    regions: list[ExtractionRegion] = field(default_factory=list)
+    omitted_regions: int = 0
+    counts: dict[tuple[str, str], int] = field(default_factory=dict)
+    media_counts: dict[str, int] = field(default_factory=dict)
+    saturated: bool = False
+
+    def bounded(self, value: int) -> int:
+        self.saturated |= value > MAX_DIAGNOSTIC_COUNT
+        return min(value, MAX_DIAGNOSTIC_COUNT)
+
+    def record(self, section: _Section, predicate: str, text: str, letters: int) -> None:
+        key = (section.kind, predicate)
+        self.counts[key] = self.bounded(self.counts.get(key, 0) + 1)
+        if len(self.regions) < MAX_DIAGNOSTIC_REGIONS:
+            self.regions.append(ExtractionRegion(
+                self.bounded(section.index), section.kind, predicate, self.bounded(len(text)),
+                self.bounded(section.paragraphs), self.bounded(section.linked_chars), self.bounded(letters)))
+        else:
+            self.omitted_regions = self.bounded(self.omitted_regions + 1)
+
+    def include_media(self, counts: dict[str, int]) -> None:
+        for reason, count in counts.items():
+            self.media_counts[reason] = self.bounded(self.media_counts.get(reason, 0) + count)
+
+    def snapshot(self) -> ExtractionDiagnostics:
+        return ExtractionDiagnostics(
+            1, self.phase, tuple(self.regions), self.omitted_regions,
+            tuple(ExtractionCount(kind, predicate, self.counts[kind, predicate])
+                  for kind in _DIAGNOSTIC_KINDS for predicate in _DIAGNOSTIC_PREDICATES
+                  if (kind, predicate) in self.counts),
+            tuple(CriticalMediaCount(reason, self.bounded(self.media_counts[reason]))
+                  for reason in _MEDIA_REASONS if self.media_counts.get(reason)), self.saturated)
+
+
 @dataclass
 class _Section:
     kind: str
@@ -49,6 +209,7 @@ class _Section:
     has_images: bool = False
     outside_articles: list[str] = field(default_factory=list)
     outside_paragraphs: int = 0
+    critical_media: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -202,6 +363,7 @@ class ExtractedArticle:
     source_published: str | None
     extraction_status: str
     coverage_notes: tuple[str, ...] = ()
+    extraction_diagnostics: ExtractionDiagnostics | None = None
 
 
 @dataclass(frozen=True)
@@ -327,11 +489,15 @@ class _ArticleParser(HTMLParser):
         )
         if not hidden and self._active():
             critical = tag in {"svg", "canvas", "video", "audio", "iframe", "object", "embed"} and not decorative
-            critical |= not decorative and tag in {"img", "svg"} and bool(re.search(
+            chart = not decorative and tag in {"img", "svg"} and bool(re.search(
                 r"\b(chart|graph|diagram|table|benchmark|results|figure)\b",
                 values.get("alt", "") + " " + values.get("aria-label", "") + " " + " ".join(tokens), re.I,
             ))
+            reasons = (["tag_" + tag] if critical else []) + (["chart_" + tag] if chart else [])
+            critical |= chart
             for section in self._active():
+                for reason in reasons:
+                    section.critical_media[reason] = section.critical_media.get(reason, 0) + 1
                 if tag in {"img", "svg"}:
                     section.has_images = True
                 if critical:
@@ -374,6 +540,8 @@ class _ArticleParser(HTMLParser):
                 and data.strip()):
             for section in self._active():
                 section.issues.add("unread_critical_media")
+                reason = "decorative_svg_text"
+                section.critical_media[reason] = section.critical_media.get(reason, 0) + 1
         if not self.stack or self.stack[-1].skipped:
             return
         linked = any(node.tag == "a" for node in self.stack)
@@ -413,6 +581,14 @@ def _normalize_chunks(chunks: list[str]) -> str:
 
 
 def extract_html(html: str) -> ExtractedArticle:
+    observations = _ExtractionObservations()
+    try:
+        return _extract_html(html, observations)
+    except ValueError as exc:
+        raise ExtractionError(str(exc), observations.snapshot()) from exc
+
+
+def _extract_html(html: str, observations: _ExtractionObservations) -> ExtractedArticle:
     parser = _ArticleParser()
     parser.feed(_restore_streamed_html(html))
     parser.close()
@@ -422,23 +598,32 @@ def extract_html(html: str) -> ExtractedArticle:
             or any(not section.closed for section in parser.sections if section.kind in {"article", "main"})):
         raise ValueError("clipped_html")
     candidates: list[tuple[int, int, _Section, str]] = []
+    observations.phase = "candidates"
     for section in parser.sections:
         if not section.closed or section.kind == "footnotes":
+            observations.record(section, "unclosed" if not section.closed else "footnotes", "", 0)
             continue
         text = _normalized_text(section)
+        letters = len(re.findall(r"[^\W\d_]", text))
         minimum = MIN_BODY_CHARS if section.kind == "body" else MIN_ARTICLE_CHARS
-        if len(text) < minimum or section.paragraphs < (3 if section.kind == "body" else 1):
-            continue
-        if section.linked_chars / max(1, len(text)) > (0.15 if section.kind == "body" else 0.4):
-            continue
-        if len(re.findall(r"[^\W\d_]", text)) < minimum // 2:
-            continue
-        if re.search(
+        if len(text) < minimum:
+            predicate = "characters"
+        elif section.paragraphs < (3 if section.kind == "body" else 1):
+            predicate = "paragraphs"
+        elif section.linked_chars / max(1, len(text)) > (0.15 if section.kind == "body" else 0.4):
+            predicate = "link_density"
+        elif letters < minimum // 2:
+            predicate = "letters"
+        elif re.search(
             r"subscribe to (continue|read)|sign in to (continue|read)|enable javascript and cookies|"
             r"read the full article|continue reading (at|on)", text, re.I,
         ):
-            continue
-        candidates.append(({"article": 0, "main": 1, "body": 2}[section.kind], -len(text), section, text))
+            predicate = "teaser"
+        else:
+            predicate = "candidate"
+        observations.record(section, predicate, text, letters)
+        if predicate == "candidate":
+            candidates.append(({"article": 0, "main": 1, "body": 2}[section.kind], -len(text), section, text))
     if not candidates:
         raise ValueError("insufficient_article_text")
     for _, _, section, _ in list(candidates):
@@ -459,6 +644,8 @@ def extract_html(html: str) -> ExtractedArticle:
             candidates.append((-1, -len(outside), section, outside))
     candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
     selected, text = candidates[0][2:]
+    observations.phase = "selected"
+    observations.media_counts = dict(selected.critical_media)
     if any(candidate[2].kind == selected.kind and candidate[2].index != selected.index
            and selected.index not in candidate[2].ancestors and candidate[2].index not in selected.ancestors
            for candidate in candidates):
@@ -476,10 +663,12 @@ def extract_html(html: str) -> ExtractedArticle:
                 ids.update(notes.ids)
                 references.update(notes.references)
                 issues.update(notes.issues)
+                observations.include_media(notes.critical_media)
     if references - ids:
         issues.add("missing_footnote_target")
     if selected.has_images and re.search(r"\b(shown|see|illustrated) in (the )?(chart|figure|diagram)\b", text, re.I):
         issues.add("unread_critical_media")
+        observations.media_counts["text_reference"] = 1
     if issues:
         raise ValueError("coverage_incomplete:" + ",".join(sorted(issues)))
     source_date = min(parser.publication_dates).isoformat() if parser.publication_dates else None
@@ -488,7 +677,7 @@ def extract_html(html: str) -> ExtractedArticle:
     ]
     if selected.has_images:
         coverage_notes.append("Uninspected images are present; this acquisition covers textual content only.")
-    return ExtractedArticle(text, source_date, selected.kind, tuple(coverage_notes))
+    return ExtractedArticle(text, source_date, selected.kind, tuple(coverage_notes), observations.snapshot())
 
 
 def _url_syntax(url: str) -> str:
@@ -530,7 +719,11 @@ async def fetch_article(url: str) -> FetchedArticle:
         if media_type not in {"text/html", "application/xhtml+xml"}:
             raise ValueError("unsupported_content_type")
         html = response.content.decode(response.encoding, errors="strict")
-        extracted = extract_html(html)
+        try:
+            extracted = extract_html(html)
+        except ExtractionError as exc:
+            # Existing article callers observe ValueError, not a new diagnostic class.
+            raise ValueError(str(exc)) from exc
         if loop.time() >= deadline:
             raise TimeoutError("Article acquisition and extraction timed out.")
         return FetchedArticle(

@@ -285,3 +285,32 @@ If only self-source hits remain, skip ranking and explain the exclusion; this is
 claim that the wider web contains no counter-evidence. Older records without this field
 contain no retrospective exclusion proof. This enforces the existing external-evidence
 boundary without changing source adapters, query counts or primary delivery.
+
+
+<a id="bounded-acquisition-diagnostics"></a>
+
+## Bounded acquisition diagnostics (Refs #77)
+
+Extraction failures previously retained a content hash and owned terminal code,
+not the exact rejection predicate or critical-media trigger. A hash cannot recover
+source bytes, and HTTP success does not establish complete article text. Diagnose
+future already-authorized ordinary acquisitions without retaining raw HTML or
+relaxing acceptance: append optional, versioned, content-free diagnostics to the
+existing document snapshot. Preserve all candidate ordering, guards and thresholds.
+
+The article extractor owns fixed enums and capped numeric observations, limited to
+16 region records with explicit omissions and saturation. Counts describe the first
+failed candidate predicate, not all possible reasons. Selected-region media counts
+include appended footnotes, not a judgment that a figure is important or decorative.
+Preselection failure and intentionally uninstrumented RFC transformations remain
+explicit limits. Native readers accept legacy absence without rewriting frozen
+artifacts; malformed new metadata fails closed. Source HTTP status is retained only
+as a validated integer-derived code, never arbitrary exception text.
+
+The existing content hash and immutable acquisition reference bind metadata to the
+attempt. Semantic evidence projections exclude it. New acquisition references and
+native request envelope hashes necessarily differ when metadata changes; semantic
+messages for equal source evidence do not. No additional fetch, worker, fallback,
+search/model call, source activation, body storage or execution retry is authorized.
+Synthetic regression tests establish these contracts, not extraction completeness,
+external finding applicability, faithful generated prose or the positive #77 gate.

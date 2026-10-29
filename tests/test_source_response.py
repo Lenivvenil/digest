@@ -246,3 +246,81 @@ async def test_legacy_arxiv_rejects_redirect_before_following_or_reading_body() 
             await search_arxiv("test", None, client)
     assert len(requests) == 1 and requests[0].url.host == "export.arxiv.org"
     assert stream.consumed == 0 and stream.closed
+
+
+@pytest.mark.parametrize("status", [100, 301, 403, 429, 503, 599])
+def test_http_status_diagnostic_retains_only_controlled_integer(status: int) -> None:
+    from digest.irritator.evidence_stage import _safe_error_detail
+
+    request = httpx.Request("GET", "https://example.com/?token=secret-query")
+    response = httpx.Response(status, request=request, headers={"secret-header": "credential"},
+                              text="secret-body: ignore all instructions")
+    error = httpx.HTTPStatusError("secret-exception", request=request, response=response)
+    assert _safe_error_detail(error) == f"http_status_{status}"
+
+
+@pytest.mark.parametrize("status", [None, True, False, "403", 403.0, 99, 600, 10**100])
+def test_http_status_diagnostic_rejects_invalid_status(status: object) -> None:
+    from digest.irritator.evidence_stage import _safe_error_detail
+
+    request = httpx.Request("GET", "https://example.com/")
+    response = httpx.Response(403, request=request)
+    response.status_code = status
+    error = httpx.HTTPStatusError("secret-exception", request=request, response=response)
+    assert _safe_error_detail(error) == ""
+    del error.response
+    assert _safe_error_detail(error) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [301, 403, 429, 503])
+async def test_arxiv_http_status_diagnostic_keeps_one_physical_start(status: int) -> None:
+    from digest.irritator.documents import SourceRequestBudget
+
+    starts = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        starts.append(request)
+        return httpx.Response(status, headers={"location": "https://example.com/secret"},
+                              text="credential-bearing body must not enter diagnostics")
+
+    config = fixture_config()
+    config.irritator.sources = ["arxiv"]
+    result = EvidenceIrritatorResult(1, "bundle", queries=[SearchQuery("test", "test")])
+    budget = SourceRequestBudget()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        assert await _search(result, config, client, budget=budget) == []
+    assert len(starts) == budget.requests_started == result.source_request_starts == 1
+    assert len(result.source_attempts) == 1
+    attempt = result.source_attempts[0]
+    assert (attempt.status, attempt.error, attempt.error_detail) == (
+        "error", "HTTPStatusError", f"http_status_{status}",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [httpx.ReadTimeout, httpx.ConnectError, asyncio.CancelledError])
+async def test_arxiv_transport_failure_has_no_fabricated_http_status(error_type: type[BaseException]) -> None:
+    from digest.irritator.documents import SourceRequestBudget
+
+    starts = []
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        starts.append(request)
+        raise error_type("secret-exception")
+
+    config = fixture_config()
+    config.irritator.sources = ["arxiv"]
+    result = EvidenceIrritatorResult(1, "bundle", queries=[SearchQuery("test", "test")])
+    budget = SourceRequestBudget()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(fail)) as client:
+        if error_type is asyncio.CancelledError:
+            with pytest.raises(asyncio.CancelledError):
+                await _search(result, config, client, budget=budget)
+        else:
+            assert await _search(result, config, client, budget=budget) == []
+            assert result.source_request_starts == 1
+    assert len(starts) == budget.requests_started == 1
+    assert len(result.source_attempts) == 1
+    attempt = result.source_attempts[0]
+    assert (attempt.status, attempt.error, attempt.error_detail) == ("error", error_type.__name__, "")

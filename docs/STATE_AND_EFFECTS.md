@@ -370,6 +370,30 @@ compact policies are held unchanged before model/source work. Unbound legacy
 contracts remain separate. See the [ADR0011 amendment](decisions/0011-source-anchored-investigation-queries.md#2026-10-15-question-routed-documents)
 for the implementation-under-review and semantic-acceptance boundary.
 
+New non-RFC document snapshots may carry versioned `extraction_diagnostics` bound
+by the snapshot's existing `content_sha256` and immutable acquisition reference.
+These are content-free observations: fixed candidate-kind/first-failing-predicate
+counts, at most 16 indexed region metric records, explicit omitted-region count,
+and fixed critical-media reason counts for the selected region plus appended
+footnotes. Integers saturate at 2,147,483,647 with an explicit saturation flag.
+Skipped unclosed/footnote candidate records use zero character and letter metrics
+as unmeasured sentinels, not evidence of empty text. Preselection failures can have
+no region observations; absence is not proof that an article body was absent. No HTML, attributes, URLs, headers or exception text
+is added to this metadata. RFC extraction can use transformed section HTML, so
+this diagnostic slice deliberately leaves RFC metadata absent rather than
+mislabel transformed-region observations as an original-response extraction.
+
+Legacy snapshot field absence restores only as an in-memory default; retained
+bytes and their hashes are never rewritten. New diagnostics are strictly validated
+on restoration. Stats do not enter discovery leads, signals, model messages,
+ranking admission or presentation. New acquisition artifact hashes (and native
+request envelopes that bind those artifacts) reflect the added metadata; semantic
+message/prompt hashes for otherwise identical evidence remain unchanged. HTTP
+source-attempt details retain only `http_status_NNN` for actual integer 100–599
+`HTTPStatusError` responses, not exception bodies or headers. These observations
+change no extraction rule, source activation, request budget or retry behavior,
+and do not establish useful counter-evidence. See [ADR0011](decisions/0011-source-anchored-investigation-queries.md#bounded-acquisition-diagnostics).
+
 The result's `.irritator.fragment.json` freezes presentation and canonical-result/source
 references. Its existing `.post-attempt.json` owns pending, reserved, consumed and
 expired dispositions; mutable state is not a ready checkpoint reference. This adds no
