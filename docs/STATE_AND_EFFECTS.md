@@ -383,6 +383,21 @@ is added to this metadata. RFC extraction can use transformed section HTML, so
 this diagnostic slice deliberately leaves RFC metadata absent rather than
 mislabel transformed-region observations as an original-response extraction.
 
+HTML extraction keeps media coverage aligned with its selected text. Ordinary
+HTML template content supplies neither article text nor critical-media triggers.
+Active or ambiguous template content (including shadow-root, marker-patching,
+foreign-namespace and malformed/unclosed templates) remains an explicit `unread_template_content` hold.
+Explicitly suppressed decorative-SVG descendants do not create a text-triggered
+media hold; extraction's automatic SVG text skip is not treated as invisibility.
+Only isolated supported inline hiding declarations are recognized for this
+correction; conflicting/unknown styles and visible SVG text remain conservative.
+ARIA-only, bare SVG `hidden`, or semantic class hints do not establish suppression
+under this new descendant rule; explicit SVG visibility overrides remain held.
+When the existing substantial-main rule removes linked teaser articles, their media
+observations are excluded with their text. Selected-main and appended-footnote
+media, global/continuation guards and explicit figure-reference holds remain.
+These structural corrections do not identify the causes of historical held pages.
+
 Legacy snapshot field absence restores only as an in-memory default; retained
 bytes and their hashes are never rewritten. New diagnostics are strictly validated
 on restoration. Stats do not enter discovery leads, signals, model messages,
