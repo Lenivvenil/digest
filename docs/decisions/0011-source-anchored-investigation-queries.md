@@ -314,3 +314,32 @@ messages for equal source evidence do not. No additional fetch, worker, fallback
 search/model call, source activation, body storage or execution retry is authorized.
 Synthetic regression tests establish these contracts, not extraction completeness,
 external finding applicability, faithful generated prose or the positive #77 gate.
+
+
+## Structural extraction ownership (Refs #77)
+
+Synthetic regressions demonstrated three classification inconsistencies independent
+of any unavailable historical response HTML: ordinary inert template descendants
+entered article evidence/media coverage; explicitly suppressed decorative-SVG text
+still flipped its guard; and the existing main-prose projection discarded teaser
+text but retained teaser media observations. Correct those ownership mismatches
+without changing candidate thresholds, selected-text ordering or source budgets.
+
+Ordinary HTML templates are excluded. Templates with declarative shadow-root or
+marker-patching attributes, and templates in foreign SVG/MathML or non-XHTML default-namespace context, remain
+unresolved-content holds rather than guessed rendered evidence. Unsupported active
+template coverage cannot be escaped by selecting a nested article or hiding the
+template element itself. Malformed/self-closing/unclosed template scope also holds. Explicit SVG
+suppression is separate from normal extraction skips; visible title/text/description
+content, conflicting styles and unknown visibility remain conservatively held.
+ARIA-only, bare SVG hidden attributes and semantic class hints are not new proof
+of visual suppression. Only the already selected outside-article main projection uses matching media
+provenance. Appended footnotes, selected visible media, pagination, continuation,
+removed footnote dependencies and explicit figure references keep their guards.
+
+No new HTTP/model/search call, raw-source retention, historical replay, source
+activation or send follows. These tests prove targeted structural behavior, not
+that a particular retained real-page failure had one of these causes and not the
+positive useful-counter-evidence acceptance gate. Existing immutable snapshots
+remain unchanged; future ordinary diagnostics may narrow a failure family but
+cannot by themselves recover a discarded historical DOM or prove content fidelity.

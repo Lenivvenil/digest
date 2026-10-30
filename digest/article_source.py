@@ -210,6 +210,8 @@ class _Section:
     outside_articles: list[str] = field(default_factory=list)
     outside_paragraphs: int = 0
     critical_media: dict[str, int] = field(default_factory=dict)
+    outside_critical_media: dict[str, int] = field(default_factory=dict)
+    outside_has_images: bool = False
 
 
 @dataclass
@@ -221,6 +223,9 @@ class _Node:
     tokens: set[str] = field(default_factory=set)
     ui_control: bool = False
     decorative_svg: bool = False
+    coverage_hidden: bool = False
+    visibility_hidden: bool = False
+    foreign_namespace: bool = False
 
 
 @dataclass
@@ -401,6 +406,22 @@ class _ArticleParser(HTMLParser):
             ):
                 section.outside_articles.append(text)
 
+    def _record_media(self, reasons: list[str], *, has_images: bool = False) -> None:
+        active = self._active()
+        for section in active:
+            section.has_images |= has_images
+            if reasons:
+                section.issues.add("unread_critical_media")
+            for reason in reasons:
+                section.critical_media[reason] = section.critical_media.get(reason, 0) + 1
+            # Match the existing outside_articles text projection, not all main descendants.
+            if section.kind == "main" and not any(
+                child.kind == "article" and section.index in child.ancestors for child in active
+            ):
+                section.outside_has_images |= has_images
+                for reason in reasons:
+                    section.outside_critical_media[reason] = section.outside_critical_media.get(reason, 0) + 1
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if len(self.stack) >= 256:
             raise ValueError("technical_html_nesting_limit")
@@ -416,17 +437,43 @@ class _ArticleParser(HTMLParser):
         tokens = set(re.split(r"[\s_-]+", (values.get("id", "") + " " + values.get("class", "")).lower()))
         if tokens & {"paywall", "metered", "subscriptionwall"}:
             self.paywall_detected = True
-        style = re.sub(r"\s+", "", values.get("style", "").lower())
+        raw_style = values.get("style", "")
+        style = re.sub(r"\s+", "", raw_style.lower())
         inside_article = any(node.tag in {"article", "main"} and not node.skipped for node in self.stack)
         footnotes = bool(tokens & {"footnotes", "endnotes"}) or values.get("role") == "doc-endnotes"
         skip_tag = tag in _SKIP_TAGS and not (
             (inside_article or footnotes) and tag in {"aside", "header", "footer"}
         )
+        # Only ordinary HTML templates are inert; shadow roots, content patches
+        # and foreign-namespace templates need rendering that this parser cannot do.
+        foreign_namespace = (bool(self.stack and self.stack[-1].foreign_namespace)
+                             or "xmlns" in values and values["xmlns"] != "http://www.w3.org/1999/xhtml")
+        foreign_template = tag == "template" and (
+            foreign_namespace or any(node.tag in {"svg", "math"} for node in self.stack)
+        )
+        active_template = tag == "template" and (
+            "shadowrootmode" in values or "for" in values or foreign_template
+        )
+        inert_template = tag == "template" and not active_template
+        skip_tag |= inert_template
         # A separately labelled generated-summary widget is not authored article evidence.
         skip_tag |= tag in {"details", "aside"} and {"ai", "summary"} <= tokens
         skipped = (bool(self.stack and self.stack[-1].skipped) or skip_tag
                    or "hidden" in values or values.get("aria-hidden", "").lower() == "true"
                    or "display:none" in style or "visibility:hidden" in style or bool(tokens & _SKIP_NAMES))
+        # SVG's extraction skip is not evidence of invisibility. Keep explicit
+        # suppression separate so its visible title/text/desc still flips the guard.
+        coverage_hidden = (bool(self.stack and self.stack[-1].coverage_hidden) or inert_template
+                           or _isolated_css_declaration(raw_style, "display", "none"))
+        # This guard is not a CSS cascade interpreter. Only isolated declarations
+        # establish new suppression; unknown child styles may override visibility.
+        visibility_hidden = (_isolated_css_declaration(raw_style, "visibility", "hidden") or
+                             bool(self.stack and self.stack[-1].visibility_hidden)
+                             and not style and "visibility" not in values)
+        if active_template:
+            # A region opened inside this unresolved content cannot escape the hold.
+            # The template element's style cannot prove instantiated content hidden.
+            self.global_issues.add("unread_template_content")
         if not skipped and tag in _BLOCK_TAGS:
             self._append("\n\n")
         decorative_svg = self._observe_coverage(tag, values, tokens, skipped, inside_article)
@@ -447,7 +494,8 @@ class _ArticleParser(HTMLParser):
                 or "button" in re.split(r"[\s/_-]+", values.get("class", ""))
             )
             self.stack.append(_Node(tag, skipped, captured, values.get("type") == "application/ld+json",
-                                    tokens, ui_control, decorative_svg))
+                                    tokens, ui_control, decorative_svg, coverage_hidden, visibility_hidden,
+                                    foreign_namespace))
         if not skipped and values.get("id"):
             for active in self._active():
                 active.ids.add(values["id"])
@@ -494,14 +542,7 @@ class _ArticleParser(HTMLParser):
                 values.get("alt", "") + " " + values.get("aria-label", "") + " " + " ".join(tokens), re.I,
             ))
             reasons = (["tag_" + tag] if critical else []) + (["chart_" + tag] if chart else [])
-            critical |= chart
-            for section in self._active():
-                for reason in reasons:
-                    section.critical_media[reason] = section.critical_media.get(reason, 0) + 1
-                if tag in {"img", "svg"}:
-                    section.has_images = True
-                if critical:
-                    section.issues.add("unread_critical_media")
+            self._record_media(reasons, has_images=tag in {"img", "svg"})
         href = values.get("href", "")
         if not skipped and tag == "a" and href.startswith("#") and (
             values.get("role") == "doc-noteref" or "footnote" in tokens
@@ -511,7 +552,15 @@ class _ArticleParser(HTMLParser):
                 section.references.add(href[1:])
         return decorative and not hidden
 
+    def close(self) -> None:
+        super().close()
+        if any(node.tag == "template" for node in self.stack):
+            self.global_issues.add("unread_template_content")
+
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "template":
+            # HTML templates are not void elements; do not guess malformed scope.
+            self.global_issues.add("unread_template_content")
         self.handle_starttag(tag, attrs)
         if tag not in _VOID_TAGS:
             self.handle_endtag(tag)
@@ -522,6 +571,8 @@ class _ArticleParser(HTMLParser):
         for index in range(len(self.stack) - 1, -1, -1):
             if self.stack[index].tag != tag:
                 continue
+            if any(node.tag == "template" for node in self.stack[index + 1:]):
+                self.global_issues.add("unread_template_content")
             node = self.stack[index]
             if node.section is not None:
                 node.section.closed = True
@@ -537,11 +588,9 @@ class _ArticleParser(HTMLParser):
             self.paywall_detected = True
         if (any(node.tag in {"title", "text", "desc"} for node in self.stack)
                 and any(node.decorative_svg for node in self.stack)
+                and not self.stack[-1].coverage_hidden and not self.stack[-1].visibility_hidden
                 and data.strip()):
-            for section in self._active():
-                section.issues.add("unread_critical_media")
-                reason = "decorative_svg_text"
-                section.critical_media[reason] = section.critical_media.get(reason, 0) + 1
+            self._record_media(["decorative_svg_text"])
         if not self.stack or self.stack[-1].skipped:
             return
         linked = any(node.tag == "a" for node in self.stack)
@@ -553,6 +602,12 @@ class _ArticleParser(HTMLParser):
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _isolated_css_declaration(style: str, name: str, value: str) -> bool:
+    # CSS token whitespace only: never join split identifiers or accept vertical tabs.
+    space = r"[ \t\r\n\f]*"
+    return bool(re.fullmatch(rf"{space}{name}{space}:{space}{value}{space};?{space}", style, re.I | re.A))
 
 
 def _icon_dimension(value: str) -> bool:
@@ -586,6 +641,23 @@ def extract_html(html: str) -> ExtractedArticle:
         return _extract_html(html, observations)
     except ValueError as exc:
         raise ExtractionError(str(exc), observations.snapshot()) from exc
+
+
+def _selected_coverage(
+    selected: _Section, outside_selected: bool, global_issues: set[str],
+) -> tuple[dict[str, int], set[str], bool]:
+    issues = selected.issues | global_issues
+    media = selected.critical_media
+    has_images = selected.has_images
+    if outside_selected:
+        # Drop only media observations owned by the same discarded teaser text.
+        # Global, footnote, continuation and explicit text-reference guards survive.
+        issues = (selected.issues - {"unread_critical_media"}) | global_issues
+        media = selected.outside_critical_media
+        has_images = selected.outside_has_images
+        if media:
+            issues.add("unread_critical_media")
+    return dict(media), issues, has_images
 
 
 def _extract_html(html: str, observations: _ExtractionObservations) -> ExtractedArticle:
@@ -644,15 +716,15 @@ def _extract_html(html: str, observations: _ExtractionObservations) -> Extracted
             candidates.append((-1, -len(outside), section, outside))
     candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
     selected, text = candidates[0][2:]
+    outside_selected = candidates[0][0] == -1
     observations.phase = "selected"
-    observations.media_counts = dict(selected.critical_media)
+    observations.media_counts, issues, has_images = _selected_coverage(selected, outside_selected, parser.global_issues)
     if any(candidate[2].kind == selected.kind and candidate[2].index != selected.index
            and selected.index not in candidate[2].ancestors and candidate[2].index not in selected.ancestors
            for candidate in candidates):
         raise ValueError("coverage_incomplete:multiple_article_regions")
     ids = set(selected.ids)
     references = set(selected.references)
-    issues = selected.issues | parser.global_issues
     for notes in parser.sections:
         if notes.kind == "footnotes" and selected.index not in notes.ancestors:
             if not notes.closed:
@@ -675,7 +747,7 @@ def _extract_html(html: str, observations: _ExtractionObservations) -> Extracted
     coverage_notes = [
         "Complete normalized text from the selected HTML region; publisher completeness is not guaranteed.",
     ]
-    if selected.has_images:
+    if has_images:
         coverage_notes.append("Uninspected images are present; this acquisition covers textual content only.")
     return ExtractedArticle(text, source_date, selected.kind, tuple(coverage_notes), observations.snapshot())
 
