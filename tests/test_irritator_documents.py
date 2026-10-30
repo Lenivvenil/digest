@@ -586,3 +586,25 @@ async def test_rfc_transformed_regions_do_not_mislabel_original_response_diagnos
     snapshot = await acquire_document(RFC_URL, budget=SourceRequestBudget())
     assert snapshot.content_sha256 == hashlib.sha256(html.encode()).hexdigest()
     assert snapshot.extraction_diagnostics is None and len(requests) == 1
+
+
+@pytest.mark.parametrize("extra, status, reason", [
+    ('<template><svg></svg><p>Inert, not evidence.</p></template>', "complete", None),
+    ('<a role="button"><svg width="16" height="16"><text style="display:none">Not visible</text></svg></a>',
+     "complete", None),
+    ('<template for="marker"><p>Unresolved replacement.</p></template>',
+     "held", "coverage_incomplete:unread_template_content"),
+    ('<svg><text>Visible evidence</text></svg>', "held", "coverage_incomplete:unread_critical_media"),
+])
+async def test_structural_media_fix_keeps_document_bytes_and_single_start(
+    http: Any, extra: str, status: str, reason: str | None,
+) -> None:
+    html = _html(f"<p>{PROSE}</p>" + extra)
+    requests, _ = http(lambda _: _response(html))
+    budget = SourceRequestBudget(1)
+    snapshot = await acquire_document("https://example.com/structure", budget=budget)
+    assert len(requests) == budget.requests_started == 1
+    assert snapshot.status == status and snapshot.error == reason
+    assert snapshot.content_sha256 == hashlib.sha256(html.encode()).hexdigest()
+    assert snapshot.extraction_diagnostics is not None
+    assert snapshot.text == (PROSE if status == "complete" else "")
