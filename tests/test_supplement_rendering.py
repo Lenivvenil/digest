@@ -190,3 +190,52 @@ def test_unfamiliar_coverage_cannot_authorize_dropping_a_known_excerpt_caveat() 
     limitation = "Evidence consists of short excerpts; full articles were not reviewed."
     result = EvidenceIrritatorResult(1, "synthetic", coverage="Unfamiliar scope.", limitations=[limitation])
     assert _reader_limitations(result, "ru") == [limitation]
+
+
+@pytest.mark.parametrize(("quote", "snippet", "continued"), [
+    ("Latency rose and up to ", "Latency rose and up to 38.66 seconds at stricter thresholds.", True),
+    ("A complete sentence.", "A complete sentence.", False),
+    ("A complete sentence.", "A complete sentence. Further evidence follows.", True),
+    ("A complete sentence.", "A complete sentence. \n", False),
+    ("Repeated", "Repeated first; Repeated last.", False),
+    ("Not supplied", "Different source evidence.", False),
+    ("", "Some evidence.", False),
+])
+def test_quote_boundary_annotation_never_completes_or_changes_evidence(
+    quote: str, snippet: str, continued: bool,
+) -> None:
+    from digest.presentation.supplement import _quote_continuation_note
+
+    for language in ("ru", "en"):
+        note = _quote_continuation_note(quote, snippet, language)
+        assert bool(note) == continued
+        rendered = quote + note
+        assert rendered[:len(quote)] == quote
+        assert _decode(split_supplement(rendered, escape_markdownv2, max_units=80)) == rendered
+        if continued:
+            assert "38.66" not in note
+
+
+def test_translated_caveats_keep_canonical_skip_decisions_and_source_index() -> None:
+    from dataclasses import replace
+
+    from digest.domain.investigation.coverage import COVERAGE
+    from digest.presentation.supplement import _reader_limitations
+
+    result = EvidenceIrritatorResult(1, "synthetic", coverage=COVERAGE, limitations=[
+        "Evidence is a sanitized RSS excerpt, not the full article.",
+        "Ranking omitted non-counter signals: supports=1, context=2, insufficient=3.",
+        "The study did not evaluate deployment safety.",
+        "URL liveness checks were not performed in the bounded evidence stage.",
+    ])
+    translated = replace(result, limitations=[
+        "Доказательство ограничено отрывком.",
+        "Пропущены сведения: поддержка=1, контекст=2, недостаточно=3.",
+        "Безопасность внедрения в исследовании не оценивалась.",
+        "Доступность ссылок не проверяли.",
+    ])
+    assert _reader_limitations(result, "ru", presented=translated) == translated.limitations[2:]
+    assert _reader_limitations(result, "ru", presented=result) == _reader_limitations(result, "ru")
+    with pytest.raises(ValueError, match="field coverage"):
+        _reader_limitations(result, "ru", presented=replace(translated, limitations=translated.limitations[:-1]))
+    assert result.limitations[2] == "The study did not evaluate deployment safety."

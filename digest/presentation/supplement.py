@@ -139,14 +139,18 @@ def _localized_caveat(limitation: str, language: str) -> str:
     return limitation
 
 
-def _reader_limitations(result: EvidenceIrritatorResult, language: str) -> list[str]:
-    """Project the closed reviewed vocabulary; unknown model caveats remain verbatim."""
+def _reader_limitations(
+    result: EvidenceIrritatorResult, language: str, *, presented: EvidenceIrritatorResult | None = None,
+) -> list[str]:
+    """Keep canonical suppression decisions; project translated caveats by stable source index."""
     from digest.domain.investigation.coverage import COVERAGE, FULL_SOURCE_COVERAGE
 
     standard_coverage = result.coverage in {COVERAGE, FULL_SOURCE_COVERAGE}
     russian = language == "ru"
     notes = []
-    for original in result.limitations:
+    if presented is not None and len(presented.limitations) != len(result.limitations):
+        raise ValueError("Presented limitations changed canonical field coverage.")
+    for index, original in enumerate(result.limitations):
         limitation = original.replace("‑", "-")
         if standard_coverage and limitation in _REPEATED_SCOPE:
             continue
@@ -182,9 +186,26 @@ def _reader_limitations(result: EvidenceIrritatorResult, language: str) -> list[
         else:
             localized = _localized_caveat(limitation, language)
             limitation = original if localized == limitation else localized
+        if presented is not None and presented.limitations[index] != original:
+            limitation = presented.limitations[index]
         if limitation not in notes:
             notes.append(limitation)
     return notes
+
+
+def _quote_continuation_note(quote: str, snippet: str, language: str) -> str:
+    """Annotate only a unique literal match with retained non-whitespace continuation."""
+    if not quote:
+        return ""
+    start = snippet.find(quote)
+    if (start < 0 or snippet.find(quote, start + 1) >= 0
+            or not snippet[start + len(quote):].strip()):
+        return ""
+    return (
+        "\nГраница цитаты: сохранённый текст источника продолжается; продолжение здесь не приведено."
+        if language == "ru" else
+        "\nQuotation boundary: retained source text continues; the continuation is not shown here."
+    )
 
 
 def fragment_text(
@@ -224,11 +245,12 @@ def fragment_text(
                          if canonical.signal.published else labels["unknown"])
         lines.append(
             f"{shown.signal.title}\n{shown.signal.url}\n{relation}: {shown.reasoning}\n"
-            f"{labels['external']}: {canonical.quote}\n"
+            f"{labels['external']}: {canonical.quote}"
+            f"{_quote_continuation_note(canonical.quote, canonical.signal.snippet, language)}\n"
             f"{labels['external_date']}: {external_date}"
         )
     lines.append(_reader_coverage(result, language))
-    limitations = _reader_limitations(result, language)
+    limitations = _reader_limitations(result, language, presented=presented)
     if limitations:
         lines.append(labels["limits"] + ": " + " ".join(limitations))
     if notice:
