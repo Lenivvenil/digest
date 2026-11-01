@@ -219,7 +219,13 @@ runtime, not public examples or PRs.
 - `native-source-packet/v1` retains the full planned packet, its exact occurrence
   hashes, owner hash, publication date, publication language, excerpt limit and
   editorial context. The planning prompt hash is historical planning metadata,
-  not a native-model request or dispatch receipt.
+  not a native-model request or dispatch receipt. At native projection/import only,
+  source news recency is evaluated at the hash-bound `planned_at` collection instant,
+  validated as nonfuture and within the current UTC day. Export and other eligibility
+  callers retain live-clock recency. Current source enablement/binding, recency policy,
+  blocklist and delivery-cache exclusions still apply; this does not extend publication
+  expiry, relax claims, recompose a packet or refresh its timestamps. No frozen source
+  configuration is inferred: the existing packet does not retain a recency-policy snapshot.
 - `native-source-packet/v2` additionally captures the optional policy and exact
   eligible closing identities. It does not change current source-policy checks or
   turn historical v1 optional blobs into valid new proposals.

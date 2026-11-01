@@ -78,8 +78,11 @@ def reconcile_eligibility(
     effective_priorities: dict[str, int] | None,
     instant: datetime,
     delivery_history: dict[str, str] | None,
+    *,
+    recency_instant: datetime | None = None,
 ) -> None:
-    """Recheck exact occurrences without changing original observation timestamps."""
+    """Recheck current exclusions; frozen native news may anchor only recency."""
+    freshness_at = instant if recency_instant is None else recency_instant
 
     def exclusion(saved: CandidateArticle, identity: str) -> str:
         article = saved.article()
@@ -88,7 +91,7 @@ def reconcile_eligibility(
             return "source_disabled_or_changed"
         if identity in delivered_cache:
             return "existing_delivery_cache"
-        if article.pub_date is not None and article.pub_date < instant - timedelta(hours=source.recency_hours):
+        if article.pub_date is not None and article.pub_date < freshness_at - timedelta(hours=source.recency_hours):
             return "outside_source_recency"
         if is_blocked(article.title, blocklist) or is_blocked(article.description, blocklist):
             return "current_blocklist"

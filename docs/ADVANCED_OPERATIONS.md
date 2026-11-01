@@ -275,6 +275,17 @@ fragment. Primary ready/claim/receipts and delivered messages remain unchanged.
 
 ### Native fragment destinations
 
+New native composition admits an optional fragment only when its immutable native
+ranking provenance proves that the retained original extraction was actually
+supplied in `original_document_context`. Missing, omitted, mismatched or unknown
+provenance omits only the optional fragment before projection freezes, without
+rewriting its pending record or fragment. Admission does not reconstruct an old
+request using today's extraction limits. A complete extraction does not establish
+publisher completeness, and context exposure does not establish additional value,
+faithful prose or semantic acceptance. Final composition review remains required.
+Already frozen, reserved and consumed editions retain their existing recovery
+contracts; this guard is not a resend, retry or retrospective acceptance mechanism.
+
 The existing native export → project → accepted import sequence can include one
 already-accepted, eligible pending counterevidence fragment. Projection selects it
 once; `native-composition/v3` binds its exact immutable projection, full text, origin
