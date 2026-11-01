@@ -972,3 +972,48 @@ async def test_native_acquisition_rejects_invalid_diagnostics_without_reacquisit
         await _advance(session)
     assert [acquired[name].await_count for name in ("original", "search", "external")] == counts
     assert {str(item): item.read_bytes() for item in Path("digests").rglob("*") if item.is_file()} == retained
+
+
+@pytest.mark.parametrize("missing_limitation", [False, True])
+async def test_native_presentation_covers_caveats_without_changing_canonical_evidence(
+    monkeypatch: pytest.MonkeyPatch, missing_limitation: bool,
+) -> None:
+    _, _, session = _setup(monkeypatch, presentation=True)
+    _acquisitions(monkeypatch)
+    caveat = "The reported benefit is conditional; actual deployment was not evaluated."
+    translated_caveat = "Заявленная польза условна; фактическое внедрение не оценивалось."
+    for expected in ("narrative", "research_plan", "ranking"):
+        pending = await _advance(session)
+        assert pending["phase"] == expected
+        value = _semantic_result(pending)
+        if expected == "ranking":
+            value["limitations"] = [caveat]
+        _accept(pending, value)
+    pending = await _advance(session)
+    assert pending["phase"] == "presentation"
+    fields = _messages(pending)["fields"]
+    caveat_id = next(key for key, value in fields.items() if value == caveat)
+    assert caveat_id.startswith("limitation:")
+    assert all("quote" not in key and "snippet" not in key for key in fields)
+    value = _semantic_result(pending)
+    for entry in value["translations"]:
+        if entry["id"] == caveat_id:
+            entry["text"] = translated_caveat
+    if missing_limitation:
+        value["translations"] = [entry for entry in value["translations"] if entry["id"] != caveat_id]
+        _accept(pending, value)
+        with pytest.raises(ValueError):
+            await _advance(session)
+        assert not list(Path("digests").glob("*.fragment.json"))
+        return
+    _accept(pending, value)
+    completed = await _advance(session)
+    assert completed["status"] == "complete"
+    fragment, reason = supplement.pending_fragment("digests", (NOW + timedelta(days=1)).date(), now=NOW)
+    assert fragment is not None and reason == "eligible"
+    result = json.loads(Path(fragment.fragment.result).read_bytes())
+    assert caveat in result["limitations"] and translated_caveat not in result["limitations"]
+    assert translated_caveat in fragment.fragment.text and caveat not in fragment.fragment.text
+    assert result["ranked_signals"][0]["quote"] in fragment.fragment.text
+    assert result["ranked_signals"][0]["signal"]["snippet"] == BODY
+    assert await _advance(session) == completed

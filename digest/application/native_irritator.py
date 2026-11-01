@@ -551,6 +551,7 @@ async def advance(
                 raise ValueError("Presentation translation requires canonical English generation.")
             fields = _ranked_fields(list(result.ranked_signals))
             fields.update({f"narrative:{index}": item.claim for index, item in enumerate(result.narratives)})
+            fields.update({f"limitation:{index}": text for index, text in enumerate(result.limitations)})
             batches, reasons = _batches(fields, config.translation.max_input_chars)
             if fields and (reasons or len(batches) != 1 or batches[0] != fields or config.translation.max_calls < 1):
                 # Native uses one bounded presentation phase, never a hidden API
@@ -570,6 +571,7 @@ async def advance(
                     {"target_language": config.translation.target_language, "fields": fields})
                 translated = _parse(response, fields)
                 presented = replace(result,
+                    limitations=[translated[f"limitation:{index}"] for index in range(len(result.limitations))],
                     narratives=[replace(item, claim=translated[f"narrative:{index}"])
                                 for index, item in enumerate(result.narratives)],
                     ranked_signals=[replace(item,
