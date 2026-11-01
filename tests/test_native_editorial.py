@@ -288,7 +288,7 @@ def test_incomplete_or_changed_source_review_fails_before_sidecars(mutation: str
     assert set(CACHE.rglob("*")) == before and storage.load_pending(CACHE) == pending
 
 
-@pytest.mark.parametrize("change", ["disabled", "demoted", "url", "category", "age", "blocklist", "seen"])
+@pytest.mark.parametrize("change", ["disabled", "demoted", "url", "category", "recency_policy", "blocklist", "seen"])
 @pytest.mark.parametrize("phase", ["project", "import"])
 def test_current_effective_eligibility_rechecked(change: str, phase: str) -> None:
     cfg = config()
@@ -301,7 +301,7 @@ def test_current_effective_eligibility_rechecked(change: str, phase: str) -> Non
         save_source_state(state, str(CACHE))
     elif change in {"url", "category"}:
         setattr(cfg.sources[0], change, "https://example.invalid/changed" if change == "url" else "Other")
-    elif change == "age":
+    elif change == "recency_policy":
         cfg.sources[0].recency_hours = -1
     elif change == "blocklist":
         cfg.filters.blocklist_keywords = ["Synthetic"]
@@ -317,6 +317,124 @@ def test_current_effective_eligibility_rechecked(change: str, phase: str) -> Non
                 cfg, response, review_for(pending, response), expected_packet_sha256=pending.packet.sha256, now=NOW
             )
     assert not (CACHE / editions.READY_FILE).exists()
+
+
+@pytest.fixture
+def collection_boundary(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Synthetic reproduction of the November 1 collection/project clock boundary."""
+    collected = datetime(2026, 11, 1, 2, 26, 26, tzinfo=timezone.utc)
+    published = datetime(2026, 10, 31, 2, 39, 52, tzinfo=timezone.utc)
+    monkeypatch.setitem(globals(), "NOW", collected)
+    articles = [replace(item, published=published.isoformat()) for item in occurrences()]
+    monkeypatch.setitem(globals(), "occurrences", lambda: articles)
+    return datetime(2026, 11, 1, 2, 39, 59, tzinfo=timezone.utc)
+
+
+def test_frozen_news_remains_fresh_at_collection_through_import(collection_boundary: datetime) -> None:
+    cfg = config()
+    for source in cfg.sources:
+        source.recency_hours = 24
+    pending = seed()
+    original = storage.read_reference(pending.packet)
+    response = response_for(pending)
+    pending = native.project_response(
+        cfg, response, review_for(pending, response),
+        expected_packet_sha256=pending.packet.sha256, now=collection_boundary,
+    )
+    assert pending.projection is not None
+    path, digest = native.import_accepted(
+        cfg, acceptance_for(pending), expected_projection_sha256=pending.projection.sha256,
+        now=collection_boundary + timedelta(hours=1),
+    )
+    edition, _ = editions.load_edition(path, "123", collection_boundary, digest)
+    assert edition.articles
+    assert storage.read_reference(pending.packet) == original
+    # Live eligibility for export/legacy callers still uses the current clock.
+    with pytest.raises(ValueError, match="no-longer-eligible"):
+        native._eligible(read_packet(original)[1], cfg, CACHE, collection_boundary)
+
+
+@pytest.mark.parametrize("phase", ["project", "import"])
+@pytest.mark.parametrize("change", ["disabled", "blocklist", "seen", "recency_policy"])
+def test_collection_anchor_preserves_live_exclusions(
+    collection_boundary: datetime, phase: str, change: str,
+) -> None:
+    cfg = config()
+    for source in cfg.sources:
+        source.recency_hours = 24
+    pending = seed()
+    response = response_for(pending)
+    if phase == "import":
+        pending = native.project_response(
+            cfg, response, review_for(pending, response),
+            expected_packet_sha256=pending.packet.sha256, now=NOW,
+        )
+    if change == "recency_policy":
+        cfg.sources[0].recency_hours = 23  # Positive policy cutoff, already stale at collection.
+    elif change == "disabled":
+        cfg.sources[0].enabled = False
+    elif change == "blocklist":
+        cfg.filters.blocklist_keywords = ["Synthetic"]
+    else:
+        item = occurrences()[0]
+        (CACHE / "seen_articles.json").write_text(json.dumps({
+            article_hash(item.title, item.link): collection_boundary.isoformat(),
+        }))
+    before = set(CACHE.rglob("*"))
+    with pytest.raises(ValueError, match="no-longer-eligible"):
+        if phase == "project":
+            native.project_response(cfg, response, review_for(pending, response),
+                expected_packet_sha256=pending.packet.sha256, now=collection_boundary)
+        else:
+            assert pending.projection is not None
+            native.import_accepted(cfg, acceptance_for(pending),
+                expected_projection_sha256=pending.projection.sha256, now=collection_boundary)
+    assert set(CACHE.rglob("*")) == before
+
+
+@pytest.mark.parametrize("clock", ["future", "prior_day", "naive", "tampered"])
+def test_invalid_frozen_collection_clock_rejected(clock: str) -> None:
+    pending = seed()
+    response = response_for(pending)
+    packet_path = Path(pending.packet.path)
+    value = json.loads(packet_path.read_bytes())
+    planned_at = {
+        "future": NOW + timedelta(seconds=1),
+        "prior_day": NOW - timedelta(days=1),
+        "naive": NOW.replace(tzinfo=None),
+        "tampered": NOW - timedelta(minutes=1),
+    }[clock]
+    value["planning_packet"]["planned_at"] = planned_at.isoformat()
+    raw = encode(value)
+    if clock == "tampered":
+        packet_path.write_bytes(raw)  # Existing reference must reject changed bytes.
+    else:
+        pending = replace(pending, packet=storage.put_bytes(raw, CACHE, "packet"))
+        storage.save_pending(CACHE, pending)
+    before = set(CACHE.rglob("*"))
+    with pytest.raises(ValueError):
+        native.project_response(config(), response, review_for(pending, response),
+            expected_packet_sha256=pending.packet.sha256, now=NOW)
+    assert set(CACHE.rglob("*")) == before
+    if clock != "tampered":
+        assert storage.load_pending(CACHE) == pending
+
+
+def test_news_already_stale_at_collection_rejected(
+    collection_boundary: datetime, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    articles = [replace(item, published=(NOW - timedelta(hours=24, seconds=1)).isoformat())
+                for item in occurrences()]
+    monkeypatch.setitem(globals(), "occurrences", lambda: articles)
+    cfg = config()
+    for source in cfg.sources:
+        source.recency_hours = 24
+    pending = seed()
+    response = response_for(pending)
+    with pytest.raises(ValueError, match="no-longer-eligible"):
+        native.project_response(cfg, response, review_for(pending, response),
+            expected_packet_sha256=pending.packet.sha256, now=collection_boundary)
+    assert storage.load_pending(CACHE) == pending
 
 
 @pytest.mark.parametrize("field", ["verdict", "projection_sha256", "packet_sha256", "response_sha256", "review_sha256"])

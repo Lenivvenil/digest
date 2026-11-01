@@ -505,6 +505,18 @@ original. This is a separate source-authoritative branch, not a reinterpretation
    receipt ownership and replay rules remain. Earlier unapproved local native drafts
    are not promoted merely because their shape resembles a legacy ready edition.
 
+The native news-age contract is freshness at the frozen planning/collection instant,
+not a send-time TTL for every source item (Refs #77; release context #91). During
+projection/import, the retained packet hash binds `planned_at`; it must be a valid
+UTC instant, nonfuture and within the current UTC day. Current recency configuration
+is applied at that instant, while delivery-cache, blocklist and enabled-source/binding
+checks remain live. Export and unrelated eligibility callers keep their live-clock
+behavior. A source aging past its configured window during editorial work alone
+therefore cannot invalidate the immutable edition. Already-stale news remains excluded.
+This changes no serialized packet, hash, publication expiry, claim, transport-unknown
+hold, retry allowance or recomposition rule. Historical source-recency configuration
+is not retained by the packet and must not be fabricated.
+
 Distinct execution-reference strings and matching hashes do not authenticate the
 writer or reviewer, prove their independence, or establish factual truth. The managed
 runtime must supply trustworthy artifacts and expected hash anchors. The engine

@@ -80,7 +80,16 @@ def _pending(cache: Path, config: Config, now: datetime) -> storage.PendingNativ
     return pending
 
 
-def _eligible(packet: CandidatePacket, config: Config, cache: Path, now: datetime) -> Config:
+def _eligible(
+    packet: CandidatePacket, config: Config, cache: Path, now: datetime, *, frozen: bool = False
+) -> Config:
+    # Only project/import supply frozen=True after checking the retained byte hash.
+    # A moving news-age cutoff must not invalidate a day's immutable collection.
+    recency_instant = None
+    if frozen:
+        recency_instant = parse_instant(packet.planned_at).astimezone(timezone.utc)
+        if recency_instant > now or recency_instant.date() != now.astimezone(timezone.utc).date():
+            raise ValueError("Native collection instant must be nonfuture and within the current UTC day.")
     effective, priorities = _portfolio(config, cache)
     delivered = _strict_cache(cache / "seen_articles.json")
     progress = CandidateProgress(
@@ -104,6 +113,7 @@ def _eligible(packet: CandidatePacket, config: Config, cache: Path, now: datetim
         priorities,
         now,
         delivered,
+        recency_instant=recency_instant,
     )
     if any(not item.eligible for item in progress.candidates.values()):
         raise ValueError("Native packet contains a no-longer-eligible exact source occurrence; no recomposition.")
@@ -446,7 +456,7 @@ def project_response(
     if pending.packet.sha256 != expected_packet_sha256:
         raise ValueError("Native packet anchor mismatch.")
     _, packet = read_packet(storage.read_reference(pending.packet))
-    effective = _eligible(packet, config, cache, instant)
+    effective = _eligible(packet, config, cache, instant, frozen=True)
     # Validate before writing any new sidecars. Existing accepted projection is immutable.
     response = storage.Reference("input.response.json", editions.content_sha256(response_raw))
     review = storage.Reference("input.review.json", editions.content_sha256(review_raw))
@@ -513,7 +523,7 @@ def import_accepted(
             return cache / editions.READY_FILE, digest
     _guard(cache, date.fromisoformat(pending.publication_date), instant)
     _, packet = read_packet(storage.read_reference(pending.packet))
-    effective = _eligible(packet, config, cache, instant)
+    effective = _eligible(packet, config, cache, instant, frozen=True)
     supplement = storage.projected_supplement(projected)
     if supplement is not None:
         native_supplement.verify_available(supplement, day=date.fromisoformat(pending.publication_date),

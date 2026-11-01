@@ -54,7 +54,9 @@ async def _origin_fragment(
 ) -> PendingSupplement:
     _clock(monkeypatch, NOW)
     if legacy:
-        return await pending_supplement(monkeypatch, long=long)
+        from tests.test_native_supplement_context import bind_context
+
+        return bind_context(await pending_supplement(monkeypatch, long=long))
     cfg, archive = _confirmed()
 
     async def stage(bundle: Any, config: Any, client: Any, *, delivered: Any, **kwargs: Any) -> Any:
@@ -70,7 +72,11 @@ async def _origin_fragment(
         assert await execute_native_post_delivery(Path("config.yaml"), archive, execution=ModelExecution()) == 2
     pending, reason = supplement.pending_fragment("digests", NEXT.date(), now=NOW)
     assert pending is not None and reason == "eligible"
-    return pending
+    # These lifecycle fixtures predate native phase provenance. Supply explicit
+    # synthetic exposure proof; admission itself is covered without mocks below.
+    from tests.test_native_supplement_context import bind_context
+
+    return bind_context(pending)
 
 
 def _project_next(

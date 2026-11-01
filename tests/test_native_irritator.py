@@ -210,6 +210,9 @@ async def test_native_semantic_phases_parse_replay_and_create_existing_fragment(
     assert marker["supplement_status"] == "pending"
     fragment, reason = supplement.pending_fragment("digests", (NOW + timedelta(days=1)).date(), now=NOW)
     assert fragment is not None and reason == "eligible"
+    from digest.application.native_supplement import ranking_had_original_context
+
+    assert ranking_had_original_context(fragment)
     result = json.loads(Path(fragment.fragment.result).read_bytes())
     assert result["source_request_starts"] == search_starts + 2 and len(result["documents"]) == 2
     assert result["ranked_signals"][0]["signal"]["snippet"] == BODY
