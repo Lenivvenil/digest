@@ -456,7 +456,8 @@ a live request, release, runtime change or #55 closure from offline tests.
 
 ## Draft source-authoritative external editorial path (#55)
 
-**Status: local integration candidate for review; not adopted or deployed.**
+**Status: implemented engine capability. Runtime adoption, observed delivery and
+ordinary-runtime quality/cost acceptance require separate evidence.**
 
 ### Problem and chosen boundary
 

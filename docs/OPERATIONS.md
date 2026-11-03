@@ -100,7 +100,7 @@ record set, not a queue of independently sendable editions.
 
 ## External editorial candidate
 
-**Local candidate only; not adopted in the production runtime.** The explicit
+**Explicit engine capability; runtime adoption is a separate deployment decision.** The explicit
 `--native-phase export|project|import|release` path is an alternative to ordinary provider
 preparation, not an additional step that runs implicitly. It requires the same
 compact prepared-delivery ownership and does not set up a schedule or send messages.
@@ -127,6 +127,14 @@ Use `python -m digest --help` for the explicit file/hash arguments. Do not combi
 native phases with ordinary preparation, legacy dispatch, discovery, preview or
 sender flags. Missing acceptance, changed text, mismatched hashes, changed eligibility
 or corrupt pending state is a hold, not permission to repair evidence or rerun a model.
+
+Before importing a verdict, verify the runtime's supported transport for retaining
+its original result and expected hash anchors. A displayed transcript, manually
+transcribed JSON, locally reconstructed file or matching hash alone does not
+authenticate the originating result. If required provenance cannot be established,
+preserve the attempt and hold before import or send. Do not rewrite output,
+normalize bytes or repeat an already-started semantic attempt to manufacture missing
+evidence.
 
 | Phase | Required inputs | Result |
 | --- | --- | --- |
@@ -482,6 +490,15 @@ state. Preserve receipts, deduplication/feedback records, translation records an
 reservations. Hold publication if compatibility or an earlier delivery is uncertain.
 Do not reset state or resend an edition merely because the engine was rolled back.
 Optional supplementary failures must remain visible without erasing primary receipts.
+
+Validate a candidate separately from the active runtime before changing its owner
+or package binding. Exercise the complete supported handoff through export,
+semantic-result capture, final acceptance and prepared-delivery barriers using
+isolated evidence and mocked external effects. Record which boundaries were actually
+exercised and which still need observation in the target runtime. Preserve the current
+schedule and all retained operational state; do not replay held attempts as rollout
+tests. Synthetic success, installation and confirmed ordinary delivery are separate
+release milestones.
 
 ### Reader presentation and detailed reports
 

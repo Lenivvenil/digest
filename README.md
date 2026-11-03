@@ -60,7 +60,7 @@ Prefer broader synthesis? The supported [category-summary mode](docs/CONFIGURATI
 offers cross-category trends and opt-in Optimist, Skeptic and Realist perspectives,
 separately from ordinary review-led cards.
 
-An explicit, not-yet-deployed [external editorial candidate](docs/OPERATIONS.md#external-editorial-candidate)
+An explicit [external editorial path](docs/OPERATIONS.md#external-editorial-candidate)
 exports source evidence and imports independently accepted publication-language prose
 without calling a model API inside the engine. A draft or per-card pass alone cannot
 be claimed or sent: the exact final composition needs machine-readable editorial
