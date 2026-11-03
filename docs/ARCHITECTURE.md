@@ -88,8 +88,9 @@ response. Existing renderers and the final accepted projection own their placeme
 An adopting runtime must own trustworthy handoff, serialized access and remote
 ready/claim durability. No scheduler or vendor adapter is installed by this candidate.
 See the [state contract](STATE_AND_EFFECTS.md#external-editorial-candidate) and
-[operator workflow](OPERATIONS.md#external-editorial-candidate). Adoption and actual
-ordinary-runtime quality/free-operation acceptance remain open.
+[operator workflow](OPERATIONS.md#external-editorial-candidate). Runtime adoption,
+observed delivery and ordinary-runtime quality/free-operation acceptance are separate
+claims; establish each from its own evidence.
 
 ## Entities, contracts and enforcement
 

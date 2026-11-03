@@ -162,7 +162,7 @@ boolean. The [code owner map](ARCHITECTURE.md#modules-and-responsibilities) iden
 
 ## External editorial candidate
 
-This explicit local candidate is separate from ordinary provider preparation; see
+This explicit external editorial path is separate from ordinary provider preparation; see
 the [draft ADR0005 amendment](decisions/0005-optional-presentation-translation.md#draft-source-authoritative-external-editorial-path-55).
 It does not change or migrate previously saved provider reviews or ready editions.
 
