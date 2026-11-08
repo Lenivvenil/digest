@@ -128,3 +128,44 @@ feedback collector must retain the ready-v2 and full-token readers required by
 an arbitrary pre-retirement pin is not safe. Retain runtime objects, candidate
 history and delivery receipts; no format migration or state reset is required.
 Editorial quality and ordinary-runtime acceptance remain separate.
+
+
+## Inactive prospective native selection — 2026-11-08
+
+Status: opt-in implementation under review, not deployed. This amendment does not
+change the ordinary provider planner or grant a production controller permission.
+The engine adds `application.native_selection`, `native_selection_lifecycle` and
+`native_selection_prospective` as the application owners of complete-pool native
+selection, exact accepted-chain reconstruction and recoverable native retirement.
+
+The complete canonical collector inventory, retained candidates and seen policy
+form the admission universe before source allocation slots. Writer, independent
+source review and final review retain their exact bytes and bounded reversible
+transport. Native dispositions do not overwrite provider statuses. Selected work
+without a delivery observation remains recovery-owned. Withheld/duplicate work
+with unchanged normalized source content and editorial policy can retire from
+active consideration while its objects and proofs remain. Enrichment is explicit
+unfinished evidence work, and capacity-deferred work remains eligible.
+
+A content/policy change can reopen eligible unfinished work. A narrow transition
+from future-at-judgment to current source time can reopen withheld/duplicate work;
+a refreshed timestamp alone cannot. Time or wording cannot resolve missing source
+evidence. This deterministic comparison is not semantic novelty assessment.
+
+Pending schema 2 explicitly owns the selection packet. Schema 1 remains limited
+to legacy packet schemas. The accepted lifecycle index is written before ready;
+recovery follows the original pending owner. Every history entry reconstructs its
+accepted chain and historical configuration. Migration may start only from an
+actual retained native ready checkpoint and its recursively bound predecessors,
+never from an unanchored directory scan. Local hashes are integrity evidence, not
+remote authenticity or a signature of the whole filesystem.
+
+History holds at 512 records or 64 MiB of lifecycle bodies. There is no silent
+truncation or compaction. Current seen pruning and canonical retained delivery
+observations keep their existing behavior. Future capacity needs a separately
+reviewed anchored compaction owner. See [state and effects](../STATE_AND_EFFECTS.md#prospective-native-selection).
+
+Source/runtime/config publication, exact-head tests, current recovery reconciliation,
+explicit controller adoption and a fresh unstarted date are separate gates. New
+state must not be read by an incompatible rollback engine. Preserve new state and
+receipts and stop advancement until a compatible recovery owner is reviewed.

@@ -745,3 +745,27 @@ ready schemas, claims, receipts, article/vote/source accounting remain unchanged
 Per-record limits do not bound total retained storage or Git-history growth; these
 sidecars are outside candidate accounting's 32 MB limit. There is no new cleanup.
 See [the decision and recovery limits](decisions/0005-optional-presentation-translation.md#optional-selected-source-comparison-55).
+
+
+## Prospective native selection
+
+The opt-in selection application in [ADR0016](decisions/0016-candidate-contracts-and-retirement.md#inactive-prospective-native-selection--2026-11-08)
+adds a complete-pool packet and separate native judgment/lifecycle evidence. It is
+inactive unless a runtime explicitly selects it. No default CLI, schedule, sender
+or provider-selection route changes here.
+
+`PendingNative` schema 2 selects the new packet decoder; schema 1 rejects selection
+packets and continues validating legacy packets. Import validates exact original
+writer/source/final evidence, writes lifecycle evidence and its durable
+`.cache/native_selection_history.json` index before ready. A partial write resumes
+from the original pending record, not a new writer attempt. Source acceptance does
+not create a delivered/seen observation. Unconfirmed accepted work requires recovery.
+
+History and immutable selection plans preserve canonical identities, source-content
+fingerprints, policy bindings and original provider status/proof. Recoverable native
+retirement changes active consideration without destroying underlying objects.
+History migration trusts only a retained ready anchor and recursively bound prior
+entries. Missing, malformed, foreign-owner, conflicting or oversized history holds.
+The 512-record/64 MiB history-body bounds do not bound all disk or proof-object I/O.
+There is no automatic long-term compaction. Runtime remote readback/CAS and actual
+owner/launch authority remain outside this local engine contract.
