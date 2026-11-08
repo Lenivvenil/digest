@@ -114,7 +114,11 @@ def load_pending(cache: Path) -> PendingNative | None:
 
 
 def validate_pending(pending: PendingNative) -> None:
-    if pending.schema != 1 or (pending.response is None) != (pending.review is None):
+    if (
+        type(pending.schema) is not int
+        or pending.schema not in {1, 2}
+        or (pending.response is None) != (pending.review is None)
+    ):
         raise ValueError("Invalid native pending phase.")
     if (pending.projection is None) != (pending.response is None):
         raise ValueError("Native projection lacks original response/review.")
@@ -128,6 +132,12 @@ def validate_pending(pending: PendingNative) -> None:
         for reference in supplement_references(decode(read_reference(pending.projection))):
             read_reference(reference)
     packet = decode(read_reference(pending.packet))
+    if pending.schema == 2:
+        from digest.application.native_selection import source_packet
+
+        packet, _ = source_packet(read_reference(pending.packet))
+    elif packet.get("schema") not in {"native-source-packet/v1", "native-source-packet/v2"}:
+        raise ValueError("Legacy pending cannot adopt selection packet.")
     if packet.get("owner_sha256") != pending.owner_sha256 or packet.get("publication_date") != pending.publication_date:
         raise ValueError("Native pending owner/date differs from its immutable source packet.")
 
@@ -203,9 +213,11 @@ def supplement_references(projected: dict[str, Any]) -> list[Reference]:
     pending = projected_supplement(projected)
     if pending is None:
         return []
-    return [Reference(pending.projection, pending.projection_sha256),
-            Reference(pending.fragment.result, pending.fragment.result_sha256),
-            Reference(pending.fragment.checkpoint, pending.fragment.origin.checkpoint_sha256)]
+    return [
+        Reference(pending.projection, pending.projection_sha256),
+        Reference(pending.fragment.result, pending.fragment.result_sha256),
+        Reference(pending.fragment.checkpoint, pending.fragment.origin.checkpoint_sha256),
+    ]
 
 
 def composition_references(pending: PendingNative, projected: dict[str, Any]) -> list[Reference]:
@@ -213,6 +225,10 @@ def composition_references(pending: PendingNative, projected: dict[str, Any]) ->
 
 
 def validate_acceptance(raw: bytes, projection: Reference, projected: dict[str, Any]) -> dict[str, Any]:
+    if projected.get("schema") == "native-selection-composition/v1":
+        from digest.application.native_selection import validate_acceptance as validate_selection
+
+        return validate_selection(raw, projection, projected)
     value = decode(raw)
     expected = {
         "schema",
@@ -247,11 +263,20 @@ def validate_native_ready(data: dict[str, Any]) -> None:
             raise ValueError("Native ready lacks its mandatory acceptance checkpoint.")
     projected = decode(read_reference(projection))
     validate_acceptance(read_reference(acceptance), projection, projected)
-    supported = {"native-composition/v3"} if data["schema"] == 5 else {
-        "native-composition/v1", "native-composition/v2",
-    }
-    if (projected.get("schema") not in supported
-            or projected.get("publication") != publication_fields(data)):
+    if projected.get("schema") == "native-selection-composition/v1":
+        from digest.application.native_selection import validate_ready
+
+        validate_ready(data, projected, projection, acceptance)
+        return
+    supported = (
+        {"native-composition/v3"}
+        if data["schema"] == 5
+        else {
+            "native-composition/v1",
+            "native-composition/v2",
+        }
+    )
+    if projected.get("schema") not in supported or projected.get("publication") != publication_fields(data):
         raise ValueError("Ready differs from the exact accepted native composition.")
     for field in ("packet", "response", "review"):
         reference = restore_dataclass(projected["references"][field], Reference)

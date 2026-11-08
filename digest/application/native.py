@@ -80,9 +80,7 @@ def _pending(cache: Path, config: Config, now: datetime) -> storage.PendingNativ
     return pending
 
 
-def _eligible(
-    packet: CandidatePacket, config: Config, cache: Path, now: datetime, *, frozen: bool = False
-) -> Config:
+def _eligible(packet: CandidatePacket, config: Config, cache: Path, now: datetime, *, frozen: bool = False) -> Config:
     # Only project/import supply frozen=True after checking the retained byte hash.
     # A moving news-age cutoff must not invalidate a day's immutable collection.
     recency_instant = None
@@ -258,8 +256,11 @@ def _optional_publication(
     captured, current = envelope["optional_policy"], _optional_policy(packet, config)
     main_ids = [article_hash(card.title, card.link) for card in cards]
     metadata: dict[str, Any] = {
-        "main_count": len(cards), "closing_start": None, "synthesis": None,
-        "closing": {"status": "absent"}, "comparison": {"status": "absent"},
+        "main_count": len(cards),
+        "closing_start": None,
+        "synthesis": None,
+        "closing": {"status": "absent"},
+        "comparison": {"status": "absent"},
     }
     for kind in ("closing", "comparison"):
         value = response.get(kind)
@@ -277,9 +278,12 @@ def _optional_publication(
             continue
         try:
             if kind == "closing":
-                card = closing_card(value, packet,
+                card = closing_card(
+                    value,
+                    packet,
                     {item["evidence_id"] for item in response["items"] if item["status"] == "card"},
-                    set(captured["closing_ids"]) & set(current["closing_ids"]))
+                    set(captured["closing_ids"]) & set(current["closing_ids"]),
+                )
                 extended, credited = _present([*cards, card], packet, day, language)
                 candidate = render_compact_publication(extended, config, "")
                 if any(item.full_hash in credited and len(item.covering_chunks) != 1 for item in candidate.articles):
@@ -289,10 +293,15 @@ def _optional_publication(
                 cards, shown, rendered = [*cards, card], extended, candidate
             else:
                 result, bindings = comparison(value, packet, main_ids)
-                text = comparison_text(language,
-                    [(binding.source, binding.evidence.url, support.observation)
-                     for binding, support in zip(bindings, result.supports, strict=True)],
-                    result.interpretation, result.qualification)
+                text = comparison_text(
+                    language,
+                    [
+                        (binding.source, binding.evidence.url, support.observation)
+                        for binding, support in zip(bindings, result.supports, strict=True)
+                    ],
+                    result.interpretation,
+                    result.qualification,
+                )
                 placement = SynthesisPlacement(text, len(main_ids))
                 candidate = render_compact_publication(shown, config, "", synthesis=placement)
                 if not _same_synthesis_layout(rendered, candidate):
@@ -312,6 +321,12 @@ def _projection(
     config: Config,
     supplement: PendingSupplement | None = None,
 ) -> dict[str, Any]:
+    if pending.schema == 2:
+        from digest.application.native_selection import projection
+
+        if supplement is not None:
+            raise ValueError("Selection supplement requires a separately versioned reviewed composition; HOLD.")
+        return projection(pending, response_raw, review_raw, config)
     assert pending.response is not None and pending.review is not None
     packet_raw = storage.read_reference(pending.packet)
     envelope, packet = read_packet(packet_raw)
@@ -389,8 +404,13 @@ def _projection(
         if synthesis is not None and (rendered.synthesis is None or len(rendered.synthesis) != 1):
             raise native_supplement.SupplementLayoutError("Native supplement would split the admitted comparison.")
         assert rendered.supplement is not None
-        frozen_supplement = PreparedSupplement(supplement.fragment, supplement.projection,
-            supplement.projection_sha256, supplement.attempt, rendered.supplement)
+        frozen_supplement = PreparedSupplement(
+            supplement.fragment,
+            supplement.projection,
+            supplement.projection_sha256,
+            supplement.attempt,
+            rendered.supplement,
+        )
         presentation["supplement"] = {"status": "included", "before_article": main_count}
     owner, _ = prepared_delivery._owner()
     payloads = []
@@ -406,9 +426,9 @@ def _projection(
                 payload["reply_markup"] = chunk.reply_markup
             payloads.append(payload)
     return {
-        "schema": "native-composition/v3" if supplement is not None else (
-            "native-composition/v2" if optional is not None else "native-composition/v1"
-        ),
+        "schema": "native-composition/v3"
+        if supplement is not None
+        else ("native-composition/v2" if optional is not None else "native-composition/v1"),
         "inputs": inputs,
         "references": {
             "packet": asdict(pending.packet),
@@ -441,6 +461,14 @@ def _projection(
     }
 
 
+def _read_pending_packet(pending: storage.PendingNative) -> tuple[dict[str, Any], CandidatePacket]:
+    if pending.schema == 2:
+        from digest.application.native_selection import source_packet
+
+        return source_packet(storage.read_reference(pending.packet))
+    return read_packet(storage.read_reference(pending.packet))
+
+
 def project_response(
     config: Config,
     response_raw: bytes,
@@ -452,10 +480,14 @@ def project_response(
 ) -> storage.PendingNative:
     instant = prepared_delivery._instant(now)
     pending = _pending(cache, config, instant)
+    if pending.schema == 2:
+        from digest.application.native_selection import verify_configuration
+
+        verify_configuration(pending, config)
     _guard(cache, date.fromisoformat(pending.publication_date), instant)
     if pending.packet.sha256 != expected_packet_sha256:
         raise ValueError("Native packet anchor mismatch.")
-    _, packet = read_packet(storage.read_reference(pending.packet))
+    _, packet = _read_pending_packet(pending)
     effective = _eligible(packet, config, cache, instant, frozen=True)
     # Validate before writing any new sidecars. Existing accepted projection is immutable.
     response = storage.Reference("input.response.json", editions.content_sha256(response_raw))
@@ -471,11 +503,20 @@ def project_response(
         ):
             raise ValueError("A native response/review is already retained; replacement blocked.")
         if supplement is not None:
-            native_supplement.verify_available(supplement, day=date.fromisoformat(pending.publication_date),
-                now=instant, owner_sha256=pending.owner_sha256)
+            native_supplement.verify_available(
+                supplement,
+                day=date.fromisoformat(pending.publication_date),
+                now=instant,
+                owner_sha256=pending.owner_sha256,
+            )
         return pending
-    supplement = (native_supplement.select_existing(effective, day=date.fromisoformat(pending.publication_date),
-        now=instant, owner_sha256=pending.owner_sha256) if _main_count(baseline) else None)
+    supplement = (
+        native_supplement.select_existing(
+            effective, day=date.fromisoformat(pending.publication_date), now=instant, owner_sha256=pending.owner_sha256
+        )
+        if _main_count(baseline)
+        else None
+    )
     if supplement is not None:
         try:
             _projection(staged, response_raw, review_raw, effective, supplement)
@@ -505,6 +546,10 @@ def import_accepted(
 ) -> tuple[Path, str]:
     instant = prepared_delivery._instant(now)
     pending = _pending(cache, config, instant)
+    if pending.schema == 2:
+        from digest.application.native_selection import verify_configuration
+
+        verify_configuration(pending, config)
     if pending.projection is None or pending.response is None or pending.review is None:
         raise ValueError("Native composition must be projected before final acceptance.")
     if pending.projection.sha256 != expected_projection_sha256:
@@ -517,17 +562,19 @@ def import_accepted(
     ready, digest, status = prepared_delivery.inspect_edition(cache_dir=cache, now=instant)
     if ready is not None and status in {"ready", "pending_window", "confirmed"} and pending.acceptance is not None:
         if ready.get("native_acceptance") == asdict(pending.acceptance):
-            native_supplement.finish_reservation(digest, cache=cache, now=instant,
-                owner=prepared_delivery._owner()[0], confirmed=status == "confirmed")
+            native_supplement.finish_reservation(
+                digest, cache=cache, now=instant, owner=prepared_delivery._owner()[0], confirmed=status == "confirmed"
+            )
             storage.clear_pending(cache)
             return cache / editions.READY_FILE, digest
     _guard(cache, date.fromisoformat(pending.publication_date), instant)
-    _, packet = read_packet(storage.read_reference(pending.packet))
+    _, packet = _read_pending_packet(pending)
     effective = _eligible(packet, config, cache, instant, frozen=True)
     supplement = storage.projected_supplement(projected)
     if supplement is not None:
-        native_supplement.verify_available(supplement, day=date.fromisoformat(pending.publication_date),
-            now=instant, owner_sha256=pending.owner_sha256)
+        native_supplement.verify_available(
+            supplement, day=date.fromisoformat(pending.publication_date), now=instant, owner_sha256=pending.owner_sha256
+        )
     current = _projection(
         pending,
         storage.read_reference(pending.response),
@@ -578,14 +625,32 @@ def import_accepted(
             articles_count=canonical["article_count"],
             synthesis=synthesis,
             closing_start=presentation.get("closing_start"),
-            supplement=(SupplementPlacement(supplement.fragment.fragment_id, supplement.fragment.text,
-                presentation["supplement"]["before_article"]) if supplement is not None else None),
+            supplement=(
+                SupplementPlacement(
+                    supplement.fragment.fragment_id,
+                    supplement.fragment.text,
+                    presentation["supplement"]["before_article"],
+                )
+                if supplement is not None
+                else None
+            ),
         )
         if archive is None:
             raise ValueError("Native archive failed; accepted handoff retained, no ready created.")
         pending = replace(pending, archive=storage.reference_file(archive))
         storage.save_pending(cache, pending)
     assert pending.acceptance is not None and pending.projection is not None
+    selection_refs: list[storage.Reference] = []
+    if pending.schema == 2:
+        from digest.application.native_selection import lifecycle_arguments
+        from digest.application.native_selection_lifecycle import persist_selection_lifecycle
+
+        selection_refs.append(
+            persist_selection_lifecycle(cache, now=instant, **lifecycle_arguments(pending, projected))
+        )
+        from digest.application.native_selection_prospective import register_history
+
+        register_history(cache, selection_refs[0])
     path, digest = prepared_delivery.prepare_edition(
         shown,
         config,
@@ -594,7 +659,9 @@ def import_accepted(
         publication_date=date.fromisoformat(pending.publication_date),
         canonical_metadata=projected["publication"]["canonical_metadata"],
         presentation_metadata=projected["publication"]["presentation_metadata"],
-        checkpoint_refs={item.path: item.sha256 for item in storage.composition_references(pending, projected)},
+        checkpoint_refs={
+            item.path: item.sha256 for item in [*storage.composition_references(pending, projected), *selection_refs]
+        },
         producing_engine=_engine_provenance(),
         native_binding=(asdict(pending.projection), asdict(pending.acceptance)),
         synthesis=synthesis,
